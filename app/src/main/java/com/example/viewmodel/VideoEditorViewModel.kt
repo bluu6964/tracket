@@ -249,6 +249,81 @@ class VideoEditorViewModel : ViewModel() {
         _tracks.value = newTracks
     }
 
+    fun flipHorizontalSelectedClip() {
+        val clipId = _selectedClipId.value ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(isFlippedH = !clip.isFlippedH) else clip
+            })
+        }
+    }
+
+    fun flipVerticalSelectedClip() {
+        val clipId = _selectedClipId.value ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(isFlippedV = !clip.isFlippedV) else clip
+            })
+        }
+    }
+
+    fun replaceSelectedClipMedia(drawableResId: Int, newName: String? = null) {
+        val clipId = _selectedClipId.value ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) {
+                    clip.copy(
+                        drawableResId = drawableResId,
+                        name = newName ?: clip.name
+                    )
+                } else clip
+            })
+        }
+    }
+
+    fun setClipBlendMode(mode: String) {
+        val clipId = _selectedClipId.value ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(blendMode = mode) else clip
+            })
+        }
+    }
+
+    fun setClipEffect(effect: String) {
+        val clipId = _selectedClipId.value ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(effectName = effect) else clip
+            })
+        }
+    }
+
+    fun setClipAnimation(anim: String) {
+        val clipId = _selectedClipId.value ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(animationName = anim) else clip
+            })
+        }
+    }
+
+    fun setClipColor(color: Long) {
+        val clipId = _selectedClipId.value ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(color = color) else clip
+            })
+        }
+    }
+
     fun addClip(
         type: LayerType,
         name: String,

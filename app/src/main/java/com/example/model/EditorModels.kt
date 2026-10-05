@@ -41,7 +41,12 @@ data class TimelineClip(
     val volume: Float = 1.0f,
     val speed: Float = 1.0f,
     val isMuted: Boolean = false,
-    val isLocked: Boolean = false
+    val isLocked: Boolean = false,
+    val isFlippedH: Boolean = false,
+    val isFlippedV: Boolean = false,
+    val blendMode: String = "Normal",
+    val effectName: String? = null,
+    val animationName: String? = null
 ) {
     val endMs: Long
         get() = startMs + durationMs

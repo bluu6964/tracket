@@ -502,5 +502,44 @@ fun TimelineClipItem(
                 .background(Color.Black.copy(alpha = 0.5f))
                 .padding(horizontal = 4.dp, vertical = 1.dp)
         )
+
+        // Selected clip duration badge & keyframe diamond (matching screenshot)
+        if (isSelected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 4.dp, bottomEnd = 4.dp))
+                    .background(Color.White)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = String.format(java.util.Locale.US, "%.1fs", clip.durationMs / 1000f),
+                    color = Color.Black,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp)
+                    .size(20.dp)
+                    .graphicsLayer { rotationZ = 45f }
+                    .background(Color(0xFF374151).copy(alpha = 0.85f), RoundedCornerShape(2.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(12.dp)
+                        .graphicsLayer { rotationZ = -45f }
+                )
+            }
+        }
     }
 }

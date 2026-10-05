@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -63,6 +64,7 @@ fun CanvasArea(
     currentPlayheadMs: Long,
     isPlaying: Boolean,
     tracks: List<TimelineTrack>,
+    selectedClipId: String? = null,
     onTogglePlayPause: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -264,6 +266,33 @@ fun CanvasArea(
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+                }
+
+                // Selected Layer Framing Box & Center Crosshair Target (matching screenshot)
+                if (selectedClipId != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp, vertical = 20.dp)
+                            .border(1.5.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(2.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.size(26.dp)) {
+                            val greenNeon = Color(0xFF00E676)
+                            val strokeW = 2.dp.toPx()
+                            val cX = size.width / 2f
+                            val cY = size.height / 2f
+
+                            // Center dot
+                            drawCircle(color = greenNeon, radius = 2.dp.toPx())
+
+                            // 4 Crosshair lines
+                            drawLine(color = greenNeon, start = Offset(cX, 0f), end = Offset(cX, 7.dp.toPx()), strokeWidth = strokeW)
+                            drawLine(color = greenNeon, start = Offset(cX, size.height - 7.dp.toPx()), end = Offset(cX, size.height), strokeWidth = strokeW)
+                            drawLine(color = greenNeon, start = Offset(0f, cY), end = Offset(7.dp.toPx(), cY), strokeWidth = strokeW)
+                            drawLine(color = greenNeon, start = Offset(size.width - 7.dp.toPx(), cY), end = Offset(size.width, cY), strokeWidth = strokeW)
+                        }
                     }
                 }
 

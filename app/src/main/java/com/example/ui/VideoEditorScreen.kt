@@ -24,9 +24,16 @@ import com.example.model.LayerType
 import com.example.ui.components.AddAudioSheet
 import com.example.ui.components.AddShapeSheet
 import com.example.ui.components.AddTextSheet
+import com.example.ui.components.AppliedEffectsView
 import com.example.ui.components.AspectRatioSheet
 import com.example.ui.components.BottomToolbar
 import com.example.ui.components.CanvasArea
+import com.example.ui.components.ClipEditToolsPanel
+import com.example.ui.components.ClipEffectsSheet
+import com.example.ui.components.ClipAnimationsSheet
+import com.example.ui.components.ClipReplaceSheet
+import com.example.ui.components.ClipBlendSheet
+import com.example.ui.components.ClipCropSheet
 import com.example.ui.components.EditorHeader
 import com.example.ui.components.ExportModalDialog
 import com.example.ui.components.FullscreenPlayerModal
@@ -68,6 +75,12 @@ fun VideoEditorScreen(
     var showAddTextSheet by remember { mutableStateOf(false) }
     var showAddShapeSheet by remember { mutableStateOf(false) }
     var showEditShapeMode by remember { mutableStateOf(false) }
+    var showClipEffectsSheet by remember { mutableStateOf(false) }
+    var showClipAnimationsSheet by remember { mutableStateOf(false) }
+    var showClipReplaceSheet by remember { mutableStateOf(false) }
+    var showClipBlendSheet by remember { mutableStateOf(false) }
+    var showClipCropSheet by remember { mutableStateOf(false) }
+    var showAppliedEffectsMode by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier
@@ -117,6 +130,7 @@ fun VideoEditorScreen(
                     currentPlayheadMs = currentPlayheadMs,
                     isPlaying = isPlaying,
                     tracks = tracks,
+                    selectedClipId = selectedClipId,
                     onTogglePlayPause = { viewModel.togglePlayPause() }
                 )
 
@@ -180,30 +194,66 @@ fun VideoEditorScreen(
                     }
                 )
 
-                // 6. Bottom Toolbar ("Add audio, text, shape, overlay, sticker")
-                BottomToolbar(
-                    height = toolbarH,
-                    onAudioClick = { showAddAudioSheet = true },
-                    onTextClick = { showAddTextSheet = true },
-                    onShapeClick = { showEditShapeMode = true },
-                    onOverlayClick = {
-                        viewModel.addClip(
-                            type = LayerType.OVERLAY,
-                            name = "Media Overlay",
-                            durationMs = 6000L
-                        )
-                        scope.launch { snackbarHostState.showSnackbar("Added overlay layer") }
-                    },
-                    onStickersClick = {
-                        viewModel.addClip(
-                            type = LayerType.STICKER,
-                            name = "✨ Sparkles Sticker",
-                            durationMs = 5000L,
-                            text = "✨ NEW VLOG ✨"
-                        )
-                        scope.launch { snackbarHostState.showSnackbar("Added sticker layer") }
-                    }
-                )
+                // 6. Footer: Clip Edit Tools Panel if clip is selected, otherwise Main Bottom Toolbar
+                if (selectedClipId != null) {
+                    ClipEditToolsPanel(
+                        height = toolbarH,
+                        onDeselect = { viewModel.selectClip(null) },
+                        onSplit = {
+                            viewModel.splitSelectedClip()
+                            scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }
+                        },
+                        onEffects = { showAppliedEffectsMode = true },
+                        onAnimations = { showClipAnimationsSheet = true },
+                        onCopy = {
+                            viewModel.duplicateSelectedClip()
+                            scope.launch { snackbarHostState.showSnackbar("Clip duplicated") }
+                        },
+                        onReplace = { showClipReplaceSheet = true },
+                        onColor = { showEditShapeMode = true },
+                        onTransform = {
+                            scope.launch { snackbarHostState.showSnackbar("Transform active - drag/pinch clip on canvas") }
+                        },
+                        onCrop = { showClipCropSheet = true },
+                        onDelete = {
+                            viewModel.deleteSelectedClip()
+                            scope.launch { snackbarHostState.showSnackbar("Clip deleted") }
+                        },
+                        onBlend = { showClipBlendSheet = true },
+                        onFlipHorizontal = {
+                            viewModel.flipHorizontalSelectedClip()
+                            scope.launch { snackbarHostState.showSnackbar("Flipped horizontally") }
+                        },
+                        onFlipVertical = {
+                            viewModel.flipVerticalSelectedClip()
+                            scope.launch { snackbarHostState.showSnackbar("Flipped vertically") }
+                        }
+                    )
+                } else {
+                    BottomToolbar(
+                        height = toolbarH,
+                        onAudioClick = { showAddAudioSheet = true },
+                        onTextClick = { showAddTextSheet = true },
+                        onShapeClick = { showEditShapeMode = true },
+                        onOverlayClick = {
+                            viewModel.addClip(
+                                type = LayerType.OVERLAY,
+                                name = "Media Overlay",
+                                durationMs = 6000L
+                            )
+                            scope.launch { snackbarHostState.showSnackbar("Added overlay layer") }
+                        },
+                        onStickersClick = {
+                            viewModel.addClip(
+                                type = LayerType.STICKER,
+                                name = "✨ Sparkles Sticker",
+                                durationMs = 5000L,
+                                text = "✨ NEW VLOG ✨"
+                            )
+                            scope.launch { snackbarHostState.showSnackbar("Added sticker layer") }
+                        }
+                    )
+                }
             }
         }
     }
@@ -310,6 +360,78 @@ fun VideoEditorScreen(
                         shapePattern = shapeType.name
                     )
                     scope.launch { snackbarHostState.showSnackbar("Added ${shapeType.label} layer") }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+
+    if (showClipEffectsSheet) {
+        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
+        ClipEffectsSheet(
+            currentEffect = selectedClip?.effectName,
+            onEffectSelect = { effect ->
+                viewModel.setClipEffect(effect)
+                scope.launch { snackbarHostState.showSnackbar("Applied $effect effect") }
+            },
+            onDismiss = { showClipEffectsSheet = false }
+        )
+    }
+
+    if (showClipAnimationsSheet) {
+        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
+        ClipAnimationsSheet(
+            currentAnim = selectedClip?.animationName,
+            onAnimSelect = { anim ->
+                viewModel.setClipAnimation(anim)
+                scope.launch { snackbarHostState.showSnackbar("Applied $anim animation") }
+            },
+            onDismiss = { showClipAnimationsSheet = false }
+        )
+    }
+
+    if (showClipReplaceSheet) {
+        ClipReplaceSheet(
+            onMediaSelected = { res, name ->
+                viewModel.replaceSelectedClipMedia(res, name)
+                scope.launch { snackbarHostState.showSnackbar("Replaced with $name") }
+            },
+            onDismiss = { showClipReplaceSheet = false }
+        )
+    }
+
+    if (showClipBlendSheet) {
+        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
+        ClipBlendSheet(
+            currentBlend = selectedClip?.blendMode ?: "Normal",
+            onBlendSelected = { mode ->
+                viewModel.setClipBlendMode(mode)
+                scope.launch { snackbarHostState.showSnackbar("Blend mode: $mode") }
+            },
+            onDismiss = { showClipBlendSheet = false }
+        )
+    }
+
+    if (showClipCropSheet) {
+        ClipCropSheet(
+            onCropRatioSelected = { ratio ->
+                scope.launch { snackbarHostState.showSnackbar("Crop ratio set to $ratio") }
+            },
+            onDismiss = { showClipCropSheet = false }
+        )
+    }
+
+    if (showAppliedEffectsMode) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showAppliedEffectsMode = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            AppliedEffectsView(
+                aspectRatio = selectedAspectRatio,
+                onDismiss = { showAppliedEffectsMode = false },
+                onEffectApplied = { effectName ->
+                    viewModel.setClipEffect(effectName)
+                    scope.launch { snackbarHostState.showSnackbar("Applied $effectName") }
                 },
                 modifier = Modifier.fillMaxSize()
             )

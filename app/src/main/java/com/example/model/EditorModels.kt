@@ -35,6 +35,10 @@ data class TimelineClip(
     val durationMs: Long,
     val color: Long,
     val drawableResId: Int? = null,
+    /** Real source URI for imported media. */
+    val sourceUri: String? = null,
+    /** Offset inside source media, used when a clip is split/trimmed. */
+    val sourceStartMs: Long = 0L,
     val text: String? = null,
     val textColor: Long = 0xFFFFFFFF,
     val shapePattern: String? = null,

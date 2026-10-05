@@ -38,11 +38,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.NeonCyan
@@ -185,55 +183,26 @@ fun ClipAnimationsSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ClipReplaceSheet(
-    onMediaSelected: (drawableResId: Int, name: String) -> Unit,
+    onImport: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val mediaOptions = listOf(
-        Triple(R.drawable.sample_portrait_1791121452621, "Portrait Vlog", "1080p 60fps"),
-        Triple(R.drawable.sample_nature_1791121466670, "Nature Canopy", "4K 30fps"),
-        Triple(R.drawable.sample_cyan_dots_1791121437975, "Cyan Graphic", "Alpha Overlay")
-    )
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = EditorSurface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
-                .padding(bottom = 28.dp)
-        ) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = EditorSurface) {
+        Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
             Text("Replace Media", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(14.dp))
-
-            mediaOptions.forEach { (res, name, desc) ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .bouncyClickable(onClick = {
-                            onMediaSelected(res, name)
-                            onDismiss()
-                        })
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Image(
-                        painter = painterResource(id = res),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(54.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        Text(desc, color = TextSecondary, fontSize = 12.sp)
-                    }
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFF202733))
+                    .bouncyClickable(onClick = onImport).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.PlayCircleOutline, contentDescription = null, tint = IconActive)
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text("Import from device", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Choose a real video file", color = TextSecondary, fontSize = 12.sp)
                 }
             }
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

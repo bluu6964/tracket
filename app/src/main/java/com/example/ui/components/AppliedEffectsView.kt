@@ -67,13 +67,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.model.AspectRatio
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.RulerSubTickColor
@@ -272,15 +270,7 @@ fun AppliedEffectsView(
                 } else if (screenMode == AppliedEffectsScreenMode.PARAMETERS && selectedEffectForEditing != null) {
                     (selectedEffectForEditing!!.intensity / 6f).dp
                 } else 0.dp
-
-                Image(
-                    painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                    contentDescription = "Background frame",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(if (blurAmount > 0.dp) Modifier.blur(blurAmount) else Modifier)
-                )
+                Box(modifier = Modifier.fillMaxSize().background(Color(0xFF111827)))
 
                 // Darkening vignette overlay
                 Box(
@@ -432,15 +422,7 @@ fun AppliedEffectsView(
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .width(80.dp)
-                            .height(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
+                    Box(modifier = Modifier.width(80.dp).height(24.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF334155)))
 
                     Spacer(modifier = Modifier.width(10.dp))
 

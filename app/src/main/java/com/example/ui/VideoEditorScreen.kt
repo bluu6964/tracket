@@ -17,6 +17,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,7 +66,27 @@ fun VideoEditorScreen(
     val exportProgress by viewModel.exportProgress.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
+
+    val videoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                viewModel.selectClip(null)
+                // Keep access to the selected file after the picker closes.
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            } catch (_: Exception) { }
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, uri)
+                val duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 1L
+                viewModel.addImportedVideo(uri, duration, uri.lastPathSegment ?: "Video")
+            } finally { retriever.release() }
+        }
+    }
 
     // Dialog & Sheet States
     var showAspectRatioSheet by remember { mutableStateOf(false) }
@@ -131,6 +153,7 @@ fun VideoEditorScreen(
                     isPlaying = isPlaying,
                     tracks = tracks,
                     selectedClipId = selectedClipId,
+                    masterMuted = isMasterMuted,
                     onTogglePlayPause = { viewModel.togglePlayPause() }
                 )
 
@@ -184,14 +207,7 @@ fun VideoEditorScreen(
                             snackbarHostState.showSnackbar(if (!isMasterMuted) "Master Audio Muted" else "Master Audio Unmuted")
                         }
                     },
-                    onAddMediaClick = {
-                        viewModel.addClip(
-                            type = LayerType.VIDEO,
-                            name = "New Clip ${tracks.firstOrNull()?.clips?.size ?: 1}",
-                            durationMs = 8000L
-                        )
-                        scope.launch { snackbarHostState.showSnackbar("Added media to timeline") }
-                    }
+                    onAddMediaClick = { videoPicker.launch(arrayOf("video/*")) }
                 )
 
                 // 6. Footer: Clip Edit Tools Panel if clip is selected, otherwise Main Bottom Toolbar
@@ -235,14 +251,7 @@ fun VideoEditorScreen(
                         onAudioClick = { showAddAudioSheet = true },
                         onTextClick = { showAddTextSheet = true },
                         onShapeClick = { showEditShapeMode = true },
-                        onOverlayClick = {
-                            viewModel.addClip(
-                                type = LayerType.OVERLAY,
-                                name = "Media Overlay",
-                                durationMs = 6000L
-                            )
-                            scope.launch { snackbarHostState.showSnackbar("Added overlay layer") }
-                        },
+                        onOverlayClick = { videoPicker.launch(arrayOf("video/*", "image/*")) },
                         onStickersClick = {
                             viewModel.addClip(
                                 type = LayerType.STICKER,
@@ -280,9 +289,11 @@ fun VideoEditorScreen(
             isExporting = isExporting,
             progress = exportProgress,
             onStartExport = {
-                viewModel.startExport {
-                    scope.launch { snackbarHostState.showSnackbar("Video exported successfully!") }
-                }
+                viewModel.startExport(
+                    context = context,
+                    onComplete = { uri -> scope.launch { snackbarHostState.showSnackbar("Export complete: $uri") } },
+                    onError = { message -> scope.launch { snackbarHostState.showSnackbar(message) } }
+                )
             },
             onDismiss = { showExportDialog = false }
         )
@@ -392,10 +403,7 @@ fun VideoEditorScreen(
 
     if (showClipReplaceSheet) {
         ClipReplaceSheet(
-            onMediaSelected = { res, name ->
-                viewModel.replaceSelectedClipMedia(res, name)
-                scope.launch { snackbarHostState.showSnackbar("Replaced with $name") }
-            },
+            onImport = { showClipReplaceSheet = false; videoPicker.launch(arrayOf("video/*")) },
             onDismiss = { showClipReplaceSheet = false }
         )
     }

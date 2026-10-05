@@ -52,12 +52,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
+import coil.compose.AsyncImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.model.LayerType
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
@@ -364,16 +363,10 @@ fun TimelineClipItem(
         when (clip.type) {
             LayerType.VIDEO -> {
                 Row(modifier = Modifier.fillMaxSize()) {
-                    val tileRes = when {
-                        clip.name.contains("Yellow") || clip.name.contains("Vlog") -> R.drawable.sample_portrait_1791121452621
-                        clip.name.contains("Canopy") || clip.name.contains("Trees") -> R.drawable.sample_nature_1791121466670
-                        else -> R.drawable.sample_portrait_1791121452621
-                    }
-
                     val frameCount = ((width.value / 38).toInt()).coerceAtLeast(1)
                     for (i in 0 until frameCount) {
-                        Image(
-                            painter = painterResource(id = tileRes),
+                        AsyncImage(
+                            model = clip.sourceUri,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -453,22 +446,11 @@ fun TimelineClipItem(
                         .fillMaxSize()
                         .background(Color(0xFF2A1C2C))
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_cyan_dots_1791121437975),
+                    AsyncImage(
+                        model = clip.sourceUri,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(4.dp))
                     )
                 }
             }

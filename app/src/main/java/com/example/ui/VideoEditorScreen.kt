@@ -1,5 +1,17 @@
 package com.example.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -17,9 +29,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
@@ -64,27 +75,45 @@ fun VideoEditorScreen(
     val canRedo by viewModel.canRedo.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
     val exportProgress by viewModel.exportProgress.collectAsState()
+    val lastExportedFile by viewModel.lastExportedFile.collectAsState()
 
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val videoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                viewModel.selectClip(null)
-                // Keep access to the selected file after the picker closes.
-                context.contentResolver.takePersistableUriPermission(uri, flags)
-            } catch (_: Exception) { }
-            val retriever = android.media.MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(context, uri)
-                val duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 1L
-                viewModel.addImportedVideo(uri, duration, uri.lastPathSegment ?: "Video")
-            } finally { retriever.release() }
+            viewModel.importMediaClip(uri, context, LayerType.VIDEO)
+            scope.launch { snackbarHostState.showSnackbar("Imported real video to timeline") }
+        }
+    }
+
+    val replacePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.replaceSelectedClipWithUri(uri, context)
+            scope.launch { snackbarHostState.showSnackbar("Replaced clip with real media") }
+        }
+    }
+
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.importMediaClip(uri, context, LayerType.AUDIO)
+            scope.launch { snackbarHostState.showSnackbar("Imported real audio track") }
+        }
+    }
+
+    val overlayPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.importMediaClip(uri, context, LayerType.OVERLAY)
+            scope.launch { snackbarHostState.showSnackbar("Imported photo/media overlay") }
         }
     }
 
@@ -142,7 +171,16 @@ fun VideoEditorScreen(
                         scope.launch { snackbarHostState.showSnackbar("Project autosaved") }
                     },
                     onAspectRatioClick = { showAspectRatioSheet = true },
-                    onExportClick = { showExportDialog = true }
+                    onExportClick = { showExportDialog = true },
+                    onImportMediaClick = {
+                        videoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                        )
+                    },
+                    onNewProjectClick = {
+                        viewModel.startBlankProject()
+                        scope.launch { snackbarHostState.showSnackbar("Started new blank project") }
+                    }
                 )
 
                 // 2. Canvas Area (9/18 of screen)
@@ -153,7 +191,6 @@ fun VideoEditorScreen(
                     isPlaying = isPlaying,
                     tracks = tracks,
                     selectedClipId = selectedClipId,
-                    masterMuted = isMasterMuted,
                     onTogglePlayPause = { viewModel.togglePlayPause() }
                 )
 
@@ -207,61 +244,95 @@ fun VideoEditorScreen(
                             snackbarHostState.showSnackbar(if (!isMasterMuted) "Master Audio Muted" else "Master Audio Unmuted")
                         }
                     },
-                    onAddMediaClick = { videoPicker.launch(arrayOf("video/*")) }
+                    onAddMediaClick = {
+                        videoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                        )
+                    }
                 )
 
                 // 6. Footer: Clip Edit Tools Panel if clip is selected, otherwise Main Bottom Toolbar
-                if (selectedClipId != null) {
-                    ClipEditToolsPanel(
-                        height = toolbarH,
-                        onDeselect = { viewModel.selectClip(null) },
-                        onSplit = {
-                            viewModel.splitSelectedClip()
-                            scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }
-                        },
-                        onEffects = { showAppliedEffectsMode = true },
-                        onAnimations = { showClipAnimationsSheet = true },
-                        onCopy = {
-                            viewModel.duplicateSelectedClip()
-                            scope.launch { snackbarHostState.showSnackbar("Clip duplicated") }
-                        },
-                        onReplace = { showClipReplaceSheet = true },
-                        onColor = { showEditShapeMode = true },
-                        onTransform = {
-                            scope.launch { snackbarHostState.showSnackbar("Transform active - drag/pinch clip on canvas") }
-                        },
-                        onCrop = { showClipCropSheet = true },
-                        onDelete = {
-                            viewModel.deleteSelectedClip()
-                            scope.launch { snackbarHostState.showSnackbar("Clip deleted") }
-                        },
-                        onBlend = { showClipBlendSheet = true },
-                        onFlipHorizontal = {
-                            viewModel.flipHorizontalSelectedClip()
-                            scope.launch { snackbarHostState.showSnackbar("Flipped horizontally") }
-                        },
-                        onFlipVertical = {
-                            viewModel.flipVerticalSelectedClip()
-                            scope.launch { snackbarHostState.showSnackbar("Flipped vertically") }
+                AnimatedContent(
+                    targetState = (selectedClipId != null),
+                    transitionSpec = {
+                        if (targetState) {
+                            slideInVertically(
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            ) { it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut()
+                        } else {
+                            slideInVertically(
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            ) { -it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut()
                         }
-                    )
-                } else {
-                    BottomToolbar(
-                        height = toolbarH,
-                        onAudioClick = { showAddAudioSheet = true },
-                        onTextClick = { showAddTextSheet = true },
-                        onShapeClick = { showEditShapeMode = true },
-                        onOverlayClick = { videoPicker.launch(arrayOf("video/*", "image/*")) },
-                        onStickersClick = {
-                            viewModel.addClip(
-                                type = LayerType.STICKER,
-                                name = "✨ Sparkles Sticker",
-                                durationMs = 5000L,
-                                text = "✨ NEW VLOG ✨"
-                            )
-                            scope.launch { snackbarHostState.showSnackbar("Added sticker layer") }
-                        }
-                    )
+                    },
+                    label = "footerToolbarAnimatedContent"
+                ) { isSelected ->
+                    if (isSelected) {
+                        ClipEditToolsPanel(
+                            height = toolbarH,
+                            onDeselect = { viewModel.selectClip(null) },
+                            onSplit = {
+                                viewModel.splitSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }
+                            },
+                            onEffects = { showAppliedEffectsMode = true },
+                            onAnimations = { showClipAnimationsSheet = true },
+                            onCopy = {
+                                viewModel.duplicateSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Clip duplicated") }
+                            },
+                            onReplace = {
+                                replacePickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                )
+                            },
+                            onColor = { showEditShapeMode = true },
+                            onTransform = {
+                                scope.launch { snackbarHostState.showSnackbar("Transform active - drag/pinch clip on canvas") }
+                            },
+                            onCrop = { showClipCropSheet = true },
+                            onDelete = {
+                                viewModel.deleteSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Clip deleted") }
+                            },
+                            onBlend = { showClipBlendSheet = true },
+                            onFlipHorizontal = {
+                                viewModel.flipHorizontalSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Flipped horizontally") }
+                            },
+                            onFlipVertical = {
+                                viewModel.flipVerticalSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Flipped vertically") }
+                            }
+                        )
+                    } else {
+                        BottomToolbar(
+                            height = toolbarH,
+                            onAudioClick = { audioPickerLauncher.launch("audio/*") },
+                            onTextClick = { showAddTextSheet = true },
+                            onShapeClick = { showEditShapeMode = true },
+                            onOverlayClick = {
+                                overlayPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                )
+                            },
+                            onStickersClick = {
+                                viewModel.addClip(
+                                    type = LayerType.STICKER,
+                                    name = "✨ Sparkles Sticker",
+                                    durationMs = 5000L,
+                                    text = "✨ NEW VLOG ✨"
+                                )
+                                scope.launch { snackbarHostState.showSnackbar("Added sticker layer") }
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -288,12 +359,13 @@ fun VideoEditorScreen(
         ExportModalDialog(
             isExporting = isExporting,
             progress = exportProgress,
+            exportedFile = lastExportedFile,
             onStartExport = {
-                viewModel.startExport(
-                    context = context,
-                    onComplete = { uri -> scope.launch { snackbarHostState.showSnackbar("Export complete: $uri") } },
-                    onError = { message -> scope.launch { snackbarHostState.showSnackbar(message) } }
-                )
+                viewModel.startRealExport(context) { exportedFile ->
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Export completed: ${exportedFile.name}")
+                    }
+                }
             },
             onDismiss = { showExportDialog = false }
         )
@@ -403,7 +475,10 @@ fun VideoEditorScreen(
 
     if (showClipReplaceSheet) {
         ClipReplaceSheet(
-            onImport = { showClipReplaceSheet = false; videoPicker.launch(arrayOf("video/*")) },
+            onMediaSelected = { res, name ->
+                viewModel.replaceSelectedClipMedia(res, name)
+                scope.launch { snackbarHostState.showSnackbar("Replaced with $name") }
+            },
             onDismiss = { showClipReplaceSheet = false }
         )
     }

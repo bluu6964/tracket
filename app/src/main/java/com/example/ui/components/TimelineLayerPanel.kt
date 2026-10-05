@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,11 +53,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import coil.compose.AsyncImage
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.model.LayerType
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
@@ -95,51 +97,51 @@ fun TimelineLayerPanel(
     val coroutineScope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
 
+    val latestPlayheadMs by rememberUpdatedState(currentPlayheadMs)
+    val latestTotalDurationMs by rememberUpdatedState(totalDurationMs)
+    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
             .background(EditorBackground)
             .testTag("layer_panel_timeline")
-            .pointerInput(totalDurationMs, currentPlayheadMs) {
+            .pointerInput(Unit) {
                 val velocityTracker = VelocityTracker()
+                var dragAccumulator = 0.0
 
                 detectDragGestures(
                     onDragStart = {
-                        // Immediately stop any active fling when user touches
                         flingJob?.cancel()
                         velocityTracker.resetTracking()
+                        dragAccumulator = latestPlayheadMs.toDouble()
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
 
-                        // Higher sensitivity so timeline glides generously like other video editing apps
-                        val dragSensitivity = 1.35f
-                        val deltaMs = (-dragAmount.x * dragSensitivity / TIMELINE_PX_PER_MS).toLong()
-                        val newTime = (currentPlayheadMs + deltaMs).coerceIn(0L, totalDurationMs)
-                        onSeekTo(newTime)
+                        val stepMs = (-dragAmount.x / TIMELINE_PX_PER_MS).toDouble()
+                        dragAccumulator = (dragAccumulator + stepMs).coerceIn(0.0, latestTotalDurationMs.toDouble())
+                        latestOnSeekTo(dragAccumulator.toLong())
                     },
                     onDragEnd = {
                         val velocityX = velocityTracker.calculateVelocity().x
-
-                        // Inertial fling momentum: swiping glides several seconds forward or backward smoothly
-                        if (kotlin.math.abs(velocityX) > 200f) {
+                        if (kotlin.math.abs(velocityX) > 120f) {
                             flingJob = coroutineScope.launch {
-                                var currentV = -velocityX * 1.3f
-                                var currentTime = currentPlayheadMs.toFloat()
-                                val decayRate = 0.93f // Smooth physical friction
+                                var currentVelocity = (-velocityX / TIMELINE_PX_PER_MS).toDouble() * 0.9
+                                var currentPos = dragAccumulator
+                                val decay = 0.94
 
-                                while (isActive && kotlin.math.abs(currentV) > 50f) {
+                                while (isActive && kotlin.math.abs(currentVelocity) > 2.0) {
                                     delay(16L) // 60fps update
-                                    val stepDeltaMs = (currentV * 0.016f / TIMELINE_PX_PER_MS)
-                                    currentTime = (currentTime + stepDeltaMs).coerceIn(0f, totalDurationMs.toFloat())
-                                    onSeekTo(currentTime.toLong())
-
-                                    if (currentTime <= 0f || currentTime >= totalDurationMs.toFloat()) {
+                                    val delta = currentVelocity * 0.016
+                                    currentPos = (currentPos + delta).coerceIn(0.0, latestTotalDurationMs.toDouble())
+                                    latestOnSeekTo(currentPos.toLong())
+                                    if (currentPos <= 0.0 || currentPos >= latestTotalDurationMs.toDouble()) {
                                         break
                                     }
-                                    currentV *= decayRate
+                                    currentVelocity *= decay
                                 }
                             }
                         }
@@ -365,15 +367,32 @@ fun TimelineClipItem(
                 Row(modifier = Modifier.fillMaxSize()) {
                     val frameCount = ((width.value / 38).toInt()).coerceAtLeast(1)
                     for (i in 0 until frameCount) {
-                        AsyncImage(
-                            model = clip.sourceUri,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .border(0.5.dp, Color.Black.copy(alpha = 0.3f))
-                        )
+                        if (clip.mediaUri != null) {
+                            coil.compose.AsyncImage(
+                                model = clip.mediaUri,
+                                contentDescription = clip.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .border(0.5.dp, Color.Black.copy(alpha = 0.3f))
+                            )
+                        } else {
+                            val tileRes = when {
+                                clip.name.contains("Yellow") || clip.name.contains("Vlog") -> R.drawable.sample_portrait_1791121452621
+                                clip.name.contains("Canopy") || clip.name.contains("Trees") -> R.drawable.sample_nature_1791121466670
+                                else -> R.drawable.sample_portrait_1791121452621
+                            }
+                            Image(
+                                painter = painterResource(id = tileRes),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .border(0.5.dp, Color.Black.copy(alpha = 0.3f))
+                            )
+                        }
                     }
                 }
             }
@@ -441,17 +460,37 @@ fun TimelineClipItem(
             }
 
             LayerType.OVERLAY -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF2A1C2C))
-                ) {
-                    AsyncImage(
-                        model = clip.sourceUri,
-                        contentDescription = null,
+                if (clip.mediaUri != null) {
+                    coil.compose.AsyncImage(
+                        model = clip.mediaUri,
+                        contentDescription = clip.name,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(4.dp))
+                        modifier = Modifier.fillMaxSize()
                     )
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0xFF2A1C2C))
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.sample_cyan_dots_1791121437975),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Image(
+                            painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                        )
+                    }
                 }
             }
 

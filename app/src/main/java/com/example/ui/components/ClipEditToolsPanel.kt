@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -33,10 +37,14 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -88,6 +96,9 @@ fun ClipEditToolsPanel(
         ClipToolItem("flip_v", "Flip V", Icons.Default.FlipCameraAndroid)
     )
 
+    val listState = rememberLazyListState()
+    val isScrolling = listState.isScrollInProgress
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -128,8 +139,9 @@ fun ClipEditToolsPanel(
                 .background(Color(0xFF262C38))
         )
 
-        // 2. Horizontal Scrolling Tools Panel (matching screenshot)
+        // 2. Horizontal Scrolling Tools Panel with dynamic swiping animation
         LazyRow(
+            state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
@@ -137,13 +149,38 @@ fun ClipEditToolsPanel(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            items(tools) { tool ->
+            itemsIndexed(tools) { index, tool ->
+                // Dynamic physics animation on toolbar swipe
+                val scrollScale by animateFloatAsState(
+                    targetValue = if (isScrolling) 1.06f else 1.0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    ),
+                    label = "toolSwipeScale_$index"
+                )
+
+                // Subtle dynamic tilt on swiping
+                val tiltAngle by animateFloatAsState(
+                    targetValue = if (isScrolling) (if (index % 2 == 0) -2.5f else 2.5f) else 0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    ),
+                    label = "toolTilt_$index"
+                )
+
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
+                        .graphicsLayer {
+                            scaleX = scrollScale
+                            scaleY = scrollScale
+                            rotationZ = tiltAngle
+                        }
                         .bouncyClickable(
-                            pressedScale = 0.88f,
-                            hoverScale = 1.08f,
+                            pressedScale = 0.82f,
+                            hoverScale = 1.12f,
                             onClick = {
                                 when (tool.id) {
                                     "split" -> onSplit()

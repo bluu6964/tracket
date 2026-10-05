@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Icon
@@ -40,6 +41,8 @@ fun EditorHeader(
     onBackClick: () -> Unit,
     onAspectRatioClick: () -> Unit,
     onExportClick: () -> Unit,
+    onImportMediaClick: () -> Unit = {},
+    onNewProjectClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -115,20 +118,40 @@ fun EditorHeader(
             )
         }
 
-        // Right: Export button with spring animation
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .bouncyClickable(onClick = onExportClick)
-                .testTag("header_export_button"),
-            contentAlignment = Alignment.Center
+        // Right: Import Real Media + Export buttons with spring animation
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Upload,
-                contentDescription = "Export Video",
-                tint = IconActive,
-                modifier = Modifier.size(24.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .bouncyClickable(onClick = onImportMediaClick)
+                    .testTag("header_import_media_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AddPhotoAlternate,
+                    contentDescription = "Import Real Media",
+                    tint = IconActive,
+                    modifier = Modifier.size(23.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .bouncyClickable(onClick = onExportClick)
+                    .testTag("header_export_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Upload,
+                    contentDescription = "Export Video",
+                    tint = IconActive,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }

@@ -1,4 +1,9 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -523,41 +528,115 @@ fun AddShapeSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
-                .padding(bottom = 28.dp)
+                .padding(horizontal = 18.dp, vertical = 8.dp)
+                .padding(bottom = 26.dp)
         ) {
-            Text("Add Shape / Graphic Layer", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(14.dp))
-
-            val shapes = listOf(
-                "Circle" to "CIRCLE",
-                "Rounded Rectangle" to "ROUNDED_SQUARE",
-                "Wide Rectangle" to "WIDE_ROUNDED_RECT",
-                "Square" to "SQUARE",
-                "Oval" to "OVAL",
-                "Star" to "STAR",
-                "Pentagon" to "PENTAGON"
+            Text(
+                text = "Add Shape",
+                color = TextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Choose a shape to add at the current playhead",
+                color = TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 3.dp, bottom = 14.dp)
             )
 
-            shapes.forEach { (name, pattern) ->
+            val shapes = listOf(
+                Triple("Circle", "CIRCLE", Color(0xFF5AC8FA)),
+                Triple("Rounded Rectangle", "ROUNDED_SQUARE", Color(0xFF7C8CFF)),
+                Triple("Wide Rectangle", "WIDE_ROUNDED_RECT", Color(0xFF34C759)),
+                Triple("Square", "SQUARE", Color(0xFFFF9F0A)),
+                Triple("Oval", "OVAL", Color(0xFFFF6B8A)),
+                Triple("Star", "STAR", Color(0xFFFFD60A)),
+                Triple("Pentagon", "PENTAGON", Color(0xFFBF5AF2))
+            )
+
+            shapes.chunked(2).forEach { rowItems ->
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .bouncyClickable {
-                            onAddShape(name, pattern)
-                            onDismiss()
-                        }
-                        .padding(vertical = 12.dp, horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("Insert", color = NeonCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    rowItems.forEach { (name, pattern, accent) ->
+                        ShapePickerCard(
+                            name = name,
+                            pattern = pattern,
+                            accent = accent,
+                            onClick = { onAddShape(name, pattern); onDismiss() },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (rowItems.size == 1) Spacer(Modifier.weight(1f))
                 }
+                Spacer(Modifier.height(10.dp))
             }
         }
     }
+}
+
+@Composable
+private fun ShapePickerCard(
+    name: String,
+    pattern: String,
+    accent: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(EditorSurfaceVariant.copy(alpha = 0.82f), shape)
+            .border(1.dp, Color.White.copy(alpha = 0.06f), shape)
+            .bouncyClickable(pressedScale = 0.96f, hoverScale = 1.01f, onClick = onClick)
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.Black.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(42.dp)) {
+                val c = accent
+                when (pattern) {
+                    "CIRCLE" -> drawCircle(c)
+                    "SQUARE" -> drawRect(c)
+                    "ROUNDED_SQUARE", "ROUNDED_RECT" -> drawRoundRect(c, cornerRadius = CornerRadius(10.dp.toPx()))
+                    "WIDE_ROUNDED_RECT" -> drawRoundRect(c, topLeft = Offset.Zero, size = Size(size.width, size.height * 0.62f), cornerRadius = CornerRadius(8.dp.toPx()))
+                    "OVAL" -> drawOval(c)
+                    "STAR" -> drawRegularPolygon(c, 5, innerRatio = 0.45f)
+                    "PENTAGON" -> drawRegularPolygon(c, 5, innerRatio = 1f)
+                    else -> drawCircle(c)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text("Add", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+private fun DrawScope.drawRegularPolygon(color: Color, points: Int, innerRatio: Float) {
+    val path = Path()
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val outer = size.minDimension / 2f
+    val total = if (innerRatio < 1f) points * 2 else points
+    for (i in 0 until total) {
+        val angle = Math.toRadians(i * 360.0 / total - 90.0)
+        val radius = if (innerRatio < 1f && i % 2 == 1) outer * innerRatio else outer
+        val x = cx + radius * kotlin.math.cos(angle).toFloat()
+        val y = cy + radius * kotlin.math.sin(angle).toFloat()
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    path.close()
+    drawPath(path, color)
 }
 
 @Composable

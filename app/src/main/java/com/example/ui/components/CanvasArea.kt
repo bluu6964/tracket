@@ -353,14 +353,17 @@ fun CanvasArea(
                                 }
                                 "PENTAGON", "STAR" -> {
                                     val path = Path().apply {
-                                        val r = size.minDimension / 2f
                                         val cX = size.width / 2f
                                         val cY = size.height / 2f
-                                        val points = 5
-                                        for (i in 0 until points) {
-                                            val angle = Math.toRadians((i * 360.0 / points) - 90.0)
-                                            val px = (cX + r * Math.cos(angle)).toFloat()
-                                            val py = (cY + r * Math.sin(angle)).toFloat()
+                                        val outer = size.minDimension / 2f
+                                        val isStar = pattern == "STAR"
+                                        val pointCount = if (isStar) 10 else 5
+                                        val inner = outer * 0.45f
+                                        for (i in 0 until pointCount) {
+                                            val angle = Math.toRadians((i * 360.0 / pointCount) - 90.0)
+                                            val radius = if (isStar && i % 2 == 1) inner else outer
+                                            val px = (cX + radius * Math.cos(angle)).toFloat()
+                                            val py = (cY + radius * Math.sin(angle)).toFloat()
                                             if (i == 0) moveTo(px, py) else lineTo(px, py)
                                         }
                                         close()

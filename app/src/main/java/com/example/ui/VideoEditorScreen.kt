@@ -329,7 +329,7 @@ fun VideoEditorScreen(
                             height = toolbarH,
                             onAudioClick = comingSoon,
                             onTextClick = comingSoon,
-                            onShapeClick = { showEditShapeMode = true },
+                            onShapeClick = { showAddShapeSheet = true },
                             onTransformClick = comingSoon,
                             onOverlayClick = comingSoon,
                             onStickersClick = comingSoon
@@ -422,11 +422,10 @@ fun VideoEditorScreen(
                 } else {
                     4000L
                 }
-                viewModel.addClip(
-                    type = LayerType.SHAPE,
+                viewModel.addShape(
                     name = name,
-                    durationMs = clipDuration,
-                    shapePattern = pattern
+                    pattern = pattern,
+                    durationMs = clipDuration
                 )
                 scope.launch { snackbarHostState.showSnackbar("Added shape: $name") }
             },

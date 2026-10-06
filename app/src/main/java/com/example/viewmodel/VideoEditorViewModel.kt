@@ -358,6 +358,40 @@ class VideoEditorViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Adds a real shape layer at the current playhead. This is the single entry point
+     * used by the Shape picker so timeline insertion, selection, undo/redo and duration
+     * calculation stay consistent.
+     */
+    fun addShape(
+        name: String,
+        pattern: String,
+        durationMs: Long = 4000L,
+        fillColor: Long = 0xFFFFFFFF,
+        strokeWidth: Float = 0f,
+        strokeColor: Long = 0xFFFFFFFF,
+        offsetX: Float = 0f,
+        offsetY: Float = 0f,
+        scaleX: Float = 1f,
+        scaleY: Float = 1f
+    ) {
+        val normalizedPattern = pattern.uppercase()
+        val safeDuration = durationMs.coerceIn(250L, 60_000L)
+        addClip(
+            type = LayerType.SHAPE,
+            name = name,
+            durationMs = safeDuration,
+            textColor = fillColor,
+            shapePattern = normalizedPattern,
+            shapeOffsetX = offsetX,
+            shapeOffsetY = offsetY,
+            shapeScaleX = scaleX.coerceIn(0.1f, 10f),
+            shapeScaleY = scaleY.coerceIn(0.1f, 10f),
+            strokeWidth = strokeWidth.coerceIn(0f, 40f),
+            strokeColor = strokeColor
+        )
+    }
+
     fun addClip(
         type: LayerType,
         name: String,

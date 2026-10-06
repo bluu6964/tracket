@@ -1,10 +1,5 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -31,7 +26,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -58,7 +53,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import com.example.ui.util.bouncyClickable
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -120,7 +114,6 @@ fun CanvasArea(
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF090A0D))
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp))
-                    .bouncyClickable(pressedScale = 0.98f, onClick = onTogglePlayPause),
                 contentAlignment = Alignment.Center
             ) {
                 val activeVideoClip = tracks
@@ -378,17 +371,44 @@ fun CanvasArea(
                         }
 
                         if (isSelected) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .border(1.5.dp, Color(0xFFFF3377), RoundedCornerShape(2.dp))
-                            )
+                            // Single Alight Motion-style transform frame: one outline + eight corner/edge handles.
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val accent = Color(0xFFFF3B81)
+                                val stroke = 1.5.dp.toPx()
+                                val handle = 7.dp.toPx()
+                                val inset = handle / 2f
+                                drawRect(
+                                    color = accent,
+                                    topLeft = Offset(inset, inset),
+                                    size = Size(size.width - handle, size.height - handle),
+                                    style = Stroke(width = stroke)
+                                )
+
+                                val points = listOf(
+                                    Offset(inset, inset),
+                                    Offset(size.width / 2f, inset),
+                                    Offset(size.width - inset, inset),
+                                    Offset(size.width - inset, size.height / 2f),
+                                    Offset(size.width - inset, size.height - inset),
+                                    Offset(size.width / 2f, size.height - inset),
+                                    Offset(inset, size.height - inset),
+                                    Offset(inset, size.height / 2f)
+                                )
+                                points.forEach { point ->
+                                    drawRect(
+                                        color = accent,
+                                        topLeft = Offset(point.x - handle / 2f, point.y - handle / 2f),
+                                        size = Size(handle, handle)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
 
                 // Main Track Framing Box & Center Crosshair Target
-                val isMainTrackSelected = tracks.firstOrNull()?.clips?.any { it.id == selectedClipId } == true
+                val selectedClipType = tracks.flatMap { it.clips }.firstOrNull { it.id == selectedClipId }?.type
+                val isMainTrackSelected = selectedClipType == LayerType.VIDEO
                 if (isMainTrackSelected) {
                     Box(
                         modifier = Modifier
@@ -415,26 +435,6 @@ fun CanvasArea(
                     }
                 }
 
-                // Subtle play indicator when paused with smooth animated transition
-                AnimatedVisibility(
-                    visible = !isPlaying,
-                    enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.8f),
-                    exit = fadeOut(tween(200)) + scaleOut(targetScale = 0.8f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(26.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Tap to Play",
-                            tint = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
-                }
             }
         }
     }

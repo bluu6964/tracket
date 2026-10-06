@@ -99,6 +99,7 @@ fun TransformView(
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
     onDismiss: () -> Unit,
+    panelOnly: Boolean = false,
     onApplyTransform: (
         horizontal: Float,
         vertical: Float,
@@ -166,6 +167,7 @@ fun TransformView(
             .background(Color(0xFF0F1116))
             .testTag("transform_screen")
     ) {
+        if (!panelOnly) {
         // 1. Header: Left down arrow button, Center "Transform" title, Right "Done" button
         Row(
             modifier = Modifier
@@ -767,6 +769,8 @@ fun TransformView(
                     }
                 }
             }
+        }
+
         }
 
         // 6. Bottom Transform Panel (matching screenshot)

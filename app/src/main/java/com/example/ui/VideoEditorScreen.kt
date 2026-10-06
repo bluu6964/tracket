@@ -8,10 +8,12 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Scaffold
@@ -36,7 +38,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
@@ -607,9 +611,16 @@ fun VideoEditorScreen(
         val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
             ?: tracks.flatMap { it.clips }.firstOrNull()
 
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showTransformMode = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        // Transform is an editor overlay over the timeline/tools area only.
+        // The canvas viewport stays completely unchanged and continues to show
+        // every visible layer while the transform controls are open.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(layerPanelH + toolbarH)
+                .zIndex(20f)
+                .background(EditorBackground)
         ) {
             com.example.ui.components.TransformView(
                 clip = selectedClip,
@@ -626,6 +637,7 @@ fun VideoEditorScreen(
                 onUndo = { viewModel.undo() },
                 onRedo = { viewModel.redo() },
                 onDismiss = { showTransformMode = false },
+                panelOnly = true,
                 onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp ->
                     val targetId = selectedClip?.id ?: selectedClipId
                     if (targetId != null) {

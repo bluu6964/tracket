@@ -1,5 +1,6 @@
 package com.example.ui.components
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Offset

@@ -327,7 +327,7 @@ fun VideoEditorScreen(
                             height = toolbarH,
                             onAudioClick = comingSoon,
                             onTextClick = comingSoon,
-                            onShapeClick = comingSoon,
+                            onShapeClick = { showEditShapeMode = true },
                             onTransformClick = comingSoon,
                             onOverlayClick = comingSoon,
                             onStickersClick = comingSoon

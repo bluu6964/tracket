@@ -1,20 +1,42 @@
 name: Build APK
-on: [push, workflow_dispatch]
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
+
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      # The project has no gradlew, so use the same Gradle version as gradle-wrapper.properties.
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
-      - run: keytool -genkeypair -keystore debug.keystore -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-      - run: gradle assembleDebug --stacktrace
+
+      # Build the APK first so you get a file even if a test fails.
+      - name: Assemble debug APK
+        run: gradle assembleDebug --no-daemon
+
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: tracket-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-reports
+          path: app/build/reports/tests/

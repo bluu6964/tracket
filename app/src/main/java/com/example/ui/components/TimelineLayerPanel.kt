@@ -310,6 +310,32 @@ fun TimelineTrackRow(
                 )
             }
         }
+
+        // Import button: sits right after the last clip on the main video track
+        // (or at the playhead when the track is empty).
+        if (track.type == LayerType.VIDEO) {
+            val endMs = track.clips.maxOfOrNull { it.endMs } ?: 0L
+            Box(
+                modifier = Modifier
+                    .offset(x = (endMs * TIMELINE_PX_PER_MS).dp + 8.dp)
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF2A3042))
+                    .bouncyClickable(
+                        pressedScale = 0.88f,
+                        hoverScale = 1.08f,
+                        onClick = onAddMediaClick
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Add media",
+                    tint = IconActive,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
     }
 }
 

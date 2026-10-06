@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.SentimentSatisfiedAlt
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.Icon
@@ -42,6 +43,7 @@ fun BottomToolbar(
     onAudioClick: () -> Unit,
     onTextClick: () -> Unit,
     onShapeClick: () -> Unit,
+    onTransformClick: () -> Unit = {},
     onOverlayClick: () -> Unit,
     onStickersClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -74,6 +76,13 @@ fun BottomToolbar(
             icon = Icons.Default.Category,
             testTag = "toolbar_shape_button",
             onClick = onShapeClick
+        )
+
+        ToolbarItem(
+            label = "Transform",
+            icon = Icons.Default.OpenWith,
+            testTag = "toolbar_transform_button",
+            onClick = onTransformClick
         )
 
         ToolbarItem(

@@ -1,22 +1,18 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Tracket (v0.1.0)
 
-# Run and deploy your AI Studio app
+Android video editor. v0.1 scope: import videos/photos, edit the main track
+(trim, split, delete with ripple, duplicate, flip, mute), preview with ExoPlayer,
+choose aspect ratio, export an H.264/AAC MP4 to Movies/Tracket.
 
-This contains everything you need to run your app locally.
+Text, shape, overlay, sticker, audio, crop, transform, effects, animations and
+blend are visible in the UI but disabled ("Coming in a later version").
 
-View your app in AI Studio: https://ai.studio/apps/868b57fa-8b02-4542-be6e-29cdc80074c7
+## Run
+1. Open the project in Android Studio and let Gradle sync.
+2. Run on an emulator or device (minSdk 24).
+3. Unit tests: `./gradlew testDebugUnitTest`
 
-## Run Locally
-
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
-
-
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
-7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
+## Release signing (optional)
+Set `STORE_PASSWORD`, `KEY_PASSWORD` and optionally `KEYSTORE_PATH`
+(default `my-upload-key.jks` in the project root, key alias `upload`).
+Without them the release build is unsigned.

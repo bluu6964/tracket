@@ -282,45 +282,31 @@ fun TimelineTrackRow(
     onAddMediaClick: () -> Unit
 ) {
     val trackHeight = when (track.type) {
-        LayerType.VIDEO -> 48.dp
+        LayerType.VIDEO -> 44.dp
         LayerType.AUDIO -> 32.dp
-        LayerType.SHAPE -> 38.dp
-        LayerType.OVERLAY -> 44.dp
+        LayerType.SHAPE -> 40.dp
+        LayerType.OVERLAY, LayerType.TEXT -> 42.dp
         else -> 36.dp
     }
 
-    Row(
-        modifier = Modifier.height(trackHeight),
-        verticalAlignment = Alignment.CenterVertically
+    Box(
+        modifier = Modifier
+            .height(trackHeight)
+            .fillMaxWidth()
+            .background(Color(0xFF13161F).copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
+        contentAlignment = Alignment.CenterStart
     ) {
         track.clips.forEach { clip ->
-            val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(40.dp)
+            val clipOffset = (clip.startMs * TIMELINE_PX_PER_MS).dp
+            val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(36.dp)
             val isSelected = clip.id == selectedClipId
 
-            TimelineClipItem(
-                clip = clip,
-                width = clipWidth,
-                isSelected = isSelected,
-                onClick = { onClipSelect(clip.id) }
-            )
-            Spacer(modifier = Modifier.width(2.dp))
-        }
-
-        // Plus (+) button at end of main video track with spring feedback
-        if (track.type == LayerType.VIDEO && track.name == "Main Video") {
-            Box(
-                modifier = Modifier
-                    .size(trackHeight)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF2B2F3A))
-                    .bouncyClickable(onClick = onAddMediaClick),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Add Media",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
+            Box(modifier = Modifier.offset(x = clipOffset)) {
+                TimelineClipItem(
+                    clip = clip,
+                    width = clipWidth,
+                    isSelected = isSelected,
+                    onClick = { onClipSelect(clip.id) }
                 )
             }
         }

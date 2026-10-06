@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/ic_tracket_app_1791121421970"
+        android:drawable="@drawable/tracket_logo_1791256186239"
         android:gravity="center" />
 </layer-list>

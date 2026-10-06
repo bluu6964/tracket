@@ -14,5 +14,5 @@
 .externalNativeBuild
 .cxx
 local.properties
-.env
-debug.keystore
+*.jks
+*.keystore

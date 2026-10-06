@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
@@ -58,6 +59,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.common.Player
 import com.example.model.AspectRatio
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -103,8 +108,25 @@ enum class ShapeEditTab(val title: String) {
 @Composable
 fun EditShapeView(
     aspectRatio: AspectRatio = AspectRatio.RATIO_16_9,
+    currentPlayheadMs: Long = 0L,
+    totalDurationMs: Long = 5000L,
+    isPlaying: Boolean = false,
+    player: Player? = null,
+    hasMainMedia: Boolean = false,
+    onTogglePlay: () -> Unit = {},
+    onSeekTo: (Long) -> Unit = {},
     onDismiss: () -> Unit,
-    onSaveShape: (ShapeType, Float, Float, Color, Float) -> Unit,
+    onSaveShape: (
+        shapeType: ShapeType,
+        widthPercent: Float,
+        heightPercent: Float,
+        fillColor: Color,
+        featherPercent: Float,
+        offsetX: Float,
+        offsetY: Float,
+        strokeWidth: Float,
+        strokeColor: Color
+    ) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Shape Parameters State
@@ -128,40 +150,32 @@ fun EditShapeView(
     var shapeOffsetX by remember { mutableFloatStateOf(0f) }
     var shapeOffsetY by remember { mutableFloatStateOf(0f) }
 
-    // Playback state
-    var isPlaying by remember { mutableStateOf(false) }
-    var currentTimeMs by remember { mutableStateOf(970L) } // 00:00 97
-    val totalTimeMs = 9140L // 00:09 14 from screenshot
-
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF0F1116))
             .testTag("edit_shape_screen")
     ) {
-        // 1. Header: Left down arrow button, Center "Edit shape" title (matching screenshot)
+        // 1. Header: Left close button, Center "Edit shape" title, Right "Add" button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
-                .padding(horizontal = 8.dp),
+                .height(52.dp)
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .bouncyClickable(onClick = {
-                        onSaveShape(selectedShapeType, widthPercent, heightPercent, fillColor, featherPercent)
-                        onDismiss()
-                    })
+                    .size(40.dp)
+                    .bouncyClickable(onClick = onDismiss)
                     .testTag("edit_shape_back_button"),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Collapse Edit Shape",
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Cancel",
                     tint = IconActive,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
 
@@ -175,7 +189,35 @@ fun EditShapeView(
             )
 
             Spacer(modifier = Modifier.weight(1f))
-            Spacer(modifier = Modifier.size(44.dp))
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(NeonCyan)
+                    .bouncyClickable(onClick = {
+                        onSaveShape(
+                            selectedShapeType,
+                            widthPercent,
+                            heightPercent,
+                            fillColor,
+                            featherPercent,
+                            shapeOffsetX,
+                            shapeOffsetY,
+                            strokeWidth,
+                            strokeColor
+                        )
+                        onDismiss()
+                    })
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Add",
+                    color = EditorBackground,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         // 2. Video Preview Canvas with Shape & Coral Pink Bounding Box (Canvas ratio strictly locked)
@@ -207,26 +249,38 @@ fun EditShapeView(
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                // Background Video Clip Still (perspective/tilted frame matching screenshot)
-                Image(
-                    painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                    contentDescription = "Background frame",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            rotationZ = -22f
-                            scaleX = 1.35f
-                            scaleY = 1.35f
-                        }
-                )
-
-                // Darkening overlay
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.35f))
-                )
+                if (player != null && hasMainMedia) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                useController = false
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                this.player = player
+                            }
+                        },
+                        update = { it.player = player }
+                    )
+                } else {
+                    // Studio canvas with subtle alignment grid
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawRect(color = Color(0xFF0F1218))
+                        val w = size.width
+                        val h = size.height
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.08f),
+                            start = Offset(w / 2f, 0f),
+                            end = Offset(w / 2f, h),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                        drawLine(
+                            color = Color.White.copy(alpha = 0.08f),
+                            start = Offset(0f, h / 2f),
+                            end = Offset(w, h / 2f),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
+                }
 
                 // Interactive Shape with Coral Bounding Box
                 val baseShapeSize = 135.dp
@@ -407,7 +461,7 @@ fun EditShapeView(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .bouncyClickable(onClick = { currentTimeMs = 0L }),
+                            .bouncyClickable(onClick = { onSeekTo(0L) }),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.SkipPrevious, contentDescription = "Prev", tint = IconActive, modifier = Modifier.size(24.dp))
@@ -416,7 +470,7 @@ fun EditShapeView(
                     Box(
                         modifier = Modifier
                             .size(40.dp)
-                            .bouncyClickable(onClick = { isPlaying = !isPlaying }),
+                            .bouncyClickable(onClick = onTogglePlay),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -430,7 +484,7 @@ fun EditShapeView(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .bouncyClickable(onClick = { currentTimeMs = totalTimeMs }),
+                            .bouncyClickable(onClick = { onSeekTo(totalDurationMs) }),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = IconActive, modifier = Modifier.size(24.dp))
@@ -447,7 +501,7 @@ fun EditShapeView(
                 }
             }
 
-            // Timescale: 00:00 97 | 00:09 14 (matching screenshot)
+            // Timescale from actual project playhead and duration
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -456,7 +510,7 @@ fun EditShapeView(
             ) {
                 Spacer(modifier = Modifier.weight(0.38f))
                 Text(
-                    text = "00:00 97",
+                    text = formatTimeCode(currentPlayheadMs),
                     color = TextPrimary,
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,
@@ -464,7 +518,7 @@ fun EditShapeView(
                 )
                 Text(text = "  |  ", color = TextSecondary, fontSize = 13.sp)
                 Text(
-                    text = "00:09 14",
+                    text = formatTimeCode(totalDurationMs),
                     color = TextSecondary,
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,
@@ -491,7 +545,8 @@ fun EditShapeView(
                 }
             }
 
-            // Mini Layer Strip with Shape Circle & Keyframe Diamond (+) button
+            // Real-time Mini Layer Strip
+            val progressFraction = if (totalDurationMs > 0L) (currentPlayheadMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f) else 0f
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -500,52 +555,25 @@ fun EditShapeView(
             ) {
                 Row(
                     modifier = Modifier
-                        .offset(x = 120.dp)
+                        .fillMaxWidth(progressFraction.coerceIn(0.2f, 1f))
                         .height(28.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(Color(0xFF2C3240))
-                        .padding(horizontal = 4.dp),
+                        .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // White shape circle preview
                     Box(
                         modifier = Modifier
-                            .size(20.dp)
-                            .background(Color.White, CircleShape)
+                            .size(18.dp)
+                            .background(fillColor.copy(alpha = fillOpacity / 100f), CircleShape)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .background(Color.White.copy(alpha = 0.5f), CircleShape)
+                    Text(
+                        text = selectedShapeType.label,
+                        color = TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .background(Color.White.copy(alpha = 0.3f), CircleShape)
-                    )
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    // Diamond/Keyframe + button
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .graphicsLayer { rotationZ = 45f }
-                            .background(Color(0xFF4B5568), RoundedCornerShape(2.dp))
-                            .bouncyClickable(onClick = {}),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Keyframe",
-                            tint = Color.White,
-                            modifier = Modifier
-                                .size(14.dp)
-                                .graphicsLayer { rotationZ = -45f }
-                        )
-                    }
                 }
 
                 // Vertical center playhead line
@@ -779,7 +807,38 @@ fun EditShapeView(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            androidx.compose.material3.Button(
+                onClick = {
+                    onSaveShape(
+                        selectedShapeType,
+                        widthPercent,
+                        heightPercent,
+                        fillColor,
+                        featherPercent,
+                        shapeOffsetX,
+                        shapeOffsetY,
+                        strokeWidth,
+                        strokeColor
+                    )
+                    onDismiss()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp),
+                shape = RoundedCornerShape(10.dp),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = NeonCyan)
+            ) {
+                Text(
+                    text = "Add Shape to Timeline",
+                    color = EditorBackground,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
         }
     }
 }

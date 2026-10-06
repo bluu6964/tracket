@@ -24,7 +24,7 @@ class VideoEditorViewModel : ViewModel() {
     private val _currentPlayheadMs = MutableStateFlow(0L)
     val currentPlayheadMs: StateFlow<Long> = _currentPlayheadMs.asStateFlow()
 
-    private val _totalDurationMs = MutableStateFlow(10_000L)
+    private val _totalDurationMs = MutableStateFlow(0L)
     val totalDurationMs: StateFlow<Long> = _totalDurationMs.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
@@ -44,6 +44,10 @@ class VideoEditorViewModel : ViewModel() {
 
     private val _tracks = MutableStateFlow<List<TimelineTrack>>(createInitialTracks())
     val tracks: StateFlow<List<TimelineTrack>> = _tracks.asStateFlow()
+
+    init {
+        recomputeTotal()
+    }
 
     // Undo / Redo history stacks
     private val undoStack = mutableListOf<List<TimelineTrack>>()
@@ -66,11 +70,6 @@ class VideoEditorViewModel : ViewModel() {
 
     private var playbackJob: Job? = null
 
-    init {
-        // Record initial state
-        undoStack.add(_tracks.value)
-    }
-
     fun togglePlayPause() {
         if (_isPlaying.value) {
             pause()
@@ -80,14 +79,21 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     fun play() {
+        val total = _totalDurationMs.value
+        if (total <= 0L) {
+            _isPlaying.value = false
+            return
+        }
         _isPlaying.value = true
         playbackJob?.cancel()
-        // With real media, ExoPlayer is the clock (the screen feeds updatePlayhead()).
-        if (hasMainMedia()) { playbackJob = null; return }
+        playbackJob = null
+        // With real media, ExoPlayer is the only clock (the screen feeds the playhead back
+        // through updatePlayhead). The wall-clock timer below is only a fallback for
+        // projects that have no media yet.
+        if (hasMainMedia()) return
         playbackJob = viewModelScope.launch {
             val startWallTime = System.currentTimeMillis()
             val startPlayhead = _currentPlayheadMs.value
-            val total = _totalDurationMs.value
 
             while (isActive && _isPlaying.value) {
                 delay(16L) // ~60 fps smooth synchronization
@@ -165,28 +171,28 @@ class VideoEditorViewModel : ViewModel() {
     private fun pushHistory() {
         undoStack.add(_tracks.value)
         redoStack.clear()
-        _canUndo.value = undoStack.size > 1
+        _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = false
     }
 
     fun undo() {
-        if (undoStack.size > 1) {
-            val current = undoStack.removeAt(undoStack.lastIndex)
-            redoStack.add(current)
-            _tracks.value = undoStack.last()
+        if (undoStack.isNotEmpty()) {
+            redoStack.add(_tracks.value)
+            val previous = undoStack.removeAt(undoStack.lastIndex)
+            _tracks.value = previous
             recomputeTotal()
-            _canUndo.value = undoStack.size > 1
+            _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = true
         }
     }
 
     fun redo() {
         if (redoStack.isNotEmpty()) {
+            undoStack.add(_tracks.value)
             val next = redoStack.removeAt(redoStack.lastIndex)
-            undoStack.add(next)
             _tracks.value = next
             recomputeTotal()
-            _canUndo.value = undoStack.size > 1
+            _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = redoStack.isNotEmpty()
         }
     }
@@ -223,15 +229,25 @@ class VideoEditorViewModel : ViewModel() {
             }
         }
         _tracks.value = newTracks
+        recomputeTotal()
     }
 
     fun deleteSelectedClip() {
         val clipId = _selectedClipId.value ?: return
         pushHistory()
         val newTracks = _tracks.value.map { track ->
-            track.copy(clips = track.clips.filter { it.id != clipId })
+            val removed = track.clips.firstOrNull { it.id == clipId } ?: return@map track
+            val remaining = track.clips.filter { it.id != clipId }
+            if (track.type == LayerType.VIDEO) {
+                // Main track is gapless: close the hole left by the removed clip.
+                track.copy(clips = remaining.map {
+                    if (it.startMs >= removed.endMs) it.copy(startMs = it.startMs - removed.durationMs) else it
+                })
+            } else {
+                track.copy(clips = remaining)
+            }
         }
-        _tracks.value = normalizeMainTrack(newTracks)
+        _tracks.value = newTracks
         _selectedClipId.value = null
         recomputeTotal()
     }
@@ -243,16 +259,27 @@ class VideoEditorViewModel : ViewModel() {
             val index = track.clips.indexOfFirst { it.id == clipId }
             if (index == -1) return@map track
             val clip = track.clips[index]
-            val duplicated = clip.copy(
-                id = UUID.randomUUID().toString(),
-                name = "${clip.name} (Copy)",
-                startMs = clip.endMs + 200
-            )
-            val list = track.clips.toMutableList()
-            if (track.id == MAIN_TRACK_ID) list.add(index + 1, duplicated) else list.add(duplicated)
-            track.copy(clips = list)
+            if (track.type == LayerType.VIDEO) {
+                val duplicated = clip.copy(
+                    id = UUID.randomUUID().toString(),
+                    name = "${clip.name} (Copy)",
+                    startMs = clip.endMs
+                )
+                val list = track.clips.map {
+                    if (it.startMs >= clip.endMs) it.copy(startMs = it.startMs + clip.durationMs) else it
+                }.toMutableList()
+                list.add(index + 1, duplicated)
+                track.copy(clips = list)
+            } else {
+                val duplicated = clip.copy(
+                    id = UUID.randomUUID().toString(),
+                    name = "${clip.name} (Copy)",
+                    startMs = clip.endMs + 200
+                )
+                track.copy(clips = track.clips + duplicated)
+            }
         }
-        _tracks.value = normalizeMainTrack(newTracks)
+        _tracks.value = newTracks
         recomputeTotal()
     }
 
@@ -337,22 +364,27 @@ class VideoEditorViewModel : ViewModel() {
         durationMs: Long = 5000L,
         text: String? = null,
         textColor: Long = 0xFFFFFFFF,
-        shapePattern: String? = null
+        shapePattern: String? = null,
+        shapeOffsetX: Float = 0f,
+        shapeOffsetY: Float = 0f,
+        shapeScaleX: Float = 1.0f,
+        shapeScaleY: Float = 1.0f,
+        strokeWidth: Float = 0f,
+        strokeColor: Long = 0xFFFFFFFF
     ) {
+        val targetType = when (type) {
+            LayerType.STICKER -> LayerType.OVERLAY
+            else -> type
+        }
+        val trackIndex = _tracks.value.indexOfFirst { it.type == targetType }
+        if (trackIndex < 0) return
         pushHistory()
         val playhead = _currentPlayheadMs.value
-        val trackIndex = when (type) {
-            LayerType.VIDEO -> 0
-            LayerType.AUDIO -> 1
-            LayerType.SHAPE -> 2
-            LayerType.OVERLAY -> 3
-            LayerType.STICKER, LayerType.TEXT -> 3
-        }
 
         val color = when (type) {
             LayerType.VIDEO -> 0xFF2A4365
             LayerType.AUDIO -> 0xFF1B4332
-            LayerType.SHAPE -> 0xFF00384D
+            LayerType.SHAPE -> 0xFFFF3377
             LayerType.OVERLAY -> 0xFF4A154B
             LayerType.TEXT -> 0xFF5C3D10
             LayerType.STICKER -> 0xFF4A2511
@@ -368,7 +400,16 @@ class VideoEditorViewModel : ViewModel() {
             color = color,
             text = text,
             textColor = textColor,
-            shapePattern = shapePattern
+            shapePattern = shapePattern,
+            shapeOffsetX = shapeOffsetX,
+            shapeOffsetY = shapeOffsetY,
+            shapeScaleX = shapeScaleX,
+            shapeScaleY = shapeScaleY,
+            strokeWidth = strokeWidth,
+            strokeColor = strokeColor,
+            transformX = shapeOffsetX,
+            transformY = shapeOffsetY,
+            scalePercent = (shapeScaleX * 100f).coerceAtLeast(10f)
         )
 
         val updatedTracks = _tracks.value.toMutableList()
@@ -377,30 +418,128 @@ class VideoEditorViewModel : ViewModel() {
             updatedTracks[trackIndex] = track.copy(clips = track.clips + newClip)
             _tracks.value = updatedTracks
             _selectedClipId.value = newClip.id
+            recomputeTotal()
         }
+    }
 
-        // Adjust total duration if new clip exceeds current duration
-        if (newClip.endMs > _totalDurationMs.value) {
-            _totalDurationMs.value = newClip.endMs + 1000L
+    fun updateClipTransform(
+        clipId: String,
+        offsetX: Float,
+        offsetY: Float,
+        scaleX: Float = 1f,
+        scaleY: Float = 1f
+    ) {
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) {
+                    clip.copy(
+                        shapeOffsetX = offsetX,
+                        shapeOffsetY = offsetY,
+                        shapeScaleX = scaleX,
+                        shapeScaleY = scaleY,
+                        transformX = offsetX,
+                        transformY = offsetY,
+                        scalePercent = if (scaleX != 1f) (scaleX * 100f).coerceAtLeast(10f) else clip.scalePercent
+                    )
+                } else clip
+            })
         }
+    }
+
+    fun updateClipFullTransform(
+        clipId: String,
+        transformX: Float,
+        transformY: Float,
+        scalePercent: Float,
+        rotationDeg: Float,
+        pivotX: Float = 0.5f,
+        pivotY: Float = 0.5f,
+        rot3dX: Float = 0f,
+        rot3dY: Float = 0f,
+        warp: Float = 0f
+    ) {
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) {
+                    clip.copy(
+                        transformX = transformX,
+                        transformY = transformY,
+                        scalePercent = scalePercent,
+                        rotationDeg = rotationDeg,
+                        pivotX = pivotX,
+                        pivotY = pivotY,
+                        rotation3dX = rot3dX,
+                        rotation3dY = rot3dY,
+                        warpDistort = warp,
+                        shapeOffsetX = transformX,
+                        shapeOffsetY = transformY,
+                        shapeScaleX = scalePercent / 100f,
+                        shapeScaleY = scalePercent / 100f
+                    )
+                } else clip
+            })
+        }
+    }
+
+    fun updateClipCrop(
+        clipId: String,
+        cropWidthPercent: Float,
+        cropHeightPercent: Float,
+        cropHorizontalPercent: Float = 50f,
+        cropVerticalPercent: Float = 50f,
+        cropPreset: String = "Free"
+    ) {
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) {
+                    clip.copy(
+                        cropWidthPercent = cropWidthPercent,
+                        cropHeightPercent = cropHeightPercent,
+                        cropHorizontalPercent = cropHorizontalPercent,
+                        cropVerticalPercent = cropVerticalPercent,
+                        cropPreset = cropPreset
+                    )
+                } else clip
+            })
+        }
+    }
+
+    fun resetClipTransform(clipId: String) {
+        pushHistory()
+        updateClipFullTransform(
+            clipId = clipId,
+            transformX = 0f,
+            transformY = 0f,
+            scalePercent = 100f,
+            rotationDeg = 0f,
+            pivotX = 0.5f,
+            pivotY = 0.5f,
+            rot3dX = 0f,
+            rot3dY = 0f,
+            warp = 0f
+        )
     }
 
     // ---- Real media -------------------------------------------------------
 
     fun hasMainMedia(): Boolean =
-        _tracks.value.firstOrNull()?.clips?.any { it.uri != null } == true
+        _tracks.value.any { track ->
+            track.type == LayerType.VIDEO && track.clips.any { it.uri != null }
+        }
 
-    /** Appends picked videos/photos to the end of the main track. */
+    /** Appends picked videos/photos to the media track. */
     fun importMedia(items: List<ImportedMedia>) {
         if (items.isEmpty()) return
         pushHistory()
         val tracks = _tracks.value.toMutableList()
-        val main = tracks[0]
-        var cursor = main.clips.maxOfOrNull { it.endMs } ?: 0L
+        val mediaTrackIndex = tracks.indexOfFirst { it.type == LayerType.VIDEO }.let { if (it >= 0) it else 0 }
+        val targetTrack = tracks[mediaTrackIndex]
+        var cursor = targetTrack.clips.maxOfOrNull { it.endMs } ?: 0L
         val added = items.map { m ->
             val clip = TimelineClip(
                 id = UUID.randomUUID().toString(),
-                trackIndex = 0,
+                trackIndex = mediaTrackIndex,
                 name = m.name,
                 type = LayerType.VIDEO,
                 startMs = cursor,
@@ -414,7 +553,7 @@ class VideoEditorViewModel : ViewModel() {
             cursor += m.durationMs
             clip
         }
-        tracks[0] = main.copy(clips = main.clips + added)
+        tracks[mediaTrackIndex] = targetTrack.copy(clips = targetTrack.clips + added)
         _tracks.value = tracks
         _selectedClipId.value = added.last().id
         recomputeTotal()
@@ -447,31 +586,17 @@ class VideoEditorViewModel : ViewModel() {
 
     private fun recomputeTotal() {
         val maxEnd = _tracks.value.flatMap { it.clips }.maxOfOrNull { it.endMs }
-        _totalDurationMs.value = if (maxEnd == null) 10_000L else maxOf(1_000L, maxEnd)
+        _totalDurationMs.value = maxEnd ?: 0L
         _currentPlayheadMs.value = _currentPlayheadMs.value.coerceAtMost(_totalDurationMs.value)
     }
 
-    /** The main track plays gapless, back to back, in list order. */
-    private fun normalizeMainTrack(tracks: List<TimelineTrack>): List<TimelineTrack> {
-        if (tracks.isEmpty()) return tracks
-        var cursor = 0L
-        val packed = tracks[0].clips.map { c ->
-            val moved = c.copy(startMs = cursor)
-            cursor += c.durationMs
-            moved
-        }
-        return listOf(tracks[0].copy(clips = packed)) + tracks.drop(1)
-    }
-
     companion object {
-        const val MAIN_TRACK_ID = "track_video_main"
-
         private fun createInitialTracks(): List<TimelineTrack> = listOf(
-            TimelineTrack(id = MAIN_TRACK_ID, name = "Main Video", type = LayerType.VIDEO),
-            TimelineTrack(id = "track_audio", name = "Audio", type = LayerType.AUDIO),
-            TimelineTrack(id = "track_shape", name = "Shapes", type = LayerType.SHAPE),
-            TimelineTrack(id = "track_overlay", name = "Overlay & Text", type = LayerType.OVERLAY),
-            TimelineTrack(id = "track_broll", name = "B-Roll", type = LayerType.VIDEO)
+            TimelineTrack(id = "track_shape", name = "Shape Layer", type = LayerType.SHAPE),
+            TimelineTrack(id = "track_text", name = "Text Layer", type = LayerType.TEXT),
+            TimelineTrack(id = "track_media", name = "Media Layer", type = LayerType.VIDEO),
+            TimelineTrack(id = "track_overlay", name = "Overlay Layer", type = LayerType.OVERLAY),
+            TimelineTrack(id = "track_audio", name = "Audio Layer", type = LayerType.AUDIO)
         )
     }
 }

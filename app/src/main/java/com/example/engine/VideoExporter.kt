@@ -25,6 +25,7 @@ import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.example.model.AspectRatio
 import com.example.model.ExportSettings
+import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
 import java.io.File
@@ -50,7 +51,8 @@ class VideoExporter(private val context: Context) {
         onDone: (Uri) -> Unit,
         onError: (String) -> Unit
     ) {
-        val clips = tracks.firstOrNull()?.clips.orEmpty().filter { it.uri != null }
+        val clips = tracks.filter { it.type == LayerType.VIDEO }
+            .flatMap { it.clips }.filter { it.uri != null }.sortedBy { it.startMs }
         if (clips.isEmpty()) {
             onError("Nothing to export: import a video or photo first.")
             return

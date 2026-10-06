@@ -530,10 +530,13 @@ fun AddShapeSheet(
             Spacer(modifier = Modifier.height(14.dp))
 
             val shapes = listOf(
-                "Cyan Dots Constellation" to "CYAN_DOTS",
-                "Cinematic Letterbox Bars" to "LETTERBOX",
-                "Focus Ring Frame" to "FOCUS_RING",
-                "Gradient Vignette" to "VIGNETTE"
+                "Circle" to "CIRCLE",
+                "Rounded Rectangle" to "ROUNDED_SQUARE",
+                "Wide Rectangle" to "WIDE_ROUNDED_RECT",
+                "Square" to "SQUARE",
+                "Oval" to "OVAL",
+                "Star" to "STAR",
+                "Pentagon" to "PENTAGON"
             )
 
             shapes.forEach { (name, pattern) ->

@@ -16,7 +16,10 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
+      # The ubuntu runner already ships with the Android SDK, so no setup-android action is needed.
+      # Accept the SDK licenses so Gradle can download any missing platform on its own.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       # The project has no gradlew, so use the same Gradle version as gradle-wrapper.properties.
       - uses: gradle/actions/setup-gradle@v4

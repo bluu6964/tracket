@@ -4,6 +4,8 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -29,10 +31,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.ui.theme.EditorBackground
+import com.example.ui.theme.EditorSurfaceVariant
+import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.IconDisabled
 import com.example.ui.util.bouncyClickable
@@ -78,7 +83,8 @@ fun PlayControlsSection(
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
+                    .background(EditorSurfaceVariant.copy(alpha = 0.78f), RoundedCornerShape(13.dp))
                     .bouncyClickable(onClick = onFullScreenClick)
                     .testTag("fullscreen_button"),
                 contentAlignment = Alignment.Center
@@ -93,7 +99,8 @@ fun PlayControlsSection(
 
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
+                    .background(EditorSurfaceVariant.copy(alpha = 0.78f), RoundedCornerShape(13.dp))
                     .bouncyClickable(onClick = onResolutionClick)
                     .testTag("preview_resolution_button"),
                 contentAlignment = Alignment.Center
@@ -127,7 +134,8 @@ fun PlayControlsSection(
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
+                    .background(EditorSurfaceVariant.copy(alpha = 0.78f), RoundedCornerShape(13.dp))
                     .bouncyClickable(onClick = onPreviousClick)
                     .testTag("prev_frame_button"),
                 contentAlignment = Alignment.Center
@@ -147,9 +155,11 @@ fun PlayControlsSection(
                         scaleX = playPauseScale
                         scaleY = playPauseScale
                     }
+                    .background(AccentBlue, CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
                     .bouncyClickable(
-                        pressedScale = 0.85f,
-                        hoverScale = 1.12f,
+                        pressedScale = 0.90f,
+                        hoverScale = 1.035f,
                         onClick = onPlayPauseClick
                     )
                     .testTag("play_pause_button"),
@@ -158,14 +168,15 @@ fun PlayControlsSection(
                 Icon(
                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = IconActive,
-                    modifier = Modifier.size(34.dp)
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp)
                 )
             }
 
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
+                    .background(EditorSurfaceVariant.copy(alpha = 0.78f), RoundedCornerShape(13.dp))
                     .bouncyClickable(onClick = onNextClick)
                     .testTag("next_frame_button"),
                 contentAlignment = Alignment.Center
@@ -186,7 +197,8 @@ fun PlayControlsSection(
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
+                    .background(EditorSurfaceVariant.copy(alpha = 0.78f), RoundedCornerShape(13.dp))
                     .bouncyClickable(
                         enabled = canUndo,
                         onClick = onUndoClick
@@ -204,7 +216,8 @@ fun PlayControlsSection(
 
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
+                    .background(EditorSurfaceVariant.copy(alpha = 0.78f), RoundedCornerShape(13.dp))
                     .bouncyClickable(
                         enabled = canRedo,
                         onClick = onRedoClick

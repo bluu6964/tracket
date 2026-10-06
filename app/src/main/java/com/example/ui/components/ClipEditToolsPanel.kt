@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.EditorBackground
+import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
@@ -102,8 +103,8 @@ fun ClipEditToolsPanel(
             modifier = Modifier
                 .padding(start = 8.dp, end = 6.dp)
                 .size(46.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF1B1E26))
+                .clip(RoundedCornerShape(14.dp))
+                .background(EditorSurfaceVariant.copy(alpha = 0.9f))
                 .bouncyClickable(
                     pressedScale = 0.88f,
                     hoverScale = 1.08f,
@@ -161,7 +162,9 @@ fun ClipEditToolsPanel(
                                 }
                             }
                         )
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(EditorSurfaceVariant.copy(alpha = 0.62f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                         .testTag("clip_tool_${tool.id}"),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center

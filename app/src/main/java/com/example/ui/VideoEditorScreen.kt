@@ -4,8 +4,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -285,8 +285,10 @@ fun VideoEditorScreen(
                 AnimatedContent(
                     targetState = selectedClipId,
                     transitionSpec = {
-                        (slideInVertically { height -> height } + fadeIn()) togetherWith
-                        (slideOutVertically { height -> height } + fadeOut())
+                        (fadeIn(animationSpec = androidx.compose.animation.core.tween(220)) +
+                                scaleIn(initialScale = 0.96f, animationSpec = androidx.compose.animation.core.tween(260))) togetherWith
+                        (fadeOut(animationSpec = androidx.compose.animation.core.tween(160)) +
+                                scaleOut(targetScale = 0.96f, animationSpec = androidx.compose.animation.core.tween(180)))
                     },
                     label = "toolbarTransition"
                 ) { targetClipId ->

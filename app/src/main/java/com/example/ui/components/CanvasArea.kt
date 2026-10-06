@@ -29,6 +29,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +62,7 @@ import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGreen
 
+@OptIn(UnstableApi::class)
 @Composable
 fun CanvasArea(
     height: Dp,
@@ -66,33 +72,14 @@ fun CanvasArea(
     tracks: List<TimelineTrack>,
     selectedClipId: String? = null,
     onTogglePlayPause: () -> Unit,
+    player: Player? = null,
+    hasMainMedia: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     // Zoom/pan state for canvas preview
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
-
-    // Floating particles animation when playing
-    val infiniteTransition = rememberInfiniteTransition(label = "particles")
-    val dotPulse by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse"
-    )
-    val dotDrift by infiniteTransition.animateFloat(
-        initialValue = -5f,
-        targetValue = 5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "drift"
-    )
 
     Box(
         modifier = modifier
@@ -137,32 +124,9 @@ fun CanvasArea(
                     .bouncyClickable(pressedScale = 0.97f, onClick = onTogglePlayPause),
                 contentAlignment = Alignment.Center
             ) {
-                // Check for real imported media active at current playhead
-                val realActiveClip = tracks
-                    .flatMap { it.clips }
-                    .firstOrNull { it.mediaUri != null && it.isActiveAt(currentPlayheadMs) }
-
-                if (realActiveClip != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = scale * (if (realActiveClip.isFlippedH) -1f else 1f)
-                                scaleY = scale * (if (realActiveClip.isFlippedV) -1f else 1f)
-                                translationX = offsetX
-                                translationY = offsetY
-                            }
-                    ) {
-                        coil.compose.AsyncImage(
-                            model = realActiveClip.mediaUri,
-                            contentDescription = realActiveClip.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                } else {
-                    // Main Composed Video Canvas Frame (Split layout matching screenshot)
-                    Row(
+                if (player != null && hasMainMedia) {
+                    // Real preview: ExoPlayer renders the main track, letterboxed to the project ratio.
+                    AndroidView(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
@@ -170,107 +134,24 @@ fun CanvasArea(
                                 scaleY = scale
                                 translationX = offsetX
                                 translationY = offsetY
+                            },
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                useController = false
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                this.player = player
                             }
-                    ) {
-                        // Left strip: Portrait clip (person / white shirt / lanyard)
-                        Box(
-                            modifier = Modifier
-                                .weight(0.24f)
-                                .fillMaxHeight()
-                                .background(Color(0xFF1E242B))
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                                contentDescription = "Left Video Frame",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-
-                    // Center strip: Dark navy with glowing green & cyan dots constellation
-                    Box(
-                        modifier = Modifier
-                            .weight(0.52f)
-                            .fillMaxHeight()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0xFF161A29),
-                                        Color(0xFF1A1F33),
-                                        Color(0xFF131724)
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // Cyan dots effect canvas
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            val w = size.width
-                            val h = size.height
-                            val baseRadius = 8.dp.toPx() * (if (isPlaying) dotPulse else 1f)
-                            val drift = if (isPlaying) dotDrift else 0f
-
-                            // Predefined glowing dots constellation matching user's image
-                            val points = listOf(
-                                Offset(w * 0.48f + drift, h * 0.20f),
-                                Offset(w * 0.25f, h * 0.22f - drift),
-                                Offset(w * 0.72f, h * 0.22f + drift),
-                                Offset(w * 0.44f - drift, h * 0.32f),
-                                Offset(w * 0.23f + drift, h * 0.46f),
-                                Offset(w * 0.76f - drift, h * 0.42f),
-                                Offset(w * 0.42f + drift, h * 0.50f),
-                                Offset(w * 0.63f, h * 0.47f + drift),
-                                Offset(w * 0.32f - drift, h * 0.60f),
-                                Offset(w * 0.77f + drift, h * 0.58f),
-                                Offset(w * 0.54f, h * 0.62f - drift)
-                            )
-
-                            points.forEach { pt ->
-                                // Outer blur/glow
-                                drawCircle(
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            NeonCyan.copy(alpha = 0.85f),
-                                            NeonGreen.copy(alpha = 0.4f),
-                                            Color.Transparent
-                                        ),
-                                        center = pt,
-                                        radius = baseRadius * 2.2f
-                                    ),
-                                    radius = baseRadius * 2.2f,
-                                    center = pt
-                                )
-                                // Bright solid core
-                                drawCircle(
-                                    color = NeonGreen,
-                                    radius = baseRadius,
-                                    center = pt
-                                )
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.9f),
-                                    radius = baseRadius * 0.4f,
-                                    center = pt
-                                )
-                            }
-                        }
-                    }
-
-                    // Right strip: Sunlit green tree canopy
-                    Box(
-                        modifier = Modifier
-                            .weight(0.24f)
-                            .fillMaxHeight()
-                            .background(Color(0xFF283B29))
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.sample_nature_1791121466670),
-                            contentDescription = "Right Nature Frame",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                        },
+                        update = { it.player = player }
+                    )
+                } else {
+                    Text(
+                        text = "Tap + in the timeline to import\nvideos or photos",
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 13.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                 }
-            }
 
                 // Render dynamic text or sticker overlays if active at current playhead
                 val activeTextClips = tracks

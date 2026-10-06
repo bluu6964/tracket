@@ -47,7 +47,12 @@ data class TimelineClip(
     val blendMode: String = "Normal",
     val effectName: String? = null,
     val animationName: String? = null,
-    val mediaUri: String? = null
+    // Real media (null for text/shape/demo layers)
+    val uri: String? = null,
+    val mimeType: String? = null,
+    val isImage: Boolean = false,
+    val sourceDurationMs: Long = 0L,
+    val trimStartMs: Long = 0L
 ) {
     val endMs: Long
         get() = startMs + durationMs
@@ -71,4 +76,13 @@ data class ExportSettings(
     val frameRate: Int = 30,
     val quality: String = "High (Recommended)",
     val format: String = "MP4 (H.264)"
+)
+
+/** Result of reading a picked file: what the importer hands to the ViewModel. */
+data class ImportedMedia(
+    val uri: String,
+    val name: String,
+    val mimeType: String?,
+    val durationMs: Long,
+    val isImage: Boolean
 )

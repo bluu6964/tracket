@@ -230,20 +230,12 @@ fun ResolutionSheet(
 fun ExportModalDialog(
     isExporting: Boolean,
     progress: Float,
-    exportedFile: java.io.File? = null,
     onStartExport: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var wasExporting by remember { mutableStateOf(false) }
     var isCompleted by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
-
     androidx.compose.runtime.LaunchedEffect(isExporting, progress) {
-        if (isExporting) {
-            wasExporting = true
-        } else if (wasExporting && progress >= 0.95f) {
-            isCompleted = true
-        }
+        if (!isExporting && progress >= 1f) isCompleted = true
     }
 
     Dialog(
@@ -297,7 +289,7 @@ fun ExportModalDialog(
                     Spacer(modifier = Modifier.height(20.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Button(
                             onClick = onDismiss,
@@ -307,33 +299,13 @@ fun ExportModalDialog(
                             Text("Done", color = TextPrimary)
                         }
                         Button(
-                            onClick = {
-                                if (exportedFile != null && exportedFile.exists()) {
-                                    try {
-                                        val uri = androidx.core.content.FileProvider.getUriForFile(
-                                            context,
-                                            "${context.packageName}.provider",
-                                            exportedFile
-                                        )
-                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                            type = "video/mp4"
-                                            putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Share Exported Video"))
-                                    } catch (e: Exception) {
-                                        android.widget.Toast.makeText(context, "Saved to ${exportedFile.name}", android.widget.Toast.LENGTH_SHORT).show()
-                                    }
-                                } else {
-                                    android.widget.Toast.makeText(context, "Video exported successfully!", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            modifier = Modifier.weight(1.3f),
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue)
                         ) {
                             Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Share Video", color = Color.White)
+                            Text("Share", color = Color.White)
                         }
                     }
                 } else if (isExporting) {

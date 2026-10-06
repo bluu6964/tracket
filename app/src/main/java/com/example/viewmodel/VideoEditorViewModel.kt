@@ -1,18 +1,15 @@
 package com.example.viewmodel
 
-import android.content.Context
-import android.media.MediaMetadataRetriever
-import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
 import com.example.model.AspectRatio
 import com.example.model.ExportSettings
+import com.example.model.ImportedMedia
 import com.example.model.LayerType
 import com.example.model.PreviewResolution
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,8 +17,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.UUID
 
 class VideoEditorViewModel : ViewModel() {
@@ -29,7 +24,7 @@ class VideoEditorViewModel : ViewModel() {
     private val _currentPlayheadMs = MutableStateFlow(0L)
     val currentPlayheadMs: StateFlow<Long> = _currentPlayheadMs.asStateFlow()
 
-    private val _totalDurationMs = MutableStateFlow(37_000L) // 00:37:00 from screenshot
+    private val _totalDurationMs = MutableStateFlow(10_000L)
     val totalDurationMs: StateFlow<Long> = _totalDurationMs.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
@@ -41,7 +36,7 @@ class VideoEditorViewModel : ViewModel() {
     private val _selectedResolution = MutableStateFlow(PreviewResolution.FULL)
     val selectedResolution: StateFlow<PreviewResolution> = _selectedResolution.asStateFlow()
 
-    private val _selectedClipId = MutableStateFlow<String?>("clip_video_yellow")
+    private val _selectedClipId = MutableStateFlow<String?>(null)
     val selectedClipId: StateFlow<String?> = _selectedClipId.asStateFlow()
 
     private val _isMasterMuted = MutableStateFlow(false)
@@ -69,9 +64,6 @@ class VideoEditorViewModel : ViewModel() {
     private val _exportProgress = MutableStateFlow(0f)
     val exportProgress: StateFlow<Float> = _exportProgress.asStateFlow()
 
-    private val _lastExportedFile = MutableStateFlow<File?>(null)
-    val lastExportedFile: StateFlow<File?> = _lastExportedFile.asStateFlow()
-
     private var playbackJob: Job? = null
 
     init {
@@ -90,6 +82,8 @@ class VideoEditorViewModel : ViewModel() {
     fun play() {
         _isPlaying.value = true
         playbackJob?.cancel()
+        // With real media, ExoPlayer is the clock (the screen feeds updatePlayhead()).
+        if (hasMainMedia()) { playbackJob = null; return }
         playbackJob = viewModelScope.launch {
             val startWallTime = System.currentTimeMillis()
             val startPlayhead = _currentPlayheadMs.value
@@ -180,6 +174,7 @@ class VideoEditorViewModel : ViewModel() {
             val current = undoStack.removeAt(undoStack.lastIndex)
             redoStack.add(current)
             _tracks.value = undoStack.last()
+            recomputeTotal()
             _canUndo.value = undoStack.size > 1
             _canRedo.value = true
         }
@@ -190,6 +185,7 @@ class VideoEditorViewModel : ViewModel() {
             val next = redoStack.removeAt(redoStack.lastIndex)
             undoStack.add(next)
             _tracks.value = next
+            recomputeTotal()
             _canUndo.value = undoStack.size > 1
             _canRedo.value = redoStack.isNotEmpty()
         }
@@ -212,7 +208,8 @@ class VideoEditorViewModel : ViewModel() {
                         id = UUID.randomUUID().toString(),
                         name = "${clip.name} (Split)",
                         startMs = playhead,
-                        durationMs = duration2
+                        durationMs = duration2,
+                        trimStartMs = clip.trimStartMs + duration1
                     )
                     val updatedClips = track.clips.toMutableList()
                     updatedClips[clipIndex] = part1
@@ -234,28 +231,29 @@ class VideoEditorViewModel : ViewModel() {
         val newTracks = _tracks.value.map { track ->
             track.copy(clips = track.clips.filter { it.id != clipId })
         }
-        _tracks.value = newTracks
+        _tracks.value = normalizeMainTrack(newTracks)
         _selectedClipId.value = null
+        recomputeTotal()
     }
 
     fun duplicateSelectedClip() {
         val clipId = _selectedClipId.value ?: return
         pushHistory()
         val newTracks = _tracks.value.map { track ->
-            val clip = track.clips.find { it.id == clipId }
-            if (clip != null) {
-                val duplicated = clip.copy(
-                    id = UUID.randomUUID().toString(),
-                    name = "${clip.name} (Copy)",
-                    startMs = clip.endMs + 200,
-                    durationMs = clip.durationMs
-                )
-                track.copy(clips = track.clips + duplicated)
-            } else {
-                track
-            }
+            val index = track.clips.indexOfFirst { it.id == clipId }
+            if (index == -1) return@map track
+            val clip = track.clips[index]
+            val duplicated = clip.copy(
+                id = UUID.randomUUID().toString(),
+                name = "${clip.name} (Copy)",
+                startMs = clip.endMs + 200
+            )
+            val list = track.clips.toMutableList()
+            if (track.id == MAIN_TRACK_ID) list.add(index + 1, duplicated) else list.add(duplicated)
+            track.copy(clips = list)
         }
-        _tracks.value = newTracks
+        _tracks.value = normalizeMainTrack(newTracks)
+        recomputeTotal()
     }
 
     fun flipHorizontalSelectedClip() {
@@ -387,283 +385,93 @@ class VideoEditorViewModel : ViewModel() {
         }
     }
 
-    fun importMediaClip(uri: Uri, context: Context, type: LayerType = LayerType.VIDEO) {
+    // ---- Real media -------------------------------------------------------
+
+    fun hasMainMedia(): Boolean =
+        _tracks.value.firstOrNull()?.clips?.any { it.uri != null } == true
+
+    /** Appends picked videos/photos to the end of the main track. */
+    fun importMedia(items: List<ImportedMedia>) {
+        if (items.isEmpty()) return
         pushHistory()
-        val playhead = _currentPlayheadMs.value
-
-        var durationMs = 8000L
-        var mediaName = "Imported Media"
-
-        try {
-            val retriever = MediaMetadataRetriever()
-            retriever.setDataSource(context, uri)
-            val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            if (durStr != null) {
-                durationMs = durStr.toLongOrNull()?.coerceAtLeast(1000L) ?: 8000L
-            }
-            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-            if (!title.isNullOrBlank()) {
-                mediaName = title
-            } else {
-                val lastSeg = uri.lastPathSegment ?: "Media"
-                mediaName = lastSeg.substringAfterLast('/').take(20)
-            }
-            retriever.release()
-        } catch (e: Exception) {
-            val lastSeg = uri.lastPathSegment ?: "Media"
-            mediaName = lastSeg.substringAfterLast('/').take(20)
+        val tracks = _tracks.value.toMutableList()
+        val main = tracks[0]
+        var cursor = main.clips.maxOfOrNull { it.endMs } ?: 0L
+        val added = items.map { m ->
+            val clip = TimelineClip(
+                id = UUID.randomUUID().toString(),
+                trackIndex = 0,
+                name = m.name,
+                type = LayerType.VIDEO,
+                startMs = cursor,
+                durationMs = m.durationMs,
+                color = 0xFF2A4365,
+                uri = m.uri,
+                mimeType = m.mimeType,
+                isImage = m.isImage,
+                sourceDurationMs = m.durationMs
+            )
+            cursor += m.durationMs
+            clip
         }
-
-        val trackIndex = when (type) {
-            LayerType.VIDEO -> 0
-            LayerType.AUDIO -> 1
-            LayerType.SHAPE -> 2
-            LayerType.OVERLAY -> 3
-            LayerType.STICKER, LayerType.TEXT -> 3
-        }
-
-        val color = when (type) {
-            LayerType.VIDEO -> 0xFF2A4365
-            LayerType.AUDIO -> 0xFF1B4332
-            LayerType.SHAPE -> 0xFF00384D
-            LayerType.OVERLAY -> 0xFF4A154B
-            LayerType.TEXT -> 0xFF5C3D10
-            LayerType.STICKER -> 0xFF4A2511
-        }
-
-        val newClip = TimelineClip(
-            id = UUID.randomUUID().toString(),
-            trackIndex = trackIndex,
-            name = mediaName,
-            type = type,
-            startMs = playhead,
-            durationMs = durationMs,
-            color = color,
-            mediaUri = uri.toString()
-        )
-
-        val updatedTracks = _tracks.value.toMutableList()
-        if (trackIndex in updatedTracks.indices) {
-            val track = updatedTracks[trackIndex]
-            updatedTracks[trackIndex] = track.copy(clips = track.clips + newClip)
-            _tracks.value = updatedTracks
-            _selectedClipId.value = newClip.id
-        }
-
-        if (newClip.endMs > _totalDurationMs.value) {
-            _totalDurationMs.value = newClip.endMs + 1000L
-        }
+        tracks[0] = main.copy(clips = main.clips + added)
+        _tracks.value = tracks
+        _selectedClipId.value = added.last().id
+        recomputeTotal()
     }
 
-    fun replaceSelectedClipWithUri(uri: Uri, context: Context) {
-        val clipId = _selectedClipId.value ?: return
-        pushHistory()
-
-        var durationMs: Long? = null
-        var mediaName = "Imported Media"
-
-        try {
-            val retriever = MediaMetadataRetriever()
-            retriever.setDataSource(context, uri)
-            val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            if (durStr != null) {
-                durationMs = durStr.toLongOrNull()
-            }
-            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-            if (!title.isNullOrBlank()) {
-                mediaName = title
-            } else {
-                mediaName = uri.lastPathSegment?.substringAfterLast('/')?.take(20) ?: "Replaced Media"
-            }
-            retriever.release()
-        } catch (e: Exception) {
-            mediaName = uri.lastPathSegment?.substringAfterLast('/')?.take(20) ?: "Media"
-        }
-
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) {
-                    clip.copy(
-                        mediaUri = uri.toString(),
-                        name = mediaName,
-                        durationMs = durationMs ?: clip.durationMs
-                    )
-                } else clip
-            })
-        }
+    /** Called by the screen while ExoPlayer plays; keeps the timeline playhead in sync. */
+    fun updatePlayhead(ms: Long) {
+        _currentPlayheadMs.value = ms.coerceIn(0L, _totalDurationMs.value)
     }
 
-    fun startBlankProject() {
-        pushHistory()
-        _tracks.value = listOf(
-            TimelineTrack(id = "track_video_main", name = "Main Video", type = LayerType.VIDEO, clips = emptyList()),
-            TimelineTrack(id = "track_audio_voiceover", name = "Audio Track", type = LayerType.AUDIO, clips = emptyList()),
-            TimelineTrack(id = "track_shape_graphics", name = "Shape Track", type = LayerType.SHAPE, clips = emptyList()),
-            TimelineTrack(id = "track_overlay_media", name = "Overlay Track", type = LayerType.OVERLAY, clips = emptyList())
-        )
-        _totalDurationMs.value = 10_000L
-        _currentPlayheadMs.value = 0L
-        _selectedClipId.value = null
+    fun onPlaybackEnded() {
+        _isPlaying.value = false
+        playbackJob?.cancel()
+        playbackJob = null
     }
 
-    fun startRealExport(context: Context, onComplete: (File) -> Unit) {
-        if (_isExporting.value) return
-        _isExporting.value = true
-        _exportProgress.value = 0f
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-                val exportFile = File(exportDir, "Tracket_Export_${System.currentTimeMillis()}.mp4")
-
-                exportFile.outputStream().use { out ->
-                    for (i in 1..100) {
-                        delay(22L)
-                        out.write("Tracket Video Export Frame $i\n".toByteArray())
-                        withContext(Dispatchers.Main) {
-                            _exportProgress.value = i / 100f
-                        }
-                    }
-                    out.flush()
-                }
-
-                _lastExportedFile.value = exportFile
-                withContext(Dispatchers.Main) {
-                    _isExporting.value = false
-                    onComplete(exportFile)
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    _isExporting.value = false
-                }
-            }
-        }
+    fun setExporting(exporting: Boolean) {
+        _isExporting.value = exporting
+        if (exporting) _exportProgress.value = 0f
     }
 
-    fun startExport(onComplete: () -> Unit) {
-        if (_isExporting.value) return
-        _isExporting.value = true
-        _exportProgress.value = 0f
+    fun setExportProgress(progress: Float) {
+        _exportProgress.value = progress.coerceIn(0f, 1f)
+    }
 
-        viewModelScope.launch {
-            for (i in 1..100) {
-                delay(22)
-                _exportProgress.value = i / 100f
-            }
-            delay(200)
-            _isExporting.value = false
-            onComplete()
+    fun finishExport() {
+        _exportProgress.value = 1f
+        _isExporting.value = false
+    }
+
+    private fun recomputeTotal() {
+        val maxEnd = _tracks.value.flatMap { it.clips }.maxOfOrNull { it.endMs }
+        _totalDurationMs.value = if (maxEnd == null) 10_000L else maxOf(1_000L, maxEnd)
+        _currentPlayheadMs.value = _currentPlayheadMs.value.coerceAtMost(_totalDurationMs.value)
+    }
+
+    /** The main track plays gapless, back to back, in list order. */
+    private fun normalizeMainTrack(tracks: List<TimelineTrack>): List<TimelineTrack> {
+        if (tracks.isEmpty()) return tracks
+        var cursor = 0L
+        val packed = tracks[0].clips.map { c ->
+            val moved = c.copy(startMs = cursor)
+            cursor += c.durationMs
+            moved
         }
+        return listOf(tracks[0].copy(clips = packed)) + tracks.drop(1)
     }
 
     companion object {
-        private fun createInitialTracks(): List<TimelineTrack> {
-            return listOf(
-                // Track 0: Main Video track with filmstrip clips matching screenshot
-                TimelineTrack(
-                    id = "track_video_main",
-                    name = "Main Video",
-                    type = LayerType.VIDEO,
-                    clips = listOf(
-                        TimelineClip(
-                            id = "clip_video_family",
-                            trackIndex = 0,
-                            name = "The Family's Secret",
-                            type = LayerType.VIDEO,
-                            startMs = 0L,
-                            durationMs = 12_000L,
-                            color = 0xFF233549
-                        ),
-                        TimelineClip(
-                            id = "clip_video_yellow",
-                            trackIndex = 0,
-                            name = "Vlog Talk",
-                            type = LayerType.VIDEO,
-                            startMs = 12_000L,
-                            durationMs = 15_000L,
-                            color = 0xFF2B4764
-                        ),
-                        TimelineClip(
-                            id = "clip_video_doctor",
-                            trackIndex = 0,
-                            name = "Notes & Study",
-                            type = LayerType.VIDEO,
-                            startMs = 27_000L,
-                            durationMs = 10_000L,
-                            color = 0xFF233549
-                        )
-                    )
-                ),
-                // Track 1: Audio / Waveform Track with green mic icon and dash markers
-                TimelineTrack(
-                    id = "track_audio_voiceover",
-                    name = "Voiceover & Audio",
-                    type = LayerType.AUDIO,
-                    clips = listOf(
-                        TimelineClip(
-                            id = "clip_audio_mic",
-                            trackIndex = 1,
-                            name = "Voice Record 01",
-                            type = LayerType.AUDIO,
-                            startMs = 0L,
-                            durationMs = 37_000L,
-                            color = 0xFF143026
-                        )
-                    )
-                ),
-                // Track 2: Shape / Cyan Glowing Dots Layer matching screenshot
-                TimelineTrack(
-                    id = "track_shape_dots",
-                    name = "Cyan Dots Effect",
-                    type = LayerType.SHAPE,
-                    clips = listOf(
-                        TimelineClip(
-                            id = "clip_shape_cyan_grid",
-                            trackIndex = 2,
-                            name = "Glowing Particles",
-                            type = LayerType.SHAPE,
-                            startMs = 0L,
-                            durationMs = 37_000L,
-                            color = 0xFF00384D,
-                            shapePattern = "CYAN_DOTS"
-                        )
-                    )
-                ),
-                // Track 3: Overlay / Image Track matching portrait cards in screenshot
-                TimelineTrack(
-                    id = "track_overlay_media",
-                    name = "Photo Overlay",
-                    type = LayerType.OVERLAY,
-                    clips = listOf(
-                        TimelineClip(
-                            id = "clip_overlay_card",
-                            trackIndex = 3,
-                            name = "Overlay Still",
-                            type = LayerType.OVERLAY,
-                            startMs = 0L,
-                            durationMs = 14_000L,
-                            color = 0xFF3D1E38
-                        )
-                    )
-                ),
-                // Track 4: Nature / B-Roll Video Track matching bottom tree canopy in screenshot
-                TimelineTrack(
-                    id = "track_broll_nature",
-                    name = "B-Roll Trees",
-                    type = LayerType.VIDEO,
-                    clips = listOf(
-                        TimelineClip(
-                            id = "clip_broll_canopy",
-                            trackIndex = 4,
-                            name = "Sunny Canopy",
-                            type = LayerType.VIDEO,
-                            startMs = 0L,
-                            durationMs = 37_000L,
-                            color = 0xFF1D382B
-                        )
-                    )
-                )
-            )
-        }
+        const val MAIN_TRACK_ID = "track_video_main"
+
+        private fun createInitialTracks(): List<TimelineTrack> = listOf(
+            TimelineTrack(id = MAIN_TRACK_ID, name = "Main Video", type = LayerType.VIDEO),
+            TimelineTrack(id = "track_audio", name = "Audio", type = LayerType.AUDIO),
+            TimelineTrack(id = "track_shape", name = "Shapes", type = LayerType.SHAPE),
+            TimelineTrack(id = "track_overlay", name = "Overlay & Text", type = LayerType.OVERLAY),
+            TimelineTrack(id = "track_broll", name = "B-Roll", type = LayerType.VIDEO)
+        )
     }
 }

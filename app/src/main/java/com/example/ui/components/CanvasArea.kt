@@ -113,7 +113,7 @@ fun CanvasArea(
                     .size(width = frameW, height = frameH)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF090A0D))
-                    .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp))
+                    .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 val activeVideoClip = tracks

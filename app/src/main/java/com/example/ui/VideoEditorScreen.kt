@@ -341,6 +341,57 @@ fun VideoEditorScreen(
                     }
                 }
             }
+
+            // Transform controls intentionally overlay only the lower timeline/tools area.
+            // Keep the canvas viewport and all visible layers completely unchanged.
+            if (showTransformMode) {
+                val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
+                    ?: tracks.flatMap { it.clips }.firstOrNull()
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(layerPanelH + toolbarH)
+                        .zIndex(20f)
+                        .background(EditorBackground)
+                ) {
+                    com.example.ui.components.TransformView(
+                        clip = selectedClip,
+                        aspectRatio = selectedAspectRatio,
+                        currentPlayheadMs = currentPlayheadMs,
+                        totalDurationMs = totalDurationMs,
+                        isPlaying = isPlaying,
+                        player = editorPlayer.player,
+                        hasMainMedia = mediaClips.isNotEmpty(),
+                        canUndo = canUndo,
+                        canRedo = canRedo,
+                        onTogglePlay = { viewModel.togglePlayPause() },
+                        onSeekTo = { viewModel.seekTo(it) },
+                        onUndo = { viewModel.undo() },
+                        onRedo = { viewModel.redo() },
+                        onDismiss = { showTransformMode = false },
+                        panelOnly = true,
+                        onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp ->
+                            val targetId = selectedClip?.id ?: selectedClipId
+                            if (targetId != null) {
+                                viewModel.updateClipFullTransform(
+                                    clipId = targetId,
+                                    transformX = h,
+                                    transformY = v,
+                                    scalePercent = sc,
+                                    rotationDeg = rot,
+                                    pivotX = px,
+                                    pivotY = py,
+                                    rot3dX = r3x,
+                                    rot3dY = r3y,
+                                    warp = warp
+                                )
+                            }
+                        }
+                    )
+                }
+            }
         }
     }
 
@@ -607,56 +658,5 @@ fun VideoEditorScreen(
         }
     }
 
-    if (showTransformMode) {
-        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-            ?: tracks.flatMap { it.clips }.firstOrNull()
 
-        // Transform is an editor overlay over the timeline/tools area only.
-        // The canvas viewport stays completely unchanged and continues to show
-        // every visible layer while the transform controls are open.
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(layerPanelH + toolbarH)
-                .zIndex(20f)
-                .background(EditorBackground)
-        ) {
-            com.example.ui.components.TransformView(
-                clip = selectedClip,
-                aspectRatio = selectedAspectRatio,
-                currentPlayheadMs = currentPlayheadMs,
-                totalDurationMs = totalDurationMs,
-                isPlaying = isPlaying,
-                player = editorPlayer.player,
-                hasMainMedia = mediaClips.isNotEmpty(),
-                canUndo = canUndo,
-                canRedo = canRedo,
-                onTogglePlay = { viewModel.togglePlayPause() },
-                onSeekTo = { viewModel.seekTo(it) },
-                onUndo = { viewModel.undo() },
-                onRedo = { viewModel.redo() },
-                onDismiss = { showTransformMode = false },
-                panelOnly = true,
-                onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp ->
-                    val targetId = selectedClip?.id ?: selectedClipId
-                    if (targetId != null) {
-                        viewModel.updateClipFullTransform(
-                            clipId = targetId,
-                            transformX = h,
-                            transformY = v,
-                            scalePercent = sc,
-                            rotationDeg = rot,
-                            pivotX = px,
-                            pivotY = py,
-                            rot3dX = r3x,
-                            rot3dY = r3y,
-                            warp = warp
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-    }
 }

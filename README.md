@@ -4,7 +4,8 @@ Android video editor. v0.1 scope: import videos/photos, edit the main track
 (trim, split, delete with ripple, duplicate, flip, mute), preview with ExoPlayer,
 choose aspect ratio, export an H.264/AAC MP4 to Movies/Tracket.
 
-Text, shape, overlay, sticker, audio, crop, transform, effects, animations and
+Clip Transform (position, scale, rotation, pivot, 3D, warp) is active in the editor
+preview. Text, shape, overlay, sticker, audio, crop, effects, animations and
 blend are visible in the UI but disabled ("Coming in a later version").
 
 ## Run

@@ -306,7 +306,7 @@ fun VideoEditorScreen(
                             },
                             onReplace = comingSoon,
                             onColor = comingSoon,
-                            onTransform = comingSoon,
+                            onTransform = { showTransformMode = true },
                             onCrop = comingSoon,
                             onDelete = {
                                 viewModel.deleteSelectedClip()

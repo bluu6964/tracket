@@ -74,6 +74,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.EditorSurfaceVariant
@@ -245,7 +246,7 @@ fun EditShapeView(
                 modifier = Modifier
                     .size(width = frameW, height = frameH)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF0A0C0F))
+                    .background(CanvasBackground)
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
@@ -264,7 +265,7 @@ fun EditShapeView(
                 } else {
                     // Studio canvas with subtle alignment grid
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawRect(color = Color(0xFF0F1218))
+                        drawRect(color = CanvasBackground)
                         val w = size.width
                         val h = size.height
                         drawLine(

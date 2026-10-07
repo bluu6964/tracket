@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.AspectRatio
+import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.RulerSubTickColor
 import com.example.ui.theme.RulerTickColor
@@ -261,7 +262,7 @@ fun AppliedEffectsView(
                 modifier = Modifier
                     .size(width = frameW, height = frameH)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF0A0C0F))
+                    .background(CanvasBackground)
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {

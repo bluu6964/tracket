@@ -10,6 +10,8 @@ val EditorSurfaceVariant = Color(0xFF1A1C20)
 val EditorDivider = Color(0xFF2A2D32)
 val GlassSurface = Color(0xFF17191D)
 val GlassHighlight = Color(0xFFFFFFFF)
+// Canvas / project background: soft charcoal instead of full black.
+val CanvasBackground = Color(0xFF252525)
 val AccentBlue = Color(0xFF0A84FF)
 val AccentBlueSoft = Color(0xFF64B5FF)
 

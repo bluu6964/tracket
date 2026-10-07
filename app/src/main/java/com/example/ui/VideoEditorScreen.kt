@@ -8,6 +8,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +44,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.unit.coerceAtLeast
+import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
@@ -172,6 +177,9 @@ fun VideoEditorScreen(
     var showClipCropSheet by remember { mutableStateOf(false) }
     var showAppliedEffectsMode by remember { mutableStateOf(false) }
     var showTransformMode by remember { mutableStateOf(false) }
+
+    // System back / gesture back closes Transform first instead of leaving the editor.
+    BackHandler(enabled = showTransformMode) { showTransformMode = false }
 
     Scaffold(
         modifier = modifier
@@ -312,7 +320,15 @@ fun VideoEditorScreen(
                             },
                             onReplace = comingSoon,
                             onColor = comingSoon,
-                            onTransform = { showTransformMode = true },
+                            onTransform = {
+                                // Open Transform on the selected layer: if the playhead is outside it,
+                                // jump to the layer's start so the layer is visible straight away.
+                                val target = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
+                                if (target != null && !target.isActiveAt(currentPlayheadMs)) {
+                                    viewModel.seekTo(target.startMs)
+                                }
+                                showTransformMode = true
+                            },
                             onCrop = comingSoon,
                             onDelete = {
                                 viewModel.deleteSelectedClip()
@@ -348,13 +364,33 @@ fun VideoEditorScreen(
                 val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
                     ?: tracks.flatMap { it.clips }.firstOrNull()
 
+                // Top bar: replaces the editor header while Transform is open (back chevron + title).
+                com.example.ui.components.TransformHeaderBar(
+                    height = headerH,
+                    onBack = { showTransformMode = false },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .zIndex(21f)
+                )
+
+                // Bottom area: playback row, timescale, the layer's strip and the transform panel.
+                // The canvas in the middle stays untouched.
+                val transformAreaH = (playControlsH + timescaleH + layerPanelH + toolbarH)
+                    .coerceAtLeast(380.dp)
+                    .coerceAtMost(totalHeight * 0.62f)
+
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .height(layerPanelH + toolbarH)
+                        .height(transformAreaH)
                         .zIndex(20f)
                         .background(EditorBackground)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {}
+                        )
                 ) {
                     com.example.ui.components.TransformView(
                         clip = selectedClip,

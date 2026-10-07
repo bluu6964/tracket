@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -62,6 +63,7 @@ import com.example.R
 import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.TimelineTrack
+import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGreen
@@ -112,7 +114,7 @@ fun CanvasArea(
                 modifier = Modifier
                     .size(width = frameW, height = frameH)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF090A0D))
+                    .background(CanvasBackground)
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
@@ -149,6 +151,8 @@ fun CanvasArea(
                             PlayerView(ctx).apply {
                                 useController = false
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                setShutterBackgroundColor(CanvasBackground.toArgb())
+                                setBackgroundColor(CanvasBackground.toArgb())
                                 this.player = player
                             }
                         },

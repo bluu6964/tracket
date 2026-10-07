@@ -67,6 +67,7 @@ import androidx.media3.ui.PlayerView
 import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.TimelineClip
+import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.NeonCyan
@@ -161,12 +162,53 @@ fun TransformView(
         )
     }
 
+    fun resetAll() {
+        horizontal = 0.0f
+        vertical = 0.0f
+        scale = 100.0f
+        rotation = 0.0f
+        pivotX = 0.5f
+        pivotY = 0.5f
+        rot3dX = 0.0f
+        rot3dY = 0.0f
+        warpDistort = 0.0f
+        emitTransform()
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0F1116))
+            .background(if (panelOnly) EditorBackground else Color(0xFF0F1116))
             .testTag("transform_screen")
     ) {
+        if (panelOnly) {
+            // Playback controls, timescale and the selected layer's own strip, then the panel at the bottom.
+            TransformPlaybackRow(
+                clip = clip,
+                totalDurationMs = totalDurationMs,
+                isPlaying = isPlaying,
+                canUndo = canUndo,
+                canRedo = canRedo,
+                onTogglePlay = onTogglePlay,
+                onSeekTo = onSeekTo,
+                onUndo = onUndo,
+                onRedo = onRedo
+            )
+            TimescaleSection(
+                height = 28.dp,
+                currentPlayheadMs = currentPlayheadMs,
+                totalDurationMs = totalDurationMs
+            )
+            TransformLayerStrip(
+                clip = clip,
+                currentPlayheadMs = currentPlayheadMs,
+                totalDurationMs = totalDurationMs,
+                onSeekTo = onSeekTo,
+                onReset = { resetAll() }
+            )
+            Spacer(modifier = Modifier.weight(1f))
+        }
+
         if (!panelOnly) {
         // 1. Header: Left down arrow button, Center "Transform" title, Right "Done" button
         Row(
@@ -251,7 +293,7 @@ fun TransformView(
                 modifier = Modifier
                     .size(width = frameW, height = frameH)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF0A0C0F))
+                    .background(CanvasBackground)
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                     .pointerInput(clip?.id) {
@@ -317,7 +359,7 @@ fun TransformView(
                                 }
                         ) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawRect(color = Color(0xFF141722))
+                                drawRect(color = CanvasBackground)
                                 val w = size.width
                                 val h = size.height
                                 drawLine(
@@ -362,7 +404,7 @@ fun TransformView(
                         )
                     } else {
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            drawRect(color = Color(0xFF141722))
+                            drawRect(color = CanvasBackground)
                             val w = size.width
                             val h = size.height
                             drawLine(

@@ -67,6 +67,7 @@ import androidx.media3.ui.PlayerView
 import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.TimelineClip
+import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.NeonCyan
@@ -266,7 +267,7 @@ fun CropView(
                 modifier = Modifier
                     .size(width = frameW, height = frameH)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF0A0C0F))
+                    .background(CanvasBackground)
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp))
                     .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center

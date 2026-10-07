@@ -673,7 +673,7 @@ class VideoEditorViewModel : ViewModel() {
             clip
         }
         var updated = _tracks.value
-        added.forEach { updated = LaneLayout.place(updated, it, insertTop = false) }
+        added.forEach { updated = LaneLayout.place(updated, it, insertTop = true) }
         _tracks.value = updated
         _selectedClipId.value = added.last().id
         recomputeTotal()

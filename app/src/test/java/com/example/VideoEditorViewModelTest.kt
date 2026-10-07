@@ -128,13 +128,13 @@ class VideoEditorViewModelTest {
     }
 
     @Test
-    fun testLayersThatDoNotOverlapShareALane() {
+    fun testEveryLayerAlwaysHasItsOwnRow() {
         viewModel.addClip(LayerType.SHAPE, "A", 3000L)
-        viewModel.seekTo(3000L)          // exactly where A ends: touching is not overlapping
+        viewModel.seekTo(3000L)
         viewModel.addClip(LayerType.SHAPE, "B", 3000L)
 
-        assertEquals(1, viewModel.tracks.value.size)
-        assertEquals(listOf("A", "B"), viewModel.tracks.value[0].clips.map { it.name })
+        assertEquals(2, viewModel.tracks.value.size)
+        assertTrue(viewModel.tracks.value.all { it.clips.size == 1 })
     }
 
     @Test
@@ -257,3 +257,44 @@ class VideoEditorViewModelTest {
         assertEquals(15_000L, viewModel.totalDurationMs.value)
     }
 }
+
+
+    @Test
+    fun testMoveClipAndResizeClip() {
+        viewModel.addClip(LayerType.SHAPE, "A", 5000L)
+        val clip = allClips().single()
+
+        viewModel.beginTimelineGesture()
+        viewModel.moveClip(clip.id, 2000L)
+        viewModel.resizeClip(clip.id, leftEdge = false, newEdgeMs = 9000L)
+        viewModel.endTimelineGesture()
+
+        val moved = allClips().single()
+        assertEquals(2000L, moved.startMs)
+        assertEquals(7000L, moved.durationMs)
+        assertTrue(viewModel.canUndo.value)
+    }
+
+    @Test
+    fun testRowsCanBeReordered() {
+        viewModel.addClip(LayerType.SHAPE, "Bottom", 3000L)
+        viewModel.addClip(LayerType.TEXT, "Top", 3000L, text = "hi")
+
+        assertEquals(listOf("Top", "Bottom"), viewModel.tracks.value.map { it.clips.single().name })
+        viewModel.beginTimelineGesture()
+        viewModel.reorderTrack(0, 1)
+        viewModel.endTimelineGesture()
+        assertEquals(listOf("Bottom", "Top"), viewModel.tracks.value.map { it.clips.single().name })
+    }
+
+    @Test
+    fun testVisibilityToggleAndLockBlockEdits() {
+        viewModel.addClip(LayerType.SHAPE, "A", 3000L)
+        val id = allClips().single().id
+        viewModel.toggleTrackVisibility(0)
+        assertFalse(viewModel.tracks.value[0].isVisible)
+
+        viewModel.toggleTrackLock(0)
+        viewModel.moveClip(id, 2000L)
+        assertEquals(0L, allClips().single().startMs)
+    }

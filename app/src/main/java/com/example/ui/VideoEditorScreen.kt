@@ -268,6 +268,13 @@ fun VideoEditorScreen(
                     isMasterMuted = isMasterMuted,
                     onSeekTo = { viewModel.seekTo(it) },
                     onClipSelect = { viewModel.selectClip(it) },
+                    onBeginTimelineGesture = { viewModel.beginTimelineGesture() },
+                    onEndTimelineGesture = { viewModel.endTimelineGesture() },
+                    onMoveClip = { id, start -> viewModel.moveClip(id, start) },
+                    onResizeClip = { id, left, edge -> viewModel.resizeClip(id, left, edge) },
+                    onReorderTrack = { from, to -> viewModel.reorderTrack(from, to) },
+                    onToggleVisibility = { index -> viewModel.toggleTrackVisibility(index) },
+                    onToggleLock = { index -> viewModel.toggleTrackLock(index) },
                     onSplitClip = {
                         viewModel.splitSelectedClip()
                         scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }

@@ -7,14 +7,17 @@ choose aspect ratio, export an H.264/AAC MP4 to Movies/Tracket.
 Clip Transform (position, scale, rotation, pivot, 3D, warp) is active in the editor
 preview. Shape layers can be added from the toolbar (editor + canvas preview).
 
-### Layer system (lanes)
-The timeline is a list of lanes (lines). There is no fixed media/text/shape row and no limit on
-the number of lanes. A new layer goes into the lowest lane that is free for its whole time range;
-if every lane is busy there, a new lane is created on top. Layers can sit side by side in one lane
-but never on top of each other. Lanes disappear when they become empty. The top lane is drawn on top.
-Preview/export still play media clips back to back (single video pipeline). Text, overlay,
-sticker, audio, crop, effects, animations and
-blend are visible in the UI but disabled ("Coming in a later version").
+### Layer system (updated)
+The timeline is a true layer stack: **one layer per line**. Every layer gets its own row even when
+its time range does not overlap another layer. Rows can be dragged up/down to change stacking order.
+A selected layer can be dragged left/right to move it forward/backward in time, and its left/right
+edge handles resize the layer. Every drag/resize gesture is one undo step.
+
+Each row has fixed controls on the left: visibility (eye), layer thumbnail/type, lock, and a drag
+handle. Hidden layers stay in the timeline but are excluded from the canvas and export.
+
+Preview/export still use the existing media pipeline. Text, overlay, sticker, audio, crop, effects,
+animations and blend remain available in the UI where implemented.
 
 ## Run
 1. Open the project in Android Studio and let Gradle sync.

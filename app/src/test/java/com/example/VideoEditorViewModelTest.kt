@@ -21,8 +21,14 @@ class VideoEditorViewModelTest {
         viewModel = VideoEditorViewModel()
     }
 
+    private fun allClips(): List<TimelineClip> = viewModel.tracks.value.flatMap { it.clips }
+
     private fun clipsOf(type: LayerType): List<TimelineClip> =
-        viewModel.tracks.value.first { it.type == type }.clips
+        allClips().filter { it.type == type }.sortedBy { it.startMs }
+
+    /** Index of the lane that holds the clip (0 = top lane). */
+    private fun laneOf(clip: TimelineClip): Int =
+        viewModel.tracks.value.indexOfFirst { lane -> lane.clips.any { it.id == clip.id } }
 
     private fun mainClips() = clipsOf(LayerType.VIDEO)
 
@@ -38,7 +44,7 @@ class VideoEditorViewModelTest {
         assertFalse(viewModel.hasMainMedia())
         assertEquals(AspectRatio.RATIO_16_9, viewModel.selectedAspectRatio.value)
         assertEquals(PreviewResolution.FULL, viewModel.selectedResolution.value)
-        assertEquals(5, viewModel.tracks.value.size)
+        assertEquals(0, viewModel.tracks.value.size)
     }
 
     @Test
@@ -93,7 +99,7 @@ class VideoEditorViewModelTest {
     }
 
     @Test
-    fun testAddClipGoesToMatchingTrack() {
+    fun testAddClipKeepsItsType() {
         viewModel.addClip(LayerType.SHAPE, "Shape", 3000L)
         viewModel.addClip(LayerType.TEXT, "Text", 3000L, text = "hi")
         viewModel.addClip(LayerType.AUDIO, "Audio", 3000L)
@@ -102,9 +108,79 @@ class VideoEditorViewModelTest {
         assertEquals(1, clipsOf(LayerType.SHAPE).size)
         assertEquals(1, clipsOf(LayerType.TEXT).size)
         assertEquals(1, clipsOf(LayerType.AUDIO).size)
-        assertEquals(1, clipsOf(LayerType.OVERLAY).size)
+        assertEquals(1, clipsOf(LayerType.STICKER).size)
         assertEquals(0, mainClips().size)
         assertFalse(viewModel.hasMainMedia())
+    }
+
+    @Test
+    fun testOverlappingLayersGetTheirOwnLanes() {
+        viewModel.addClip(LayerType.SHAPE, "A", 4000L)
+        viewModel.addClip(LayerType.SHAPE, "B", 4000L)
+        viewModel.addClip(LayerType.TEXT, "C", 4000L, text = "hi")
+
+        val lanes = viewModel.tracks.value
+        assertEquals(3, lanes.size)
+        assertTrue(lanes.all { it.clips.size == 1 })
+        // Newest layer is on the top lane.
+        assertEquals("C", lanes[0].clips[0].name)
+        assertEquals("A", lanes[2].clips[0].name)
+    }
+
+    @Test
+    fun testLayersThatDoNotOverlapShareALane() {
+        viewModel.addClip(LayerType.SHAPE, "A", 3000L)
+        viewModel.seekTo(3000L)          // exactly where A ends: touching is not overlapping
+        viewModel.addClip(LayerType.SHAPE, "B", 3000L)
+
+        assertEquals(1, viewModel.tracks.value.size)
+        assertEquals(listOf("A", "B"), viewModel.tracks.value[0].clips.map { it.name })
+    }
+
+    @Test
+    fun testNoLimitOnLanes() {
+        repeat(25) { viewModel.addClip(LayerType.SHAPE, "S$it", 2000L) }
+        assertEquals(25, viewModel.tracks.value.size)
+        assertTrue(viewModel.tracks.value.all { it.clips.size == 1 })
+    }
+
+    @Test
+    fun testMediaIsNotSpecialInLanes() {
+        viewModel.addClip(LayerType.SHAPE, "Shape", 4000L)
+        importVideo("a", 5_000L)
+
+        // The media clip overlaps the shape, so it gets its own lane instead of a fixed "media row".
+        assertEquals(2, viewModel.tracks.value.size)
+        assertEquals(0, laneOf(mainClips()[0]))
+        assertEquals(1, laneOf(clipsOf(LayerType.SHAPE)[0]))
+    }
+
+    @Test
+    fun testNoLaneEverHasOverlappingClips() {
+        importVideo("a", 6_000L)
+        viewModel.addClip(LayerType.SHAPE, "A", 3000L)
+        viewModel.seekTo(2_000L)
+        viewModel.addClip(LayerType.TEXT, "B", 3000L, text = "hi")
+        viewModel.seekTo(5_000L)
+        viewModel.addClip(LayerType.SHAPE, "C", 3000L)
+        viewModel.duplicateSelectedClip()
+
+        viewModel.tracks.value.forEach { lane ->
+            for (i in lane.clips.indices) for (j in i + 1 until lane.clips.size) {
+                assertFalse(lane.clips[i].overlaps(lane.clips[j]))
+            }
+        }
+    }
+
+    @Test
+    fun testEmptyLaneDisappearsWhenItsLastLayerIsDeleted() {
+        viewModel.addClip(LayerType.SHAPE, "A", 3000L)
+        viewModel.addClip(LayerType.SHAPE, "B", 3000L)
+        assertEquals(2, viewModel.tracks.value.size)
+
+        viewModel.deleteSelectedClip()   // B is selected after adding
+        assertEquals(1, viewModel.tracks.value.size)
+        assertEquals("A", viewModel.tracks.value[0].clips[0].name)
     }
 
     @Test

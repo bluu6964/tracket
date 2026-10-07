@@ -226,16 +226,24 @@ fun TimelineLayerPanel(
                     },
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                // One row per lane, top lane first. Any number of lanes; they only exist while
+                // they hold layers, and layers that overlap in time are on different lanes.
                 tracks.forEach { track ->
                     TimelineTrackRow(
                         track = track,
                         selectedClipId = selectedClipId,
                         onClipSelect = onClipSelect,
-                        onAddMediaClick = onAddMediaClick,
                         visibleFromMs = visibleFromMs,
                         visibleToMs = visibleToMs
                     )
                 }
+
+                // Import button: right after the last media clip (or at the start when there is
+                // none). It has its own row so it never covers another layer.
+                val mediaEndMs = tracks.maxOfOrNull { t ->
+                    t.clips.filter { it.type == LayerType.VIDEO }.maxOfOrNull { it.endMs } ?: 0L
+                } ?: 0L
+                AddMediaRow(endMs = mediaEndMs, onAddMediaClick = onAddMediaClick)
             }
         }
 
@@ -338,17 +346,11 @@ fun TimelineTrackRow(
     track: TimelineTrack,
     selectedClipId: String?,
     onClipSelect: (String?) -> Unit,
-    onAddMediaClick: () -> Unit,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4
 ) {
-    val trackHeight = when (track.type) {
-        LayerType.VIDEO -> 44.dp
-        LayerType.AUDIO -> 32.dp
-        LayerType.SHAPE -> 40.dp
-        LayerType.OVERLAY, LayerType.TEXT -> 42.dp
-        else -> 36.dp
-    }
+    // A lane is as tall as its tallest layer (media is the tallest, audio the shortest).
+    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 36.dp
 
     Box(
         modifier = Modifier
@@ -373,31 +375,44 @@ fun TimelineTrackRow(
                 )
             }
         }
+    }
+}
 
-        // Import button: sits right after the last clip on the main video track
-        // (or at the playhead when the track is empty).
-        if (track.type == LayerType.VIDEO) {
-            val endMs = track.clips.maxOfOrNull { it.endMs } ?: 0L
-            Box(
-                modifier = Modifier
-                    .offset(x = (endMs * TIMELINE_PX_PER_MS).dp + 8.dp)
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF2A3042))
-                    .bouncyClickable(
-                        pressedScale = 0.88f,
-                        hoverScale = 1.08f,
-                        onClick = onAddMediaClick
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Add media",
-                    tint = IconActive,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
+private fun laneHeightFor(type: LayerType): Dp = when (type) {
+    LayerType.VIDEO -> 44.dp
+    LayerType.AUDIO -> 32.dp
+    LayerType.SHAPE -> 40.dp
+    LayerType.OVERLAY, LayerType.TEXT -> 42.dp
+    else -> 36.dp
+}
+
+@Composable
+private fun AddMediaRow(endMs: Long, onAddMediaClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(36.dp)
+            .fillMaxWidth(),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Box(
+            modifier = Modifier
+                .offset(x = (endMs * TIMELINE_PX_PER_MS).dp + 8.dp)
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF2A3042))
+                .bouncyClickable(
+                    pressedScale = 0.88f,
+                    hoverScale = 1.08f,
+                    onClick = onAddMediaClick
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add media",
+                tint = IconActive,
+                modifier = Modifier.size(22.dp)
+            )
         }
     }
 }

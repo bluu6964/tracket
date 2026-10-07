@@ -174,11 +174,14 @@ fun CanvasArea(
                 }
 
                 // Render dynamic text or sticker overlays if active at current playhead
-                val activeTextClips = tracks
+                // Lane order = stacking order: the bottom lane is drawn first, the top lane last.
+                val activeOverlayClips = tracks
+                    .asReversed()
                     .flatMap { it.clips }
-                    .filter { it.text != null && it.isActiveAt(currentPlayheadMs) }
+                    .filter { (it.type == LayerType.SHAPE || it.text != null) && it.isActiveAt(currentPlayheadMs) }
 
-                activeTextClips.forEach { clip ->
+                activeOverlayClips.forEach { clip ->
+                  if (clip.type != LayerType.SHAPE) {
                     val effectiveTransX = clip.transformX
                     val effectiveTransY = clip.transformY
                     val effectiveScale = clip.scalePercent / 100f
@@ -232,14 +235,7 @@ fun CanvasArea(
                             fontWeight = FontWeight.Bold
                         )
                     }
-                }
-
-                // Render dynamic shape overlays if active at current playhead
-                val activeShapeClips = tracks
-                    .flatMap { it.clips }
-                    .filter { it.type == LayerType.SHAPE && it.isActiveAt(currentPlayheadMs) }
-
-                activeShapeClips.forEach { clip ->
+                  } else {
                     val rawColor = if (clip.textColor != 0L) clip.textColor else clip.color
                     val a = ((rawColor shr 24) and 0xFF).toInt()
                     val r = ((rawColor shr 16) and 0xFF).toInt()
@@ -408,6 +404,7 @@ fun CanvasArea(
                             }
                         }
                     }
+                }
                 }
 
                 // Main Track Framing Box & Center Crosshair Target

@@ -28,7 +28,6 @@ enum class PreviewResolution(val label: String, val detail: String) {
 
 data class TimelineClip(
     val id: String,
-    val trackIndex: Int,
     val name: String,
     val type: LayerType,
     val startMs: Long,
@@ -82,12 +81,20 @@ data class TimelineClip(
     fun isActiveAt(timeMs: Long): Boolean {
         return timeMs in startMs until endMs
     }
+
+    /** True when the two clips share any part of the timeline (touching ends do not count). */
+    fun overlaps(other: TimelineClip): Boolean {
+        return startMs < other.endMs && other.startMs < endMs
+    }
 }
 
+/**
+ * One horizontal line (lane) of the timeline. Lanes are not tied to a layer type: any layer
+ * (media, shape, text, audio, ...) can live in any lane. Clips inside a lane never overlap in time.
+ */
 data class TimelineTrack(
     val id: String,
     val name: String,
-    val type: LayerType,
     val isMuted: Boolean = false,
     val isLocked: Boolean = false,
     val clips: List<TimelineClip> = emptyList()

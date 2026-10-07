@@ -51,8 +51,8 @@ class VideoExporter(private val context: Context) {
         onDone: (Uri) -> Unit,
         onError: (String) -> Unit
     ) {
-        val clips = tracks.filter { it.type == LayerType.VIDEO }
-            .flatMap { it.clips }.filter { it.uri != null }.sortedBy { it.startMs }
+        val clips = tracks.flatMap { it.clips }
+            .filter { it.type == LayerType.VIDEO && it.uri != null }.sortedBy { it.startMs }
         if (clips.isEmpty()) {
             onError("Nothing to export: import a video or photo first.")
             return

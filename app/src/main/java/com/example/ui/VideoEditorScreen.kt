@@ -116,8 +116,8 @@ fun VideoEditorScreen(
 
     // Real media clips across all tracks in timeline order
     val mediaClips = remember(tracks) {
-        tracks.filter { it.type == LayerType.VIDEO }
-            .flatMap { it.clips }.filter { it.uri != null }.sortedBy { it.startMs }
+        tracks.flatMap { it.clips }
+            .filter { it.type == LayerType.VIDEO && it.uri != null }.sortedBy { it.startMs }
     }
     LaunchedEffect(mediaClips) {
         editorPlayer.setClips(mediaClips, viewModel.currentPlayheadMs.value)

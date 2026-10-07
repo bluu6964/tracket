@@ -289,7 +289,8 @@ fun TransformLayerStrip(
                 )
             }
     ) {
-        val centerX = maxWidth / 2
+        val stripWidth = maxWidth
+        val centerX = stripWidth / 2
         // centre of the playhead measured inside the clip viewport (which starts after the reset button)
         val centerInViewport = centerX - StripLeftInset
 
@@ -309,7 +310,7 @@ fun TransformLayerStrip(
                 val marginMs = (100f / TIMELINE_PX_PER_MS).toLong()
                 val visibleFromMs = currentPlayheadMs - (centerInViewport.value / TIMELINE_PX_PER_MS).toLong() - marginMs
                 val visibleToMs = currentPlayheadMs +
-                    ((maxWidth - centerX).value / TIMELINE_PX_PER_MS).toLong() + marginMs
+                    ((stripWidth - centerX).value / TIMELINE_PX_PER_MS).toLong() + marginMs
 
                 Box(
                     modifier = Modifier

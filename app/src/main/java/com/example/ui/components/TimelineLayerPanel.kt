@@ -586,7 +586,7 @@ private fun TimelineTrackRow(
 }
 
 @Composable
-private fun TimelineClipItem(
+fun TimelineClipItem(
     clip: TimelineClip,
     width: Dp,
     isSelected: Boolean,

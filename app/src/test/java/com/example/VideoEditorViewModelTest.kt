@@ -256,8 +256,6 @@ class VideoEditorViewModelTest {
         assertEquals(10_000L, clips[2].startMs)
         assertEquals(15_000L, viewModel.totalDurationMs.value)
     }
-}
-
 
     @Test
     fun testMoveClipAndResizeClip() {
@@ -298,3 +296,5 @@ class VideoEditorViewModelTest {
         viewModel.moveClip(id, 2000L)
         assertEquals(0L, allClips().single().startMs)
     }
+
+}

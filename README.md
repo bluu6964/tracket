@@ -1,22 +1,21 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Tracket
 
-# Run and deploy your AI Studio app
+Tracket is a native Android video-editor prototype built with Kotlin, Jetpack Compose, and Media3.
 
-This contains everything you need to run your app locally.
+## Current functionality
 
-View your app in AI Studio: https://ai.studio/apps/868b57fa-8b02-4542-be6e-29cdc80074c7
+- Import videos and photos with Android Photo Picker.
+- Preview the main video track with ExoPlayer.
+- Split, duplicate, delete, and flip clips; choose a project aspect ratio.
+- Export the main video track as MP4 with Media3 Transformer.
+- Autosave and restore the current editing session in app-private storage. Picked media is reopened when Android permits the Photo Picker URI grant to be persisted.
 
-## Run Locally
+Audio mixing, compositing secondary tracks, exporting text/shape/overlay layers, advanced effects, and project management/multiple named projects are not implemented yet. Audio and some editing panels are currently UI prototypes; those clips are not included in the MP4 export.
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+## Build and run
 
+1. Install Android Studio with JDK 17 and the Android SDK platform required by `app/build.gradle.kts` (API 36).
+2. Open this repository in Android Studio and allow Gradle sync to finish.
+3. Run the `app` configuration on an emulator or Android device.
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
-7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
+No Gemini API key is required by the current app. The CI workflow builds the debug APK and uploads it as a workflow artifact.

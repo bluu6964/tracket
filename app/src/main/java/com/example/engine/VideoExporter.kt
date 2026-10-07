@@ -48,15 +48,18 @@ class VideoExporter(private val context: Context) {
         settings: ExportSettings,
         onProgress: (Float) -> Unit,
         onDone: (Uri) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        masterMuted: Boolean = false
     ) {
-        val clips = tracks.firstOrNull()?.clips.orEmpty().filter { it.uri != null }
+        val mainTrack = tracks.firstOrNull()
+        val clips = mainTrack?.clips.orEmpty().filter { it.uri != null }
         if (clips.isEmpty()) {
             onError("Nothing to export: import a video or photo first.")
             return
         }
         val (w, h) = outputSize(settings.resolution, aspectRatio)
-        val items = clips.map { buildItem(it, w, h) }
+        val removeAudio = masterMuted || mainTrack?.isMuted == true
+        val items = clips.map { buildItem(it, w, h, removeAudio) }
 
         val sequenceBuilder = EditedMediaItemSequence.Builder(items)
         // Photos have no audio; force a silent track so mixed sequences stay consistent.
@@ -101,7 +104,7 @@ class VideoExporter(private val context: Context) {
         transformer = null
     }
 
-    private fun buildItem(c: TimelineClip, w: Int, h: Int): EditedMediaItem {
+    private fun buildItem(c: TimelineClip, w: Int, h: Int, masterMuted: Boolean): EditedMediaItem {
         val mi = MediaItem.Builder().setUri(c.uri!!.toUri())
         c.mimeType?.let { mi.setMimeType(it) }
         if (!c.isImage) {
@@ -122,7 +125,7 @@ class VideoExporter(private val context: Context) {
 
         val b = EditedMediaItem.Builder(mi.build())
             .setEffects(Effects(emptyList(), video))
-            .setRemoveAudio(c.isMuted)
+            .setRemoveAudio(c.isMuted || masterMuted)
         if (c.isImage) b.setDurationUs(c.durationMs * 1_000L).setFrameRate(30)
         return b.build()
     }

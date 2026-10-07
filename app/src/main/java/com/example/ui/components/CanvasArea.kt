@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import android.view.LayoutInflater
+import android.view.ViewGroup
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -80,6 +82,9 @@ fun CanvasArea(
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+    val activeMainClip = tracks.firstOrNull()?.clips?.firstOrNull {
+        it.uri != null && it.isActiveAt(currentPlayheadMs)
+    }
 
     Box(
         modifier = modifier
@@ -130,13 +135,18 @@ fun CanvasArea(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
+                                scaleX = scale * (if (activeMainClip?.isFlippedH == true) -1f else 1f)
+                                scaleY = scale * (if (activeMainClip?.isFlippedV == true) -1f else 1f)
                                 translationX = offsetX
                                 translationY = offsetY
                             },
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
+                            (LayoutInflater.from(ctx)
+                                .inflate(R.layout.player_texture, null, false) as PlayerView).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
                                 useController = false
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                                 this.player = player

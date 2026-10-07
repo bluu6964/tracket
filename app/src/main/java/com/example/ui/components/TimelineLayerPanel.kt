@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,6 +97,9 @@ fun TimelineLayerPanel(
 ) {
     val coroutineScope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
+    val latestPlayheadMs = rememberUpdatedState(currentPlayheadMs)
+    val latestDurationMs = rememberUpdatedState(totalDurationMs)
+    val latestOnSeekTo = rememberUpdatedState(onSeekTo)
 
     BoxWithConstraints(
         modifier = modifier
@@ -102,61 +107,59 @@ fun TimelineLayerPanel(
             .height(height)
             .background(EditorBackground)
             .testTag("layer_panel_timeline")
-            .pointerInput(totalDurationMs, currentPlayheadMs) {
+            .pointerInput(Unit) {
                 val velocityTracker = VelocityTracker()
+                var dragTimeMs = latestPlayheadMs.value
 
                 detectDragGestures(
                     onDragStart = {
-                        // Immediately stop any active fling when user touches
+                        // Immediately stop any active fling when user touches.
                         flingJob?.cancel()
                         velocityTracker.resetTracking()
+                        dragTimeMs = latestPlayheadMs.value
                     },
                     onDrag = { change, dragAmount ->
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
 
-                        // Higher sensitivity so timeline glides generously like other video editing apps
                         val dragSensitivity = 1.35f
                         val deltaMs = (-dragAmount.x * dragSensitivity / TIMELINE_PX_PER_MS).toLong()
-                        val newTime = (currentPlayheadMs + deltaMs).coerceIn(0L, totalDurationMs)
-                        onSeekTo(newTime)
+                        dragTimeMs = (dragTimeMs + deltaMs).coerceIn(0L, latestDurationMs.value)
+                        latestOnSeekTo.value(dragTimeMs)
                     },
                     onDragEnd = {
                         val velocityX = velocityTracker.calculateVelocity().x
-
-                        // Inertial fling momentum: swiping glides several seconds forward or backward smoothly
                         if (kotlin.math.abs(velocityX) > 200f) {
                             flingJob = coroutineScope.launch {
                                 var currentV = -velocityX * 1.3f
-                                var currentTime = currentPlayheadMs.toFloat()
-                                val decayRate = 0.93f // Smooth physical friction
+                                var currentTime = dragTimeMs.toFloat()
+                                val decayRate = 0.93f
 
                                 while (isActive && kotlin.math.abs(currentV) > 50f) {
-                                    delay(16L) // 60fps update
-                                    val stepDeltaMs = (currentV * 0.016f / TIMELINE_PX_PER_MS)
-                                    currentTime = (currentTime + stepDeltaMs).coerceIn(0f, totalDurationMs.toFloat())
-                                    onSeekTo(currentTime.toLong())
+                                    delay(16L)
+                                    val stepDeltaMs = currentV * 0.016f / TIMELINE_PX_PER_MS
+                                    val totalMs = latestDurationMs.value.toFloat()
+                                    currentTime = (currentTime + stepDeltaMs).coerceIn(0f, totalMs)
+                                    latestOnSeekTo.value(currentTime.toLong())
 
-                                    if (currentTime <= 0f || currentTime >= totalDurationMs.toFloat()) {
-                                        break
-                                    }
+                                    if (currentTime <= 0f || currentTime >= totalMs) break
                                     currentV *= decayRate
                                 }
                             }
                         }
                     },
-                    onDragCancel = {
-                        flingJob?.cancel()
-                    }
+                    onDragCancel = { flingJob?.cancel() }
                 )
             }
     ) {
         val screenWidth = maxWidth
-        val centerLineX = screenWidth / 2 // EXACT 50% HORIZONTAL CENTER OF SCREEN
+        val centerLineX = screenWidth / 2
+        val timelineContentWidth = screenWidth +
+            (totalDurationMs * TIMELINE_PX_PER_MS).dp + 60.dp
 
         val verticalScrollState = rememberScrollState()
 
-        // 1. Horizontal Scroll Content: All timeline tracks translated strictly proportional to currentPlayheadMs
+        // The playhead stays centered while clips retain their startMs-based positions.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -165,7 +168,7 @@ fun TimelineLayerPanel(
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .requiredWidth(timelineContentWidth)
                     .offset(x = centerLineX - (currentPlayheadMs * TIMELINE_PX_PER_MS).dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -173,6 +176,7 @@ fun TimelineLayerPanel(
                     TimelineTrackRow(
                         track = track,
                         selectedClipId = selectedClipId,
+                        timelineContentWidth = timelineContentWidth,
                         onClipSelect = onClipSelect,
                         onAddMediaClick = onAddMediaClick
                     )
@@ -279,7 +283,8 @@ fun TimelineTrackRow(
     track: TimelineTrack,
     selectedClipId: String?,
     onClipSelect: (String?) -> Unit,
-    onAddMediaClick: () -> Unit
+    onAddMediaClick: () -> Unit,
+    timelineContentWidth: Dp = 1000.dp
 ) {
     val trackHeight = when (track.type) {
         LayerType.VIDEO -> 48.dp
@@ -289,27 +294,28 @@ fun TimelineTrackRow(
         else -> 36.dp
     }
 
-    Row(
-        modifier = Modifier.height(trackHeight),
-        verticalAlignment = Alignment.CenterVertically
+    Box(
+        modifier = Modifier
+            .requiredWidth(timelineContentWidth)
+            .height(trackHeight)
     ) {
         track.clips.forEach { clip ->
             val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(40.dp)
-            val isSelected = clip.id == selectedClipId
-
             TimelineClipItem(
                 clip = clip,
                 width = clipWidth,
-                isSelected = isSelected,
-                onClick = { onClipSelect(clip.id) }
+                isSelected = clip.id == selectedClipId,
+                onClick = { onClipSelect(clip.id) },
+                modifier = Modifier.offset(x = (clip.startMs.coerceAtLeast(0L) * TIMELINE_PX_PER_MS).dp)
             )
-            Spacer(modifier = Modifier.width(2.dp))
         }
 
-        // Plus (+) button at end of main video track with spring feedback
+        // Plus (+) button sits after the last main-track clip, in timeline time.
         if (track.type == LayerType.VIDEO && track.name == "Main Video") {
+            val addAtMs = track.clips.maxOfOrNull { it.endMs } ?: 0L
             Box(
                 modifier = Modifier
+                    .offset(x = (addAtMs.coerceAtLeast(0L) * TIMELINE_PX_PER_MS).dp)
                     .size(trackHeight)
                     .clip(RoundedCornerShape(6.dp))
                     .background(Color(0xFF2B2F3A))
@@ -332,7 +338,8 @@ fun TimelineClipItem(
     clip: TimelineClip,
     width: Dp,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val selectScale by animateFloatAsState(
         targetValue = if (isSelected) 1.03f else 1f,
@@ -350,7 +357,7 @@ fun TimelineClipItem(
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .width(width)
             .fillMaxHeight()
             .graphicsLayer {

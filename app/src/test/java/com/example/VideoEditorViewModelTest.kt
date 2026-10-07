@@ -81,6 +81,42 @@ class VideoEditorViewModelTest {
     )
 
     @Test
+    fun testUndoRedoPreservesEveryIntermediateEdit() {
+        importVideo("a", 5_000L)
+        importVideo("b", 5_000L)
+
+        assertEquals(2, viewModel.tracks.value[0].clips.size)
+        viewModel.undo()
+        assertEquals(listOf("a"), viewModel.tracks.value[0].clips.map { it.name })
+        viewModel.undo()
+        assertTrue(viewModel.tracks.value[0].clips.isEmpty())
+
+        viewModel.redo()
+        assertEquals(listOf("a"), viewModel.tracks.value[0].clips.map { it.name })
+        viewModel.redo()
+        assertEquals(listOf("a", "b"), viewModel.tracks.value[0].clips.map { it.name })
+    }
+
+    @Test
+    fun testRestoreProjectSnapshotRestoresTimelineAndEditorSettings() {
+        importVideo("saved.mp4", 8_000L)
+        viewModel.setAspectRatio(AspectRatio.RATIO_9_16)
+        viewModel.setResolution(PreviewResolution.HALF)
+        viewModel.toggleMasterAudio()
+        viewModel.seekTo(3_000L)
+
+        val restored = VideoEditorViewModel()
+        restored.restoreProject(viewModel.createProjectSnapshot())
+
+        assertEquals(viewModel.tracks.value, restored.tracks.value)
+        assertEquals(3_000L, restored.currentPlayheadMs.value)
+        assertEquals(AspectRatio.RATIO_9_16, restored.selectedAspectRatio.value)
+        assertEquals(PreviewResolution.HALF, restored.selectedResolution.value)
+        assertTrue(restored.isMasterMuted.value)
+        assertFalse(restored.canUndo.value)
+    }
+
+    @Test
     fun testImportAppendsToMainTrackAndUpdatesDuration() {
         importVideo("a", 12_000L)
         importVideo("b", 8_000L)

@@ -58,8 +58,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.Player
 import com.example.model.AspectRatio
 import com.example.model.LayerType
+import com.example.model.TimelineTrack
 import com.example.model.PreviewResolution
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.EditorSurface
@@ -564,7 +566,10 @@ fun FullscreenPlayerModal(
     totalDurationMs: Long,
     isPlaying: Boolean,
     onTogglePlay: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    tracks: List<TimelineTrack> = emptyList(),
+    player: Player? = null,
+    hasMainMedia: Boolean = false
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -582,8 +587,10 @@ fun FullscreenPlayerModal(
                 aspectRatio = aspectRatio,
                 currentPlayheadMs = currentPlayheadMs,
                 isPlaying = isPlaying,
-                tracks = emptyList(),
+                tracks = tracks,
                 onTogglePlayPause = onTogglePlay,
+                player = player,
+                hasMainMedia = hasMainMedia,
                 modifier = Modifier.fillMaxWidth()
             )
 

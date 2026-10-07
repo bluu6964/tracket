@@ -1,12 +1,15 @@
 package com.example.ui
 
+import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -16,10 +19,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.util.UnstableApi
 import com.example.engine.EditorPlayer
 import com.example.engine.MediaImporter
+import com.example.engine.ProjectStore
 import com.example.engine.VideoExporter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -79,7 +84,31 @@ fun VideoEditorScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val appContext = context.applicationContext
     val exportSettings by viewModel.exportSettings.collectAsState()
+    val projectStore = remember(appContext) { ProjectStore(appContext) }
+    var projectLoaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(projectStore, viewModel) {
+        try {
+            projectStore.load()?.let(viewModel::restoreProject)
+        } finally {
+            projectLoaded = true
+        }
+    }
+    LaunchedEffect(
+        projectLoaded,
+        tracks,
+        currentPlayheadMs,
+        selectedAspectRatio,
+        selectedResolution,
+        isMasterMuted
+    ) {
+        if (!projectLoaded) return@LaunchedEffect
+        // Debounce frequent playhead updates; persist the final position after scrubbing/playback.
+        delay(750L)
+        runCatching { projectStore.save(viewModel.createProjectSnapshot()) }
+    }
 
     // ---- Real engine: preview player, exporter, media picker ----
     val editorPlayer = remember { EditorPlayer(context) }
@@ -126,6 +155,15 @@ fun VideoEditorScreen(
         ActivityResultContracts.PickMultipleVisualMedia(20)
     ) { uris ->
         if (uris.isNotEmpty()) {
+            // Photo Picker grants can be persisted so a saved project can reopen its media later.
+            uris.forEach { uri ->
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+            }
             scope.launch {
                 val items = MediaImporter.read(context, uris)
                 if (items.isEmpty()) {
@@ -153,6 +191,20 @@ fun VideoEditorScreen(
     var showClipBlendSheet by remember { mutableStateOf(false) }
     var showClipCropSheet by remember { mutableStateOf(false) }
     var showAppliedEffectsMode by remember { mutableStateOf(false) }
+
+    if (!projectLoaded) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(EditorBackground)
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            contentAlignment = Alignment.Center
+        ) {
+            CircularProgressIndicator()
+        }
+        return
+    }
 
     Scaffold(
         modifier = modifier
@@ -189,7 +241,15 @@ fun VideoEditorScreen(
                     height = headerH,
                     aspectRatio = selectedAspectRatio,
                     onBackClick = {
-                        scope.launch { snackbarHostState.showSnackbar("Project autosaved") }
+                        scope.launch {
+                            val saveResult = runCatching {
+                                projectStore.save(viewModel.createProjectSnapshot())
+                            }
+                            snackbarHostState.showSnackbar(
+                                if (saveResult.isSuccess) "Project saved on this device"
+                                else "Could not save project"
+                            )
+                        }
                     },
                     onAspectRatioClick = { showAspectRatioSheet = true },
                     onExportClick = { showExportDialog = true }
@@ -204,8 +264,8 @@ fun VideoEditorScreen(
                     tracks = tracks,
                     selectedClipId = selectedClipId,
                     onTogglePlayPause = { viewModel.togglePlayPause() },
-                    player = editorPlayer.player,
-                    hasMainMedia = mainClips.isNotEmpty()
+                    player = if (showFullscreenPlayer) null else editorPlayer.player,
+                    hasMainMedia = mainClips.isNotEmpty() && !showFullscreenPlayer
                 )
 
                 // 3. Play & Full Screen Section (1/18 of screen)
@@ -216,9 +276,15 @@ fun VideoEditorScreen(
                     canRedo = canRedo,
                     onFullScreenClick = { showFullscreenPlayer = true },
                     onResolutionClick = { showResolutionSheet = true },
-                    onPreviousClick = { viewModel.jumpPrevious() },
+                    onPreviousClick = {
+                        if (viewModel.isPlaying.value) viewModel.pause()
+                        viewModel.jumpPrevious()
+                    },
                     onPlayPauseClick = { viewModel.togglePlayPause() },
-                    onNextClick = { viewModel.jumpNext() },
+                    onNextClick = {
+                        if (viewModel.isPlaying.value) viewModel.pause()
+                        viewModel.jumpNext()
+                    },
                     onUndoClick = { viewModel.undo() },
                     onRedoClick = { viewModel.redo() }
                 )
@@ -238,7 +304,10 @@ fun VideoEditorScreen(
                     totalDurationMs = totalDurationMs,
                     selectedClipId = selectedClipId,
                     isMasterMuted = isMasterMuted,
-                    onSeekTo = { viewModel.seekTo(it) },
+                    onSeekTo = {
+                        if (viewModel.isPlaying.value) viewModel.pause()
+                        viewModel.seekTo(it)
+                    },
                     onClipSelect = { viewModel.selectClip(it) },
                     onSplitClip = {
                         viewModel.splitSelectedClip()
@@ -357,6 +426,7 @@ fun VideoEditorScreen(
                     tracks = tracks,
                     aspectRatio = selectedAspectRatio,
                     settings = exportSettings,
+                    masterMuted = isMasterMuted,
                     onProgress = { viewModel.setExportProgress(it) },
                     onDone = {
                         viewModel.finishExport()
@@ -424,6 +494,9 @@ fun VideoEditorScreen(
             currentPlayheadMs = currentPlayheadMs,
             totalDurationMs = totalDurationMs,
             isPlaying = isPlaying,
+            tracks = tracks,
+            player = editorPlayer.player,
+            hasMainMedia = mainClips.isNotEmpty(),
             onTogglePlay = { viewModel.togglePlayPause() },
             onDismiss = { showFullscreenPlayer = false }
         )

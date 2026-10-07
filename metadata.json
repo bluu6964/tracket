@@ -1,6 +1,6 @@
 {
   "name": "Tracket",
-  "description": "Professional mobile video editor with timeline, aspect ratio controls, canvas preview, multi-layer tracks, audio, text, shapes, and overlays.",
+  "description": "Android video editor prototype with media import, main-track preview, basic clip editing, and MP4 export.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

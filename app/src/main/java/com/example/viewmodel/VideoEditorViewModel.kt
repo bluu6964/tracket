@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
 import com.example.model.AspectRatio
+import com.example.model.EditorProjectSnapshot
 import com.example.model.ExportSettings
 import com.example.model.ImportedMedia
 import com.example.model.LayerType
@@ -65,11 +66,6 @@ class VideoEditorViewModel : ViewModel() {
     val exportProgress: StateFlow<Float> = _exportProgress.asStateFlow()
 
     private var playbackJob: Job? = null
-
-    init {
-        // Record initial state
-        undoStack.add(_tracks.value)
-    }
 
     fun togglePlayPause() {
         if (_isPlaying.value) {
@@ -163,30 +159,36 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     private fun pushHistory() {
-        undoStack.add(_tracks.value)
+        // Store the state being replaced, not the state produced by the edit.
+        // Avoid consecutive duplicate snapshots when an action makes no change.
+        if (undoStack.lastOrNull() != _tracks.value) {
+            undoStack.add(_tracks.value)
+        }
         redoStack.clear()
-        _canUndo.value = undoStack.size > 1
+        _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = false
     }
 
     fun undo() {
-        if (undoStack.size > 1) {
-            val current = undoStack.removeAt(undoStack.lastIndex)
+        if (undoStack.isNotEmpty()) {
+            val current = _tracks.value
+            val previous = undoStack.removeAt(undoStack.lastIndex)
             redoStack.add(current)
-            _tracks.value = undoStack.last()
+            _tracks.value = previous
             recomputeTotal()
-            _canUndo.value = undoStack.size > 1
-            _canRedo.value = true
+            _canUndo.value = undoStack.isNotEmpty()
+            _canRedo.value = redoStack.isNotEmpty()
         }
     }
 
     fun redo() {
         if (redoStack.isNotEmpty()) {
+            val current = _tracks.value
             val next = redoStack.removeAt(redoStack.lastIndex)
-            undoStack.add(next)
+            undoStack.add(current)
             _tracks.value = next
             recomputeTotal()
-            _canUndo.value = undoStack.size > 1
+            _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = redoStack.isNotEmpty()
         }
     }
@@ -194,6 +196,10 @@ class VideoEditorViewModel : ViewModel() {
     fun splitSelectedClip() {
         val clipId = _selectedClipId.value ?: return
         val playhead = _currentPlayheadMs.value
+        val selectedClip = _tracks.value.asSequence()
+            .flatMap { it.clips.asSequence() }
+            .firstOrNull { it.id == clipId } ?: return
+        if (playhead <= selectedClip.startMs + 500L || playhead >= selectedClip.endMs - 500L) return
 
         pushHistory()
         val newTracks = _tracks.value.map { track ->
@@ -389,6 +395,31 @@ class VideoEditorViewModel : ViewModel() {
 
     fun hasMainMedia(): Boolean =
         _tracks.value.firstOrNull()?.clips?.any { it.uri != null } == true
+
+    fun createProjectSnapshot(): EditorProjectSnapshot = EditorProjectSnapshot(
+        tracks = _tracks.value,
+        playheadMs = _currentPlayheadMs.value,
+        aspectRatio = _selectedAspectRatio.value,
+        previewResolution = _selectedResolution.value,
+        isMasterMuted = _isMasterMuted.value
+    )
+
+    /** Restores a saved project and starts a fresh undo history from that state. */
+    fun restoreProject(snapshot: EditorProjectSnapshot) {
+        pause()
+        _tracks.value = snapshot.tracks.ifEmpty { createInitialTracks() }
+        _selectedAspectRatio.value = snapshot.aspectRatio
+        _selectedResolution.value = snapshot.previewResolution
+        _isMasterMuted.value = snapshot.isMasterMuted
+        _selectedClipId.value = null
+
+        undoStack.clear()
+        redoStack.clear()
+        _canUndo.value = false
+        _canRedo.value = false
+        recomputeTotal()
+        _currentPlayheadMs.value = snapshot.playheadMs.coerceIn(0L, _totalDurationMs.value)
+    }
 
     /** Appends picked videos/photos to the end of the main track. */
     fun importMedia(items: List<ImportedMedia>) {

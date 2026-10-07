@@ -86,3 +86,12 @@ data class ImportedMedia(
     val durationMs: Long,
     val isImage: Boolean
 )
+
+/** Persistable editor state for restoring the user's current project. */
+data class EditorProjectSnapshot(
+    val tracks: List<TimelineTrack>,
+    val playheadMs: Long,
+    val aspectRatio: AspectRatio,
+    val previewResolution: PreviewResolution,
+    val isMasterMuted: Boolean
+)

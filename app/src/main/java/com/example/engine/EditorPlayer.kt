@@ -5,6 +5,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import com.example.model.TimelineClip
 
 /**
@@ -86,6 +87,13 @@ class EditorPlayer(context: Context) {
     }
 
     fun totalMs(): Long = clips.sumOf { it.durationMs }
+
+    /** While scrubbing, jump to the nearest keyframe (fast). Before playing, seek exactly. */
+    fun setScrubbing(scrubbing: Boolean) {
+        player.setSeekParameters(
+            if (scrubbing) SeekParameters.CLOSEST_SYNC else SeekParameters.EXACT
+        )
+    }
 
     fun setMuted(muted: Boolean) {
         player.volume = if (muted) 0f else 1f

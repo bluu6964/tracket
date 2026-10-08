@@ -203,10 +203,15 @@ fun TimelineLayerPanel(
         val contentWidth = (contentEndMs * TIMELINE_PX_PER_MS).dp + screenWidth + 64.dp
 
         // Time window that is actually on screen (+ margin) so only visible thumbnails load.
+        // The window is snapped to 2 s steps: while swiping, the clips only recompose when the
+        // window steps (every ~2 s), not on every frame. The margin (~2.2 s) is larger than the step.
         val marginMs = (100f / TIMELINE_PX_PER_MS).toLong()
-        val visibleFromMs = currentPlayheadMs - (centerLineX.value / TIMELINE_PX_PER_MS).toLong() - marginMs
-        val visibleToMs = currentPlayheadMs +
+        val windowStepMs = 2_000L
+        val rawFromMs = currentPlayheadMs - (centerLineX.value / TIMELINE_PX_PER_MS).toLong() - marginMs
+        val rawToMs = currentPlayheadMs +
             ((screenWidth - centerLineX).value / TIMELINE_PX_PER_MS).toLong() + marginMs
+        val visibleFromMs = Math.floorDiv(rawFromMs, windowStepMs) * windowStepMs
+        val visibleToMs = (Math.floorDiv(rawToMs, windowStepMs) + 1L) * windowStepMs
 
         // 1. Timeline content, shifted so currentPlayheadMs sits under the center line.
         Box(
@@ -221,7 +226,8 @@ fun TimelineLayerPanel(
                     .width(contentWidth)
                     .offset {
                         IntOffset(
-                            x = ((centerLineX.value - currentPlayheadMs * TIMELINE_PX_PER_MS) * dpToPx).roundToInt(),
+                            // Read in the layout phase: moving the timeline does not recompose it.
+                            x = ((centerLineX.value - latestPlayheadMs * TIMELINE_PX_PER_MS) * dpToPx).roundToInt(),
                             y = 0
                         )
                     },

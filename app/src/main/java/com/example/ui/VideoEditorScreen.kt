@@ -170,7 +170,10 @@ fun VideoEditorScreen(
 
     // Scrubbing / seeking while paused moves the player to the playhead.
     LaunchedEffect(currentPlayheadMs, isPlaying) {
-        if (!isPlaying) editorPlayer.seekTo(currentPlayheadMs)
+        if (!isPlaying) {
+            editorPlayer.setScrubbing(true)
+            editorPlayer.seekTo(currentPlayheadMs)
+        }
     }
     // Play / pause: ExoPlayer is the clock and feeds the playhead back to the ViewModel when media exists.
     LaunchedEffect(isPlaying, mediaClips) {
@@ -178,6 +181,7 @@ fun VideoEditorScreen(
         if (isPlaying) {
             val total = editorPlayer.totalMs()
             if (viewModel.currentPlayheadMs.value >= total - 50L) viewModel.seekTo(0L)
+            editorPlayer.setScrubbing(false)
             editorPlayer.seekTo(viewModel.currentPlayheadMs.value, force = true)
             editorPlayer.player.play()
             while (isActive) {

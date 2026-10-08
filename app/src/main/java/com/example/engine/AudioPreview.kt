@@ -79,8 +79,9 @@ class AudioPreview(context: Context) {
                             p.seekTo(target)
                         }
                     } else {
+                        // Paused / scrubbing: no seeking here (it made swiping lag). The player
+                        // jumps to the right position when playback starts.
                         p.playWhenReady = false
-                        if (abs(p.currentPosition - target) > 50L) p.seekTo(target)
                     }
                 } else {
                     p.playWhenReady = false

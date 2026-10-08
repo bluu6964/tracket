@@ -43,7 +43,7 @@ object LaneLayout {
             if (sorted.size > 1) overflow += sorted.drop(1)
         }
 
-        var result = singles
+        var result: List<TimelineTrack> = singles
         for (clip in overflow) {
             result = place(result, clip)
         }

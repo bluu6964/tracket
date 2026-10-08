@@ -71,9 +71,6 @@ class VideoEditorViewModel : ViewModel() {
 
     private var playbackJob: Job? = null
 
-    // Timeline drag/resize edits are committed as one undo step when the gesture ends.
-    private var timelineGestureStart: List<TimelineTrack>? = null
-
     fun togglePlayPause() {
         if (_isPlaying.value) {
             pause()
@@ -172,104 +169,6 @@ class VideoEditorViewModel : ViewModel() {
         }
     }
 
-    fun toggleTrackVisibility(trackIndex: Int) {
-        pushHistory()
-        val currentList = _tracks.value.toMutableList()
-        if (trackIndex in currentList.indices) {
-            val track = currentList[trackIndex]
-            currentList[trackIndex] = track.copy(isVisible = !track.isVisible)
-            _tracks.value = currentList
-        }
-    }
-
-    fun toggleTrackLock(trackIndex: Int) {
-        pushHistory()
-        val currentList = _tracks.value.toMutableList()
-        if (trackIndex in currentList.indices) {
-            val track = currentList[trackIndex]
-            currentList[trackIndex] = track.copy(isLocked = !track.isLocked)
-            _tracks.value = currentList
-        }
-    }
-
-    /** Start one compound timeline gesture so all drag/resize frames undo in one step. */
-    fun beginTimelineGesture() {
-        if (timelineGestureStart == null) timelineGestureStart = _tracks.value
-    }
-
-    /** Finish the active drag/resize gesture and add its original state to undo history. */
-    fun endTimelineGesture() {
-        val start = timelineGestureStart ?: return
-        timelineGestureStart = null
-        if (start != _tracks.value) {
-            undoStack.add(start)
-            redoStack.clear()
-            _canUndo.value = true
-            _canRedo.value = false
-            recomputeTotal()
-        }
-    }
-
-    fun cancelTimelineGesture() {
-        timelineGestureStart = null
-    }
-
-    fun moveClip(clipId: String, newStartMs: Long) {
-        val updated = _tracks.value.map { track ->
-            if (track.isLocked) return@map track
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) clip.copy(startMs = newStartMs.coerceAtLeast(0L)) else clip
-            })
-        }
-        _tracks.value = updated
-        recomputeTotal()
-    }
-
-    fun resizeClip(clipId: String, leftEdge: Boolean, newEdgeMs: Long) {
-        val minDuration = 200L
-        val updated = _tracks.value.map { track ->
-            if (track.isLocked) return@map track
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id != clipId) return@map clip
-
-                if (leftEdge) {
-                    var maxStart = clip.endMs - minDuration
-                    if (clip.sourceDurationMs > 0L) {
-                        val maxDeltaBySource =
-                            (clip.sourceDurationMs - clip.trimStartMs - minDuration).coerceAtLeast(0L)
-                        maxStart = minOf(maxStart, clip.startMs + maxDeltaBySource)
-                    }
-                    val newStart = newEdgeMs.coerceIn(0L, maxStart)
-                    val delta = newStart - clip.startMs
-                    clip.copy(
-                        startMs = newStart,
-                        durationMs = (clip.durationMs - delta).coerceAtLeast(minDuration),
-                        trimStartMs = (clip.trimStartMs + delta).coerceAtLeast(0L)
-                    )
-                } else {
-                    var maxDuration = Long.MAX_VALUE
-                    if (clip.sourceDurationMs > 0L) {
-                        maxDuration = (clip.sourceDurationMs - clip.trimStartMs).coerceAtLeast(minDuration)
-                    }
-                    val newDuration = (newEdgeMs - clip.startMs)
-                        .coerceAtLeast(minDuration)
-                        .coerceAtMost(maxDuration)
-                    clip.copy(durationMs = newDuration)
-                }
-            })
-        }
-        _tracks.value = updated
-        recomputeTotal()
-    }
-
-    fun reorderTrack(fromIndex: Int, toIndex: Int) {
-        if (fromIndex !in _tracks.value.indices || toIndex !in _tracks.value.indices || fromIndex == toIndex) return
-        val list = _tracks.value.toMutableList()
-        val moved = list.removeAt(fromIndex)
-        list.add(toIndex.coerceIn(0, list.size), moved)
-        _tracks.value = list
-    }
-
     private fun pushHistory() {
         undoStack.add(_tracks.value)
         redoStack.clear()
@@ -302,30 +201,35 @@ class VideoEditorViewModel : ViewModel() {
     fun splitSelectedClip() {
         val clipId = _selectedClipId.value ?: return
         val playhead = _currentPlayheadMs.value
-        val laneIndex = _tracks.value.indexOfFirst { it.clips.any { clip -> clip.id == clipId } }
-        if (laneIndex < 0) return
-
-        val clip = _tracks.value[laneIndex].clips.first()
-        if (playhead <= clip.startMs + 500 || playhead >= clip.endMs - 500) return
 
         pushHistory()
-        val duration1 = playhead - clip.startMs
-        val duration2 = clip.endMs - playhead
-        val part1 = clip.copy(durationMs = duration1)
-        val part2 = clip.copy(
-            id = UUID.randomUUID().toString(),
-            name = "${clip.name} (Split)",
-            startMs = playhead,
-            durationMs = duration2,
-            trimStartMs = clip.trimStartMs + duration1
-        )
-
-        val list = _tracks.value.toMutableList()
-        list[laneIndex] = list[laneIndex].copy(name = part1.name, clips = listOf(part1))
-        // Split pieces are separate layers/rows now, matching the one-layer-per-line rule.
-        list.add((laneIndex + 1).coerceAtMost(list.size), LaneLayout.newLane(part2))
-        _tracks.value = list
-        _selectedClipId.value = part2.id
+        val newTracks = _tracks.value.map { track ->
+            val clipIndex = track.clips.indexOfFirst { it.id == clipId }
+            if (clipIndex != -1) {
+                val clip = track.clips[clipIndex]
+                if (playhead > clip.startMs + 500 && playhead < clip.endMs - 500) {
+                    val duration1 = playhead - clip.startMs
+                    val duration2 = clip.endMs - playhead
+                    val part1 = clip.copy(durationMs = duration1)
+                    val part2 = clip.copy(
+                        id = UUID.randomUUID().toString(),
+                        name = "${clip.name} (Split)",
+                        startMs = playhead,
+                        durationMs = duration2,
+                        trimStartMs = clip.trimStartMs + duration1
+                    )
+                    val updatedClips = track.clips.toMutableList()
+                    updatedClips[clipIndex] = part1
+                    updatedClips.add(clipIndex + 1, part2)
+                    track.copy(clips = updatedClips.sortedBy { it.startMs })
+                } else {
+                    track
+                }
+            } else {
+                track
+            }
+        }
+        _tracks.value = newTracks
         recomputeTotal()
     }
 
@@ -349,7 +253,7 @@ class VideoEditorViewModel : ViewModel() {
         } else {
             withoutClip
         }
-        _tracks.value = closedGap.filter { it.clips.isNotEmpty() }
+        _tracks.value = LaneLayout.normalize(closedGap)
         _selectedClipId.value = null
         recomputeTotal()
     }
@@ -376,8 +280,8 @@ class VideoEditorViewModel : ViewModel() {
         } else {
             _tracks.value
         }
-        // Every duplicated layer gets its own dedicated row.
-        _tracks.value = LaneLayout.place(LaneLayout.normalize(base), duplicated, insertTop = true)
+        // The copy goes to the first lane that is free at its time, otherwise to a new lane.
+        _tracks.value = LaneLayout.place(LaneLayout.normalize(base), duplicated)
         recomputeTotal()
     }
 
@@ -537,8 +441,8 @@ class VideoEditorViewModel : ViewModel() {
             scalePercent = (shapeScaleX * 100f).coerceAtLeast(10f)
         )
 
-        // Every layer gets its own dedicated timeline row.
-        _tracks.value = LaneLayout.place(_tracks.value, newClip, insertTop = true)
+        // Every layer type is placed the same way: first free lane, otherwise a new lane.
+        _tracks.value = LaneLayout.place(_tracks.value, newClip)
         _selectedClipId.value = newClip.id
         recomputeTotal()
     }
@@ -673,7 +577,7 @@ class VideoEditorViewModel : ViewModel() {
             clip
         }
         var updated = _tracks.value
-        added.forEach { updated = LaneLayout.place(updated, it, insertTop = true) }
+        added.forEach { updated = LaneLayout.place(updated, it) }
         _tracks.value = updated
         _selectedClipId.value = added.last().id
         recomputeTotal()

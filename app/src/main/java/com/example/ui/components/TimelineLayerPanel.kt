@@ -1,19 +1,17 @@
 package com.example.ui.components
 
 import androidx.compose.animation.core.AnimationState
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -40,22 +38,16 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DragIndicator
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.SmartButton
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,16 +89,13 @@ import com.example.ui.theme.SelectedClipBorder
 import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
-
-private val LAYER_CONTROL_WIDTH = 124.dp
-private val LAYER_ROW_HEIGHT = 50.dp
-private val LAYER_ROW_GAP = 4.dp
-private const val MIN_CLIP_DURATION_MS = 200L
 
 @Composable
 fun TimelineLayerPanel(
@@ -118,13 +107,6 @@ fun TimelineLayerPanel(
     isMasterMuted: Boolean,
     onSeekTo: (Long) -> Unit,
     onClipSelect: (String?) -> Unit,
-    onBeginTimelineGesture: () -> Unit,
-    onEndTimelineGesture: () -> Unit,
-    onMoveClip: (String, Long) -> Unit,
-    onResizeClip: (String, Boolean, Long) -> Unit,
-    onReorderTrack: (Int, Int) -> Unit,
-    onToggleVisibility: (Int) -> Unit,
-    onToggleLock: (Int) -> Unit,
     onSplitClip: () -> Unit,
     onDeleteClip: () -> Unit,
     onDuplicateClip: () -> Unit,
@@ -134,6 +116,10 @@ fun TimelineLayerPanel(
 ) {
     val coroutineScope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
+
+    // The gesture block below is created ONCE (key = Unit). Before, it was keyed on
+    // currentPlayheadMs, so every drag frame restarted it and the swipe was dropped
+    // after a short distance. These always hold the latest values without restarting it.
     val latestPlayheadMs by rememberUpdatedState(currentPlayheadMs)
     val latestTotalMs by rememberUpdatedState(totalDurationMs)
     val latestSeek by rememberUpdatedState(onSeekTo)
@@ -144,6 +130,7 @@ fun TimelineLayerPanel(
             .height(height)
             .background(EditorBackground)
             .testTag("layer_panel_timeline")
+            // Touching the panel stops a running fling (without consuming the touch).
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -152,8 +139,9 @@ fun TimelineLayerPanel(
             }
             .pointerInput(Unit) {
                 val velocityTracker = VelocityTracker()
-                val pxPerDp = density
+                val pxPerDp = density          // PointerInputScope is a Density
                 var posMs = 0f
+
                 detectHorizontalDragGestures(
                     onDragStart = {
                         flingJob?.cancel()
@@ -163,6 +151,7 @@ fun TimelineLayerPanel(
                     onHorizontalDrag = { change, dragAmountPx ->
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
+                        // px -> dp -> ms, so the timeline follows the finger 1:1.
                         val deltaMs = -(dragAmountPx / pxPerDp) / TIMELINE_PX_PER_MS
                         posMs = (posMs + deltaMs).coerceIn(0f, latestTotalMs.toFloat())
                         latestSeek(posMs.roundToLong())
@@ -177,7 +166,10 @@ fun TimelineLayerPanel(
                                     initialValue = startMs,
                                     initialVelocity = velocityMsPerSec
                                 ).animateDecay(
-                                    exponentialDecay(frictionMultiplier = FLING_FRICTION, absVelocityThreshold = 40f)
+                                    exponentialDecay(
+                                        frictionMultiplier = FLING_FRICTION,
+                                        absVelocityThreshold = 40f
+                                    )
                                 ) {
                                     val total = latestTotalMs.toFloat()
                                     val ms = value.coerceIn(0f, total)
@@ -187,325 +179,218 @@ fun TimelineLayerPanel(
                             }
                         }
                     },
-                    onDragCancel = { flingJob?.cancel() }
+                    onDragCancel = {
+                        flingJob?.cancel()
+                    }
                 )
             }
     ) {
         val screenWidth = maxWidth
-        val centerLineX = screenWidth / 2
+        val centerLineX = screenWidth / 2 // EXACT 50% HORIZONTAL CENTER OF SCREEN
+
         val verticalScrollState = rememberScrollState()
         val dpToPx = LocalDensity.current.density
 
+        // Real timeline length: the longest clip (any track) + room for the + button and the
+        // right half of the screen. Clips used to be capped at the screen width because their
+        // parent had a bounded width; the horizontalScroll below (scrolling disabled) only
+        // hands its child unbounded width so a long clip keeps its true size.
         val contentEndMs = maxOf(
             totalDurationMs,
-            tracks.maxOfOrNull { it.clips.firstOrNull()?.endMs ?: 0L } ?: 0L
+            tracks.maxOfOrNull { t -> t.clips.maxOfOrNull { it.endMs } ?: 0L } ?: 0L
         )
-        val contentWidth = (contentEndMs * TIMELINE_PX_PER_MS).dp + screenWidth + 96.dp
-        val marginMs = (160f / TIMELINE_PX_PER_MS).toLong()
+        val contentWidth = (contentEndMs * TIMELINE_PX_PER_MS).dp + screenWidth + 64.dp
+
+        // Time window that is actually on screen (+ margin) so only visible thumbnails load.
+        val marginMs = (100f / TIMELINE_PX_PER_MS).toLong()
         val visibleFromMs = currentPlayheadMs - (centerLineX.value / TIMELINE_PX_PER_MS).toLong() - marginMs
         val visibleToMs = currentPlayheadMs +
             ((screenWidth - centerLineX).value / TIMELINE_PX_PER_MS).toLong() + marginMs
 
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Timeline rows. Each row is one and only one layer.
-            Box(
+        // 1. Timeline content, shifted so currentPlayheadMs sits under the center line.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(verticalScrollState)
+                .horizontalScroll(rememberScrollState(), enabled = false)
+                .padding(vertical = 4.dp)
+        ) {
+            Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(verticalScrollState)
-                    .horizontalScroll(rememberScrollState(), enabled = false)
-                    .padding(vertical = 4.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .width(contentWidth)
-                        .offset {
-                            IntOffset(
-                                x = ((centerLineX.value - currentPlayheadMs * TIMELINE_PX_PER_MS) * dpToPx).roundToInt(),
-                                y = 0
-                            )
-                        },
-                    verticalArrangement = Arrangement.spacedBy(LAYER_ROW_GAP)
-                ) {
-                    tracks.forEachIndexed { index, track ->
-                        TimelineTrackRow(
-                            track = track,
-                            trackIndex = index,
-                            trackCount = tracks.size,
-                            selectedClipId = selectedClipId,
-                            onClipSelect = onClipSelect,
-                            onBeginTimelineGesture = onBeginTimelineGesture,
-                            onEndTimelineGesture = onEndTimelineGesture,
-                            onMoveClip = onMoveClip,
-                            onResizeClip = onResizeClip,
-                            onReorderTrack = onReorderTrack,
-                            visibleFromMs = visibleFromMs,
-                            visibleToMs = visibleToMs
+                    .width(contentWidth)
+                    .offset {
+                        IntOffset(
+                            x = ((centerLineX.value - currentPlayheadMs * TIMELINE_PX_PER_MS) * dpToPx).roundToInt(),
+                            y = 0
                         )
-                    }
-                    AddMediaRow(
-                        endMs = tracks.maxOfOrNull { it.clips.firstOrNull()?.endMs ?: 0L } ?: 0L,
-                        onAddMediaClick = onAddMediaClick
-                    )
-                }
-            }
-
-            // Fixed layer controls, like the marked controls in the reference: eye + layer icon +
-            // name + lock/drag handle. It shares the exact same vertical scroll state as the timeline.
-            LayerControlColumn(
-                tracks = tracks,
-                selectedClipId = selectedClipId,
-                scrollState = verticalScrollState,
-                onClipSelect = onClipSelect,
-                onToggleVisibility = onToggleVisibility,
-                onToggleLock = onToggleLock,
-                onBeginTimelineGesture = onBeginTimelineGesture,
-                onEndTimelineGesture = onEndTimelineGesture,
-                onReorderTrack = onReorderTrack
-            )
-
-            // Center-locked playhead.
-            Canvas(
-                modifier = Modifier
-                    .width(2.dp)
-                    .fillMaxHeight()
-                    .offset(x = centerLineX - 1.dp)
-            ) {
-                drawLine(
-                    color = PlayheadColor,
-                    start = Offset(1.dp.toPx(), 0f),
-                    end = Offset(1.dp.toPx(), size.height),
-                    strokeWidth = 2.dp.toPx()
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .offset(x = (centerLineX - 54.dp).coerceAtLeast(132.dp), y = 8.dp)
-                    .size(44.dp)
-                    .background(EditorBackground.copy(alpha = 0.75f), CircleShape)
-                    .bouncyClickable(onClick = onToggleMasterAudio),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isMasterMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = "Master Audio",
-                    tint = IconActive,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
-
-            if (selectedClipId != null) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(start = 132.dp, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    QuickTimelineButton(Icons.Default.SmartButton, NeonCyan, onSplitClip)
-                    QuickTimelineButton(Icons.Default.ContentCopy, IconActive, onDuplicateClip)
-                    QuickTimelineButton(Icons.Default.Delete, Color(0xFFFF5252), onDeleteClip, destructive = true)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun QuickTimelineButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    tint: Color,
-    onClick: () -> Unit,
-    destructive: Boolean = false
-) {
-    Box(
-        modifier = Modifier
-            .size(34.dp)
-            .background(
-                if (destructive) Color(0xFF3B1818).copy(alpha = 0.9f) else EditorSurface.copy(alpha = 0.9f),
-                CircleShape
-            )
-            .bouncyClickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
-    }
-}
-
-@Composable
-private fun LayerControlColumn(
-    tracks: List<TimelineTrack>,
-    selectedClipId: String?,
-    scrollState: androidx.compose.foundation.ScrollState,
-    onClipSelect: (String) -> Unit,
-    onToggleVisibility: (Int) -> Unit,
-    onToggleLock: (Int) -> Unit,
-    onBeginTimelineGesture: () -> Unit,
-    onEndTimelineGesture: () -> Unit,
-    onReorderTrack: (Int, Int) -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .width(LAYER_CONTROL_WIDTH)
-            .fillMaxHeight()
-            .background(EditorBackground.copy(alpha = 0.96f))
-            .verticalScroll(scrollState)
-            .padding(vertical = 4.dp)
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(LAYER_ROW_GAP)) {
-            tracks.forEachIndexed { index, track ->
-                val clip = track.clips.firstOrNull() ?: return@forEachIndexed
-                var dragY by remember(track.id) { mutableFloatStateOf(0f) }
-                val density = LocalDensity.current
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(LAYER_ROW_HEIGHT)
-                        .graphicsLayer { translationY = dragY }
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(if (clip.id == selectedClipId) Color(0xFF242B38) else Color(0xFF151A24))
-                        .border(1.dp, Color(0xFF262D3A), RoundedCornerShape(7.dp))
-                        .pointerInput(track.id, index) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    dragY = 0f
-                                    onClipSelect(clip.id)
-                                    onBeginTimelineGesture()
-                                },
-                                onDrag = { change, amount ->
-                                    change.consume()
-                                    dragY += amount.y
-                                },
-                                onDragEnd = {
-                                    val rowStepPx = with(density) { (LAYER_ROW_HEIGHT + LAYER_ROW_GAP).toPx() }
-                                    val target = (index + (dragY / rowStepPx).roundToInt()).coerceIn(0, tracks.lastIndex)
-                                    dragY = 0f
-                                    onReorderTrack(index, target)
-                                    onEndTimelineGesture()
-                                },
-                                onDragCancel = {
-                                    dragY = 0f
-                                    onEndTimelineGesture()
-                                }
-                            )
-                        }
-                        .bouncyClickable { onClipSelect(clip.id) },
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .padding(start = 4.dp)
-                            .size(30.dp)
-                            .bouncyClickable { onToggleVisibility(index) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (track.isVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = if (track.isVisible) "Hide layer" else "Show layer",
-                            tint = if (track.isVisible) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.35f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    LayerThumb(
-                        clip = clip,
-                        modifier = Modifier
-                            .padding(start = 38.dp)
-                            .size(30.dp)
-                    )
-
-                    Text(
-                        text = clip.name,
-                        color = Color.White.copy(alpha = 0.82f),
-                        fontSize = 9.sp,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .padding(start = 72.dp)
-                            .width(30.dp)
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .padding(end = 28.dp)
-                            .size(22.dp)
-                            .bouncyClickable { onToggleLock(index) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (track.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = if (track.isLocked) "Unlock layer" else "Lock layer",
-                            tint = if (track.isLocked) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.28f),
-                            modifier = Modifier.size(13.dp)
-                        )
-                    }
-
-                    Icon(
-                        imageVector = Icons.Default.DragIndicator,
-                        contentDescription = "Drag layer",
-                        tint = Color.White.copy(alpha = 0.25f),
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .padding(end = 4.dp)
-                            .size(18.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(40.dp))
-        }
-    }
-}
-
-@Composable
-private fun LayerThumb(clip: TimelineClip, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val loader = remember(context) { ThumbLoader.get(context) }
-    val background = Color(clip.color)
-    when {
-        clip.type == LayerType.VIDEO && clip.uri != null -> {
-            val request = ImageRequest.Builder(context)
-                .data(clip.uri)
-                .size(60, 60)
-                .memoryCacheKey("layer-thumb-${clip.uri}")
-                .apply { if (!clip.isImage) videoFrameMillis(0) }
-                .build()
-            AsyncImage(
-                model = request,
-                imageLoader = loader,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = modifier.clip(RoundedCornerShape(5.dp))
-            )
-        }
-        else -> {
-            Box(
-                modifier = modifier
-                    .clip(RoundedCornerShape(5.dp))
-                    .background(background),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = when (clip.type) {
-                        LayerType.TEXT -> "T"
-                        LayerType.SHAPE -> "◆"
-                        LayerType.AUDIO -> "♫"
-                        LayerType.OVERLAY -> "◉"
-                        LayerType.STICKER -> "★"
-                        LayerType.VIDEO -> "▶"
                     },
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // One row per lane, top lane first. Any number of lanes; they only exist while
+                // they hold layers, and layers that overlap in time are on different lanes.
+                tracks.forEach { track ->
+                    TimelineTrackRow(
+                        track = track,
+                        selectedClipId = selectedClipId,
+                        onClipSelect = onClipSelect,
+                        visibleFromMs = visibleFromMs,
+                        visibleToMs = visibleToMs
+                    )
+                }
+
+                // Import button: right after the last media clip (or at the start when there is
+                // none). It has its own row so it never covers another layer.
+                val mediaEndMs = tracks.maxOfOrNull { t ->
+                    t.clips.filter { it.type == LayerType.VIDEO }.maxOfOrNull { it.endMs } ?: 0L
+                } ?: 0L
+                AddMediaRow(endMs = mediaEndMs, onAddMediaClick = onAddMediaClick)
+            }
+        }
+
+        // 2. Left side Speaker icon with spring click animation
+        Box(
+            modifier = Modifier
+                .offset(x = (centerLineX - 54.dp).coerceAtLeast(8.dp), y = 8.dp)
+                .size(44.dp)
+                .background(EditorBackground.copy(alpha = 0.75f), CircleShape)
+                .bouncyClickable(onClick = onToggleMasterAudio),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (isMasterMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = "Master Audio",
+                tint = IconActive,
+                modifier = Modifier.size(26.dp)
+            )
+        }
+
+        // 3. Quick action buttons on the left with spring click animation
+        if (selectedClipId != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(EditorSurface.copy(alpha = 0.9f), CircleShape)
+                            .bouncyClickable(onClick = onSplitClip),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SmartButton,
+                            contentDescription = "Split Clip",
+                            tint = NeonCyan,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(EditorSurface.copy(alpha = 0.9f), CircleShape)
+                            .bouncyClickable(onClick = onDuplicateClip),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Duplicate Clip",
+                            tint = IconActive,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(Color(0xFF3B1818).copy(alpha = 0.9f), CircleShape)
+                            .bouncyClickable(onClick = onDeleteClip),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete Clip",
+                            tint = Color(0xFFFF5252),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. VERTICAL LOCKED PLAYHEAD LINE ("খারাভাবে middle এ locked timeline")
+        Canvas(
+            modifier = Modifier
+                .width(2.dp)
+                .fillMaxHeight()
+                .offset(x = centerLineX - 1.dp)
+        ) {
+            drawLine(
+                color = PlayheadColor,
+                start = Offset(1.dp.toPx(), 0f),
+                end = Offset(1.dp.toPx(), size.height),
+                strokeWidth = 2.dp.toPx()
+            )
+        }
+    }
+}
+
+@Composable
+fun TimelineTrackRow(
+    track: TimelineTrack,
+    selectedClipId: String?,
+    onClipSelect: (String?) -> Unit,
+    visibleFromMs: Long = Long.MIN_VALUE / 4,
+    visibleToMs: Long = Long.MAX_VALUE / 4
+) {
+    // A lane is as tall as its tallest layer (media is the tallest, audio the shortest).
+    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 36.dp
+
+    Box(
+        modifier = Modifier
+            .height(trackHeight)
+            .fillMaxWidth()
+            .background(Color(0xFF13161F).copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        track.clips.forEach { clip ->
+            val clipOffset = (clip.startMs * TIMELINE_PX_PER_MS).dp
+            val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(36.dp)
+            val isSelected = clip.id == selectedClipId
+
+            Box(modifier = Modifier.offset(x = clipOffset)) {
+                TimelineClipItem(
+                    clip = clip,
+                    width = clipWidth,
+                    isSelected = isSelected,
+                    onClick = { onClipSelect(clip.id) },
+                    visibleFromMs = visibleFromMs,
+                    visibleToMs = visibleToMs
                 )
             }
         }
     }
+}
+
+private fun laneHeightFor(type: LayerType): Dp = when (type) {
+    LayerType.VIDEO -> 44.dp
+    LayerType.AUDIO -> 32.dp
+    LayerType.SHAPE -> 40.dp
+    LayerType.OVERLAY, LayerType.TEXT -> 42.dp
+    else -> 36.dp
 }
 
 @Composable
 private fun AddMediaRow(endMs: Long, onAddMediaClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .height(40.dp)
+            .height(36.dp)
             .fillMaxWidth(),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -515,71 +400,18 @@ private fun AddMediaRow(endMs: Long, onAddMediaClick: () -> Unit) {
                 .size(36.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF2A3042))
-                .bouncyClickable(pressedScale = 0.88f, hoverScale = 1.08f, onClick = onAddMediaClick),
+                .bouncyClickable(
+                    pressedScale = 0.88f,
+                    hoverScale = 1.08f,
+                    onClick = onAddMediaClick
+                ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Add, contentDescription = "Add media", tint = IconActive, modifier = Modifier.size(22.dp))
-        }
-    }
-}
-
-@Composable
-private fun TimelineTrackRow(
-    track: TimelineTrack,
-    trackIndex: Int,
-    trackCount: Int,
-    selectedClipId: String?,
-    onClipSelect: (String) -> Unit,
-    onBeginTimelineGesture: () -> Unit,
-    onEndTimelineGesture: () -> Unit,
-    onMoveClip: (String, Long) -> Unit,
-    onResizeClip: (String, Boolean, Long) -> Unit,
-    onReorderTrack: (Int, Int) -> Unit,
-    visibleFromMs: Long,
-    visibleToMs: Long
-) {
-    val clip = track.clips.firstOrNull() ?: return
-    val density = LocalDensity.current
-    val isSelected = clip.id == selectedClipId
-    var dragY by remember(clip.id) { mutableFloatStateOf(0f) }
-
-    Box(
-        modifier = Modifier
-            .height(LAYER_ROW_HEIGHT)
-            .fillMaxWidth(),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Box(
-            modifier = Modifier
-                .offset(x = (clip.startMs * TIMELINE_PX_PER_MS).dp)
-                .graphicsLayer {
-                    translationY = dragY
-                    alpha = if (track.isVisible) 1f else 0.45f
-                }
-        ) {
-            TimelineClipItem(
-                clip = clip,
-                width = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(44.dp),
-                isSelected = isSelected,
-                isLocked = track.isLocked,
-                onClick = { onClipSelect(clip.id) },
-                onBeginTimelineGesture = onBeginTimelineGesture,
-                onEndTimelineGesture = onEndTimelineGesture,
-                onMove = { deltaMs ->
-                    onMoveClip(clip.id, clip.startMs + deltaMs)
-                },
-                onResize = { left, edgeMs ->
-                    onResizeClip(clip.id, left, edgeMs)
-                },
-                onVerticalDrag = { deltaY -> dragY += deltaY },
-                onVerticalDragEnd = {
-                    val rowStepPx = with(density) { (LAYER_ROW_HEIGHT + LAYER_ROW_GAP).toPx() }
-                    val target = (trackIndex + (dragY / rowStepPx).roundToInt()).coerceIn(0, trackCount - 1)
-                    dragY = 0f
-                    onReorderTrack(trackIndex, target)
-                },
-                visibleFromMs = visibleFromMs,
-                visibleToMs = visibleToMs
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add media",
+                tint = IconActive,
+                modifier = Modifier.size(22.dp)
             )
         }
     }
@@ -590,73 +422,41 @@ fun TimelineClipItem(
     clip: TimelineClip,
     width: Dp,
     isSelected: Boolean,
-    isLocked: Boolean,
     onClick: () -> Unit,
-    onBeginTimelineGesture: () -> Unit,
-    onEndTimelineGesture: () -> Unit,
-    onMove: (Long) -> Unit,
-    onResize: (Boolean, Long) -> Unit,
-    onVerticalDrag: (Float) -> Unit,
-    onVerticalDragEnd: () -> Unit,
-    visibleFromMs: Long,
-    visibleToMs: Long
+    visibleFromMs: Long = Long.MIN_VALUE / 4,
+    visibleToMs: Long = Long.MAX_VALUE / 4
 ) {
-    val density = LocalDensity.current
     val selectScale by animateFloatAsState(
-        targetValue = if (isSelected) 1.02f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+        targetValue = if (isSelected) 1.03f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
         label = "clipSelectScale"
     )
+
     val borderModifier = if (isSelected) {
         Modifier.border(2.dp, SelectedClipBorder, RoundedCornerShape(6.dp))
     } else {
         Modifier.border(1.dp, Color(0xFF2C3240), RoundedCornerShape(6.dp))
     }
-    var totalDragY by remember(clip.id) { mutableFloatStateOf(0f) }
 
     Box(
         modifier = Modifier
             .width(width)
-            .height(LAYER_ROW_HEIGHT - 6.dp)
-            .graphicsLayer { scaleX = selectScale; scaleY = selectScale }
+            .fillMaxHeight()
+            .graphicsLayer {
+                scaleX = selectScale
+                scaleY = selectScale
+            }
             .clip(RoundedCornerShape(6.dp))
             .then(borderModifier)
-            .pointerInput(clip.id, isLocked, width) {
-                detectDragGestures(
-                    onDragStart = {
-                        if (!isLocked) {
-                            totalDragY = 0f
-                            onBeginTimelineGesture()
-                            onClick()
-                        }
-                    },
-                    onDrag = { change, amount ->
-                        if (isLocked) return@detectDragGestures
-                        change.consume()
-                        val deltaMs = (amount.x / density.density / TIMELINE_PX_PER_MS).roundToLong()
-                        if (deltaMs != 0L) onMove(deltaMs)
-                        totalDragY += amount.y
-                        onVerticalDrag(amount.y)
-                    },
-                    onDragEnd = {
-                        if (!isLocked) {
-                            onVerticalDragEnd()
-                            onEndTimelineGesture()
-                        }
-                        totalDragY = 0f
-                    },
-                    onDragCancel = {
-                        if (!isLocked) onEndTimelineGesture()
-                        totalDragY = 0f
-                    }
-                )
-            }
-            .bouncyClickable(enabled = !isLocked, onClick = onClick),
-        contentAlignment = Alignment.Center
+            .bouncyClickable(pressedScale = 0.95f, onClick = onClick)
     ) {
         when (clip.type) {
             LayerType.VIDEO -> {
                 if (clip.uri != null) {
+                    // Real frames taken from the clip itself, spread over its full width.
                     VideoFrameStrip(
                         clip = clip,
                         widthDp = width,
@@ -664,56 +464,131 @@ fun TimelineClipItem(
                         visibleToMs = visibleToMs
                     )
                 } else {
-                    Row(Modifier.fillMaxSize()) {
+                    // Demo clip without media: keep the old placeholder tiles.
+                    Row(modifier = Modifier.fillMaxSize()) {
                         val tileRes = when {
                             clip.name.contains("Yellow") || clip.name.contains("Vlog") -> R.drawable.sample_portrait_1791121452621
                             clip.name.contains("Canopy") || clip.name.contains("Trees") -> R.drawable.sample_nature_1791121466670
                             else -> R.drawable.sample_portrait_1791121452621
                         }
-                        repeat(((width.value / 38).toInt()).coerceAtLeast(1)) {
+                        val frameCount = ((width.value / 38).toInt()).coerceAtLeast(1)
+                        for (i in 0 until frameCount) {
                             Image(
                                 painter = painterResource(id = tileRes),
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.weight(1f).fillMaxHeight()
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .border(0.5.dp, Color.Black.copy(alpha = 0.3f))
                             )
                         }
                     }
                 }
             }
+
             LayerType.AUDIO -> {
-                Row(
-                    modifier = Modifier.fillMaxSize().background(Color(0xFF1E232A)).padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF1E232A))
                 ) {
-                    Icon(Icons.Default.Mic, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(14.dp))
-                    repeat(14) { Box(Modifier.width(13.dp).height(4.dp).background(Color(0xFF4B5563), RoundedCornerShape(2.dp))) }
-                }
-            }
-            LayerType.SHAPE -> {
-                Box(Modifier.fillMaxSize().background(Color(0xFF0F2537))) {
-                    Canvas(Modifier.fillMaxSize()) {
-                        val dotSpacing = 8.dp.toPx()
-                        val cols = (size.width / dotSpacing).toInt()
-                        val rows = (size.height / dotSpacing).toInt()
-                        for (r in 1 until rows) for (c in 1 until cols) {
-                            drawCircle(NeonCyan, 1.6.dp.toPx(), Offset(c * dotSpacing, r * dotSpacing))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .background(NeonGreen.copy(alpha = 0.25f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Mic",
+                                tint = NeonGreen,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+
+                        repeat(15) {
+                            Box(
+                                modifier = Modifier
+                                    .width(16.dp)
+                                    .height(4.dp)
+                                    .background(Color(0xFF4B5563), RoundedCornerShape(2.dp))
+                            )
                         }
                     }
                 }
             }
-            LayerType.OVERLAY -> {
-                Box(Modifier.fillMaxSize().background(Color(0xFF2A1C2C)), contentAlignment = Alignment.CenterStart) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(start = 6.dp)) {
-                        Image(painter = painterResource(R.drawable.sample_cyan_dots_1791121437975), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(34.dp))
-                        Image(painter = painterResource(R.drawable.sample_portrait_1791121452621), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(34.dp))
+
+            LayerType.SHAPE -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF0F2537))
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val dotSpacing = 8.dp.toPx()
+                        val cols = (size.width / dotSpacing).toInt()
+                        val rows = (size.height / dotSpacing).toInt()
+                        for (r in 1 until rows) {
+                            for (c in 1 until cols) {
+                                drawCircle(
+                                    color = NeonCyan,
+                                    radius = 1.6.dp.toPx(),
+                                    center = Offset(c * dotSpacing, r * dotSpacing)
+                                )
+                            }
+                        }
                     }
                 }
             }
+
+            LayerType.OVERLAY -> {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF2A1C2C))
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.sample_cyan_dots_1791121437975),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Image(
+                        painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                    )
+                }
+            }
+
             else -> {
-                Box(Modifier.fillMaxSize().background(Color(clip.color)), contentAlignment = Alignment.CenterStart) {
-                    Text(clip.name, color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(clip.color)),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Text(
+                        text = clip.name,
+                        color = TextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
                 }
             }
         }
@@ -724,79 +599,53 @@ fun TimelineClipItem(
             fontSize = 9.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
-            modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 4.dp, vertical = 1.dp)
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .background(Color.Black.copy(alpha = 0.5f))
+                .padding(horizontal = 4.dp, vertical = 1.dp)
         )
 
+        // Selected clip duration badge & keyframe diamond (matching screenshot)
         if (isSelected) {
-            // Duration badge.
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .height(26.dp)
-                    .clip(RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp))
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 4.dp, bottomEnd = 4.dp))
                     .background(Color.White)
                     .padding(horizontal = 4.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(String.format(java.util.Locale.US, "%.1fs", clip.durationMs / 1000f), color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = String.format(java.util.Locale.US, "%.1fs", clip.durationMs / 1000f),
+                    color = Color.Black,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
 
-            // Left/right trim handles: drag both sides to shorten/extend.
-            ResizeHandle(
-                isLeft = true,
-                modifier = Modifier.align(Alignment.CenterStart),
-                onBegin = onBeginTimelineGesture,
-                onDragDelta = { deltaPx ->
-                    val edge = clip.startMs + (deltaPx / density.density / TIMELINE_PX_PER_MS).roundToLong()
-                    onResize(true, edge)
-                },
-                onEnd = onEndTimelineGesture
-            )
-            ResizeHandle(
-                isLeft = false,
-                modifier = Modifier.align(Alignment.CenterEnd),
-                onBegin = onBeginTimelineGesture,
-                onDragDelta = { deltaPx ->
-                    val edge = clip.endMs + (deltaPx / density.density / TIMELINE_PX_PER_MS).roundToLong()
-                    onResize(false, edge)
-                },
-                onEnd = onEndTimelineGesture
-            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp)
+                    .size(20.dp)
+                    .graphicsLayer { rotationZ = 45f }
+                    .background(Color(0xFF374151).copy(alpha = 0.85f), RoundedCornerShape(2.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(12.dp)
+                        .graphicsLayer { rotationZ = -45f }
+                )
+            }
         }
     }
 }
 
-@Composable
-private fun ResizeHandle(
-    isLeft: Boolean,
-    modifier: Modifier,
-    onBegin: () -> Unit,
-    onDragDelta: (Float) -> Unit,
-    onEnd: () -> Unit
-) {
-    Box(
-        modifier = modifier
-            .width(11.dp)
-            .fillMaxHeight()
-            .background(Color.White.copy(alpha = 0.12f))
-            .pointerInput(isLeft) {
-                detectHorizontalDragGestures(
-                    onDragStart = { onBegin() },
-                    onHorizontalDrag = { change, delta -> change.consume(); onDragDelta(delta) },
-                    onDragEnd = onEnd,
-                    onDragCancel = onEnd
-                )
-            }
-    ) {
-        Box(
-            modifier = Modifier
-                .align(if (isLeft) Alignment.CenterStart else Alignment.CenterEnd)
-                .width(2.dp)
-                .fillMaxHeight(0.55f)
-                .background(Color.White.copy(alpha = 0.9f), RoundedCornerShape(2.dp))
-        )
-    }
-}
 
 /** Higher = shorter glide after a swipe. 0.55 glides ~2x further than the Android default. */
 private const val FLING_FRICTION = 0.55f

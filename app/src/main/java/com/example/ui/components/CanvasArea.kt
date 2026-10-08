@@ -119,7 +119,6 @@ fun CanvasArea(
                 contentAlignment = Alignment.Center
             ) {
                 val activeVideoClip = tracks
-                    .filter { it.isVisible }
                     .flatMap { it.clips }
                     .find { it.type == LayerType.VIDEO && it.isActiveAt(currentPlayheadMs) }
                 val clipScale = (activeVideoClip?.scalePercent ?: 100f) / 100f
@@ -159,7 +158,7 @@ fun CanvasArea(
                         },
                         update = { it.player = player }
                     )
-                } else if (tracks.filter { it.isVisible }.flatMap { it.clips }.none { it.isActiveAt(currentPlayheadMs) }) {
+                } else if (tracks.flatMap { it.clips }.none { it.isActiveAt(currentPlayheadMs) }) {
                     // Clean Alight Motion style canvas with subtle center indicator
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -177,7 +176,6 @@ fun CanvasArea(
                 // Render dynamic text or sticker overlays if active at current playhead
                 // Lane order = stacking order: the bottom lane is drawn first, the top lane last.
                 val activeOverlayClips = tracks
-                    .filter { it.isVisible }
                     .asReversed()
                     .flatMap { it.clips }
                     .filter { (it.type == LayerType.SHAPE || it.text != null) && it.isActiveAt(currentPlayheadMs) }

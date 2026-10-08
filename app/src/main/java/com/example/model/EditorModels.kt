@@ -97,7 +97,6 @@ data class TimelineTrack(
     val name: String,
     val isMuted: Boolean = false,
     val isLocked: Boolean = false,
-    val isVisible: Boolean = true,
     val clips: List<TimelineClip> = emptyList()
 )
 

@@ -328,14 +328,7 @@ fun TransformLayerStrip(
                             clip = clip,
                             width = clipWidthDp,
                             isSelected = false,
-                            isLocked = false,
                             onClick = {},
-                            onBeginTimelineGesture = {},
-                            onEndTimelineGesture = {},
-                            onMove = {},
-                            onResize = { _, _ -> },
-                            onVerticalDrag = {},
-                            onVerticalDragEnd = {},
                             visibleFromMs = visibleFromMs,
                             visibleToMs = visibleToMs
                         )

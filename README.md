@@ -12,7 +12,14 @@ The timeline is a list of lanes (lines). There is no fixed media/text/shape row 
 the number of lanes. A new layer goes into the lowest lane that is free for its whole time range;
 if every lane is busy there, a new lane is created on top. Layers can sit side by side in one lane
 but never on top of each other. Lanes disappear when they become empty. The top lane is drawn on top.
-Preview/export still play media clips back to back (single video pipeline). Text, overlay,
+Text layers (v0.1.11): the Text button adds a text layer at the playhead and opens "Text edit"
+(same panel layout as Transform: live canvas in the middle). Tabs: Fonts (system + Google Fonts that are
+downloaded once and cached, search, "Add font" for your own .ttf/.otf), Style (presets, color, weight,
+italic/underline/strike), Stroke, Shadow, Background, Spacing (letter/line spacing, alignment).
+The color eyedropper reads a pixel from the canvas. Re-open it with the Edit tool or by double-tapping
+the text on the canvas. Text is shown in the editor preview; like shapes it is not rendered into the
+exported video yet.
+Preview/export still play media clips back to back (single video pipeline). Overlay,
 sticker, audio, crop, effects, animations and
 blend are visible in the UI but disabled ("Coming in a later version").
 

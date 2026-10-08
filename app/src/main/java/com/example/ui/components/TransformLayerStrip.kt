@@ -92,7 +92,8 @@ import kotlin.math.sin
 fun TransformHeaderBar(
     height: Dp,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    title: String = "Transform"
 ) {
     Box(
         modifier = modifier
@@ -123,7 +124,7 @@ fun TransformHeaderBar(
             )
         }
         Text(
-            text = "Transform",
+            text = title,
             color = TextPrimary,
             fontSize = 17.sp,
             fontWeight = FontWeight.Bold,

@@ -256,4 +256,40 @@ class VideoEditorViewModelTest {
         assertEquals(10_000L, clips[2].startMs)
         assertEquals(15_000L, viewModel.totalDurationMs.value)
     }
+
+    @Test
+    fun testAddTextLayerCreatesSelectedEmptyTextLayer() {
+        val id = viewModel.addTextLayer()
+        val clip = clipsOf(LayerType.TEXT).single()
+        assertEquals(id, clip.id)
+        assertEquals(id, viewModel.selectedClipId.value)
+        assertEquals("", clip.text)
+        assertEquals(4_000L, clip.durationMs)
+    }
+
+    @Test
+    fun testUpdateClipChangesTextStyleLive() {
+        val id = viewModel.addTextLayer()
+        viewModel.updateClip(id) {
+            it.copy(text = "Hello", fontFamily = "Lobster", fontWeight = 700, textStrokeThickness = 40f)
+        }
+        val clip = clipsOf(LayerType.TEXT).single()
+        assertEquals("Hello", clip.text)
+        assertEquals("Lobster", clip.fontFamily)
+        assertEquals(700, clip.fontWeight)
+        assertEquals(40f, clip.textStrokeThickness, 0.001f)
+    }
+
+    @Test
+    fun testTextEditSessionUndoesAsOneStep() {
+        val id = viewModel.addTextLayer()
+        viewModel.beginTextEdit()
+        viewModel.updateClip(id) { it.copy(text = "a") }
+        viewModel.updateClip(id) { it.copy(text = "ab") }
+        viewModel.updateClip(id) { it.copy(fontWeight = 900) }
+        viewModel.undo()
+        val clip = clipsOf(LayerType.TEXT).single()
+        assertEquals("", clip.text)
+        assertEquals(600, clip.fontWeight)
+    }
 }

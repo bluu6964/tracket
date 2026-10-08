@@ -81,6 +81,8 @@ fun CanvasArea(
     player: Player? = null,
     hasMainMedia: Boolean = false,
     onUpdateClipTransform: (clipId: String, offsetX: Float, offsetY: Float) -> Unit = { _, _, _ -> },
+    onClipSelect: (clipId: String) -> Unit = {},
+    onTextDoubleTap: (clipId: String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -182,59 +184,15 @@ fun CanvasArea(
 
                 activeOverlayClips.forEach { clip ->
                   if (clip.type != LayerType.SHAPE) {
-                    val effectiveTransX = clip.transformX
-                    val effectiveTransY = clip.transformY
-                    val effectiveScale = clip.scalePercent / 100f
-                    val isSelected = clip.id == selectedClipId
-
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .graphicsLayer {
-                                translationX = effectiveTransX
-                                translationY = effectiveTransY
-                                scaleX = effectiveScale.coerceAtLeast(0.1f)
-                                scaleY = effectiveScale.coerceAtLeast(0.1f)
-                                rotationZ = clip.rotationDeg
-                                rotationX = clip.rotation3dX
-                                rotationY = clip.rotation3dY
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(clip.pivotX, clip.pivotY)
-                                cameraDistance = 12f * density
-                            }
-                            .pointerInput(clip.id) {
-                                var currentDragX = effectiveTransX
-                                var currentDragY = effectiveTransY
-                                detectDragGestures(
-                                    onDragStart = {
-                                        currentDragX = effectiveTransX
-                                        currentDragY = effectiveTransY
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        currentDragX += dragAmount.x
-                                        currentDragY += dragAmount.y
-                                        onUpdateClipTransform(
-                                            clip.id,
-                                            currentDragX,
-                                            currentDragY
-                                        )
-                                    }
-                                )
-                            }
-                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                            .then(
-                                if (isSelected) Modifier.border(1.5.dp, Color(0xFF00E676), RoundedCornerShape(4.dp))
-                                else Modifier
-                            )
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = clip.text ?: "",
-                            color = Color(clip.textColor),
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    TextLayerOnCanvas(
+                        clip = clip,
+                        frameWidth = frameW,
+                        isSelected = clip.id == selectedClipId,
+                        onMove = onUpdateClipTransform,
+                        onTap = onClipSelect,
+                        onDoubleTap = onTextDoubleTap,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
                   } else {
                     val rawColor = if (clip.textColor != 0L) clip.textColor else clip.color
                     val a = ((rawColor shr 24) and 0xFF).toInt()

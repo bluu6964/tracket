@@ -18,6 +18,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.example.ui.components.TextEditSheet
+import com.example.ui.components.pickColorFromWindow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -177,9 +192,16 @@ fun VideoEditorScreen(
     var showClipCropSheet by remember { mutableStateOf(false) }
     var showAppliedEffectsMode by remember { mutableStateOf(false) }
     var showTransformMode by remember { mutableStateOf(false) }
+    // Text edit: id of the text layer that is being edited (null = closed).
+    var editingTextId by remember { mutableStateOf<String?>(null) }
+    // Eyedropper: while set, a tap on the canvas picks a color and passes it to this callback.
+    var eyedropperCallback by remember { mutableStateOf<((Long) -> Unit)?>(null) }
 
     // System back / gesture back closes Transform first instead of leaving the editor.
     BackHandler(enabled = showTransformMode) { showTransformMode = false }
+    BackHandler(enabled = editingTextId != null) {
+        if (eyedropperCallback != null) eyedropperCallback = null else editingTextId = null
+    }
 
     Scaffold(
         modifier = modifier
@@ -233,7 +255,13 @@ fun VideoEditorScreen(
                     onTogglePlayPause = { viewModel.togglePlayPause() },
                     player = editorPlayer.player,
                     hasMainMedia = mediaClips.isNotEmpty(),
-                    onUpdateClipTransform = { id, x, y -> viewModel.updateClipTransform(id, x, y) }
+                    onUpdateClipTransform = { id, x, y -> viewModel.updateClipTransform(id, x, y) },
+                    onClipSelect = { viewModel.selectClip(it) },
+                    onTextDoubleTap = { id ->
+                        viewModel.selectClip(id)
+                        viewModel.beginTextEdit()
+                        editingTextId = id
+                    }
                 )
 
                 // 3. Play & Full Screen Section (1/18 of screen)
@@ -342,17 +370,108 @@ fun VideoEditorScreen(
                             onFlipVertical = {
                                 viewModel.flipVerticalSelectedClip()
                                 scope.launch { snackbarHostState.showSnackbar("Flipped vertically") }
-                            }
+                            },
+                            onEditText = if (tracks.flatMap { it.clips }
+                                    .any { it.id == targetClipId && it.type == LayerType.TEXT }
+                            ) {
+                                {
+                                    viewModel.beginTextEdit()
+                                    editingTextId = targetClipId
+                                }
+                            } else null
                         )
                     } else {
                         BottomToolbar(
                             height = toolbarH,
                             onAudioClick = comingSoon,
-                            onTextClick = comingSoon,
+                            onTextClick = {
+                                // New text layer at the playhead, opened straight in Text edit.
+                                val remaining = totalDurationMs - currentPlayheadMs
+                                val id = viewModel.addTextLayer(
+                                    if (totalDurationMs > 0L && remaining >= 1000L) minOf(4000L, remaining) else 4000L
+                                )
+                                if (id.isNotEmpty()) editingTextId = id
+                            },
                             onShapeClick = { showAddShapeSheet = true },
                             onTransformClick = comingSoon,
                             onOverlayClick = comingSoon,
                             onStickersClick = comingSoon
+                        )
+                    }
+                }
+            }
+
+            // ---- Text edit -------------------------------------------------------------------
+            // Same idea as Transform: the real canvas in the middle stays visible (it shows every
+            // change live), the header becomes "Text edit" and the lower area becomes the editor.
+            val editingText = editingTextId?.let { id -> tracks.flatMap { it.clips }.find { it.id == id } }
+            LaunchedEffect(editingText == null, editingTextId) {
+                if (editingText == null && editingTextId != null) editingTextId = null
+            }
+            if (editingText != null) {
+                com.example.ui.components.TransformHeaderBar(
+                    height = headerH,
+                    onBack = {
+                        eyedropperCallback = null
+                        editingTextId = null
+                    },
+                    title = "Text edit",
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .zIndex(31f)
+                )
+
+                TextEditSheet(
+                    clip = editingText,
+                    onUpdate = { change -> viewModel.updateClip(editingText.id, change) },
+                    onEyedropper = { cb -> eyedropperCallback = cb },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .zIndex(30f),
+                    fullHeight = totalHeight - headerH - canvasH
+                )
+                // The layer can disappear while editing (undo / delete): close the editor then.
+
+                // Eyedropper: a tap on the canvas reads the pixel under the finger.
+                val picker = eyedropperCallback
+                if (picker != null) {
+                    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(y = headerH)
+                            .fillMaxWidth()
+                            .height(canvasH)
+                            .zIndex(32f)
+                            .onGloballyPositioned { origin = it.positionInWindow() }
+                            .pointerInput(picker) {
+                                detectTapGestures { tap ->
+                                    pickColorFromWindow(
+                                        context,
+                                        (origin.x + tap.x).toInt(),
+                                        (origin.y + tap.y).toInt()
+                                    ) { color ->
+                                        if (color != null) picker(color)
+                                        else scope.launch {
+                                            snackbarHostState.showSnackbar("Could not read that color")
+                                        }
+                                        eyedropperCallback = null
+                                    }
+                                }
+                            }
+                    ) {
+                        Text(
+                            "Tap the canvas to pick a color",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 10.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
                 }

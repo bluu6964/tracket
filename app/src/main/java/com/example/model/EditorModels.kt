@@ -36,6 +36,32 @@ data class TimelineClip(
     val drawableResId: Int? = null,
     val text: String? = null,
     val textColor: Long = 0xFFFFFFFF,
+    // ---- Text layer styling (only used by LayerType.TEXT) ----
+    val fontFamily: String = "Roboto",
+    val fontWeight: Int = 600,
+    val isItalic: Boolean = false,
+    val isUnderline: Boolean = false,
+    val isStrikethrough: Boolean = false,
+    /** 0 = left, 1 = center, 2 = right */
+    val textAlign: Int = 1,
+    /** Letter spacing, -10..40 (percent of the font size). */
+    val letterSpacing: Float = 0f,
+    /** Line height, 80..200 (percent). */
+    val lineHeightPercent: Float = 120f,
+    /** Text outline thickness, 0..100 (0 = no outline). */
+    val textStrokeThickness: Float = 0f,
+    val textStrokeColor: Long = 0xFF000000,
+    /** Shadow: opacity 0 turns it off. All values 0..100 except angle (0..360). */
+    val shadowOpacity: Float = 60f,
+    val shadowBlur: Float = 30f,
+    val shadowDistance: Float = 10f,
+    val shadowAngle: Float = 45f,
+    val shadowColor: Long = 0xFF000000,
+    /** Background box behind the text: opacity 0 turns it off. */
+    val bgOpacity: Float = 0f,
+    val bgColor: Long = 0xFF000000,
+    val bgCorner: Float = 20f,
+    val bgPadding: Float = 30f,
     val shapePattern: String? = null,
     val shapeOffsetX: Float = 0f,
     val shapeOffsetY: Float = 0f,

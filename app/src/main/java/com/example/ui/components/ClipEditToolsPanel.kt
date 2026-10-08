@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.Layers
@@ -72,9 +73,12 @@ fun ClipEditToolsPanel(
     onBlend: () -> Unit,
     onFlipHorizontal: () -> Unit,
     onFlipVertical: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Only set for text layers: adds an "Edit" tool that opens Text edit. */
+    onEditText: (() -> Unit)? = null
 ) {
-    val tools = listOf(
+    val tools = (if (onEditText != null) listOf(ClipToolItem("edit_text", "Edit", Icons.Default.Edit))
+    else emptyList()) + listOf(
         ClipToolItem("split", "Split", Icons.Default.ContentCut),
         ClipToolItem("effects", "Effects", Icons.Default.AutoAwesome),
         ClipToolItem("animations", "Animations", Icons.Default.Animation),
@@ -147,6 +151,7 @@ fun ClipEditToolsPanel(
                             hoverScale = 1.08f,
                             onClick = {
                                 when (tool.id) {
+                                    "edit_text" -> onEditText?.invoke()
                                     "split" -> onSplit()
                                     "effects" -> onEffects()
                                     "animations" -> onAnimations()

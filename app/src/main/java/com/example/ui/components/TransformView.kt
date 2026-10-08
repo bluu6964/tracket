@@ -562,16 +562,9 @@ fun TransformView(
                                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(pivotX, pivotY)
                                     cameraDistance = 12f * density
                                 }
-                                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                                .border(1.5.dp, Color(0xFF00E676), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                                .border(1.dp, Color.White)
                         ) {
-                            Text(
-                                text = clip.text ?: "",
-                                color = Color(clip.textColor),
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            TextLayerContent(clip = clip, frameWidth = frameW)
                         }
 
                         PivotTargetCrosshair(

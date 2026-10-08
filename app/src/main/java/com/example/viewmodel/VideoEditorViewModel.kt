@@ -394,6 +394,33 @@ class VideoEditorViewModel : ViewModel() {
         )
     }
 
+    /**
+     * Adds an empty text layer at the playhead and selects it. Returns the new layer's id so the
+     * screen can open Text edit on it. The layer exists (and can be undone) right away.
+     */
+    fun addTextLayer(durationMs: Long = 4000L): String {
+        addClip(
+            type = LayerType.TEXT,
+            name = "Text",
+            durationMs = durationMs.coerceIn(250L, 60_000L),
+            text = ""
+        )
+        return _selectedClipId.value.orEmpty()
+    }
+
+    /** Remembers the current state for undo before a Text edit session on an existing layer. */
+    fun beginTextEdit() = pushHistory()
+
+    /**
+     * Live edit of one layer (used by Text edit). It does not push undo steps itself:
+     * one step is pushed when the editor opens, so a whole editing session undoes at once.
+     */
+    fun updateClip(clipId: String, change: (TimelineClip) -> TimelineClip) {
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { if (it.id == clipId) change(it) else it })
+        }
+    }
+
     fun addClip(
         type: LayerType,
         name: String,

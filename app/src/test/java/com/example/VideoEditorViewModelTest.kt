@@ -188,22 +188,27 @@ class VideoEditorViewModelTest {
     }
 
     @Test
-    fun testImportAppendsToMainTrackAndUpdatesDuration() {
+    fun testImportMediaAsNormalLayersAtPlayhead() {
         importVideo("a", 12_000L)
+        viewModel.seekTo(3_000L)
         importVideo("b", 8_000L)
         val clips = mainClips()
         assertEquals(2, clips.size)
-        assertEquals(0L, clips[0].startMs)
-        assertEquals(12_000L, clips[1].startMs)
-        assertEquals(20_000L, viewModel.totalDurationMs.value)
+        // Both placed at the playhead of their import (no sequential main-track append).
+        assertEquals(0L, clips.minOf { it.startMs })
+        assertEquals(3_000L, clips.maxOf { it.startMs })
+        assertEquals(12_000L, viewModel.totalDurationMs.value) // a is longer from 0
         assertTrue(viewModel.hasMainMedia())
+        // Each media layer has its own lane.
+        assertEquals(2, viewModel.tracks.value.count { t -> t.clips.any { it.type == LayerType.VIDEO } })
     }
 
     @Test
-    fun testFirstImportStartsAtZeroEvenWithOtherLayers() {
+    fun testMediaImportUsesPlayheadLikeOtherLayers() {
         viewModel.addClip(LayerType.TEXT, "Text", 3000L, text = "hi")
+        viewModel.seekTo(1_500L)
         importVideo("a", 5_000L)
-        assertEquals(0L, mainClips()[0].startMs)
+        assertEquals(1_500L, mainClips()[0].startMs)
     }
 
     @Test
@@ -221,44 +226,47 @@ class VideoEditorViewModelTest {
     }
 
     @Test
-    fun testDeleteRipplesMainTrack() {
+    fun testDeleteMediaDoesNotRippleOtherLayers() {
         importVideo("a", 5_000L)
+        viewModel.seekTo(5_000L)
         importVideo("b", 5_000L)
+        viewModel.seekTo(10_000L)
         importVideo("c", 5_000L)
-        viewModel.selectClip(mainClips()[1].id)
+        val mid = mainClips().first { it.startMs == 5_000L }
+        viewModel.selectClip(mid.id)
         viewModel.deleteSelectedClip()
         val clips = mainClips()
         assertEquals(2, clips.size)
-        assertEquals(5_000L, clips[1].startMs)
-        assertEquals(10_000L, viewModel.totalDurationMs.value)
+        // Remaining media keep their own start times (no ripple).
+        assertEquals(setOf(0L, 10_000L), clips.map { it.startMs }.toSet())
+        assertEquals(15_000L, viewModel.totalDurationMs.value)
     }
 
     @Test
     fun testUndoRestoresDeletedClip() {
         importVideo("a", 5_000L)
+        viewModel.seekTo(5_000L)
         importVideo("b", 5_000L)
-        viewModel.selectClip(mainClips()[0].id)
+        viewModel.selectClip(mainClips().first { it.startMs == 0L }.id)
         viewModel.deleteSelectedClip()
-        assertEquals(5_000L, viewModel.totalDurationMs.value)
+        assertEquals(10_000L, viewModel.totalDurationMs.value)
 
         viewModel.undo()
         assertEquals(2, mainClips().size)
-        assertEquals(5_000L, mainClips()[1].startMs)
         assertEquals(10_000L, viewModel.totalDurationMs.value)
     }
 
     @Test
-    fun testDuplicateInsertsAfterClipAndShiftsFollowing() {
+    fun testDuplicateMediaLikeOtherLayers() {
         importVideo("a", 5_000L)
-        importVideo("b", 5_000L)
         viewModel.selectClip(mainClips()[0].id)
         viewModel.duplicateSelectedClip()
         val clips = mainClips()
-        assertEquals(3, clips.size)
-        assertEquals(0L, clips[0].startMs)
-        assertEquals(5_000L, clips[1].startMs)
-        assertEquals(10_000L, clips[2].startMs)
-        assertEquals(15_000L, viewModel.totalDurationMs.value)
+        assertEquals(2, clips.size)
+        // Copy starts just after the original; no shifting of other media.
+        assertEquals(0L, clips.minOf { it.startMs })
+        assertEquals(5_200L, clips.maxOf { it.startMs })
+        assertEquals(10_200L, viewModel.totalDurationMs.value)
     }
 
     @Test

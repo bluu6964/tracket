@@ -373,11 +373,6 @@ fun VideoEditorScreen(
                         }
                     },
                     waveforms = waveforms,
-                    onAddMediaClick = {
-                        mediaPicker.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
-                        )
-                    },
                     onMoveClipInTime = { id, delta -> viewModel.moveClipInTime(id, delta) },
                     onBeginClipTimeDrag = { viewModel.beginAdjust() },
                     onReorderLane = { from, to -> viewModel.reorderLane(from, to) }
@@ -487,7 +482,11 @@ fun VideoEditorScreen(
                             },
                             onShapeClick = { showAddShapeSheet = true },
                             onTransformClick = comingSoon,
-                            onOverlayClick = comingSoon,
+                            onMediaClick = {
+                                mediaPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                )
+                            },
                             onStickersClick = comingSoon
                         )
                     }

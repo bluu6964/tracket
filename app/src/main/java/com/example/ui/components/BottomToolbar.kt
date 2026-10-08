@@ -47,7 +47,7 @@ fun BottomToolbar(
     onTextClick: () -> Unit,
     onShapeClick: () -> Unit,
     onTransformClick: () -> Unit = {},
-    onOverlayClick: () -> Unit,
+    onMediaClick: () -> Unit,
     onStickersClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -64,7 +64,7 @@ fun BottomToolbar(
         ToolbarItem("Text", Icons.Default.TextFields, "toolbar_text_button", onTextClick)
         ToolbarItem("Shape", Icons.Default.Category, "toolbar_shape_button", onShapeClick)
         ToolbarItem("Transform", Icons.Default.OpenWith, "toolbar_transform_button", onTransformClick)
-        ToolbarItem("Overlay", Icons.Default.AddPhotoAlternate, "toolbar_overlay_button", onOverlayClick)
+        ToolbarItem("Media", Icons.Default.AddPhotoAlternate, "toolbar_media_button", onMediaClick)
         ToolbarItem("Stickers", Icons.Default.SentimentSatisfiedAlt, "toolbar_stickers_button", onStickersClick)
     }
 }

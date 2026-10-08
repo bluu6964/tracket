@@ -113,7 +113,6 @@ fun TimelineLayerPanel(
     onDeleteClip: () -> Unit,
     onDuplicateClip: () -> Unit,
     onToggleMasterAudio: () -> Unit,
-    onAddMediaClick: () -> Unit,
     /** Horizontal drag on a layer: move it earlier/later on the timeline (ms delta). */
     onMoveClipInTime: (clipId: String, deltaMs: Long) -> Unit = { _, _ -> },
     /** Called once when a layer time-drag starts (for undo). */
@@ -258,12 +257,6 @@ fun TimelineLayerPanel(
                     )
                 }
 
-                // Import button: right after the last media clip (or at the start when there is
-                // none). It has its own row so it never covers another layer.
-                val mediaEndMs = tracks.maxOfOrNull { t ->
-                    t.clips.filter { it.type == LayerType.VIDEO }.maxOfOrNull { it.endMs } ?: 0L
-                } ?: 0L
-                AddMediaRow(endMs = mediaEndMs, onAddMediaClick = onAddMediaClick)
             }
         }
 
@@ -471,37 +464,6 @@ private fun laneHeightFor(type: LayerType): Dp = when (type) {
     LayerType.SHAPE -> 40.dp
     LayerType.OVERLAY, LayerType.TEXT -> 42.dp
     else -> 36.dp
-}
-
-@Composable
-private fun AddMediaRow(endMs: Long, onAddMediaClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .height(36.dp)
-            .fillMaxWidth(),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Box(
-            modifier = Modifier
-                .offset(x = (endMs * TIMELINE_PX_PER_MS).dp + 8.dp)
-                .size(36.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF2A3042))
-                .bouncyClickable(
-                    pressedScale = 0.88f,
-                    hoverScale = 1.08f,
-                    onClick = onAddMediaClick
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = "Add media",
-                tint = IconActive,
-                modifier = Modifier.size(22.dp)
-            )
-        }
-    }
 }
 
 @Composable

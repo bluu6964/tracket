@@ -239,25 +239,13 @@ class VideoEditorViewModel : ViewModel() {
 
     fun deleteSelectedClip() {
         val clipId = _selectedClipId.value ?: return
-        val removed = _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId } ?: return
+        if (_tracks.value.flatMap { it.clips }.none { it.id == clipId }) return
         pushHistory()
+        // Media is a normal layer (like text/shape): no special gap-closing.
         val withoutClip = _tracks.value.map { track ->
             track.copy(clips = track.clips.filter { it.id != clipId })
         }
-        val closedGap = if (removed.type == LayerType.VIDEO) {
-            // Media plays back to back: close the hole left by the removed media clip
-            // (media clips can live in any lane, so every lane is checked).
-            withoutClip.map { track ->
-                track.copy(clips = track.clips.map {
-                    if (it.type == LayerType.VIDEO && it.startMs >= removed.endMs) {
-                        it.copy(startMs = it.startMs - removed.durationMs)
-                    } else it
-                })
-            }
-        } else {
-            withoutClip
-        }
-        _tracks.value = LaneLayout.normalize(closedGap)
+        _tracks.value = LaneLayout.normalize(withoutClip)
         _selectedClipId.value = null
         recomputeTotal()
     }
@@ -266,26 +254,14 @@ class VideoEditorViewModel : ViewModel() {
         val clipId = _selectedClipId.value ?: return
         val clip = _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId } ?: return
         pushHistory()
-        val isMedia = clip.type == LayerType.VIDEO
+        // Same rule for every layer type (media is not special).
         val duplicated = clip.copy(
             id = UUID.randomUUID().toString(),
             name = "${clip.name} (Copy)",
-            startMs = if (isMedia) clip.endMs else clip.endMs + 200
+            startMs = clip.endMs + 200
         )
-        val base = if (isMedia) {
-            // Media is inserted right after the original; later media moves along.
-            _tracks.value.map { track ->
-                track.copy(clips = track.clips.map {
-                    if (it.type == LayerType.VIDEO && it.startMs >= clip.endMs) {
-                        it.copy(startMs = it.startMs + clip.durationMs)
-                    } else it
-                })
-            }
-        } else {
-            _tracks.value
-        }
-        // The copy goes to the first lane that is free at its time, otherwise to a new lane.
-        _tracks.value = LaneLayout.place(LaneLayout.normalize(base), duplicated)
+        _tracks.value = LaneLayout.place(LaneLayout.normalize(_tracks.value), duplicated)
+        _selectedClipId.value = duplicated.id
         recomputeTotal()
     }
 
@@ -726,19 +702,22 @@ class VideoEditorViewModel : ViewModel() {
             track.clips.any { it.type == LayerType.VIDEO && it.uri != null }
         }
 
-    /** Appends picked videos/photos after the last media clip, in whichever lane has room. */
+    /**
+     * Imports videos/photos as normal layers (like text/shape).
+     * Each file becomes its own lane at the playhead — no special "main track" behaviour.
+     */
     fun importMedia(items: List<ImportedMedia>) {
         if (items.isEmpty()) return
         pushHistory()
-        var cursor = _tracks.value.flatMap { it.clips }
-            .filter { it.type == LayerType.VIDEO }
-            .maxOfOrNull { it.endMs } ?: 0L
-        val added = items.map { m ->
+        val playhead = _currentPlayheadMs.value
+        var updated = _tracks.value
+        var lastId: String? = null
+        for (m in items) {
             val clip = TimelineClip(
                 id = UUID.randomUUID().toString(),
                 name = m.name,
                 type = LayerType.VIDEO,
-                startMs = cursor,
+                startMs = playhead,
                 durationMs = m.durationMs,
                 color = 0xFF2A4365,
                 uri = m.uri,
@@ -746,13 +725,11 @@ class VideoEditorViewModel : ViewModel() {
                 isImage = m.isImage,
                 sourceDurationMs = m.durationMs
             )
-            cursor += m.durationMs
-            clip
+            updated = LaneLayout.place(updated, clip)
+            lastId = clip.id
         }
-        var updated = _tracks.value
-        added.forEach { updated = LaneLayout.place(updated, it) }
         _tracks.value = updated
-        _selectedClipId.value = added.last().id
+        _selectedClipId.value = lastId
         recomputeTotal()
     }
 

@@ -33,7 +33,6 @@ data class TimelineClip(
     val startMs: Long,
     val durationMs: Long,
     val color: Long,
-    val drawableResId: Int? = null,
     val text: String? = null,
     val textColor: Long = 0xFFFFFFFF,
     val shapePattern: String? = null,
@@ -53,21 +52,10 @@ data class TimelineClip(
     val rotation3dX: Float = 0f,
     val rotation3dY: Float = 0f,
     val warpDistort: Float = 0f,
-    // Crop parameters
-    val cropWidthPercent: Float = 100f,
-    val cropHeightPercent: Float = 100f,
-    val cropHorizontalPercent: Float = 50f,
-    val cropVerticalPercent: Float = 50f,
-    val cropPreset: String = "Free",
-    val volume: Float = 1.0f,
     val speed: Float = 1.0f,
     val isMuted: Boolean = false,
-    val isLocked: Boolean = false,
     val isFlippedH: Boolean = false,
     val isFlippedV: Boolean = false,
-    val blendMode: String = "Normal",
-    val effectName: String? = null,
-    val animationName: String? = null,
     // Real media (null for text/shape/demo layers)
     val uri: String? = null,
     val mimeType: String? = null,
@@ -95,8 +83,6 @@ data class TimelineClip(
 data class TimelineTrack(
     val id: String,
     val name: String,
-    val isMuted: Boolean = false,
-    val isLocked: Boolean = false,
     val clips: List<TimelineClip> = emptyList()
 )
 

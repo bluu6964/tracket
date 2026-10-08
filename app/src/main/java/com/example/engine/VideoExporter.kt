@@ -8,6 +8,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
@@ -29,7 +30,6 @@ import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
 import java.io.File
-import kotlin.math.roundToInt
 
 /**
  * Real export: renders the main track (trim, flip, mute, project aspect ratio)
@@ -57,7 +57,7 @@ class VideoExporter(private val context: Context) {
             onError("Nothing to export: import a video or photo first.")
             return
         }
-        val (w, h) = outputSize(settings.resolution, aspectRatio)
+        val (w, h) = ExportSizes.forResolution(settings.resolution, aspectRatio)
         val items = clips.map { buildItem(it, w, h) }
 
         val sequenceBuilder = EditedMediaItemSequence.Builder(items)
@@ -125,17 +125,8 @@ class VideoExporter(private val context: Context) {
         val b = EditedMediaItem.Builder(mi.build())
             .setEffects(Effects(emptyList(), video))
             .setRemoveAudio(c.isMuted)
-        if (c.isImage) b.setDurationUs(c.durationMs * 1_000L).setFrameRate(30)
+        if (c.isImage) b.setDurationUs(c.durationMs * 1_000L).setFrameRate(IMAGE_FRAME_RATE)
         return b.build()
-    }
-
-    /** "1080p FHD" + 9:16 -> 1080x1920; short side = the number, both sides even. */
-    private fun outputSize(resolution: String, ratio: AspectRatio): Pair<Int, Int> {
-        val short = Regex("\\d{3,4}").find(resolution)?.value?.toInt() ?: 1080
-        val r = ratio.ratioFloat
-        val (w, h) = if (r >= 1f) (short * r) to short.toFloat() else short.toFloat() to (short / r)
-        fun even(x: Float) = (x.roundToInt() / 2) * 2
-        return even(w) to even(h)
     }
 
     private fun startPolling(t: Transformer, onProgress: (Float) -> Unit) {
@@ -176,11 +167,13 @@ class VideoExporter(private val context: Context) {
             file.delete()
             return uri
         }
-        // API 24-28: app-specific folder (no storage permission needed).
+        // API 24-28: app-specific folder (no storage permission needed). The result is shared
+        // through FileProvider: handing out a raw file:// URI throws FileUriExposedException
+        // on these versions as soon as another app (gallery, share sheet) opens it.
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
         val dest = File(dir, name)
         file.copyTo(dest, overwrite = true)
         file.delete()
-        return Uri.fromFile(dest)
+        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", dest)
     }
 }

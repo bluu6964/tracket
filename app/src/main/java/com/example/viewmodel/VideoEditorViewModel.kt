@@ -2,7 +2,6 @@ package com.example.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.R
 import com.example.model.AspectRatio
 import com.example.model.ExportSettings
 import com.example.model.ImportedMedia
@@ -19,6 +18,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
+
+/** A split needs at least this much clip on both sides of the playhead. */
+private const val MIN_SPLIT_MARGIN_MS = 500L
+
+/** Undo/redo history is capped so a long editing session cannot grow without bound. */
+private const val MAX_HISTORY = 50
 
 class VideoEditorViewModel : ViewModel() {
 
@@ -159,18 +164,10 @@ class VideoEditorViewModel : ViewModel() {
         _isMasterMuted.value = !_isMasterMuted.value
     }
 
-    fun toggleTrackMute(trackIndex: Int) {
-        pushHistory()
-        val currentList = _tracks.value.toMutableList()
-        if (trackIndex in currentList.indices) {
-            val track = currentList[trackIndex]
-            currentList[trackIndex] = track.copy(isMuted = !track.isMuted)
-            _tracks.value = currentList
-        }
-    }
-
     private fun pushHistory() {
         undoStack.add(_tracks.value)
+        // Keep the history bounded: dragging a slider used to push a snapshot per frame.
+        if (undoStack.size > MAX_HISTORY) undoStack.removeAt(0)
         redoStack.clear()
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = false
@@ -198,39 +195,46 @@ class VideoEditorViewModel : ViewModel() {
         }
     }
 
-    fun splitSelectedClip() {
-        val clipId = _selectedClipId.value ?: return
+    /**
+     * Splits the selected clip at the playhead: the left part keeps the clip id and trim
+     * start, the right part starts at the split point with its own trim offset.
+     *
+     * @return true when a split was made, false when there was nothing to split (no
+     * selection, or the playhead sits too close to one of the clip edges).
+     */
+    fun splitSelectedClip(): Boolean {
+        val clipId = _selectedClipId.value ?: return false
         val playhead = _currentPlayheadMs.value
+        val clip = _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId } ?: return false
+        if (playhead <= clip.startMs + MIN_SPLIT_MARGIN_MS ||
+            playhead >= clip.endMs - MIN_SPLIT_MARGIN_MS
+        ) {
+            return false
+        }
 
         pushHistory()
         val newTracks = _tracks.value.map { track ->
             val clipIndex = track.clips.indexOfFirst { it.id == clipId }
-            if (clipIndex != -1) {
-                val clip = track.clips[clipIndex]
-                if (playhead > clip.startMs + 500 && playhead < clip.endMs - 500) {
-                    val duration1 = playhead - clip.startMs
-                    val duration2 = clip.endMs - playhead
-                    val part1 = clip.copy(durationMs = duration1)
-                    val part2 = clip.copy(
-                        id = UUID.randomUUID().toString(),
-                        name = "${clip.name} (Split)",
-                        startMs = playhead,
-                        durationMs = duration2,
-                        trimStartMs = clip.trimStartMs + duration1
-                    )
-                    val updatedClips = track.clips.toMutableList()
-                    updatedClips[clipIndex] = part1
-                    updatedClips.add(clipIndex + 1, part2)
-                    track.copy(clips = updatedClips.sortedBy { it.startMs })
-                } else {
-                    track
-                }
-            } else {
-                track
-            }
+            if (clipIndex == -1) return@map track
+
+            val source = track.clips[clipIndex]
+            val duration1 = playhead - source.startMs
+            val part1 = source.copy(durationMs = duration1)
+            val part2 = source.copy(
+                id = UUID.randomUUID().toString(),
+                name = "${source.name} (Split)",
+                startMs = playhead,
+                durationMs = source.endMs - playhead,
+                trimStartMs = source.trimStartMs + duration1
+            )
+            val updatedClips = track.clips.toMutableList()
+            updatedClips[clipIndex] = part1
+            updatedClips.add(clipIndex + 1, part2)
+            track.copy(clips = updatedClips.sortedBy { it.startMs })
         }
         _tracks.value = newTracks
         recomputeTotal()
+        return true
     }
 
     fun deleteSelectedClip() {
@@ -301,61 +305,6 @@ class VideoEditorViewModel : ViewModel() {
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
                 if (clip.id == clipId) clip.copy(isFlippedV = !clip.isFlippedV) else clip
-            })
-        }
-    }
-
-    fun replaceSelectedClipMedia(drawableResId: Int, newName: String? = null) {
-        val clipId = _selectedClipId.value ?: return
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) {
-                    clip.copy(
-                        drawableResId = drawableResId,
-                        name = newName ?: clip.name
-                    )
-                } else clip
-            })
-        }
-    }
-
-    fun setClipBlendMode(mode: String) {
-        val clipId = _selectedClipId.value ?: return
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) clip.copy(blendMode = mode) else clip
-            })
-        }
-    }
-
-    fun setClipEffect(effect: String) {
-        val clipId = _selectedClipId.value ?: return
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) clip.copy(effectName = effect) else clip
-            })
-        }
-    }
-
-    fun setClipAnimation(anim: String) {
-        val clipId = _selectedClipId.value ?: return
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) clip.copy(animationName = anim) else clip
-            })
-        }
-    }
-
-    fun setClipColor(color: Long) {
-        val clipId = _selectedClipId.value ?: return
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) clip.copy(color = color) else clip
             })
         }
     }
@@ -504,46 +453,6 @@ class VideoEditorViewModel : ViewModel() {
                 } else clip
             })
         }
-    }
-
-    fun updateClipCrop(
-        clipId: String,
-        cropWidthPercent: Float,
-        cropHeightPercent: Float,
-        cropHorizontalPercent: Float = 50f,
-        cropVerticalPercent: Float = 50f,
-        cropPreset: String = "Free"
-    ) {
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) {
-                    clip.copy(
-                        cropWidthPercent = cropWidthPercent,
-                        cropHeightPercent = cropHeightPercent,
-                        cropHorizontalPercent = cropHorizontalPercent,
-                        cropVerticalPercent = cropVerticalPercent,
-                        cropPreset = cropPreset
-                    )
-                } else clip
-            })
-        }
-    }
-
-    fun resetClipTransform(clipId: String) {
-        pushHistory()
-        updateClipFullTransform(
-            clipId = clipId,
-            transformX = 0f,
-            transformY = 0f,
-            scalePercent = 100f,
-            rotationDeg = 0f,
-            pivotX = 0.5f,
-            pivotY = 0.5f,
-            rot3dX = 0f,
-            rot3dY = 0f,
-            warp = 0f
-        )
     }
 
     // ---- Real media -------------------------------------------------------

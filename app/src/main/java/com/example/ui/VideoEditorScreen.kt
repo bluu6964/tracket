@@ -1,7 +1,6 @@
 package com.example.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -49,19 +48,11 @@ import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
-import com.example.ui.components.AddAudioSheet
 import com.example.ui.components.AddShapeSheet
-import com.example.ui.components.AddTextSheet
-import com.example.ui.components.AppliedEffectsView
 import com.example.ui.components.AspectRatioSheet
 import com.example.ui.components.BottomToolbar
 import com.example.ui.components.CanvasArea
 import com.example.ui.components.ClipEditToolsPanel
-import com.example.ui.components.ClipEffectsSheet
-import com.example.ui.components.ClipAnimationsSheet
-import com.example.ui.components.ClipReplaceSheet
-import com.example.ui.components.ClipBlendSheet
-import com.example.ui.components.ClipCropSheet
 import com.example.ui.components.EditorHeader
 import com.example.ui.components.ExportModalDialog
 import com.example.ui.components.FullscreenPlayerModal
@@ -101,6 +92,19 @@ fun VideoEditorScreen(
     val comingSoon: () -> Unit = {
         snackbarHostState.currentSnackbarData?.dismiss()
         scope.launch { snackbarHostState.showSnackbar("Coming in a later version") }
+    }
+
+    // Splitting only works when the playhead sits inside the selected clip (more than
+    // 500 ms from both edges). Report the real result instead of always claiming success
+    // (see ANALYSIS.md, P0-4).
+    val splitSelected: () -> Unit = {
+        snackbarHostState.currentSnackbarData?.dismiss()
+        scope.launch {
+            snackbarHostState.showSnackbar(
+                if (viewModel.splitSelectedClip()) "Clip split at playhead"
+                else "Move the playhead inside the clip to split"
+            )
+        }
     }
 
     // ---- Real engine: preview player, exporter, media picker ----
@@ -166,16 +170,7 @@ fun VideoEditorScreen(
     var showResolutionSheet by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showFullscreenPlayer by remember { mutableStateOf(false) }
-    var showAddAudioSheet by remember { mutableStateOf(false) }
-    var showAddTextSheet by remember { mutableStateOf(false) }
     var showAddShapeSheet by remember { mutableStateOf(false) }
-    var showEditShapeMode by remember { mutableStateOf(false) }
-    var showClipEffectsSheet by remember { mutableStateOf(false) }
-    var showClipAnimationsSheet by remember { mutableStateOf(false) }
-    var showClipReplaceSheet by remember { mutableStateOf(false) }
-    var showClipBlendSheet by remember { mutableStateOf(false) }
-    var showClipCropSheet by remember { mutableStateOf(false) }
-    var showAppliedEffectsMode by remember { mutableStateOf(false) }
     var showTransformMode by remember { mutableStateOf(false) }
 
     // System back / gesture back closes Transform first instead of leaving the editor.
@@ -216,7 +211,11 @@ fun VideoEditorScreen(
                     height = headerH,
                     aspectRatio = selectedAspectRatio,
                     onBackClick = {
-                        scope.launch { snackbarHostState.showSnackbar("Project autosaved") }
+                        // Nothing is persisted yet: say so instead of promising an autosave
+                        // that does not exist (see ANALYSIS.md, P0-3).
+                        scope.launch {
+                            snackbarHostState.showSnackbar("Project is not saved yet — use Export to keep your video")
+                        }
                     },
                     onAspectRatioClick = { showAspectRatioSheet = true },
                     onExportClick = { showExportDialog = true }
@@ -268,10 +267,7 @@ fun VideoEditorScreen(
                     isMasterMuted = isMasterMuted,
                     onSeekTo = { viewModel.seekTo(it) },
                     onClipSelect = { viewModel.selectClip(it) },
-                    onSplitClip = {
-                        viewModel.splitSelectedClip()
-                        scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }
-                    },
+                    onSplitClip = splitSelected,
                     onDeleteClip = {
                         viewModel.deleteSelectedClip()
                         scope.launch { snackbarHostState.showSnackbar("Clip removed") }
@@ -308,10 +304,7 @@ fun VideoEditorScreen(
                         ClipEditToolsPanel(
                             height = toolbarH,
                             onDeselect = { viewModel.selectClip(null) },
-                            onSplit = {
-                                viewModel.splitSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }
-                            },
+                            onSplit = splitSelected,
                             onEffects = comingSoon,
                             onAnimations = comingSoon,
                             onCopy = {
@@ -452,6 +445,8 @@ fun VideoEditorScreen(
         ExportModalDialog(
             isExporting = isExporting,
             progress = exportProgress,
+            resolution = exportSettings.resolution,
+            aspectRatio = selectedAspectRatio,
             onStartExport = {
                 viewModel.pause()
                 viewModel.setExporting(true)
@@ -475,35 +470,7 @@ fun VideoEditorScreen(
         )
     }
 
-    if (showAddAudioSheet) {
-        AddAudioSheet(
-            onAddAudio = { audioName ->
-                viewModel.addClip(
-                    type = LayerType.AUDIO,
-                    name = audioName,
-                    durationMs = 15_000L
-                )
-                scope.launch { snackbarHostState.showSnackbar("Added audio: $audioName") }
-            },
-            onDismiss = { showAddAudioSheet = false }
-        )
-    }
 
-    if (showAddTextSheet) {
-        AddTextSheet(
-            onAddText = { text, color ->
-                viewModel.addClip(
-                    type = LayerType.TEXT,
-                    name = "Text: $text",
-                    durationMs = 7000L,
-                    text = text,
-                    textColor = color
-                )
-                scope.launch { snackbarHostState.showSnackbar("Added text layer") }
-            },
-            onDismiss = { showAddTextSheet = false }
-        )
-    }
 
     if (showAddShapeSheet) {
         AddShapeSheet(
@@ -534,165 +501,4 @@ fun VideoEditorScreen(
             onDismiss = { showFullscreenPlayer = false }
         )
     }
-
-    if (showEditShapeMode) {
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showEditShapeMode = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            com.example.ui.components.EditShapeView(
-                aspectRatio = selectedAspectRatio,
-                currentPlayheadMs = currentPlayheadMs,
-                totalDurationMs = totalDurationMs,
-                isPlaying = isPlaying,
-                player = editorPlayer.player,
-                hasMainMedia = mediaClips.isNotEmpty(),
-                onTogglePlay = { viewModel.togglePlayPause() },
-                onSeekTo = { viewModel.seekTo(it) },
-                onDismiss = { showEditShapeMode = false },
-                onSaveShape = { shapeType, w, h, color, feather, offX, offY, strokeW, strokeCol ->
-                    val clipDuration = if (totalDurationMs > 0L && currentPlayheadMs < totalDurationMs) {
-                        minOf(4000L, (totalDurationMs - currentPlayheadMs).coerceAtLeast(1000L))
-                    } else {
-                        4000L
-                    }
-                    val a = (color.alpha * 255).toInt().coerceIn(0, 255)
-                    val r = (color.red * 255).toInt().coerceIn(0, 255)
-                    val g = (color.green * 255).toInt().coerceIn(0, 255)
-                    val b = (color.blue * 255).toInt().coerceIn(0, 255)
-                    val argb = ((a and 0xFF) shl 24) or ((r and 0xFF) shl 16) or ((g and 0xFF) shl 8) or (b and 0xFF)
-                    val colorLong = argb.toLong() and 0xFFFFFFFFL
-
-                    val strA = (strokeCol.alpha * 255).toInt().coerceIn(0, 255)
-                    val strR = (strokeCol.red * 255).toInt().coerceIn(0, 255)
-                    val strG = (strokeCol.green * 255).toInt().coerceIn(0, 255)
-                    val strB = (strokeCol.blue * 255).toInt().coerceIn(0, 255)
-                    val strokeArgb = ((strA and 0xFF) shl 24) or ((strR and 0xFF) shl 16) or ((strG and 0xFF) shl 8) or (strB and 0xFF)
-                    val strokeColorLong = strokeArgb.toLong() and 0xFFFFFFFFL
-
-                    viewModel.addClip(
-                        type = LayerType.SHAPE,
-                        name = "${shapeType.label} Shape",
-                        durationMs = clipDuration,
-                        shapePattern = shapeType.name,
-                        textColor = colorLong,
-                        shapeOffsetX = offX,
-                        shapeOffsetY = offY,
-                        shapeScaleX = w / 100f,
-                        shapeScaleY = h / 100f,
-                        strokeWidth = strokeW,
-                        strokeColor = strokeColorLong
-                    )
-                    scope.launch { snackbarHostState.showSnackbar("Added ${shapeType.label} to canvas") }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-    }
-
-    if (showClipEffectsSheet) {
-        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-        ClipEffectsSheet(
-            currentEffect = selectedClip?.effectName,
-            onEffectSelect = { effect ->
-                viewModel.setClipEffect(effect)
-                scope.launch { snackbarHostState.showSnackbar("Applied $effect effect") }
-            },
-            onDismiss = { showClipEffectsSheet = false }
-        )
-    }
-
-    if (showClipAnimationsSheet) {
-        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-        ClipAnimationsSheet(
-            currentAnim = selectedClip?.animationName,
-            onAnimSelect = { anim ->
-                viewModel.setClipAnimation(anim)
-                scope.launch { snackbarHostState.showSnackbar("Applied $anim animation") }
-            },
-            onDismiss = { showClipAnimationsSheet = false }
-        )
-    }
-
-    if (showClipReplaceSheet) {
-        ClipReplaceSheet(
-            onMediaSelected = { res, name ->
-                viewModel.replaceSelectedClipMedia(res, name)
-                scope.launch { snackbarHostState.showSnackbar("Replaced with $name") }
-            },
-            onDismiss = { showClipReplaceSheet = false }
-        )
-    }
-
-    if (showClipBlendSheet) {
-        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-        ClipBlendSheet(
-            currentBlend = selectedClip?.blendMode ?: "Normal",
-            onBlendSelected = { mode ->
-                viewModel.setClipBlendMode(mode)
-                scope.launch { snackbarHostState.showSnackbar("Blend mode: $mode") }
-            },
-            onDismiss = { showClipBlendSheet = false }
-        )
-    }
-
-    if (showClipCropSheet) {
-        val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-            ?: tracks.flatMap { it.clips }.firstOrNull()
-
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showClipCropSheet = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            com.example.ui.components.CropView(
-                clip = selectedClip,
-                aspectRatio = selectedAspectRatio,
-                currentPlayheadMs = currentPlayheadMs,
-                totalDurationMs = totalDurationMs,
-                isPlaying = isPlaying,
-                player = editorPlayer.player,
-                hasMainMedia = mediaClips.isNotEmpty(),
-                canUndo = canUndo,
-                canRedo = canRedo,
-                onTogglePlay = { viewModel.togglePlayPause() },
-                onSeekTo = { viewModel.seekTo(it) },
-                onUndo = { viewModel.undo() },
-                onRedo = { viewModel.redo() },
-                onDismiss = { showClipCropSheet = false },
-                onApplyCrop = { w, h, horiz, vert, preset ->
-                    val targetId = selectedClip?.id ?: selectedClipId
-                    if (targetId != null) {
-                        viewModel.updateClipCrop(
-                            clipId = targetId,
-                            cropWidthPercent = w,
-                            cropHeightPercent = h,
-                            cropHorizontalPercent = horiz,
-                            cropVerticalPercent = vert,
-                            cropPreset = preset
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-    }
-
-    if (showAppliedEffectsMode) {
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showAppliedEffectsMode = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            AppliedEffectsView(
-                aspectRatio = selectedAspectRatio,
-                onDismiss = { showAppliedEffectsMode = false },
-                onEffectApplied = { effectName ->
-                    viewModel.setClipEffect(effectName)
-                    scope.launch { snackbarHostState.showSnackbar("Applied $effectName") }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-    }
-
-
 }

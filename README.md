@@ -7,19 +7,27 @@ choose aspect ratio, export an H.264/AAC MP4 to Movies/Tracket.
 Clip Transform (position, scale, rotation, pivot, 3D, warp) is active in the editor
 preview. Shape layers can be added from the toolbar (editor + canvas preview).
 
+> **Known limitation:** the preview and the export are not identical yet. Transform and crop
+> are preview-only, and only the main media track is encoded — text, overlay, sticker and
+> audio layers are not exported at all. Flip and mute are the other way round: export-only.
+> See [`ANALYSIS.md`](ANALYSIS.md) for the full review and the fix plan.
+
 ### Layer system (lanes)
 The timeline is a list of lanes (lines). There is no fixed media/text/shape row and no limit on
 the number of lanes. A new layer goes into the lowest lane that is free for its whole time range;
 if every lane is busy there, a new lane is created on top. Layers can sit side by side in one lane
 but never on top of each other. Lanes disappear when they become empty. The top lane is drawn on top.
 Preview/export still play media clips back to back (single video pipeline). Text, overlay,
-sticker, audio, crop, effects, animations and
-blend are visible in the UI but disabled ("Coming in a later version").
+sticker, audio, crop, effects, animations and blend are **not implemented**; the buttons that
+used to show a "Coming in a later version" placeholder have been removed with the rest of the
+unreachable UI.
 
 ## Run
 1. Open the project in Android Studio and let Gradle sync.
 2. Run on an emulator or device (minSdk 24).
-3. Unit tests: `./gradlew testDebugUnitTest`
+3. Unit tests: `gradle testDebugUnitTest`
+   (the repo ships `gradle/wrapper/gradle-wrapper.properties` but no `gradlew` script, so use a
+   local Gradle 9.3.1 or let Android Studio run them; CI does the same.)
 
 ## Release signing (optional)
 Set `STORE_PASSWORD`, `KEY_PASSWORD` and optionally `KEYSTORE_PATH`

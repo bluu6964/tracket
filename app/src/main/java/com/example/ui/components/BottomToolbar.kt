@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.IconActive
-import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.util.bouncyClickable
 

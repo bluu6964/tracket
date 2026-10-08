@@ -7,7 +7,6 @@ import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,7 +60,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -74,7 +71,6 @@ import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
 import coil.request.videoFrameMillis
-import com.example.R
 import com.example.model.LayerType
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
@@ -89,8 +85,6 @@ import com.example.ui.theme.SelectedClipBorder
 import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -464,26 +458,12 @@ fun TimelineClipItem(
                         visibleToMs = visibleToMs
                     )
                 } else {
-                    // Demo clip without media: keep the old placeholder tiles.
-                    Row(modifier = Modifier.fillMaxSize()) {
-                        val tileRes = when {
-                            clip.name.contains("Yellow") || clip.name.contains("Vlog") -> R.drawable.sample_portrait_1791121452621
-                            clip.name.contains("Canopy") || clip.name.contains("Trees") -> R.drawable.sample_nature_1791121466670
-                            else -> R.drawable.sample_portrait_1791121452621
-                        }
-                        val frameCount = ((width.value / 38).toInt()).coerceAtLeast(1)
-                        for (i in 0 until frameCount) {
-                            Image(
-                                painter = painterResource(id = tileRes),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .border(0.5.dp, Color.Black.copy(alpha = 0.3f))
-                            )
-                        }
-                    }
+                    // A clip without media (added from the toolbar): a plain tile in its own colour.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(clip.color))
+                    )
                 }
             }
 
@@ -549,31 +529,6 @@ fun TimelineClipItem(
                 }
             }
 
-            LayerType.OVERLAY -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF2A1C2C))
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_cyan_dots_1791121437975),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-                }
-            }
 
             else -> {
                 Box(

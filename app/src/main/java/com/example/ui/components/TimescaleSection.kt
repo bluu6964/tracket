@@ -22,7 +22,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.pxPerMs
+import com.example.model.TIMELINE_PX_PER_MS
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.PlayheadColor
 import com.example.ui.theme.RulerSubTickColor

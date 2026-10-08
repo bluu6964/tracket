@@ -149,33 +149,76 @@ fun TimelineLayerPanel(
             .height(height)
             .background(EditorBackground)
             .testTag("layer_panel_timeline")
-            // Touching the panel stops a running fling (without consuming the touch).
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    flingJob?.cancel()
-                }
-            }
+            // One gesture loop: 1-finger horizontal = scrub/fling, 2-finger = pinch zoom.
+            // detectTransformGestures was eating single-finger swipes, so this is unified.
             .pointerInput(Unit) {
                 val velocityTracker = VelocityTracker()
-                val pxPerDp = density          // PointerInputScope is a Density
-                var posMs = 0f
+                val pxPerDp = density
+                val touchSlop = viewConfiguration.touchSlop
 
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        flingJob?.cancel()
-                        velocityTracker.resetTracking()
-                        posMs = latestPlayheadMs.toFloat()
-                    },
-                    onHorizontalDrag = { change, dragAmountPx ->
-                        change.consume()
-                        velocityTracker.addPosition(change.uptimeMillis, change.position)
-                        // px -> dp -> ms, so the timeline follows the finger 1:1.
-                        val deltaMs = -(dragAmountPx / pxPerDp) / latestPxPerMs
-                        posMs = (posMs + deltaMs).coerceIn(0f, latestTotalMs.toFloat())
-                        latestSeek(posMs.roundToLong())
-                    },
-                    onDragEnd = {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    flingJob?.cancel()
+                    velocityTracker.resetTracking()
+                    var posMs = latestPlayheadMs.toFloat()
+                    var pastTouchSlop = false
+                    var isPinch = false
+                    var lastSpan = 0f
+                    var didScrub = false
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+
+                        if (pressed.isEmpty()) break
+
+                        if (pressed.size >= 2) {
+                            // ---- Pinch zoom ----
+                            isPinch = true
+                            val a = pressed[0].position
+                            val b = pressed[1].position
+                            val span = (a - b).getDistance()
+                            if (lastSpan > 1f && span > 1f) {
+                                val zoomChange = span / lastSpan
+                                if (abs(zoomChange - 1f) > 0.001f) {
+                                    val next = (latestPxPerMs * zoomChange).coerceIn(
+                                        TIMELINE_PX_PER_MS * 0.25f,
+                                        TIMELINE_PX_PER_MS * 8f
+                                    )
+                                    latestOnPx(next)
+                                }
+                            }
+                            lastSpan = span
+                            pressed.forEach { it.consume() }
+                        } else if (!isPinch) {
+                            // ---- Single-finger horizontal scrub ----
+                            val change = pressed[0]
+                            val dx = change.position.x - change.previousPosition.x
+                            val dy = change.position.y - change.previousPosition.y
+                            if (!pastTouchSlop) {
+                                val totalDx = change.position.x - change.previousPosition.x
+                                // accumulate via position vs down would be better; use slop on movement
+                                if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
+                                    pastTouchSlop = true
+                                    // If mostly vertical, don't steal — let verticalScroll handle it
+                                    if (abs(dy) > abs(dx) * 1.2f) {
+                                        break
+                                    }
+                                }
+                            }
+                            if (pastTouchSlop) {
+                                change.consume()
+                                velocityTracker.addPosition(change.uptimeMillis, change.position)
+                                val deltaMs = -(dx / pxPerDp) / latestPxPerMs
+                                posMs = (posMs + deltaMs).coerceIn(0f, latestTotalMs.toFloat())
+                                latestSeek(posMs.roundToLong())
+                                didScrub = true
+                            }
+                        }
+                    }
+
+                    // Fling after a horizontal scrub (not after pinch / vertical scroll).
+                    if (didScrub && !isPinch) {
                         val velocityPxPerSec = velocityTracker.calculateVelocity().x
                         if (abs(velocityPxPerSec) > 120f) {
                             val startMs = posMs
@@ -197,22 +240,6 @@ fun TimelineLayerPanel(
                                 }
                             }
                         }
-                    },
-                    onDragCancel = {
-                        flingJob?.cancel()
-                    }
-                )
-            }
-
-            // Two-finger pinch → zoom the timeline (Alight Motion style).
-            .pointerInput(Unit) {
-                detectTransformGestures { _, _, zoomChange, _ ->
-                    if (kotlin.math.abs(zoomChange - 1f) > 0.001f) {
-                        val next = (latestPxPerMs * zoomChange).coerceIn(
-                            TIMELINE_PX_PER_MS * 0.25f,
-                            TIMELINE_PX_PER_MS * 8f
-                        )
-                        latestOnPx(next)
                     }
                 }
             }

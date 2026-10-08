@@ -129,13 +129,16 @@ class VideoEditorViewModelTest {
     }
 
     @Test
-    fun testLayersThatDoNotOverlapShareALane() {
+    fun testEachLayerGetsItsOwnLane_AlightMotionStyle() {
         viewModel.addClip(LayerType.SHAPE, "A", 3000L)
-        viewModel.seekTo(3000L)          // exactly where A ends: touching is not overlapping
+        viewModel.seekTo(3000L)          // even non-overlapping layers stay on separate lines
         viewModel.addClip(LayerType.SHAPE, "B", 3000L)
 
-        assertEquals(1, viewModel.tracks.value.size)
-        assertEquals(listOf("A", "B"), viewModel.tracks.value[0].clips.map { it.name })
+        assertEquals(2, viewModel.tracks.value.size)
+        assertTrue(viewModel.tracks.value.all { it.clips.size == 1 })
+        // Newest on top
+        assertEquals("B", viewModel.tracks.value[0].clips[0].name)
+        assertEquals("A", viewModel.tracks.value[1].clips[0].name)
     }
 
     @Test

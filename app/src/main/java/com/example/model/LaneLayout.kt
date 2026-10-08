@@ -3,15 +3,14 @@ package com.example.model
 import java.util.UUID
 
 /**
- * Timeline lane rules (pure functions, no Android dependencies).
+ * Timeline lane rules — Alight Motion style (pure functions, no Android dependencies).
  *
  * - The timeline is a list of lanes. `tracks[0]` is the TOP lane (drawn above the others),
  *   the last item is the BOTTOM lane.
- * - There is no limit on the number of lanes and no lane is special: media is a layer like any other.
- * - Layers may sit side by side in one lane, but two layers that overlap in time are never in the
- *   same lane: the later one is moved to another lane (a new lane is created when needed).
- * - Lanes only exist while they hold at least one clip.
- * - Clips inside a lane are always sorted by start time.
+ * - **One layer per line**: each lane holds at most one clip. Layers never sit side by side.
+ * - A new layer always gets its own new lane (created on top).
+ * - Lanes only exist while they hold a clip.
+ * - Vertical reorder changes stacking order (top = drawn on top in the canvas / export).
  */
 object LaneLayout {
 
@@ -22,37 +21,79 @@ object LaneLayout {
     )
 
     /**
-     * Puts [clip] in the lowest existing lane that is free for its whole time range.
-     * If every lane is busy there, a new lane is created above all others.
+     * Puts [clip] in its own exclusive lane on top (Alight Motion: 1 layer = 1 line).
      */
     fun place(tracks: List<TimelineTrack>, clip: TimelineClip): List<TimelineTrack> {
-        for (i in tracks.indices.reversed()) {
-            val lane = tracks[i]
-            if (lane.clips.none { it.overlaps(clip) }) {
-                val result = tracks.toMutableList()
-                result[i] = lane.copy(clips = (lane.clips + clip).sortedBy { it.startMs })
-                return result
-            }
-        }
         return listOf(newLane(listOf(clip))) + tracks
     }
 
     /**
-     * Repairs the layout after clips changed: overlapping clips are moved out of their lane
-     * (the one that starts first keeps the lane), empty lanes are removed and every lane is sorted.
+     * Ensures every lane has at most one clip. Extra clips each get their own lane on top.
+     * Empty lanes are removed.
      */
     fun normalize(tracks: List<TimelineTrack>): List<TimelineTrack> {
+        val singles = mutableListOf<TimelineTrack>()
         val overflow = mutableListOf<TimelineClip>()
-        val kept = tracks.map { lane ->
-            val accepted = mutableListOf<TimelineClip>()
-            for (clip in lane.clips.sortedBy { it.startMs }) {
-                if (accepted.none { it.overlaps(clip) }) accepted += clip else overflow += clip
-            }
-            lane.copy(clips = accepted)
-        }.filter { it.clips.isNotEmpty() }
 
-        var result = kept
-        for (clip in overflow) result = place(result, clip)
+        for (lane in tracks) {
+            val sorted = lane.clips.sortedBy { it.startMs }
+            if (sorted.isEmpty()) continue
+            // Keep the first clip in this lane; any extras become their own lanes.
+            singles += lane.copy(clips = listOf(sorted.first()))
+            if (sorted.size > 1) overflow += sorted.drop(1)
+        }
+
+        var result = singles
+        for (clip in overflow) {
+            result = place(result, clip)
+        }
         return result
+    }
+
+    /** Moves the lane at [fromIndex] to [toIndex] (stacking order). Indices are clamped. */
+    fun reorder(tracks: List<TimelineTrack>, fromIndex: Int, toIndex: Int): List<TimelineTrack> {
+        if (tracks.isEmpty()) return tracks
+        val from = fromIndex.coerceIn(0, tracks.lastIndex)
+        val to = toIndex.coerceIn(0, tracks.lastIndex)
+        if (from == to) return tracks
+        val list = tracks.toMutableList()
+        val item = list.removeAt(from)
+        list.add(to, item)
+        return list
+    }
+
+    /**
+     * Moves [clipId] earlier/later on the timeline by [deltaMs].
+     * Start is clamped to ≥ 0. Does not change duration.
+     */
+    fun shiftClipTime(
+        tracks: List<TimelineTrack>,
+        clipId: String,
+        deltaMs: Long
+    ): List<TimelineTrack> {
+        return tracks.map { lane ->
+            lane.copy(
+                clips = lane.clips.map { c ->
+                    if (c.id != clipId) c
+                    else c.copy(startMs = (c.startMs + deltaMs).coerceAtLeast(0L))
+                }
+            )
+        }
+    }
+
+    /** Sets absolute start time of [clipId] (ms ≥ 0). */
+    fun setClipStart(
+        tracks: List<TimelineTrack>,
+        clipId: String,
+        startMs: Long
+    ): List<TimelineTrack> {
+        return tracks.map { lane ->
+            lane.copy(
+                clips = lane.clips.map { c ->
+                    if (c.id != clipId) c
+                    else c.copy(startMs = startMs.coerceAtLeast(0L))
+                }
+            )
+        }
     }
 }

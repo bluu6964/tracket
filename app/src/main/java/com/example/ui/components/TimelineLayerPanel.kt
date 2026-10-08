@@ -13,6 +13,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -112,6 +114,12 @@ fun TimelineLayerPanel(
     onDuplicateClip: () -> Unit,
     onToggleMasterAudio: () -> Unit,
     onAddMediaClick: () -> Unit,
+    /** Horizontal drag on a layer: move it earlier/later on the timeline (ms delta). */
+    onMoveClipInTime: (clipId: String, deltaMs: Long) -> Unit = { _, _ -> },
+    /** Called once when a layer time-drag starts (for undo). */
+    onBeginClipTimeDrag: () -> Unit = {},
+    /** Vertical reorder: move lane fromIndex → toIndex (0 = top). */
+    onReorderLane: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     waveforms: Map<String, FloatArray> = emptyMap()
 ) {
@@ -159,7 +167,7 @@ fun TimelineLayerPanel(
                     },
                     onDragEnd = {
                         val velocityPxPerSec = velocityTracker.calculateVelocity().x
-                        if (abs(velocityPxPerSec) > 200f) {
+                        if (abs(velocityPxPerSec) > 120f) {
                             val startMs = posMs
                             val velocityMsPerSec = -(velocityPxPerSec / pxPerDp) / TIMELINE_PX_PER_MS
                             flingJob = coroutineScope.launch {
@@ -169,7 +177,7 @@ fun TimelineLayerPanel(
                                 ).animateDecay(
                                     exponentialDecay(
                                         frictionMultiplier = FLING_FRICTION,
-                                        absVelocityThreshold = 40f
+                                        absVelocityThreshold = 25f
                                     )
                                 ) {
                                     val total = latestTotalMs.toFloat()
@@ -233,13 +241,17 @@ fun TimelineLayerPanel(
                     },
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // One row per lane, top lane first. Any number of lanes; they only exist while
-                // they hold layers, and layers that overlap in time are on different lanes.
-                tracks.forEach { track ->
+                // One row per lane (Alight Motion: 1 layer = 1 line). Top lane is drawn on top.
+                tracks.forEachIndexed { laneIndex, track ->
                     TimelineTrackRow(
                         track = track,
+                        laneIndex = laneIndex,
+                        laneCount = tracks.size,
                         selectedClipId = selectedClipId,
                         onClipSelect = onClipSelect,
+                        onMoveClipInTime = onMoveClipInTime,
+                        onBeginClipTimeDrag = onBeginClipTimeDrag,
+                        onReorderLane = onReorderLane,
                         visibleFromMs = visibleFromMs,
                         visibleToMs = visibleToMs,
                         waveforms = waveforms
@@ -352,32 +364,97 @@ fun TimelineLayerPanel(
 @Composable
 fun TimelineTrackRow(
     track: TimelineTrack,
+    laneIndex: Int = 0,
+    laneCount: Int = 1,
     selectedClipId: String?,
     onClipSelect: (String?) -> Unit,
+    onMoveClipInTime: (clipId: String, deltaMs: Long) -> Unit = { _, _ -> },
+    onBeginClipTimeDrag: () -> Unit = {},
+    onReorderLane: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4,
     waveforms: Map<String, FloatArray> = emptyMap()
 ) {
-    // A lane is as tall as its tallest layer (media is the tallest, audio the shortest).
-    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 36.dp
+    // Alight Motion: one layer per line → fixed row height by layer type.
+    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 40.dp
+    val density = LocalDensity.current
+    val pxPerDp = density.density
+    // How many vertical pixels ≈ one lane step for reorder.
+    val laneStepPx = with(density) { (trackHeight + 6.dp).toPx() }
+
+    var dragOffsetX by remember { mutableStateOf(0f) }
+    var dragOffsetY by remember { mutableStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
             .height(trackHeight)
             .fillMaxWidth()
+            .graphicsLayer {
+                // Live feedback while reordering vertically.
+                translationY = if (isDragging) dragOffsetY else 0f
+                alpha = if (isDragging) 0.92f else 1f
+                shadowElevation = if (isDragging) 8f else 0f
+            }
             .background(Color(0xFF13161F).copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
         contentAlignment = Alignment.CenterStart
     ) {
+        // Exactly one clip per lane in Alight Motion mode.
         track.clips.forEach { clip ->
             val clipOffset = (clip.startMs * TIMELINE_PX_PER_MS).dp
             val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(36.dp)
             val isSelected = clip.id == selectedClipId
 
-            Box(modifier = Modifier.offset(x = clipOffset)) {
+            Box(
+                modifier = Modifier
+                    .offset(x = clipOffset + if (isDragging) (dragOffsetX / pxPerDp).dp else 0.dp)
+                    .pointerInput(clip.id, laneIndex, laneCount) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                isDragging = true
+                                dragOffsetX = 0f
+                                dragOffsetY = 0f
+                                onClipSelect(clip.id)
+                                onBeginClipTimeDrag()
+                            },
+                            onDragEnd = {
+                                // Commit vertical reorder if moved enough lanes.
+                                val steps = (dragOffsetY / laneStepPx).roundToInt()
+                                if (steps != 0) {
+                                    val to = (laneIndex + steps).coerceIn(0, (laneCount - 1).coerceAtLeast(0))
+                                    if (to != laneIndex) onReorderLane(laneIndex, to)
+                                }
+                                // Horizontal time already applied live via onMoveClipInTime.
+                                isDragging = false
+                                dragOffsetX = 0f
+                                dragOffsetY = 0f
+                            },
+                            onDragCancel = {
+                                isDragging = false
+                                dragOffsetX = 0f
+                                dragOffsetY = 0f
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                dragOffsetX += dragAmount.x
+                                dragOffsetY += dragAmount.y
+                                // Dominant axis: horizontal → time, vertical → reorder preview only.
+                                if (abs(dragAmount.x) >= abs(dragAmount.y)) {
+                                    val deltaMs = (dragAmount.x / pxPerDp / TIMELINE_PX_PER_MS).roundToLong()
+                                    if (deltaMs != 0L) {
+                                        onMoveClipInTime(clip.id, deltaMs)
+                                        // Keep visual offset in sync after model updates startMs.
+                                        dragOffsetX -= deltaMs * TIMELINE_PX_PER_MS * pxPerDp
+                                    }
+                                }
+                            }
+                        )
+                    }
+            ) {
                 TimelineClipItem(
                     clip = clip,
                     width = clipWidth,
-                    isSelected = isSelected,
+                    isSelected = isSelected || isDragging,
                     onClick = { onClipSelect(clip.id) },
                     visibleFromMs = visibleFromMs,
                     visibleToMs = visibleToMs,
@@ -669,8 +746,8 @@ fun TimelineClipItem(
 }
 
 
-/** Higher = shorter glide after a swipe. 0.55 glides ~2x further than the Android default. */
-private const val FLING_FRICTION = 0.55f
+/** Lower = longer glide after a swipe. Alight-Motion-like smooth coast. */
+private const val FLING_FRICTION = 0.35f
 
 private val ThumbTileWidth = 44.dp
 private val ThumbTileHeight = 44.dp

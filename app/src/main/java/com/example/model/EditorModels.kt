@@ -118,8 +118,9 @@ data class TimelineClip(
 }
 
 /**
- * One horizontal line (lane) of the timeline. Lanes are not tied to a layer type: any layer
- * (media, shape, text, audio, ...) can live in any lane. Clips inside a lane never overlap in time.
+ * One horizontal line (lane) of the timeline (Alight Motion style).
+ * Lanes are not tied to a layer type: any layer (media, shape, text, audio, ...) can live in any lane.
+ * Each lane holds at most one clip (one layer per line).
  */
 data class TimelineTrack(
     val id: String,

@@ -8,10 +8,13 @@ Clip Transform (position, scale, rotation, pivot, 3D, warp) is active in the edi
 preview. Shape layers can be added from the toolbar (editor + canvas preview).
 
 ### Layer system (lanes) — Alight Motion style
-The timeline is a list of free lanes (lines). There is no fixed media/text/shape row and no limit on
-the number of lanes. A new layer goes into the lowest lane that is free for its whole time range;
-if every lane is busy there, a new lane is created on top. Layers can sit side by side in one lane
-but never on top of each other. Lanes disappear when they become empty. The top lane is drawn on top.
+The timeline is a list of free lanes (lines). **One layer per line** — layers never sit side by side.
+A new layer always gets its own lane on top. There is no limit on the number of lanes and no fixed
+media/text/shape row. Lanes disappear when they become empty. The top lane is drawn on top.
+
+**Layer handling:** long-press a layer on the timeline, then drag horizontally to move it in time
+or vertically to reorder stacking (bring forward / send backward). Swipe the empty timeline area to
+scrub with inertia.
 
 **Export rule (v0.1.15):** Export works as soon as **any one layer** exists (video, photo, shape,
 text, audio, …) — same idea as Alight Motion. If there is no video/photo media, a solid black

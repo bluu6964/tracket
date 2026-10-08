@@ -425,6 +425,48 @@ class VideoEditorViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Moves a layer earlier/later on the timeline (horizontal drag).
+     * [deltaMs] is added to startMs; start is clamped to ≥ 0.
+     * Call [beginAdjust] once before a drag session so undo is a single step.
+     */
+    fun moveClipInTime(clipId: String, deltaMs: Long) {
+        if (deltaMs == 0L) return
+        _tracks.value = LaneLayout.shiftClipTime(_tracks.value, clipId, deltaMs)
+        recomputeTotal()
+    }
+
+    /** Sets absolute start time of a layer on the timeline. */
+    fun setClipStartMs(clipId: String, startMs: Long) {
+        _tracks.value = LaneLayout.setClipStart(_tracks.value, clipId, startMs)
+        recomputeTotal()
+    }
+
+    /**
+     * Reorders lanes (vertical drag). [fromIndex]/[toIndex] are positions in [tracks]
+     * (0 = top layer, drawn above everything).
+     */
+    fun reorderLane(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        pushHistory()
+        _tracks.value = LaneLayout.reorder(_tracks.value, fromIndex, toIndex)
+    }
+
+    /**
+     * Moves the lane that holds [clipId] by [deltaLanes] steps
+     * (negative = toward top / higher in the stack, positive = toward bottom).
+     */
+    fun moveLaneByClip(clipId: String, deltaLanes: Int) {
+        if (deltaLanes == 0) return
+        val tracks = _tracks.value
+        val from = tracks.indexOfFirst { lane -> lane.clips.any { it.id == clipId } }
+        if (from < 0) return
+        val to = (from + deltaLanes).coerceIn(0, tracks.lastIndex)
+        if (from == to) return
+        pushHistory()
+        _tracks.value = LaneLayout.reorder(tracks, from, to)
+    }
+
     fun addClip(
         type: LayerType,
         name: String,
@@ -472,7 +514,7 @@ class VideoEditorViewModel : ViewModel() {
             scalePercent = (shapeScaleX * 100f).coerceAtLeast(10f)
         )
 
-        // Every layer type is placed the same way: first free lane, otherwise a new lane.
+        // Alight Motion style: every layer gets its own exclusive lane (1 layer = 1 line).
         _tracks.value = LaneLayout.place(_tracks.value, newClip)
         _selectedClipId.value = newClip.id
         recomputeTotal()

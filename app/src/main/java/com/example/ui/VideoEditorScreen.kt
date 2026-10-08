@@ -377,7 +377,10 @@ fun VideoEditorScreen(
                         mediaPicker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
                         )
-                    }
+                    },
+                    onMoveClipInTime = { id, delta -> viewModel.moveClipInTime(id, delta) },
+                    onBeginClipTimeDrag = { viewModel.beginAdjust() },
+                    onReorderLane = { from, to -> viewModel.reorderLane(from, to) }
                 )
 
                 // 6. Footer: Clip Edit Tools Panel if clip is selected, otherwise Main Bottom Toolbar

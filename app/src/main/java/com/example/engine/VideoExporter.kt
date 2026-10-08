@@ -159,7 +159,10 @@ class VideoExporter(private val context: Context) {
     private fun buildItem(c: TimelineClip, w: Int, h: Int): EditedMediaItem {
         val mi = MediaItem.Builder().setUri(c.uri!!.toUri())
         c.mimeType?.let { mi.setMimeType(it) }
-        if (!c.isImage) {
+        if (c.isImage) {
+            // Required by Media3 AssetLoader for still images.
+            mi.setImageDurationMs(c.durationMs.coerceAtLeast(100L))
+        } else {
             mi.setClippingConfiguration(
                 MediaItem.ClippingConfiguration.Builder()
                     .setStartPositionMs(c.trimStartMs)
@@ -178,7 +181,7 @@ class VideoExporter(private val context: Context) {
         val b = EditedMediaItem.Builder(mi.build())
             .setEffects(Effects(emptyList(), video))
             .setRemoveAudio(c.isMuted)
-        if (c.isImage) b.setDurationUs(c.durationMs * 1_000L).setFrameRate(30)
+        if (c.isImage) b.setFrameRate(30)
         return b.build()
     }
 
@@ -213,9 +216,12 @@ class VideoExporter(private val context: Context) {
     }
 
     private fun buildBlankItem(uri: Uri, durationMs: Long, w: Int, h: Int): EditedMediaItem {
+        val dur = durationMs.coerceAtLeast(100L)
+        // setImageDurationMs is required by Media3 AssetLoader for image inputs.
         val mi = MediaItem.Builder()
             .setUri(uri)
             .setMimeType(MimeTypes.IMAGE_JPEG)
+            .setImageDurationMs(dur)
             .build()
         // SCALE_TO_FIT expands the tiny black still to the full output size.
         val video = listOf(
@@ -223,7 +229,6 @@ class VideoExporter(private val context: Context) {
         )
         return EditedMediaItem.Builder(mi)
             .setEffects(Effects(emptyList(), video))
-            .setDurationUs(durationMs.coerceAtLeast(100L) * 1_000L)
             .setFrameRate(30)
             .build()
     }

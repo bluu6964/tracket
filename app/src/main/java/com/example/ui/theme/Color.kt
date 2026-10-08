@@ -2,26 +2,25 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Tracket Pro dark palette — Apple-inspired: quiet blacks, soft graphite surfaces,
-// neutral controls and a restrained blue accent instead of neon/glow-heavy UI.
-val EditorBackground = Color(0xFF08090B)
-val EditorSurface = Color(0xFF111214)
-val EditorSurfaceVariant = Color(0xFF1A1C20)
-val EditorDivider = Color(0xFF2A2D32)
-val GlassSurface = Color(0xFF17191D)
+// Tracket light-theme palette: off-white app theme, full-black canvas.
+val EditorBackground = Color(0xFFF2F2EF)
+val EditorSurface = Color(0xFFE9E9E5)
+val EditorSurfaceVariant = Color(0xFFDEDEDA)
+val EditorDivider = Color(0xFFC6C6C1)
+val GlassSurface = Color(0xFFE4E4E0)
 val GlassHighlight = Color(0xFFFFFFFF)
-// Canvas / project background: soft charcoal instead of full black.
-val CanvasBackground = Color(0xFF252525)
+// Canvas / project background: full black.
+val CanvasBackground = Color(0xFF000000)
 val AccentBlue = Color(0xFF0A84FF)
 val AccentBlueSoft = Color(0xFF64B5FF)
 
 // Timeline & Track colors
-val TrackBackground = Color(0xFF14161A)
-val TrackBorder = Color(0xFF30343A)
-val PlayheadColor = Color(0xFFF5F5F7)
+val TrackBackground = Color(0xFFE4E4E0)
+val TrackBorder = Color(0xFFC0C0BB)
+val PlayheadColor = Color(0xFF111111)
 val PlayheadAccent = Color(0xFFFF453A)
-val RulerTickColor = Color(0xFF6E7178)
-val RulerSubTickColor = Color(0xFF34373D)
+val RulerTickColor = Color(0xFF6A6A66)
+val RulerSubTickColor = Color(0xFFB4B4AF)
 
 // Clip type colors — muted, professional surfaces
 val ClipVideoColor = Color(0xFF27384C)
@@ -36,12 +35,12 @@ val NeonCyan = AccentBlue
 val NeonGreen = Color(0xFF30D158)
 val ElectricBlue = AccentBlue
 val AccentAmber = Color(0xFFFF9F0A)
-val SelectedClipBorder = Color(0xFFF2F2F7)
+val SelectedClipBorder = Color(0xFF111111)
 val TrimHandleColor = AccentBlue
 
 // Text & Icons
-val TextPrimary = Color(0xFFF5F5F7)
-val TextSecondary = Color(0xFFA1A1A6)
-val TextTertiary = Color(0xFF6E6E73)
-val IconActive = Color(0xFFE5E5EA)
-val IconDisabled = Color(0xFF4A4B50)
+val TextPrimary = Color(0xFF151515)
+val TextSecondary = Color(0xFF5C5C58)
+val TextTertiary = Color(0xFF8A8A85)
+val IconActive = Color(0xFF1C1C1C)
+val IconDisabled = Color(0xFFAAAAA5)

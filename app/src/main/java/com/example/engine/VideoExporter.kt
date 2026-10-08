@@ -5,12 +5,20 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.media3.common.Effect
@@ -19,8 +27,11 @@ import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.ScaleAndRotateTransformation
+import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -93,6 +104,12 @@ class VideoExporter(private val context: Context) {
             forceSilentAudio = true
         }
 
+        // Shape + text layers burned into the export via OverlayEffect (Alight Motion style).
+        val overlayClips = tracks
+            .asReversed() // bottom lane first → top lane last (drawn on top)
+            .flatMap { it.clips }
+            .filter { it.type == LayerType.SHAPE || it.type == LayerType.TEXT }
+
         val sequenceBuilder = EditedMediaItemSequence.Builder(items)
         // Photos / blank background have no audio; force a silent track so mixed sequences stay consistent.
         if (forceSilentAudio) sequenceBuilder.experimentalSetForceAudioTrack(true)
@@ -106,7 +123,14 @@ class VideoExporter(private val context: Context) {
                 }
             }
         }
-        val composition = Composition.Builder(sequences).build()
+
+        val compositionBuilder = Composition.Builder(sequences)
+        if (overlayClips.isNotEmpty()) {
+            val overlay = LayerBitmapOverlay(overlayClips, w, h)
+            val overlayEffect = OverlayEffect(listOf(overlay))
+            compositionBuilder.setEffects(Effects(/* audio */ emptyList(), /* video */ listOf(overlayEffect)))
+        }
+        val composition = compositionBuilder.build()
 
         val out = File(context.cacheDir, "tracket_${System.currentTimeMillis()}.mp4")
         val t = Transformer.Builder(context)
@@ -323,5 +347,172 @@ class VideoExporter(private val context: Context) {
         file.copyTo(dest, overwrite = true)
         file.delete()
         return Uri.fromFile(dest)
+    }
+}
+
+/**
+ * Draws shape + text layers onto each exported frame.
+ * presentationTimeUs is composition time (from the start of the export).
+ * Clips are already ordered bottom→top so later draws sit on top.
+ */
+@UnstableApi
+private class LayerBitmapOverlay(
+    private val clips: List<TimelineClip>,
+    private val frameW: Int,
+    private val frameH: Int
+) : BitmapOverlay() {
+
+    private var cached: Bitmap? = null
+    private val clearPaint = Paint().apply { xfermode = android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
+
+    override fun getBitmap(presentationTimeUs: Long): Bitmap {
+        val bmp = cached?.takeIf { it.width == frameW && it.height == frameH }
+            ?: Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888).also { cached = it }
+        val canvas = Canvas(bmp)
+        canvas.drawPaint(clearPaint) // transparent every frame
+
+        val timeMs = presentationTimeUs / 1_000L
+        for (clip in clips) {
+            if (!clip.isActiveAt(timeMs)) continue
+            if (clip.type == LayerType.SHAPE) {
+                drawShape(canvas, clip)
+            } else if (clip.type == LayerType.TEXT || clip.text != null) {
+                drawText(canvas, clip)
+            }
+        }
+        return bmp
+    }
+
+    private fun drawShape(canvas: Canvas, clip: TimelineClip) {
+        val cx = frameW / 2f + clip.transformX
+        val cy = frameH / 2f + clip.transformY
+        val scale = (clip.scalePercent / 100f).coerceAtLeast(0.05f)
+        val base = minOf(frameW, frameH) * 0.18f * scale
+        val color = argb(clip.textColor.takeIf { it != 0L } ?: clip.color, fallback = 0xFFFF3377)
+        val strokeCol = argb(clip.strokeColor, fallback = 0xFFFFFFFF)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = Paint.Style.FILL
+        }
+        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = strokeCol
+            style = Paint.Style.STROKE
+            strokeWidth = (clip.strokeWidth.coerceAtLeast(0f) * scale).coerceAtLeast(0f)
+        }
+
+        canvas.save()
+        canvas.translate(cx, cy)
+        canvas.rotate(clip.rotationDeg)
+        canvas.scale(scale, scale)
+
+        val pattern = clip.shapePattern ?: "CIRCLE"
+        when (pattern.uppercase()) {
+            "RECT", "RECTANGLE", "SQUARE" -> {
+                val r = RectF(-base, -base, base, base)
+                canvas.drawRect(r, paint)
+                if (stroke.strokeWidth > 0f) canvas.drawRect(r, stroke)
+            }
+            "ROUNDED", "ROUNDED_RECT" -> {
+                val r = RectF(-base, -base, base, base)
+                val rad = base * 0.25f
+                canvas.drawRoundRect(r, rad, rad, paint)
+                if (stroke.strokeWidth > 0f) canvas.drawRoundRect(r, rad, rad, stroke)
+            }
+            "OVAL", "ELLIPSE" -> {
+                val r = RectF(-base * 1.2f, -base * 0.75f, base * 1.2f, base * 0.75f)
+                canvas.drawOval(r, paint)
+                if (stroke.strokeWidth > 0f) canvas.drawOval(r, stroke)
+            }
+            "TRIANGLE" -> {
+                val path = Path().apply {
+                    moveTo(0f, -base)
+                    lineTo(base, base)
+                    lineTo(-base, base)
+                    close()
+                }
+                canvas.drawPath(path, paint)
+                if (stroke.strokeWidth > 0f) canvas.drawPath(path, stroke)
+            }
+            else -> { // CIRCLE
+                canvas.drawCircle(0f, 0f, base, paint)
+                if (stroke.strokeWidth > 0f) canvas.drawCircle(0f, 0f, base, stroke)
+            }
+        }
+        canvas.restore()
+    }
+
+    private fun drawText(canvas: Canvas, clip: TimelineClip) {
+        val content = clip.text?.ifBlank { null } ?: "Text"
+        val textColor = argb(clip.textColor, fallback = 0xFFFFFFFF)
+        val scale = (clip.scalePercent / 100f).coerceAtLeast(0.05f)
+        val textSizePx = (minOf(frameW, frameH) * 0.06f * scale).coerceAtLeast(12f)
+
+        val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = textColor
+            textSize = textSizePx
+            typeface = Typeface.create(
+                Typeface.DEFAULT,
+                when {
+                    clip.fontWeight >= 700 && clip.isItalic -> Typeface.BOLD_ITALIC
+                    clip.fontWeight >= 700 -> Typeface.BOLD
+                    clip.isItalic -> Typeface.ITALIC
+                    else -> Typeface.NORMAL
+                }
+            )
+            isUnderlineText = clip.isUnderline
+            isStrikeThruText = clip.isStrikethrough
+            letterSpacing = clip.letterSpacing / 100f
+        }
+
+        val maxWidth = (frameW * 0.85f).toInt().coerceAtLeast(1)
+        val align = when (clip.textAlign) {
+            0 -> Layout.Alignment.ALIGN_NORMAL
+            2 -> Layout.Alignment.ALIGN_OPPOSITE
+            else -> Layout.Alignment.ALIGN_CENTER
+        }
+        @Suppress("DEPRECATION")
+        val layout = StaticLayout(content, tp, maxWidth, align, clip.lineHeightPercent / 100f, 0f, false)
+
+        val cx = frameW / 2f + clip.transformX
+        val cy = frameH / 2f + clip.transformY
+
+        canvas.save()
+        canvas.translate(cx - layout.width / 2f, cy - layout.height / 2f)
+        canvas.rotate(clip.rotationDeg, layout.width / 2f, layout.height / 2f)
+
+        // Optional background box
+        if (clip.bgOpacity > 0f) {
+            val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = argb(clip.bgColor, fallback = 0xFF000000)
+                alpha = (clip.bgOpacity.coerceIn(0f, 100f) / 100f * 255).toInt()
+            }
+            val pad = clip.bgPadding.coerceAtLeast(0f)
+            val rr = RectF(-pad, -pad, layout.width + pad, layout.height + pad)
+            canvas.drawRoundRect(rr, clip.bgCorner, clip.bgCorner, bg)
+        }
+
+        // Optional stroke outline (draw text multiple offsets)
+        if (clip.textStrokeThickness > 0f) {
+            val strokePaint = TextPaint(tp).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = clip.textStrokeThickness
+                color = argb(clip.textStrokeColor, fallback = 0xFF000000)
+            }
+            @Suppress("DEPRECATION")
+            val strokeLayout = StaticLayout(content, strokePaint, maxWidth, align, clip.lineHeightPercent / 100f, 0f, false)
+            strokeLayout.draw(canvas)
+        }
+
+        layout.draw(canvas)
+        canvas.restore()
+    }
+
+    private fun argb(value: Long, fallback: Long): Int {
+        val v = if (value == 0L) fallback else value
+        val a = ((v shr 24) and 0xFF).toInt().let { if (it == 0) 255 else it }
+        val r = ((v shr 16) and 0xFF).toInt()
+        val g = ((v shr 8) and 0xFF).toInt()
+        val b = (v and 0xFF).toInt()
+        return Color.argb(a, r, g, b)
     }
 }

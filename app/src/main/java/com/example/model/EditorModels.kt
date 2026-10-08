@@ -92,6 +92,8 @@ data class TimelineClip(
     val fadeInMs: Long = 0L,
     val fadeOutMs: Long = 0L,
     val isLocked: Boolean = false,
+    /** When false the layer is hidden on the canvas and skipped on export (eye control). */
+    val isVisible: Boolean = true,
     val isFlippedH: Boolean = false,
     val isFlippedV: Boolean = false,
     val blendMode: String = "Normal",

@@ -122,7 +122,7 @@ fun CanvasArea(
             ) {
                 val activeVideoClip = tracks
                     .flatMap { it.clips }
-                    .find { it.type == LayerType.VIDEO && it.isActiveAt(currentPlayheadMs) }
+                    .find { it.type == LayerType.VIDEO && it.isVisible && it.isActiveAt(currentPlayheadMs) }
                 val clipScale = (activeVideoClip?.scalePercent ?: 100f) / 100f
                 val clipRotZ = activeVideoClip?.rotationDeg ?: 0f
                 val clipRotX = activeVideoClip?.rotation3dX ?: 0f
@@ -180,7 +180,7 @@ fun CanvasArea(
                 val activeOverlayClips = tracks
                     .asReversed()
                     .flatMap { it.clips }
-                    .filter { (it.type == LayerType.SHAPE || it.text != null) && it.isActiveAt(currentPlayheadMs) }
+                    .filter { it.isVisible && (it.type == LayerType.SHAPE || it.text != null) && it.isActiveAt(currentPlayheadMs) }
 
                 activeOverlayClips.forEach { clip ->
                   if (clip.type != LayerType.SHAPE) {

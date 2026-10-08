@@ -13,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
@@ -42,11 +43,14 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.SmartButton
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -119,11 +123,18 @@ fun TimelineLayerPanel(
     onBeginClipTimeDrag: () -> Unit = {},
     /** Vertical reorder: move lane fromIndex → toIndex (0 = top). */
     onReorderLane: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
+    /** Eye control: toggle layer visibility on canvas/export. */
+    onToggleClipVisibility: (clipId: String) -> Unit = {},
+    /** Timeline scale in px-per-ms (supports pinch zoom). */
+    pxPerMs: Float = TIMELINE_PX_PER_MS,
+    onPxPerMsChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
     waveforms: Map<String, FloatArray> = emptyMap()
 ) {
     val coroutineScope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
+    val latestPxPerMs by rememberUpdatedState(pxPerMs)
+    val latestOnPx by rememberUpdatedState(onPxPerMsChange)
 
     // The gesture block below is created ONCE (key = Unit). Before, it was keyed on
     // currentPlayheadMs, so every drag frame restarted it and the swipe was dropped
@@ -160,7 +171,7 @@ fun TimelineLayerPanel(
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
                         // px -> dp -> ms, so the timeline follows the finger 1:1.
-                        val deltaMs = -(dragAmountPx / pxPerDp) / TIMELINE_PX_PER_MS
+                        val deltaMs = -(dragAmountPx / pxPerDp) / latestPxPerMs
                         posMs = (posMs + deltaMs).coerceIn(0f, latestTotalMs.toFloat())
                         latestSeek(posMs.roundToLong())
                     },
@@ -168,7 +179,7 @@ fun TimelineLayerPanel(
                         val velocityPxPerSec = velocityTracker.calculateVelocity().x
                         if (abs(velocityPxPerSec) > 120f) {
                             val startMs = posMs
-                            val velocityMsPerSec = -(velocityPxPerSec / pxPerDp) / TIMELINE_PX_PER_MS
+                            val velocityMsPerSec = -(velocityPxPerSec / pxPerDp) / latestPxPerMs
                             flingJob = coroutineScope.launch {
                                 AnimationState(
                                     initialValue = startMs,
@@ -192,6 +203,19 @@ fun TimelineLayerPanel(
                     }
                 )
             }
+
+            // Two-finger pinch → zoom the timeline (Alight Motion style).
+            .pointerInput(Unit) {
+                detectTransformGestures { _, _, zoomChange, _ ->
+                    if (kotlin.math.abs(zoomChange - 1f) > 0.001f) {
+                        val next = (latestPxPerMs * zoomChange).coerceIn(
+                            TIMELINE_PX_PER_MS * 0.25f,
+                            TIMELINE_PX_PER_MS * 8f
+                        )
+                        latestOnPx(next)
+                    }
+                }
+            }
     ) {
         val screenWidth = maxWidth
         val centerLineX = screenWidth / 2 // EXACT 50% HORIZONTAL CENTER OF SCREEN
@@ -207,82 +231,108 @@ fun TimelineLayerPanel(
             totalDurationMs,
             tracks.maxOfOrNull { t -> t.clips.maxOfOrNull { it.endMs } ?: 0L } ?: 0L
         )
-        val contentWidth = (contentEndMs * TIMELINE_PX_PER_MS).dp + screenWidth + 64.dp
+        val contentWidth = (contentEndMs * pxPerMs).dp + screenWidth + 64.dp
 
         // Time window that is actually on screen (+ margin) so only visible thumbnails load.
         // The window is snapped to 2 s steps: while swiping, the clips only recompose when the
         // window steps (every ~2 s), not on every frame. The margin (~2.2 s) is larger than the step.
-        val marginMs = (100f / TIMELINE_PX_PER_MS).toLong()
+        val marginMs = (100f / pxPerMs).toLong()
         val windowStepMs = 2_000L
-        val rawFromMs = currentPlayheadMs - (centerLineX.value / TIMELINE_PX_PER_MS).toLong() - marginMs
+        val rawFromMs = currentPlayheadMs - (centerLineX.value / pxPerMs).toLong() - marginMs
         val rawToMs = currentPlayheadMs +
-            ((screenWidth - centerLineX).value / TIMELINE_PX_PER_MS).toLong() + marginMs
+            ((screenWidth - centerLineX).value / pxPerMs).toLong() + marginMs
         val visibleFromMs = Math.floorDiv(rawFromMs, windowStepMs) * windowStepMs
         val visibleToMs = (Math.floorDiv(rawToMs, windowStepMs) + 1L) * windowStepMs
 
-        // 1. Timeline content, shifted so currentPlayheadMs sits under the center line.
-        Box(
+        // 1. Left layer controls (eye + thumb) + timeline tracks, shared vertical scroll.
+        val leftRailWidth = 56.dp
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(verticalScrollState)
-                .horizontalScroll(rememberScrollState(), enabled = false)
                 .padding(vertical = 4.dp)
         ) {
+            // Left rail — Alight Motion style: eye + layer preview for each lane.
             Column(
                 modifier = Modifier
-                    .width(contentWidth)
-                    .offset {
-                        IntOffset(
-                            // Read in the layout phase: moving the timeline does not recompose it.
-                            x = ((centerLineX.value - latestPlayheadMs * TIMELINE_PX_PER_MS) * dpToPx).roundToInt(),
-                            y = 0
-                        )
-                    },
+                    .width(leftRailWidth)
+                    .padding(start = 6.dp, end = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // One row per lane (Alight Motion: 1 layer = 1 line). Top lane is drawn on top.
-                tracks.forEachIndexed { laneIndex, track ->
-                    TimelineTrackRow(
-                        track = track,
-                        laneIndex = laneIndex,
-                        laneCount = tracks.size,
-                        selectedClipId = selectedClipId,
-                        onClipSelect = onClipSelect,
-                        onMoveClipInTime = onMoveClipInTime,
-                        onBeginClipTimeDrag = onBeginClipTimeDrag,
-                        onReorderLane = onReorderLane,
-                        visibleFromMs = visibleFromMs,
-                        visibleToMs = visibleToMs,
-                        waveforms = waveforms
+                tracks.forEach { track ->
+                    val clip = track.clips.firstOrNull()
+                    val rowH = clip?.let { laneHeightFor(it.type) } ?: 40.dp
+                    LayerLaneControl(
+                        clip = clip,
+                        height = rowH,
+                        onToggleVisibility = { id -> onToggleClipVisibility(id) },
+                        onSelect = { id -> onClipSelect(id) }
                     )
                 }
+            }
 
+            // Timeline content, shifted so currentPlayheadMs sits under the center line.
+            // Center line is still screen-relative; offset accounts for left rail.
+            val railPx = with(LocalDensity.current) { leftRailWidth.toPx() }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState(), enabled = false)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .width(contentWidth)
+                        .offset {
+                            IntOffset(
+                                x = ((centerLineX.value - latestPlayheadMs * pxPerMs) * dpToPx - railPx).roundToInt(),
+                                y = 0
+                            )
+                        },
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    tracks.forEachIndexed { laneIndex, track ->
+                        TimelineTrackRow(
+                            track = track,
+                            laneIndex = laneIndex,
+                            laneCount = tracks.size,
+                            selectedClipId = selectedClipId,
+                            onClipSelect = onClipSelect,
+                            onMoveClipInTime = onMoveClipInTime,
+                            onBeginClipTimeDrag = onBeginClipTimeDrag,
+                            onReorderLane = onReorderLane,
+                            pxPerMs = pxPerMs,
+                            visibleFromMs = visibleFromMs,
+                            visibleToMs = visibleToMs,
+                            waveforms = waveforms
+                        )
+                    }
+                }
             }
         }
 
-        // 2. Left side Speaker icon with spring click animation
-        Box(
+        // 2. Quick actions + master speaker (bottom-left, clear of the layer rail)
+        Column(
             modifier = Modifier
-                .offset(x = (centerLineX - 54.dp).coerceAtLeast(8.dp), y = 8.dp)
-                .size(44.dp)
-                .background(EditorBackground.copy(alpha = 0.75f), CircleShape)
-                .bouncyClickable(onClick = onToggleMasterAudio),
-            contentAlignment = Alignment.Center
+                .align(Alignment.BottomStart)
+                .padding(start = 8.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Icon(
-                imageVector = if (isMasterMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                contentDescription = "Master Audio",
-                tint = IconActive,
-                modifier = Modifier.size(26.dp)
-            )
-        }
-
-        // 3. Quick action buttons on the left with spring click animation
-        if (selectedClipId != null) {
-            Column(
+            Box(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 12.dp, bottom = 8.dp),
+                    .size(36.dp)
+                    .background(EditorBackground.copy(alpha = 0.9f), CircleShape)
+                    .bouncyClickable(onClick = onToggleMasterAudio),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (isMasterMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = "Master Audio",
+                    tint = IconActive,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (selectedClipId != null) {
+            Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Row(
@@ -334,8 +384,9 @@ fun TimelineLayerPanel(
                         )
                     }
                 }
-            }
-        }
+            } // selected tools Column
+            } // if selectedClipId
+        } // bottom-left Column
 
         // 4. VERTICAL LOCKED PLAYHEAD LINE ("খারাভাবে middle এ locked timeline")
         Canvas(
@@ -354,6 +405,89 @@ fun TimelineLayerPanel(
     }
 }
 
+
+@Composable
+private fun LayerLaneControl(
+    clip: TimelineClip?,
+    height: Dp,
+    onToggleVisibility: (String) -> Unit,
+    onSelect: (String) -> Unit
+) {
+    if (clip == null) {
+        Spacer(modifier = Modifier.height(height))
+        return
+    }
+    val raw = (clip.textColor.takeIf { it != 0L } ?: clip.color)
+    val thumbColor = Color(
+        red = ((raw shr 16) and 0xFF).toInt() / 255f,
+        green = ((raw shr 8) and 0xFF).toInt() / 255f,
+        blue = (raw and 0xFF).toInt() / 255f,
+        alpha = 1f
+    )
+    Row(
+        modifier = Modifier
+            .height(height)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(height / 2))
+            .background(Color(0xFF1A1E28))
+            .bouncyClickable(pressedScale = 0.96f, onClick = { onSelect(clip.id) })
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(
+            imageVector = if (clip.isVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+            contentDescription = if (clip.isVisible) "Hide layer" else "Show layer",
+            tint = if (clip.isVisible) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.35f),
+            modifier = Modifier
+                .size(18.dp)
+                .bouncyClickable(onClick = { onToggleVisibility(clip.id) })
+        )
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(
+                    when (clip.type) {
+                        LayerType.VIDEO -> Color(0xFF2A4365)
+                        LayerType.AUDIO -> Color(0xFF1B4332)
+                        LayerType.SHAPE -> thumbColor
+                        LayerType.TEXT -> Color(0xFF5C3D10)
+                        else -> thumbColor
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            when (clip.type) {
+                LayerType.SHAPE -> {
+                    // Mini shape cue
+                    Box(
+                        Modifier
+                            .size(12.dp)
+                            .clip(
+                                when ((clip.shapePattern ?: "CIRCLE").uppercase()) {
+                                    "RECT", "RECTANGLE", "SQUARE" -> RoundedCornerShape(2.dp)
+                                    "ROUNDED", "ROUNDED_RECT" -> RoundedCornerShape(4.dp)
+                                    else -> CircleShape
+                                }
+                            )
+                            .background(thumbColor)
+                    )
+                }
+                LayerType.TEXT -> {
+                    Text("T", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                LayerType.AUDIO -> {
+                    Icon(Icons.Default.Mic, null, tint = Color.White, modifier = Modifier.size(12.dp))
+                }
+                else -> {
+                    // video / other: solid chip already shows
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun TimelineTrackRow(
     track: TimelineTrack,
@@ -364,6 +498,7 @@ fun TimelineTrackRow(
     onMoveClipInTime: (clipId: String, deltaMs: Long) -> Unit = { _, _ -> },
     onBeginClipTimeDrag: () -> Unit = {},
     onReorderLane: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
+    pxPerMs: Float = TIMELINE_PX_PER_MS,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4,
     waveforms: Map<String, FloatArray> = emptyMap()
@@ -394,8 +529,8 @@ fun TimelineTrackRow(
     ) {
         // Exactly one clip per lane in Alight Motion mode.
         track.clips.forEach { clip ->
-            val clipOffset = (clip.startMs * TIMELINE_PX_PER_MS).dp
-            val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(36.dp)
+            val clipOffset = (clip.startMs * pxPerMs).dp
+            val clipWidth = (clip.durationMs * pxPerMs).dp.coerceAtLeast(36.dp)
             val isSelected = clip.id == selectedClipId
 
             Box(
@@ -433,11 +568,11 @@ fun TimelineTrackRow(
                                 dragOffsetY += dragAmount.y
                                 // Dominant axis: horizontal → time, vertical → reorder preview only.
                                 if (abs(dragAmount.x) >= abs(dragAmount.y)) {
-                                    val deltaMs = (dragAmount.x / pxPerDp / TIMELINE_PX_PER_MS).roundToLong()
+                                    val deltaMs = (dragAmount.x / pxPerDp / pxPerMs).roundToLong()
                                     if (deltaMs != 0L) {
                                         onMoveClipInTime(clip.id, deltaMs)
                                         // Keep visual offset in sync after model updates startMs.
-                                        dragOffsetX -= deltaMs * TIMELINE_PX_PER_MS * pxPerDp
+                                        dragOffsetX -= deltaMs * pxPerMs * pxPerDp
                                     }
                                 }
                             }
@@ -498,6 +633,7 @@ fun TimelineClipItem(
             .graphicsLayer {
                 scaleX = selectScale
                 scaleY = selectScale
+                alpha = if (clip.isVisible) 1f else 0.35f
             }
             .clip(RoundedCornerShape(6.dp))
             .then(borderModifier)

@@ -81,7 +81,7 @@ class VideoExporter(private val context: Context) {
             return
         }
         val videoClips = allClips
-            .filter { it.type == LayerType.VIDEO && it.uri != null }
+            .filter { it.type == LayerType.VIDEO && it.uri != null && it.isVisible }
             .sortedBy { it.startMs }
         val (w, h) = outputSize(settings.resolution, aspectRatio)
 
@@ -108,7 +108,7 @@ class VideoExporter(private val context: Context) {
         val overlayClips = tracks
             .asReversed() // bottom lane first → top lane last (drawn on top)
             .flatMap { it.clips }
-            .filter { it.type == LayerType.SHAPE || it.type == LayerType.TEXT }
+            .filter { it.isVisible && (it.type == LayerType.SHAPE || it.type == LayerType.TEXT) }
 
         val sequenceBuilder = EditedMediaItemSequence.Builder(items)
         // Photos / blank background have no audio; force a silent track so mixed sequences stay consistent.
@@ -118,7 +118,7 @@ class VideoExporter(private val context: Context) {
         val sequences = mutableListOf(sequenceBuilder.build())
         tracks.forEach { track ->
             track.clips.forEach { c ->
-                if (c.type == LayerType.AUDIO && c.uri != null && !c.isMuted && !track.isMuted) {
+                if (c.type == LayerType.AUDIO && c.uri != null && c.isVisible && !c.isMuted && !track.isMuted) {
                     buildAudioSequence(c, videoEndMs)?.let { sequences += it }
                 }
             }

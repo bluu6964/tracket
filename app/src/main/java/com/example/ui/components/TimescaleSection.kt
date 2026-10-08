@@ -22,7 +22,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.TIMELINE_PX_PER_MS
+import com.example.model.pxPerMs
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.PlayheadColor
 import com.example.ui.theme.RulerSubTickColor
@@ -36,6 +36,7 @@ fun TimescaleSection(
     height: Dp,
     currentPlayheadMs: Long,
     totalDurationMs: Long,
+    pxPerMs: Float = TIMELINE_PX_PER_MS,
     modifier: Modifier = Modifier
 ) {
     val currentTimeStr = formatTimeCode(currentPlayheadMs)
@@ -103,7 +104,7 @@ fun TimescaleSection(
         }
 
         // 4. Timescale ruler tick marks starting after total duration and extending to the right
-        // EXACT mathematical 1:1 proportionality with TimelineLayerPanel via TIMELINE_PX_PER_MS
+        // EXACT mathematical 1:1 proportionality with TimelineLayerPanel via pxPerMs
         val rulerStartX = centerLineX + 8.dp + durationLabelWidth + 4.dp
         val rulerWidth = (screenWidth - rulerStartX).coerceAtLeast(0.dp)
 
@@ -118,9 +119,9 @@ fun TimescaleSection(
                 val h = size.height
 
                 // Calculate time window visible in ruler canvas
-                // tickX_dp = centerLineX + (tickTimeMs - currentPlayheadMs) * TIMELINE_PX_PER_MS
+                // tickX_dp = centerLineX + (tickTimeMs - currentPlayheadMs) * pxPerMs
                 // In canvas local coordinates: localX_dp = tickX_dp - rulerStartX
-                val pxPerMsDp = TIMELINE_PX_PER_MS.dp.toPx()
+                val pxPerMsDp = pxPerMs.dp.toPx()
 
                 // Calculate min and max timeMs visible in this section
                 val minVisibleMs = currentPlayheadMs + ((rulerStartX - centerLineX).toPx() / pxPerMsDp).toLong()

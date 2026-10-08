@@ -171,6 +171,16 @@ class VideoEditorViewModel : ViewModel() {
         }
     }
 
+    /** Eye control: hide/show a layer on the canvas and in export. */
+    fun toggleClipVisibility(clipId: String) {
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { c ->
+                if (c.id == clipId) c.copy(isVisible = !c.isVisible) else c
+            })
+        }
+    }
+
     private fun pushHistory() {
         undoStack.add(_tracks.value)
         redoStack.clear()

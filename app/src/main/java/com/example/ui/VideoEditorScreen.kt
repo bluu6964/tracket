@@ -55,6 +55,7 @@ import kotlinx.coroutines.isActive
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -66,6 +67,7 @@ import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
+import com.example.model.TIMELINE_PX_PER_MS
 import com.example.ui.components.AudioClipToolsPanel
 import com.example.ui.components.AudioFadeSheet
 import com.example.ui.components.AudioSpeedSheet
@@ -236,6 +238,7 @@ fun VideoEditorScreen(
     var showAspectRatioSheet by remember { mutableStateOf(false) }
     var showResolutionSheet by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var timelinePxPerMs by remember { mutableFloatStateOf(TIMELINE_PX_PER_MS) }
     var showFullscreenPlayer by remember { mutableStateOf(false) }
     var showAudioVolumeSheet by remember { mutableStateOf(false) }
     var showAudioFadeSheet by remember { mutableStateOf(false) }
@@ -341,7 +344,8 @@ fun VideoEditorScreen(
                 TimescaleSection(
                     height = timescaleH,
                     currentPlayheadMs = currentPlayheadMs,
-                    totalDurationMs = totalDurationMs
+                    totalDurationMs = totalDurationMs,
+                    pxPerMs = timelinePxPerMs
                 )
 
                 // 5. Layer Panel (5/18 of screen)
@@ -375,7 +379,10 @@ fun VideoEditorScreen(
                     waveforms = waveforms,
                     onMoveClipInTime = { id, delta -> viewModel.moveClipInTime(id, delta) },
                     onBeginClipTimeDrag = { viewModel.beginAdjust() },
-                    onReorderLane = { from, to -> viewModel.reorderLane(from, to) }
+                    onReorderLane = { from, to -> viewModel.reorderLane(from, to) },
+                    onToggleClipVisibility = { id -> viewModel.toggleClipVisibility(id) },
+                    pxPerMs = timelinePxPerMs,
+                    onPxPerMsChange = { timelinePxPerMs = it }
                 )
 
                 // 6. Footer: Clip Edit Tools Panel if clip is selected, otherwise Main Bottom Toolbar

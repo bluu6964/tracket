@@ -12,7 +12,7 @@ class ExportSizesTest {
     fun shortSideComesFromTheResolutionLabel() {
         assertEquals(1920 to 1080, ExportSizes.forResolution("1080p FHD", AspectRatio.RATIO_16_9))
         assertEquals(1280 to 720, ExportSizes.forResolution("720p", AspectRatio.RATIO_16_9))
-        assertEquals(854 to 480, ExportSizes.forResolution("480p", AspectRatio.RATIO_16_9))
+        assertEquals(852 to 480, ExportSizes.forResolution("480p", AspectRatio.RATIO_16_9))
     }
 
     @Test

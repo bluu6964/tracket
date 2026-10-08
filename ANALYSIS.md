@@ -270,4 +270,37 @@ README-এর **Phase 1** (Kotlin editor) লক্ষ্যমাত্রা �
 
 ---
 
+---
+
+## ১২. ক্লিনআপ পাস (২০২৬-১০-০৮) — কী করা হয়েছে
+
+### সরানো ডেড কোড
+| কী | লাইন |
+|---|---|
+| `EditShapeView.kt`, `AppliedEffectsView.kt`, `CropView.kt`, `ClipToolsSheets.kt`, `MediaPreview.kt` | ২,৮০৬ |
+| `EditorSheets.kt` থেকে `AddAudioSheet`/`AddTextSheet` | ১২৮ |
+| `VideoEditorScreen.kt` থেকে ৯টি অপ্রাপ্য `show*` ফ্ল্যাগ + ব্লক | ১৮৯ |
+| ViewModel-এর অব্যবহৃত মেথড (`updateClipCrop`, `resetClipTransform`, `toggleTrackMute`, `setClipEffect/Animation/BlendMode/Color`, `replaceSelectedClipMedia`) | ১৪০ |
+| `TimelineClip`/`TimelineTrack`-এর অব্যবহৃত ফিল্ড (crop × ৫, blend, effect, animation, volume, drawableResId, isLocked × ২, track.isMuted) | ১৩ |
+| ৬টি ডেমো drawable (~৫.৮ MB) + `player_texture.xml` | — |
+| `libs.versions.toml` থেকে ~৩৩ অব্যবহৃত এন্ট্রি + Gemini স্ক্যাফোল্ডিং (`metadata.json`, `.env.example`) | ৫১ |
+| ৫৭টি অব্যবহৃত import | ৫৭ |
+| **মোট** | **≈ ৩,৩৮০ লাইন + ৫.৮ MB** |
+
+### ছোট ফিক্স
+- `splitSelectedClip()` এখন `Boolean` রিটার্ন করে → প্লেহেড ক্লিপের বাইরে থাকলে আর “স্প্লিট হয়েছে” মিথ্যে বার্তা আসে না।
+- ব্যাক বাটনের “Project autosaved” → “Project is not saved yet — use Export…”。
+- Export ডায়ালগ: হার্ডকোডড “1080p FHD (1920x1080)” ও বানানো “28.4 MB” সরিয়ে **আসল** আউটপুট সাইজ / রেশিও / ফরম্যাট; সাইজ ম্যাথ `ExportSizes`-এ (এনকোডার ও UI একই সোর্স)।
+- Undo হিস্ট্রি ৫০-এ ক্যাপড।
+- API ২৪–২৮-এ `Uri.fromFile` → `FileProvider` (`res/xml/file_paths.xml` আগে থেকেই ছিল, ব্যবহার হতো না) + ম্যানিফেস্টে provider。
+- নতুন `ExportSizesTest` (৫টি টেস্ট)।
+
+### যাচাই (CI ছাড়া)
+স্যান্ডবক্সে Android SDK নেই, তাই:
+1. **Kotlin 2.2.10** (প্রজেক্টের একই ভার্সন) দিয়ে পুরো `app/src/main` কম্পাইল → **কোনো syntax error নেই**; error ৫,৪২৯ → ৩,২৫৫ (−৪০%), কোনো **নতুন error-ক্যাটাগরি নেই** (বাকি সব অনুপস্থিত AndroidX/Compose/Media3 থেকে)।
+2. `androidx.lifecycle` + `kotlinx.coroutines`-এর স্টাব বানিয়ে **আসল `VideoEditorViewModel` + আসল ২০টি টেস্ট** কম্পাইল ও রান → **২৪/২৪ পাস** (১৯ পুরনো + ৫ নতুন)।
+
+### ⚠️ CI নোট
+এই সেশনের GitHub টোকেনের `workflows`/`actions` পারমিশন নেই, তাই (ক) `.github/workflows/build.yml`-এ `pull_request` ট্রিগার যোগ করা যায়নি, (খ) `gh workflow run` দিয়ে বিল্ড ট্রিগার করা যায়নি (HTTP 403)। **ব্যবহারকারীকে手动 চালাতে হবে:** GitHub → Actions → *Build APK* → *Run workflow* → branch `arena/71cd0be0-tracket`। ওয়ার্কফাইলে `workflow_dispatch` আগে থেকেই আছে, তাই এতে APK + `gradle testDebugUnitTest` চলবে।
+
 **সারকথা:** ইঞ্জিনের ভিত্তি শক্ত, কিন্তু UI সেই ভিত্তির চেয়ে অনেক এগিয়ে — ভিত্তি (export parity, persistence, drag/trim, honest feedback) দ্রুত শক্ত করলে এই প্রজেক্ট সত্যিই একটি শক্তিশালী মোবাইল এডিটর হতে পারবে। C++ মাইগ্রেশনের কথা ভাবার আগে Phase 1-এর মিউজ-রিলেটেড ফাঁকগুলো ভরাট করাই বুদ্ধিমানের কাজ।

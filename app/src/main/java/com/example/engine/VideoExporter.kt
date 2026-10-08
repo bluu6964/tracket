@@ -2,6 +2,9 @@ package com.example.engine
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -31,12 +34,17 @@ import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
 import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.roundToInt
 
 /**
  * Real export: renders the main track (trim, flip, mute, project aspect ratio) and mixes in
  * the audio layers (volume, fades, speed)
  * to an H.264/AAC MP4 with Media3 Transformer, then saves it to Movies/Tracket.
+ *
+ * Export is allowed when at least one layer of any type exists (like Alight Motion).
+ * If there is no video/photo media, a solid black background of the project duration is used
+ * so shape / text / audio-only projects can still be exported.
  * Must be used from the main thread.
  */
 @UnstableApi
@@ -54,21 +62,41 @@ class VideoExporter(private val context: Context) {
         onDone: (Uri) -> Unit,
         onError: (String) -> Unit
     ) {
-        val clips = tracks.flatMap { it.clips }
-            .filter { it.type == LayerType.VIDEO && it.uri != null }.sortedBy { it.startMs }
-        if (clips.isEmpty()) {
-            onError("Nothing to export: import a video or photo first.")
+        val allClips = tracks.flatMap { it.clips }
+        // Like Alight Motion: export is allowed when at least one layer exists (any type).
+        if (allClips.isEmpty()) {
+            onError("Nothing to export: add at least one layer.")
             return
         }
+        val videoClips = allClips
+            .filter { it.type == LayerType.VIDEO && it.uri != null }
+            .sortedBy { it.startMs }
         val (w, h) = outputSize(settings.resolution, aspectRatio)
-        val items = clips.map { buildItem(it, w, h) }
+
+        val items: List<EditedMediaItem>
+        val videoEndMs: Long
+        val forceSilentAudio: Boolean
+        if (videoClips.isNotEmpty()) {
+            items = videoClips.map { buildItem(it, w, h) }
+            videoEndMs = videoClips.maxOf { it.endMs }
+            forceSilentAudio = videoClips.any { it.isImage }
+        } else {
+            // No media layer: create a solid black background video spanning all layers
+            // (shapes / text / audio-only projects), so export always succeeds with ≥1 layer.
+            videoEndMs = allClips.maxOf { it.endMs }.coerceAtLeast(100L)
+            val blankUri = createBlankImageUri(w, h) ?: run {
+                onError("Could not create background for export.")
+                return
+            }
+            items = listOf(buildBlankItem(blankUri, videoEndMs, w, h))
+            forceSilentAudio = true
+        }
 
         val sequenceBuilder = EditedMediaItemSequence.Builder(items)
-        // Photos have no audio; force a silent track so mixed sequences stay consistent.
-        if (clips.any { it.isImage }) sequenceBuilder.experimentalSetForceAudioTrack(true)
+        // Photos / blank background have no audio; force a silent track so mixed sequences stay consistent.
+        if (forceSilentAudio) sequenceBuilder.experimentalSetForceAudioTrack(true)
         // Audio layers: one sequence per layer, each one starts after a silent gap, and all of
         // them are mixed with the video's own sound by Transformer.
-        val videoEndMs = clips.maxOf { it.endMs }
         val sequences = mutableListOf(sequenceBuilder.build())
         tracks.forEach { track ->
             track.clips.forEach { c ->
@@ -141,6 +169,36 @@ class VideoExporter(private val context: Context) {
             .setRemoveAudio(c.isMuted)
         if (c.isImage) b.setDurationUs(c.durationMs * 1_000L).setFrameRate(30)
         return b.build()
+    }
+
+    /**
+     * Solid black image used as a background track when the project has layers
+     * (shape / text / audio) but no video/photo media. Enables export with any layer,
+     * similar to Alight Motion.
+     */
+    private fun createBlankImageUri(w: Int, h: Int): Uri? {
+        return try {
+            val bmp = Bitmap.createBitmap(w.coerceAtLeast(2), h.coerceAtLeast(2), Bitmap.Config.ARGB_8888)
+            Canvas(bmp).drawColor(Color.BLACK)
+            val file = File(context.cacheDir, "tracket_blank_${System.currentTimeMillis()}.png")
+            FileOutputStream(file).use { out ->
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            bmp.recycle()
+            Uri.fromFile(file)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun buildBlankItem(uri: Uri, durationMs: Long, w: Int, h: Int): EditedMediaItem {
+        val mi = MediaItem.Builder().setUri(uri).setMimeType(MimeTypes.IMAGE_PNG).build()
+        val video = listOf(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
+        return EditedMediaItem.Builder(mi)
+            .setEffects(Effects(emptyList(), video))
+            .setDurationUs(durationMs * 1_000L)
+            .setFrameRate(30)
+            .build()
     }
 
     /** One audio layer -> a sequence: [silent gap until the layer starts] + the trimmed audio. */

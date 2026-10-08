@@ -1,4 +1,4 @@
-# Tracket (v0.1.12)
+# Tracket (v0.1.15)
 
 Android video editor. v0.1 scope: import videos/photos, edit the main track
 (trim, split, delete with ripple, duplicate, flip, mute), preview with ExoPlayer,
@@ -7,11 +7,17 @@ choose aspect ratio, export an H.264/AAC MP4 to Movies/Tracket.
 Clip Transform (position, scale, rotation, pivot, 3D, warp) is active in the editor
 preview. Shape layers can be added from the toolbar (editor + canvas preview).
 
-### Layer system (lanes)
-The timeline is a list of lanes (lines). There is no fixed media/text/shape row and no limit on
+### Layer system (lanes) — Alight Motion style
+The timeline is a list of free lanes (lines). There is no fixed media/text/shape row and no limit on
 the number of lanes. A new layer goes into the lowest lane that is free for its whole time range;
 if every lane is busy there, a new lane is created on top. Layers can sit side by side in one lane
 but never on top of each other. Lanes disappear when they become empty. The top lane is drawn on top.
+
+**Export rule (v0.1.15):** Export works as soon as **any one layer** exists (video, photo, shape,
+text, audio, …) — same idea as Alight Motion. If there is no video/photo media, a solid black
+background of the project duration is used so the export still produces a valid MP4 (shapes/text
+are still preview-only and not yet burned into the export).
+
 Text layers (v0.1.11): the Text button adds a text layer at the playhead and opens "Text edit"
 (same panel layout as Transform: live canvas in the middle). Tabs: Fonts (system + Google Fonts that are
 downloaded once and cached, search, "Add font" for your own .ttf/.otf), Style (presets, color, weight,

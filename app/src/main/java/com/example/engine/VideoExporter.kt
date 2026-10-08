@@ -11,6 +11,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.media3.common.Effect
 import androidx.media3.common.audio.AudioProcessor
@@ -130,7 +131,17 @@ class VideoExporter(private val context: Context) {
                     exportException: ExportException
                 ) {
                     stopPolling()
-                    onError(exportException.message ?: "Export failed")
+                    val detail = buildString {
+                        append(exportException.message ?: "Export failed")
+                        var c: Throwable? = exportException.cause
+                        var depth = 0
+                        while (c != null && depth < 4) {
+                            c.message?.let { append(" → ").append(it) }
+                            c = c.cause
+                            depth++
+                        }
+                    }
+                    onError(detail)
                 }
             })
             .build()
@@ -172,31 +183,47 @@ class VideoExporter(private val context: Context) {
     }
 
     /**
-     * Solid black image used as a background track when the project has layers
+     * Small solid black JPEG used as a background track when the project has layers
      * (shape / text / audio) but no video/photo media. Enables export with any layer,
      * similar to Alight Motion.
+     *
+     * A tiny image is used on purpose: Media3 AssetLoader is more reliable with small
+     * stills; [Presentation] scales it to the full export resolution.
      */
     private fun createBlankImageUri(w: Int, h: Int): Uri? {
         return try {
-            val bmp = Bitmap.createBitmap(w.coerceAtLeast(2), h.coerceAtLeast(2), Bitmap.Config.ARGB_8888)
+            val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val file = File(dir, "blank_${System.currentTimeMillis()}.jpg")
+            // Keep the still tiny so the image decoder never OOMs / fails to init.
+            val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
             Canvas(bmp).drawColor(Color.BLACK)
-            val file = File(context.cacheDir, "tracket_blank_${System.currentTimeMillis()}.png")
             FileOutputStream(file).use { out ->
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
             }
             bmp.recycle()
-            Uri.fromFile(file)
+            // content:// via FileProvider is more reliable for Media3 AssetLoader than file://
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
         } catch (_: Exception) {
             null
         }
     }
 
     private fun buildBlankItem(uri: Uri, durationMs: Long, w: Int, h: Int): EditedMediaItem {
-        val mi = MediaItem.Builder().setUri(uri).setMimeType(MimeTypes.IMAGE_PNG).build()
-        val video = listOf(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
+        val mi = MediaItem.Builder()
+            .setUri(uri)
+            .setMimeType(MimeTypes.IMAGE_JPEG)
+            .build()
+        // SCALE_TO_FIT expands the tiny black still to the full output size.
+        val video = listOf(
+            Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT)
+        )
         return EditedMediaItem.Builder(mi)
             .setEffects(Effects(emptyList(), video))
-            .setDurationUs(durationMs * 1_000L)
+            .setDurationUs(durationMs.coerceAtLeast(100L) * 1_000L)
             .setFrameRate(30)
             .build()
     }

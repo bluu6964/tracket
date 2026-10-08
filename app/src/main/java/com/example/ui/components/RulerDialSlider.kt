@@ -45,11 +45,11 @@ fun RulerDialSlider(
     val currentOnValueChange by rememberUpdatedState(onValueChange)
 
     val displayValue = if (unit.isNotEmpty()) {
-        String.format(Locale.US, "%.0f%s", value, unit)
+        String.format(Locale.US, "%.1f%s", value, unit)
     } else if (isPercentage) {
-        String.format(Locale.US, "%.0f%%", value)
-    } else {
         String.format(Locale.US, "%.1f%%", value)
+    } else {
+        String.format(Locale.US, "%.1f", value)
     }
 
     Row(

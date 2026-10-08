@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,7 +30,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.AspectRatio
+import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.EditorBackground
+import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
@@ -47,88 +51,69 @@ fun EditorHeader(
             .fillMaxWidth()
             .height(height)
             .background(EditorBackground)
-            .padding(horizontal = 8.dp),
+            .padding(horizontal = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left: Back button with spring animation
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .bouncyClickable(onClick = onBackClick)
-                .testTag("header_back_button"),
-            contentAlignment = Alignment.Center
+        GlassIconButton(
+            modifier = Modifier.testTag("header_back_button"),
+            onClick = onBackClick,
+            contentDescription = "Back"
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = IconActive,
-                modifier = Modifier.size(24.dp)
-            )
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = IconActive, modifier = Modifier.size(20.dp))
         }
 
-        // Center: Aspect Ratio selector button with spring bounce
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .bouncyClickable(
-                    pressedScale = 0.93f,
-                    hoverScale = 1.06f,
-                    onClick = onAspectRatioClick
-                )
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(EditorSurfaceVariant.copy(alpha = 0.92f))
+                .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(18.dp))
+                .bouncyClickable(pressedScale = 0.96f, onClick = onAspectRatioClick)
+                .padding(horizontal = 13.dp, vertical = 7.dp)
                 .testTag("header_aspect_ratio_button"),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Aspect ratio frame icon
             Box(
                 modifier = Modifier
-                    .width(18.dp)
+                    .width(17.dp)
                     .height(11.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.Transparent)
-            ) {
-                androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
-                    drawRect(
-                        color = IconActive,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.8f)
-                    )
-                }
-            }
-
+                    .clip(RoundedCornerShape(3.dp))
+                    .border(1.4.dp, IconActive.copy(alpha = 0.9f), RoundedCornerShape(3.dp))
+            )
             Spacer(modifier = Modifier.width(8.dp))
-
-            Text(
-                text = aspectRatio.label,
-                color = TextPrimary,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium
-            )
-
-            Spacer(modifier = Modifier.width(4.dp))
-
-            Icon(
-                imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = "Select Aspect Ratio",
-                tint = IconActive,
-                modifier = Modifier.size(18.dp)
-            )
+            Text(aspectRatio.label, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.width(2.dp))
+            Icon(Icons.Default.KeyboardArrowDown, null, tint = IconActive, modifier = Modifier.size(17.dp))
         }
 
-        // Right: Export button with spring animation
         Box(
             modifier = Modifier
-                .size(44.dp)
-                .bouncyClickable(onClick = onExportClick)
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(AccentBlue)
+                .bouncyClickable(pressedScale = 0.90f, hoverScale = 1.03f, onClick = onExportClick)
                 .testTag("header_export_button"),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.Upload,
-                contentDescription = "Export Video",
-                tint = IconActive,
-                modifier = Modifier.size(24.dp)
-            )
+            Icon(Icons.Default.Upload, "Export Video", tint = Color.White, modifier = Modifier.size(20.dp))
         }
     }
+}
+
+@Composable
+private fun GlassIconButton(
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    contentDescription: String,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(EditorSurfaceVariant.copy(alpha = 0.84f))
+            .border(1.dp, Color.White.copy(alpha = 0.055f), CircleShape)
+            .bouncyClickable(pressedScale = 0.90f, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { content() }
 }

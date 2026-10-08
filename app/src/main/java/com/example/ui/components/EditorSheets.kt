@@ -1,9 +1,13 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,9 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,13 +26,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DownloadDone
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SmartButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,8 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -52,14 +47,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.engine.ExportSizes
+import com.example.engine.IMAGE_FRAME_RATE
 import com.example.model.AspectRatio
-import com.example.model.LayerType
 import com.example.model.PreviewResolution
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.EditorSurface
@@ -230,6 +225,8 @@ fun ResolutionSheet(
 fun ExportModalDialog(
     isExporting: Boolean,
     progress: Float,
+    resolution: String,
+    aspectRatio: AspectRatio,
     onStartExport: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -326,12 +323,14 @@ fun ExportModalDialog(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Encoding audio & multi-layer timeline frames...",
+                        text = "Encoding the main track...",
                         color = TextSecondary,
                         fontSize = 12.sp
                     )
                 } else {
-                    // Export Preset info
+                    // What the encoder will actually produce: the same helper the exporter
+                    // uses, so this summary can never drift from the real output.
+                    val (outW, outH) = ExportSizes.forResolution(resolution, aspectRatio)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -342,8 +341,16 @@ fun ExportModalDialog(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Resolution", color = TextSecondary, fontSize = 13.sp)
-                            Text("1080p FHD (1920x1080)", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Output", color = TextSecondary, fontSize = 13.sp)
+                            Text("${outW} x ${outH}", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Aspect ratio", color = TextSecondary, fontSize = 13.sp)
+                            Text(aspectRatio.label, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
@@ -351,16 +358,24 @@ fun ExportModalDialog(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text("Frame Rate", color = TextSecondary, fontSize = 13.sp)
-                            Text("30 FPS", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Source ($IMAGE_FRAME_RATE for photos)", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Est. File Size", color = TextSecondary, fontSize = 13.sp)
-                            Text("28.4 MB", color = NeonCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Format", color = TextSecondary, fontSize = 13.sp)
+                            Text("MP4 (H.264 / AAC)", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            // Only the main media track is rendered; overlay/shape/text layers
+                            // are editor-preview only so far.
+                            text = "Only the main video track is exported.",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(20.dp))
@@ -384,134 +399,6 @@ fun ExportModalDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddAudioSheet(
-    onAddAudio: (name: String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = EditorSurface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
-                .padding(bottom = 28.dp)
-        ) {
-            Text("Add Audio Track", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(14.dp))
-
-            val tracks = listOf(
-                "Cinematic Ambient Beat" to "3:15",
-                "Upbeat Vlog Pop" to "2:40",
-                "Chill Lo-Fi Sunset" to "1:55",
-                "Electric Groove Synth" to "2:10"
-            )
-
-            tracks.forEach { (title, length) ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .bouncyClickable {
-                            onAddAudio(title)
-                            onDismiss()
-                        }
-                        .padding(vertical = 10.dp, horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.MusicNote, contentDescription = null, tint = NeonGreen, modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text(title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                            Text(length, color = TextSecondary, fontSize = 12.sp)
-                        }
-                    }
-                    Text("Add", color = NeonCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AddTextSheet(
-    onAddText: (text: String, color: Long) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var textInput by remember { mutableStateOf("আমার নতুন ভিডিও") }
-    var selectedColor by remember { mutableStateOf(0xFFFFFFFF) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = EditorSurface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
-                .padding(bottom = 28.dp)
-        ) {
-            Text("Add Text Layer", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = textInput,
-                onValueChange = { textInput = it },
-                label = { Text("Title / Caption", color = TextSecondary) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = TextPrimary,
-                    unfocusedTextColor = TextPrimary,
-                    focusedBorderColor = NeonCyan,
-                    unfocusedBorderColor = EditorSurfaceVariant
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text("Color Preset", color = TextSecondary, fontSize = 13.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                listOf(0xFFFFFFFF, 0xFF00F0FF, 0xFFFFEB3B, 0xFFFF4081, 0xFF00E676).forEach { colorValue ->
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color(colorValue))
-                            .border(
-                                width = if (selectedColor == colorValue) 3.dp else 1.dp,
-                                color = if (selectedColor == colorValue) Color.White else Color.Transparent,
-                                shape = CircleShape
-                            )
-                            .clickable { selectedColor = colorValue }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Button(
-                onClick = {
-                    if (textInput.isNotBlank()) {
-                        onAddText(textInput, selectedColor)
-                    }
-                    onDismiss()
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
-            ) {
-                Text("Add to Timeline", color = EditorBackground, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 fun AddShapeSheet(
     onAddShape: (name: String, pattern: String) -> Unit,
     onDismiss: () -> Unit
@@ -523,38 +410,115 @@ fun AddShapeSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
-                .padding(bottom = 28.dp)
+                .padding(horizontal = 18.dp, vertical = 8.dp)
+                .padding(bottom = 26.dp)
         ) {
-            Text("Add Shape / Graphic Layer", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(14.dp))
-
-            val shapes = listOf(
-                "Cyan Dots Constellation" to "CYAN_DOTS",
-                "Cinematic Letterbox Bars" to "LETTERBOX",
-                "Focus Ring Frame" to "FOCUS_RING",
-                "Gradient Vignette" to "VIGNETTE"
+            Text(
+                text = "Add Shape",
+                color = TextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Choose a shape to add at the current playhead",
+                color = TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 3.dp, bottom = 14.dp)
             )
 
-            shapes.forEach { (name, pattern) ->
+            val shapes = listOf(
+                Triple("Circle", "CIRCLE", Color(0xFF5AC8FA)),
+                Triple("Rounded Rectangle", "ROUNDED_SQUARE", Color(0xFF7C8CFF)),
+                Triple("Wide Rectangle", "WIDE_ROUNDED_RECT", Color(0xFF34C759)),
+                Triple("Square", "SQUARE", Color(0xFFFF9F0A)),
+                Triple("Oval", "OVAL", Color(0xFFFF6B8A)),
+                Triple("Star", "STAR", Color(0xFFFFD60A)),
+                Triple("Pentagon", "PENTAGON", Color(0xFFBF5AF2))
+            )
+
+            shapes.chunked(2).forEach { rowItems ->
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .bouncyClickable {
-                            onAddShape(name, pattern)
-                            onDismiss()
-                        }
-                        .padding(vertical = 12.dp, horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("Insert", color = NeonCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    rowItems.forEach { (name, pattern, accent) ->
+                        ShapePickerCard(
+                            name = name,
+                            pattern = pattern,
+                            accent = accent,
+                            onClick = { onAddShape(name, pattern); onDismiss() },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (rowItems.size == 1) Spacer(Modifier.weight(1f))
                 }
+                Spacer(Modifier.height(10.dp))
             }
         }
     }
+}
+
+@Composable
+private fun ShapePickerCard(
+    name: String,
+    pattern: String,
+    accent: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(EditorSurfaceVariant.copy(alpha = 0.82f), shape)
+            .border(1.dp, Color.White.copy(alpha = 0.06f), shape)
+            .bouncyClickable(pressedScale = 0.96f, hoverScale = 1.01f, onClick = onClick)
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.Black.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(42.dp)) {
+                val c = accent
+                when (pattern) {
+                    "CIRCLE" -> drawCircle(c)
+                    "SQUARE" -> drawRect(c)
+                    "ROUNDED_SQUARE", "ROUNDED_RECT" -> drawRoundRect(c, cornerRadius = CornerRadius(10.dp.toPx()))
+                    "WIDE_ROUNDED_RECT" -> drawRoundRect(c, topLeft = Offset.Zero, size = Size(size.width, size.height * 0.62f), cornerRadius = CornerRadius(8.dp.toPx()))
+                    "OVAL" -> drawOval(c)
+                    "STAR" -> drawRegularPolygon(c, 5, innerRatio = 0.45f)
+                    "PENTAGON" -> drawRegularPolygon(c, 5, innerRatio = 1f)
+                    else -> drawCircle(c)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text("Add", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+private fun DrawScope.drawRegularPolygon(color: Color, points: Int, innerRatio: Float) {
+    val path = Path()
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val outer = size.minDimension / 2f
+    val total = if (innerRatio < 1f) points * 2 else points
+    for (i in 0 until total) {
+        val angle = Math.toRadians(i * 360.0 / total - 90.0)
+        val radius = if (innerRatio < 1f && i % 2 == 1) outer * innerRatio else outer
+        val x = cx + radius * kotlin.math.cos(angle).toFloat()
+        val y = cy + radius * kotlin.math.sin(angle).toFloat()
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    path.close()
+    drawPath(path, color)
 }
 
 @Composable

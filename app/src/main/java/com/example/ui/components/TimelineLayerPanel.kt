@@ -1,19 +1,23 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -48,16 +53,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
+import android.content.Context
+import coil.ImageLoader
+import coil.compose.AsyncImage
+import coil.decode.VideoFrameDecoder
+import coil.request.ImageRequest
+import coil.request.videoFrameMillis
 import com.example.model.LayerType
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
@@ -72,9 +85,11 @@ import com.example.ui.theme.SelectedClipBorder
 import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 @Composable
 fun TimelineLayerPanel(
@@ -96,51 +111,64 @@ fun TimelineLayerPanel(
     val coroutineScope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
 
+    // The gesture block below is created ONCE (key = Unit). Before, it was keyed on
+    // currentPlayheadMs, so every drag frame restarted it and the swipe was dropped
+    // after a short distance. These always hold the latest values without restarting it.
+    val latestPlayheadMs by rememberUpdatedState(currentPlayheadMs)
+    val latestTotalMs by rememberUpdatedState(totalDurationMs)
+    val latestSeek by rememberUpdatedState(onSeekTo)
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
             .background(EditorBackground)
             .testTag("layer_panel_timeline")
-            .pointerInput(totalDurationMs, currentPlayheadMs) {
+            // Touching the panel stops a running fling (without consuming the touch).
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    flingJob?.cancel()
+                }
+            }
+            .pointerInput(Unit) {
                 val velocityTracker = VelocityTracker()
+                val pxPerDp = density          // PointerInputScope is a Density
+                var posMs = 0f
 
-                detectDragGestures(
+                detectHorizontalDragGestures(
                     onDragStart = {
-                        // Immediately stop any active fling when user touches
                         flingJob?.cancel()
                         velocityTracker.resetTracking()
+                        posMs = latestPlayheadMs.toFloat()
                     },
-                    onDrag = { change, dragAmount ->
+                    onHorizontalDrag = { change, dragAmountPx ->
                         change.consume()
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
-
-                        // Higher sensitivity so timeline glides generously like other video editing apps
-                        val dragSensitivity = 1.35f
-                        val deltaMs = (-dragAmount.x * dragSensitivity / TIMELINE_PX_PER_MS).toLong()
-                        val newTime = (currentPlayheadMs + deltaMs).coerceIn(0L, totalDurationMs)
-                        onSeekTo(newTime)
+                        // px -> dp -> ms, so the timeline follows the finger 1:1.
+                        val deltaMs = -(dragAmountPx / pxPerDp) / TIMELINE_PX_PER_MS
+                        posMs = (posMs + deltaMs).coerceIn(0f, latestTotalMs.toFloat())
+                        latestSeek(posMs.roundToLong())
                     },
                     onDragEnd = {
-                        val velocityX = velocityTracker.calculateVelocity().x
-
-                        // Inertial fling momentum: swiping glides several seconds forward or backward smoothly
-                        if (kotlin.math.abs(velocityX) > 200f) {
+                        val velocityPxPerSec = velocityTracker.calculateVelocity().x
+                        if (abs(velocityPxPerSec) > 200f) {
+                            val startMs = posMs
+                            val velocityMsPerSec = -(velocityPxPerSec / pxPerDp) / TIMELINE_PX_PER_MS
                             flingJob = coroutineScope.launch {
-                                var currentV = -velocityX * 1.3f
-                                var currentTime = currentPlayheadMs.toFloat()
-                                val decayRate = 0.93f // Smooth physical friction
-
-                                while (isActive && kotlin.math.abs(currentV) > 50f) {
-                                    delay(16L) // 60fps update
-                                    val stepDeltaMs = (currentV * 0.016f / TIMELINE_PX_PER_MS)
-                                    currentTime = (currentTime + stepDeltaMs).coerceIn(0f, totalDurationMs.toFloat())
-                                    onSeekTo(currentTime.toLong())
-
-                                    if (currentTime <= 0f || currentTime >= totalDurationMs.toFloat()) {
-                                        break
-                                    }
-                                    currentV *= decayRate
+                                AnimationState(
+                                    initialValue = startMs,
+                                    initialVelocity = velocityMsPerSec
+                                ).animateDecay(
+                                    exponentialDecay(
+                                        frictionMultiplier = FLING_FRICTION,
+                                        absVelocityThreshold = 40f
+                                    )
+                                ) {
+                                    val total = latestTotalMs.toFloat()
+                                    val ms = value.coerceIn(0f, total)
+                                    latestSeek(ms.roundToLong())
+                                    if (ms <= 0f || ms >= total) cancelAnimation()
                                 }
                             }
                         }
@@ -155,28 +183,61 @@ fun TimelineLayerPanel(
         val centerLineX = screenWidth / 2 // EXACT 50% HORIZONTAL CENTER OF SCREEN
 
         val verticalScrollState = rememberScrollState()
+        val dpToPx = LocalDensity.current.density
 
-        // 1. Horizontal Scroll Content: All timeline tracks translated strictly proportional to currentPlayheadMs
+        // Real timeline length: the longest clip (any track) + room for the + button and the
+        // right half of the screen. Clips used to be capped at the screen width because their
+        // parent had a bounded width; the horizontalScroll below (scrolling disabled) only
+        // hands its child unbounded width so a long clip keeps its true size.
+        val contentEndMs = maxOf(
+            totalDurationMs,
+            tracks.maxOfOrNull { t -> t.clips.maxOfOrNull { it.endMs } ?: 0L } ?: 0L
+        )
+        val contentWidth = (contentEndMs * TIMELINE_PX_PER_MS).dp + screenWidth + 64.dp
+
+        // Time window that is actually on screen (+ margin) so only visible thumbnails load.
+        val marginMs = (100f / TIMELINE_PX_PER_MS).toLong()
+        val visibleFromMs = currentPlayheadMs - (centerLineX.value / TIMELINE_PX_PER_MS).toLong() - marginMs
+        val visibleToMs = currentPlayheadMs +
+            ((screenWidth - centerLineX).value / TIMELINE_PX_PER_MS).toLong() + marginMs
+
+        // 1. Timeline content, shifted so currentPlayheadMs sits under the center line.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(verticalScrollState)
+                .horizontalScroll(rememberScrollState(), enabled = false)
                 .padding(vertical = 4.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .offset(x = centerLineX - (currentPlayheadMs * TIMELINE_PX_PER_MS).dp),
+                    .width(contentWidth)
+                    .offset {
+                        IntOffset(
+                            x = ((centerLineX.value - currentPlayheadMs * TIMELINE_PX_PER_MS) * dpToPx).roundToInt(),
+                            y = 0
+                        )
+                    },
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                // One row per lane, top lane first. Any number of lanes; they only exist while
+                // they hold layers, and layers that overlap in time are on different lanes.
                 tracks.forEach { track ->
                     TimelineTrackRow(
                         track = track,
                         selectedClipId = selectedClipId,
                         onClipSelect = onClipSelect,
-                        onAddMediaClick = onAddMediaClick
+                        visibleFromMs = visibleFromMs,
+                        visibleToMs = visibleToMs
                     )
                 }
+
+                // Import button: right after the last media clip (or at the start when there is
+                // none). It has its own row so it never covers another layer.
+                val mediaEndMs = tracks.maxOfOrNull { t ->
+                    t.clips.filter { it.type == LayerType.VIDEO }.maxOfOrNull { it.endMs } ?: 0L
+                } ?: 0L
+                AddMediaRow(endMs = mediaEndMs, onAddMediaClick = onAddMediaClick)
             }
         }
 
@@ -279,50 +340,73 @@ fun TimelineTrackRow(
     track: TimelineTrack,
     selectedClipId: String?,
     onClipSelect: (String?) -> Unit,
-    onAddMediaClick: () -> Unit
+    visibleFromMs: Long = Long.MIN_VALUE / 4,
+    visibleToMs: Long = Long.MAX_VALUE / 4
 ) {
-    val trackHeight = when (track.type) {
-        LayerType.VIDEO -> 48.dp
-        LayerType.AUDIO -> 32.dp
-        LayerType.SHAPE -> 38.dp
-        LayerType.OVERLAY -> 44.dp
-        else -> 36.dp
-    }
+    // A lane is as tall as its tallest layer (media is the tallest, audio the shortest).
+    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 36.dp
 
-    Row(
-        modifier = Modifier.height(trackHeight),
-        verticalAlignment = Alignment.CenterVertically
+    Box(
+        modifier = Modifier
+            .height(trackHeight)
+            .fillMaxWidth()
+            .background(Color(0xFF13161F).copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
+        contentAlignment = Alignment.CenterStart
     ) {
         track.clips.forEach { clip ->
-            val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(40.dp)
+            val clipOffset = (clip.startMs * TIMELINE_PX_PER_MS).dp
+            val clipWidth = (clip.durationMs * TIMELINE_PX_PER_MS).dp.coerceAtLeast(36.dp)
             val isSelected = clip.id == selectedClipId
 
-            TimelineClipItem(
-                clip = clip,
-                width = clipWidth,
-                isSelected = isSelected,
-                onClick = { onClipSelect(clip.id) }
-            )
-            Spacer(modifier = Modifier.width(2.dp))
-        }
-
-        // Plus (+) button at end of main video track with spring feedback
-        if (track.type == LayerType.VIDEO && track.name == "Main Video") {
-            Box(
-                modifier = Modifier
-                    .size(trackHeight)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF2B2F3A))
-                    .bouncyClickable(onClick = onAddMediaClick),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Add Media",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
+            Box(modifier = Modifier.offset(x = clipOffset)) {
+                TimelineClipItem(
+                    clip = clip,
+                    width = clipWidth,
+                    isSelected = isSelected,
+                    onClick = { onClipSelect(clip.id) },
+                    visibleFromMs = visibleFromMs,
+                    visibleToMs = visibleToMs
                 )
             }
+        }
+    }
+}
+
+private fun laneHeightFor(type: LayerType): Dp = when (type) {
+    LayerType.VIDEO -> 44.dp
+    LayerType.AUDIO -> 32.dp
+    LayerType.SHAPE -> 40.dp
+    LayerType.OVERLAY, LayerType.TEXT -> 42.dp
+    else -> 36.dp
+}
+
+@Composable
+private fun AddMediaRow(endMs: Long, onAddMediaClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(36.dp)
+            .fillMaxWidth(),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Box(
+            modifier = Modifier
+                .offset(x = (endMs * TIMELINE_PX_PER_MS).dp + 8.dp)
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF2A3042))
+                .bouncyClickable(
+                    pressedScale = 0.88f,
+                    hoverScale = 1.08f,
+                    onClick = onAddMediaClick
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add media",
+                tint = IconActive,
+                modifier = Modifier.size(22.dp)
+            )
         }
     }
 }
@@ -332,7 +416,9 @@ fun TimelineClipItem(
     clip: TimelineClip,
     width: Dp,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    visibleFromMs: Long = Long.MIN_VALUE / 4,
+    visibleToMs: Long = Long.MAX_VALUE / 4
 ) {
     val selectScale by animateFloatAsState(
         targetValue = if (isSelected) 1.03f else 1f,
@@ -363,25 +449,21 @@ fun TimelineClipItem(
     ) {
         when (clip.type) {
             LayerType.VIDEO -> {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    val tileRes = when {
-                        clip.name.contains("Yellow") || clip.name.contains("Vlog") -> R.drawable.sample_portrait_1791121452621
-                        clip.name.contains("Canopy") || clip.name.contains("Trees") -> R.drawable.sample_nature_1791121466670
-                        else -> R.drawable.sample_portrait_1791121452621
-                    }
-
-                    val frameCount = ((width.value / 38).toInt()).coerceAtLeast(1)
-                    for (i in 0 until frameCount) {
-                        Image(
-                            painter = painterResource(id = tileRes),
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .border(0.5.dp, Color.Black.copy(alpha = 0.3f))
-                        )
-                    }
+                if (clip.uri != null) {
+                    // Real frames taken from the clip itself, spread over its full width.
+                    VideoFrameStrip(
+                        clip = clip,
+                        widthDp = width,
+                        visibleFromMs = visibleFromMs,
+                        visibleToMs = visibleToMs
+                    )
+                } else {
+                    // A clip without media (added from the toolbar): a plain tile in its own colour.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(clip.color))
+                    )
                 }
             }
 
@@ -447,31 +529,6 @@ fun TimelineClipItem(
                 }
             }
 
-            LayerType.OVERLAY -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF2A1C2C))
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_cyan_dots_1791121437975),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-                }
-            }
 
             else -> {
                 Box(
@@ -540,6 +597,92 @@ fun TimelineClipItem(
                         .graphicsLayer { rotationZ = -45f }
                 )
             }
+        }
+    }
+}
+
+
+/** Higher = shorter glide after a swipe. 0.55 glides ~2x further than the Android default. */
+private const val FLING_FRICTION = 0.55f
+
+private val ThumbTileWidth = 44.dp
+private val ThumbTileHeight = 44.dp
+
+/** One shared loader that can decode video frames (coil-video). */
+private object ThumbLoader {
+    @Volatile
+    private var instance: ImageLoader? = null
+
+    fun get(context: Context): ImageLoader =
+        instance ?: synchronized(this) {
+            instance ?: ImageLoader.Builder(context.applicationContext)
+                .components { add(VideoFrameDecoder.Factory()) }
+                .build()
+                .also { instance = it }
+        }
+}
+
+/**
+ * Filmstrip for a clip: one thumbnail per [ThumbTileWidth] of clip width, each showing the
+ * frame at that point of the clip (respecting trim and speed). Only tiles inside the visible
+ * time window are composed, so very long clips stay cheap.
+ */
+@Composable
+private fun VideoFrameStrip(
+    clip: TimelineClip,
+    widthDp: Dp,
+    visibleFromMs: Long,
+    visibleToMs: Long
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val loader = remember(context) { ThumbLoader.get(context) }
+
+    val tileW = ThumbTileWidth.value
+    val tileCount = ceil(widthDp.value / tileW).toInt().coerceAtLeast(1)
+
+    val relFromMs = visibleFromMs - clip.startMs
+    val relToMs = visibleToMs - clip.startMs
+    if (relToMs < 0L || relFromMs > clip.durationMs) return
+
+    val first = (relFromMs.coerceAtLeast(0L) * TIMELINE_PX_PER_MS / tileW).toInt().coerceIn(0, tileCount - 1)
+    val last = (relToMs * TIMELINE_PX_PER_MS / tileW).toInt().coerceIn(0, tileCount - 1)
+
+    val tilePxW = with(density) { ThumbTileWidth.roundToPx() }
+    val tilePxH = with(density) { ThumbTileHeight.roundToPx() }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1B2030))) {
+        for (i in first..last) {
+            val key: String
+            var frameMs = 0L
+            if (clip.isImage) {
+                key = "${clip.uri}@img"
+            } else {
+                val timelineOffsetMs = (i * tileW + tileW / 2f) / TIMELINE_PX_PER_MS
+                var srcMs = clip.trimStartMs + (timelineOffsetMs * clip.speed).toLong()
+                if (clip.sourceDurationMs > 0L) {
+                    srcMs = srcMs.coerceIn(0L, (clip.sourceDurationMs - 1L).coerceAtLeast(0L))
+                }
+                frameMs = (srcMs / 200L) * 200L // snap so nearby tiles/redraws share the cache
+                key = "${clip.uri}@$frameMs"
+            }
+            val request = ImageRequest.Builder(context)
+                .data(clip.uri)
+                .size(tilePxW, tilePxH)
+                .memoryCacheKey(key)
+                .apply { if (!clip.isImage) videoFrameMillis(frameMs) }
+                .build()
+
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                imageLoader = loader,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .offset(x = ThumbTileWidth * i)
+                    .width(ThumbTileWidth)
+                    .fillMaxHeight()
+            )
         }
     }
 }

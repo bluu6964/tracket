@@ -28,25 +28,34 @@ enum class PreviewResolution(val label: String, val detail: String) {
 
 data class TimelineClip(
     val id: String,
-    val trackIndex: Int,
     val name: String,
     val type: LayerType,
     val startMs: Long,
     val durationMs: Long,
     val color: Long,
-    val drawableResId: Int? = null,
     val text: String? = null,
     val textColor: Long = 0xFFFFFFFF,
     val shapePattern: String? = null,
-    val volume: Float = 1.0f,
+    val shapeOffsetX: Float = 0f,
+    val shapeOffsetY: Float = 0f,
+    val shapeScaleX: Float = 1.0f,
+    val shapeScaleY: Float = 1.0f,
+    val strokeWidth: Float = 0f,
+    val strokeColor: Long = 0xFFFFFFFF,
+    // Transform parameters (2D, Pivot, 3D, Warp)
+    val transformX: Float = 0f,
+    val transformY: Float = 0f,
+    val scalePercent: Float = 100f,
+    val rotationDeg: Float = 0f,
+    val pivotX: Float = 0.5f,
+    val pivotY: Float = 0.5f,
+    val rotation3dX: Float = 0f,
+    val rotation3dY: Float = 0f,
+    val warpDistort: Float = 0f,
     val speed: Float = 1.0f,
     val isMuted: Boolean = false,
-    val isLocked: Boolean = false,
     val isFlippedH: Boolean = false,
     val isFlippedV: Boolean = false,
-    val blendMode: String = "Normal",
-    val effectName: String? = null,
-    val animationName: String? = null,
     // Real media (null for text/shape/demo layers)
     val uri: String? = null,
     val mimeType: String? = null,
@@ -60,14 +69,20 @@ data class TimelineClip(
     fun isActiveAt(timeMs: Long): Boolean {
         return timeMs in startMs until endMs
     }
+
+    /** True when the two clips share any part of the timeline (touching ends do not count). */
+    fun overlaps(other: TimelineClip): Boolean {
+        return startMs < other.endMs && other.startMs < endMs
+    }
 }
 
+/**
+ * One horizontal line (lane) of the timeline. Lanes are not tied to a layer type: any layer
+ * (media, shape, text, audio, ...) can live in any lane. Clips inside a lane never overlap in time.
+ */
 data class TimelineTrack(
     val id: String,
     val name: String,
-    val type: LayerType,
-    val isMuted: Boolean = false,
-    val isLocked: Boolean = false,
     val clips: List<TimelineClip> = emptyList()
 )
 

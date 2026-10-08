@@ -1,4 +1,4 @@
-# Tracket (v0.1.0)
+# Tracket (v0.1.12)
 
 Android video editor. v0.1 scope: import videos/photos, edit the main track
 (trim, split, delete with ripple, duplicate, flip, mute), preview with ExoPlayer,
@@ -19,8 +19,13 @@ italic/underline/strike), Stroke, Shadow, Background, Spacing (letter/line spaci
 The color eyedropper reads a pixel from the canvas. Re-open it with the Edit tool or by double-tapping
 the text on the canvas. Text is shown in the editor preview; like shapes it is not rendered into the
 exported video yet.
+Audio layers (v0.1.12): the Audio button picks music/sound files from the phone. Each file becomes an
+audio layer (it follows the lane rules and never runs past the end of the video). The layer shows a real
+waveform and its length. Tools: Split, Volume (0-100%), Fade (in/out), Delete, Speed (0.25x-4x, pitch stays),
+Duplicate. Reverse is not available yet. Audio plays in the preview together with the video sound
+(lane mute and the master speaker also mute it) and is mixed into the exported MP4.
 Preview/export still play media clips back to back (single video pipeline). Overlay,
-sticker, audio, crop, effects, animations and
+sticker, crop, effects, animations and
 blend are visible in the UI but disabled ("Coming in a later version").
 
 ## Run

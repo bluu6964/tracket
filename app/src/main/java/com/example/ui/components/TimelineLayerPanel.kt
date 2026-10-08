@@ -112,7 +112,8 @@ fun TimelineLayerPanel(
     onDuplicateClip: () -> Unit,
     onToggleMasterAudio: () -> Unit,
     onAddMediaClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    waveforms: Map<String, FloatArray> = emptyMap()
 ) {
     val coroutineScope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
@@ -234,7 +235,8 @@ fun TimelineLayerPanel(
                         selectedClipId = selectedClipId,
                         onClipSelect = onClipSelect,
                         visibleFromMs = visibleFromMs,
-                        visibleToMs = visibleToMs
+                        visibleToMs = visibleToMs,
+                        waveforms = waveforms
                     )
                 }
 
@@ -347,7 +349,8 @@ fun TimelineTrackRow(
     selectedClipId: String?,
     onClipSelect: (String?) -> Unit,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
-    visibleToMs: Long = Long.MAX_VALUE / 4
+    visibleToMs: Long = Long.MAX_VALUE / 4,
+    waveforms: Map<String, FloatArray> = emptyMap()
 ) {
     // A lane is as tall as its tallest layer (media is the tallest, audio the shortest).
     val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 36.dp
@@ -371,7 +374,8 @@ fun TimelineTrackRow(
                     isSelected = isSelected,
                     onClick = { onClipSelect(clip.id) },
                     visibleFromMs = visibleFromMs,
-                    visibleToMs = visibleToMs
+                    visibleToMs = visibleToMs,
+                    waveform = clip.uri?.let { waveforms[it] }
                 )
             }
         }
@@ -380,7 +384,7 @@ fun TimelineTrackRow(
 
 private fun laneHeightFor(type: LayerType): Dp = when (type) {
     LayerType.VIDEO -> 44.dp
-    LayerType.AUDIO -> 32.dp
+    LayerType.AUDIO -> 44.dp
     LayerType.SHAPE -> 40.dp
     LayerType.OVERLAY, LayerType.TEXT -> 42.dp
     else -> 36.dp
@@ -424,7 +428,8 @@ fun TimelineClipItem(
     isSelected: Boolean,
     onClick: () -> Unit,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
-    visibleToMs: Long = Long.MAX_VALUE / 4
+    visibleToMs: Long = Long.MAX_VALUE / 4,
+    waveform: FloatArray? = null
 ) {
     val selectScale by animateFloatAsState(
         targetValue = if (isSelected) 1.03f else 1f,
@@ -488,39 +493,50 @@ fun TimelineClipItem(
             }
 
             LayerType.AUDIO -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF1E232A))
-                ) {
-                    Row(
+                if (clip.uri != null) {
+                    // Real audio layer: waveform of the part of the song this layer plays.
+                    AudioClipBody(
+                        clip = clip,
+                        width = width,
+                        waveform = waveform,
+                        visibleFromMs = visibleFromMs,
+                        visibleToMs = visibleToMs
+                    )
+                } else {
+                    // Old demo audio layer (no file): keep the placeholder bars.
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            .background(Color(0xFF1E232A))
                     ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(22.dp)
-                                .background(NeonGreen.copy(alpha = 0.25f), CircleShape),
-                            contentAlignment = Alignment.Center
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Mic,
-                                contentDescription = "Mic",
-                                tint = NeonGreen,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-
-                        repeat(15) {
                             Box(
                                 modifier = Modifier
-                                    .width(16.dp)
-                                    .height(4.dp)
-                                    .background(Color(0xFF4B5563), RoundedCornerShape(2.dp))
-                            )
+                                    .size(22.dp)
+                                    .background(NeonGreen.copy(alpha = 0.25f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Mic",
+                                    tint = NeonGreen,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            repeat(15) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(16.dp)
+                                        .height(4.dp)
+                                        .background(Color(0xFF4B5563), RoundedCornerShape(2.dp))
+                                )
+                            }
                         }
                     }
                 }

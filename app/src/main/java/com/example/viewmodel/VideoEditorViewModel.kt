@@ -1,8 +1,10 @@
 package com.example.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
+import com.example.engine.AudioWaveform
 import com.example.model.AspectRatio
 import com.example.model.ExportSettings
 import com.example.model.ImportedMedia
@@ -210,13 +212,15 @@ class VideoEditorViewModel : ViewModel() {
                 if (playhead > clip.startMs + 500 && playhead < clip.endMs - 500) {
                     val duration1 = playhead - clip.startMs
                     val duration2 = clip.endMs - playhead
-                    val part1 = clip.copy(durationMs = duration1)
+                    val part1 = clip.copy(durationMs = duration1, fadeOutMs = 0L)
                     val part2 = clip.copy(
                         id = UUID.randomUUID().toString(),
                         name = "${clip.name} (Split)",
                         startMs = playhead,
                         durationMs = duration2,
-                        trimStartMs = clip.trimStartMs + duration1
+                        // Source time moves `speed` times faster than timeline time.
+                        trimStartMs = clip.trimStartMs + (duration1 * clip.speed).toLong(),
+                        fadeInMs = 0L
                     )
                     val updatedClips = track.clips.toMutableList()
                     updatedClips[clipIndex] = part1
@@ -571,6 +575,106 @@ class VideoEditorViewModel : ViewModel() {
             rot3dY = 0f,
             warp = 0f
         )
+    }
+
+
+    // ---- Audio layers -----------------------------------------------------
+
+    private val _waveforms = MutableStateFlow<Map<String, FloatArray>>(emptyMap())
+    /** Waveform peaks per audio file uri (empty array = could not be decoded). */
+    val waveforms: StateFlow<Map<String, FloatArray>> = _waveforms.asStateFlow()
+    private val waveformRequested = mutableSetOf<String>()
+
+    /** Decodes the waveform of an audio file once, in the background. */
+    fun requestWaveform(context: Context, uri: String, durationMs: Long) {
+        if (!waveformRequested.add(uri)) return
+        viewModelScope.launch {
+            val peaks = AudioWaveform.compute(context, uri, durationMs) ?: FloatArray(0)
+            _waveforms.value = _waveforms.value + (uri to peaks)
+        }
+    }
+
+    /** End of the last picture/video clip: audio is kept inside the video length. */
+    private fun videoEndMs(): Long =
+        _tracks.value.flatMap { it.clips }
+            .filter { it.type == LayerType.VIDEO && it.uri != null }
+            .maxOfOrNull { it.endMs } ?: 0L
+
+    /**
+     * Adds picked audio files as audio layers, one after the other, starting at the playhead.
+     * When there is video, a layer never runs past the end of the video.
+     */
+    fun importAudio(items: List<ImportedMedia>) {
+        if (items.isEmpty()) return
+        pushHistory()
+        val videoEnd = videoEndMs()
+        var cursor = _currentPlayheadMs.value
+        if (videoEnd > 0L && cursor > videoEnd - 1000L) cursor = 0L
+        var updated = _tracks.value
+        var lastId: String? = null
+        for (m in items) {
+            var duration = m.durationMs
+            if (videoEnd > 0L) duration = minOf(duration, videoEnd - cursor)
+            if (duration < 250L) continue
+            val clip = TimelineClip(
+                id = UUID.randomUUID().toString(),
+                name = m.name,
+                type = LayerType.AUDIO,
+                startMs = cursor,
+                durationMs = duration,
+                color = 0xFF1B4332,
+                uri = m.uri,
+                mimeType = m.mimeType,
+                sourceDurationMs = m.durationMs
+            )
+            updated = LaneLayout.place(updated, clip)
+            lastId = clip.id
+            cursor += duration
+        }
+        if (lastId == null) {
+            undoStack.removeAt(undoStack.lastIndex)
+            _canUndo.value = undoStack.isNotEmpty()
+            return
+        }
+        _tracks.value = updated
+        _selectedClipId.value = lastId
+        recomputeTotal()
+    }
+
+    /** One undo step for a whole slider session (Volume / Fade / Speed sheets). */
+    fun beginAdjust() = pushHistory()
+
+    fun setClipVolume(clipId: String, volume: Float) =
+        updateClip(clipId) { it.copy(volume = volume.coerceIn(0f, 1f)) }
+
+    fun setClipFades(clipId: String, fadeInMs: Long, fadeOutMs: Long) =
+        updateClip(clipId) {
+            val maxFade = it.durationMs
+            it.copy(
+                fadeInMs = fadeInMs.coerceIn(0L, maxFade),
+                fadeOutMs = fadeOutMs.coerceIn(0L, maxFade)
+            )
+        }
+
+    /** Changes the speed of an audio layer; the layer gets shorter/longer on the timeline. */
+    fun setAudioSpeed(clipId: String, speed: Float) {
+        val s = speed.coerceIn(0.25f, 4f)
+        val mapped = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) {
+                    val sourceSpan = clip.durationMs * clip.speed
+                    val newDuration = (sourceSpan / s).toLong().coerceAtLeast(250L)
+                    clip.copy(
+                        speed = s,
+                        durationMs = newDuration,
+                        fadeInMs = clip.fadeInMs.coerceAtMost(newDuration),
+                        fadeOutMs = clip.fadeOutMs.coerceAtMost(newDuration)
+                    )
+                } else clip
+            })
+        }
+        _tracks.value = LaneLayout.normalize(mapped)
+        recomputeTotal()
     }
 
     // ---- Real media -------------------------------------------------------

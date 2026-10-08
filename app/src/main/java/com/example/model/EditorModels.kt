@@ -88,6 +88,9 @@ data class TimelineClip(
     val volume: Float = 1.0f,
     val speed: Float = 1.0f,
     val isMuted: Boolean = false,
+    /** Audio layers: fade in / fade out length on the timeline, in ms (0 = no fade). */
+    val fadeInMs: Long = 0L,
+    val fadeOutMs: Long = 0L,
     val isLocked: Boolean = false,
     val isFlippedH: Boolean = false,
     val isFlippedV: Boolean = false,
@@ -141,3 +144,19 @@ data class ImportedMedia(
     val durationMs: Long,
     val isImage: Boolean
 )
+
+/**
+ * Fade multiplier (0..1) of an audio layer at [relMs] ms after the layer's start on the timeline.
+ * Volume is applied separately (clip.volume). Used by the preview and mirrored by the exporter.
+ */
+fun TimelineClip.fadeGainAt(relMs: Long): Float {
+    var g = 1f
+    if (fadeInMs > 0L && relMs < fadeInMs) {
+        g = minOf(g, relMs.coerceAtLeast(0L) / fadeInMs.toFloat())
+    }
+    val left = durationMs - relMs
+    if (fadeOutMs > 0L && left < fadeOutMs) {
+        g = minOf(g, left.coerceAtLeast(0L) / fadeOutMs.toFloat())
+    }
+    return g.coerceIn(0f, 1f)
+}

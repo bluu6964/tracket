@@ -5,6 +5,7 @@ import com.example.model.ImportedMedia
 import com.example.model.LayerType
 import com.example.model.PreviewResolution
 import com.example.model.TimelineClip
+import com.example.model.fadeGainAt
 import com.example.viewmodel.VideoEditorViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -291,5 +292,68 @@ class VideoEditorViewModelTest {
         val clip = clipsOf(LayerType.TEXT).single()
         assertEquals("", clip.text)
         assertEquals(600, clip.fontWeight)
+    }
+
+    // ---- Audio layers (v0.1.12) ----
+
+    private fun importAudio(name: String, ms: Long) = viewModel.importAudio(
+        listOf(ImportedMedia("content://test/$name", name, "audio/mpeg", ms, isImage = false))
+    )
+
+    @Test
+    fun testImportAudioIsKeptInsideVideoLength() {
+        importVideo("v", 10_000L)
+        viewModel.seekTo(4_000L)
+        importAudio("song", 60_000L)
+        val audio = clipsOf(LayerType.AUDIO).single()
+        assertEquals(4_000L, audio.startMs)
+        assertEquals(6_000L, audio.durationMs)
+        assertEquals(60_000L, audio.sourceDurationMs)
+        assertEquals(audio.id, viewModel.selectedClipId.value)
+    }
+
+    @Test
+    fun testAudioOverlappingVideoGoesToItsOwnLane() {
+        importVideo("v", 10_000L)
+        viewModel.seekTo(0L)
+        importAudio("song", 5_000L)
+        val video = mainClips().single()
+        val audio = clipsOf(LayerType.AUDIO).single()
+        assertTrue(laneOf(video) != laneOf(audio))
+    }
+
+    @Test
+    fun testAudioSpeedChangesTimelineLength() {
+        importAudio("song", 10_000L)
+        val id = clipsOf(LayerType.AUDIO).single().id
+        viewModel.setAudioSpeed(id, 2f)
+        val audio = clipsOf(LayerType.AUDIO).single()
+        assertEquals(2f, audio.speed, 0.0001f)
+        assertEquals(5_000L, audio.durationMs)
+    }
+
+    @Test
+    fun testSplitAudioKeepsSourcePositionWithSpeed() {
+        importAudio("song", 20_000L)
+        val id = clipsOf(LayerType.AUDIO).single().id
+        viewModel.setAudioSpeed(id, 2f)            // now 10 s long on the timeline
+        viewModel.seekTo(4_000L)
+        viewModel.splitSelectedClip()
+        val parts = clipsOf(LayerType.AUDIO)
+        assertEquals(2, parts.size)
+        assertEquals(4_000L, parts[0].durationMs)
+        assertEquals(8_000L, parts[1].trimStartMs)  // 4 s on the timeline = 8 s of the song
+    }
+
+    @Test
+    fun testFadeGain() {
+        val clip = TimelineClip(
+            id = "a", name = "a", type = LayerType.AUDIO, startMs = 0L, durationMs = 10_000L,
+            color = 0L, fadeInMs = 2_000L, fadeOutMs = 2_000L
+        )
+        assertEquals(0f, clip.fadeGainAt(0L), 0.0001f)
+        assertEquals(0.5f, clip.fadeGainAt(1_000L), 0.0001f)
+        assertEquals(1f, clip.fadeGainAt(5_000L), 0.0001f)
+        assertEquals(0.5f, clip.fadeGainAt(9_000L), 0.0001f)
     }
 }

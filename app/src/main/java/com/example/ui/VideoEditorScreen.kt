@@ -45,6 +45,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.util.UnstableApi
+import android.content.Intent
+import com.example.engine.AudioPreview
 import com.example.engine.EditorPlayer
 import com.example.engine.MediaImporter
 import com.example.engine.VideoExporter
@@ -64,7 +66,10 @@ import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
-import com.example.ui.components.AddAudioSheet
+import com.example.ui.components.AudioClipToolsPanel
+import com.example.ui.components.AudioFadeSheet
+import com.example.ui.components.AudioSpeedSheet
+import com.example.ui.components.AudioVolumeSheet
 import com.example.ui.components.AddShapeSheet
 import com.example.ui.components.AddTextSheet
 import com.example.ui.components.AppliedEffectsView
@@ -106,6 +111,7 @@ fun VideoEditorScreen(
     val canRedo by viewModel.canRedo.collectAsState()
     val isExporting by viewModel.isExporting.collectAsState()
     val exportProgress by viewModel.exportProgress.collectAsState()
+    val waveforms by viewModel.waveforms.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -121,12 +127,35 @@ fun VideoEditorScreen(
     // ---- Real engine: preview player, exporter, media picker ----
     val editorPlayer = remember { EditorPlayer(context) }
     val exporter = remember { VideoExporter(context) }
+    val audioPreview = remember { AudioPreview(context) }
     DisposableEffect(Unit) {
         editorPlayer.onEnded = { viewModel.onPlaybackEnded() }
         onDispose {
             exporter.cancel()
             editorPlayer.release()
+            audioPreview.release()
         }
+    }
+
+    // Leaving the app stops playback (video and audio layers).
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.pause()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Audio layers follow the playhead (play, pause, scrub, volume/fade/speed/mute changes).
+    LaunchedEffect(tracks, currentPlayheadMs, isPlaying, isMasterMuted) {
+        audioPreview.sync(tracks, currentPlayheadMs, isPlaying, isMasterMuted)
+    }
+    // Decode the waveform of every audio file once, in the background.
+    LaunchedEffect(tracks) {
+        tracks.flatMap { it.clips }
+            .filter { it.type == LayerType.AUDIO && it.uri != null }
+            .forEach { viewModel.requestWaveform(context.applicationContext, it.uri!!, it.sourceDurationMs) }
     }
 
     // Real media clips across all tracks in timeline order
@@ -176,12 +205,37 @@ fun VideoEditorScreen(
         }
     }
 
+    val audioPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            uris.forEach { u ->
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        u, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+            }
+            scope.launch {
+                val items = MediaImporter.read(context, uris)
+                if (items.isEmpty()) {
+                    snackbarHostState.showSnackbar("Could not read the selected audio")
+                } else {
+                    viewModel.importAudio(items)
+                    snackbarHostState.showSnackbar("Added ${items.size} audio layer(s)")
+                }
+            }
+        }
+    }
+
     // Dialog & Sheet States
     var showAspectRatioSheet by remember { mutableStateOf(false) }
     var showResolutionSheet by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showFullscreenPlayer by remember { mutableStateOf(false) }
-    var showAddAudioSheet by remember { mutableStateOf(false) }
+    var showAudioVolumeSheet by remember { mutableStateOf(false) }
+    var showAudioFadeSheet by remember { mutableStateOf(false) }
+    var showAudioSpeedSheet by remember { mutableStateOf(false) }
     var showAddTextSheet by remember { mutableStateOf(false) }
     var showAddShapeSheet by remember { mutableStateOf(false) }
     var showEditShapeMode by remember { mutableStateOf(false) }
@@ -314,6 +368,7 @@ fun VideoEditorScreen(
                             snackbarHostState.showSnackbar(if (!isMasterMuted) "Master Audio Muted" else "Master Audio Unmuted")
                         }
                     },
+                    waveforms = waveforms,
                     onAddMediaClick = {
                         mediaPicker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
@@ -333,7 +388,38 @@ fun VideoEditorScreen(
                     label = "toolbarTransition"
                 ) { targetClipId ->
                     if (targetClipId != null) {
-                        ClipEditToolsPanel(
+                        val targetIsAudio = tracks.any { t ->
+                            t.clips.any { it.id == targetClipId && it.type == LayerType.AUDIO }
+                        }
+                        if (targetIsAudio) AudioClipToolsPanel(
+                            height = toolbarH,
+                            onDeselect = { viewModel.selectClip(null) },
+                            onSplit = {
+                                viewModel.splitSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Audio split at playhead") }
+                            },
+                            onVolume = {
+                                viewModel.beginAdjust()
+                                showAudioVolumeSheet = true
+                            },
+                            onFade = {
+                                viewModel.beginAdjust()
+                                showAudioFadeSheet = true
+                            },
+                            onDelete = {
+                                viewModel.deleteSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Audio deleted") }
+                            },
+                            onSpeed = {
+                                viewModel.beginAdjust()
+                                showAudioSpeedSheet = true
+                            },
+                            onReverse = comingSoon,
+                            onDuplicate = {
+                                viewModel.duplicateSelectedClip()
+                                scope.launch { snackbarHostState.showSnackbar("Audio duplicated") }
+                            }
+                        ) else ClipEditToolsPanel(
                             height = toolbarH,
                             onDeselect = { viewModel.selectClip(null) },
                             onSplit = {
@@ -383,7 +469,7 @@ fun VideoEditorScreen(
                     } else {
                         BottomToolbar(
                             height = toolbarH,
-                            onAudioClick = comingSoon,
+                            onAudioClick = { audioPicker.launch(arrayOf("audio/*")) },
                             onTextClick = {
                                 // New text layer at the playhead, opened straight in Text edit.
                                 val remaining = totalDurationMs - currentPlayheadMs
@@ -594,17 +680,29 @@ fun VideoEditorScreen(
         )
     }
 
-    if (showAddAudioSheet) {
-        AddAudioSheet(
-            onAddAudio = { audioName ->
-                viewModel.addClip(
-                    type = LayerType.AUDIO,
-                    name = audioName,
-                    durationMs = 15_000L
-                )
-                scope.launch { snackbarHostState.showSnackbar("Added audio: $audioName") }
-            },
-            onDismiss = { showAddAudioSheet = false }
+    val selectedAudio = tracks.flatMap { it.clips }
+        .firstOrNull { it.id == selectedClipId && it.type == LayerType.AUDIO }
+    if (showAudioVolumeSheet && selectedAudio != null) {
+        AudioVolumeSheet(
+            volume = selectedAudio.volume,
+            onVolumeChange = { viewModel.setClipVolume(selectedAudio.id, it) },
+            onDismiss = { showAudioVolumeSheet = false }
+        )
+    }
+    if (showAudioFadeSheet && selectedAudio != null) {
+        AudioFadeSheet(
+            fadeInMs = selectedAudio.fadeInMs,
+            fadeOutMs = selectedAudio.fadeOutMs,
+            maxFadeMs = selectedAudio.durationMs / 2,
+            onChange = { fin, fout -> viewModel.setClipFades(selectedAudio.id, fin, fout) },
+            onDismiss = { showAudioFadeSheet = false }
+        )
+    }
+    if (showAudioSpeedSheet && selectedAudio != null) {
+        AudioSpeedSheet(
+            speed = selectedAudio.speed,
+            onSpeedChange = { viewModel.setAudioSpeed(selectedAudio.id, it) },
+            onDismiss = { showAudioSpeedSheet = false }
         )
     }
 

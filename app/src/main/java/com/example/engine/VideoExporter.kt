@@ -10,6 +10,8 @@ import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.net.toUri
 import androidx.media3.common.Effect
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
@@ -32,7 +34,8 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * Real export: renders the main track (trim, flip, mute, project aspect ratio)
+ * Real export: renders the main track (trim, flip, mute, project aspect ratio) and mixes in
+ * the audio layers (volume, fades, speed)
  * to an H.264/AAC MP4 with Media3 Transformer, then saves it to Movies/Tracket.
  * Must be used from the main thread.
  */
@@ -63,7 +66,18 @@ class VideoExporter(private val context: Context) {
         val sequenceBuilder = EditedMediaItemSequence.Builder(items)
         // Photos have no audio; force a silent track so mixed sequences stay consistent.
         if (clips.any { it.isImage }) sequenceBuilder.experimentalSetForceAudioTrack(true)
-        val composition = Composition.Builder(sequenceBuilder.build()).build()
+        // Audio layers: one sequence per layer, each one starts after a silent gap, and all of
+        // them are mixed with the video's own sound by Transformer.
+        val videoEndMs = clips.maxOf { it.endMs }
+        val sequences = mutableListOf(sequenceBuilder.build())
+        tracks.forEach { track ->
+            track.clips.forEach { c ->
+                if (c.type == LayerType.AUDIO && c.uri != null && !c.isMuted && !track.isMuted) {
+                    buildAudioSequence(c, videoEndMs)?.let { sequences += it }
+                }
+            }
+        }
+        val composition = Composition.Builder(sequences).build()
 
         val out = File(context.cacheDir, "tracket_${System.currentTimeMillis()}.mp4")
         val t = Transformer.Builder(context)
@@ -127,6 +141,43 @@ class VideoExporter(private val context: Context) {
             .setRemoveAudio(c.isMuted)
         if (c.isImage) b.setDurationUs(c.durationMs * 1_000L).setFrameRate(30)
         return b.build()
+    }
+
+    /** One audio layer -> a sequence: [silent gap until the layer starts] + the trimmed audio. */
+    private fun buildAudioSequence(c: TimelineClip, videoEndMs: Long): EditedMediaItemSequence? {
+        val durationMs = minOf(c.durationMs, videoEndMs - c.startMs)
+        if (durationMs < 100L) return null
+        val sourceSpanMs = (durationMs * c.speed).toLong()
+
+        val mi = MediaItem.Builder().setUri(c.uri!!.toUri())
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(c.trimStartMs)
+                    .setEndPositionMs(c.trimStartMs + sourceSpanMs)
+                    .build()
+            )
+            .build()
+
+        // Order matters: speed first, then volume/fades (which use the timeline clock).
+        val processors = mutableListOf<AudioProcessor>()
+        if (kotlin.math.abs(c.speed - 1f) > 0.001f) {
+            processors += SonicAudioProcessor().apply {
+                setSpeed(c.speed)
+                setPitch(1f)
+            }
+        }
+        if (c.volume != 1f || c.fadeInMs > 0L || c.fadeOutMs > 0L) {
+            processors += GainFadeAudioProcessor(c.volume, c.fadeInMs, c.fadeOutMs, c.durationMs)
+        }
+        val item = EditedMediaItem.Builder(mi)
+            .setRemoveVideo(true)
+            .setEffects(Effects(processors, emptyList()))
+            .build()
+
+        val seq = EditedMediaItemSequence.Builder()
+        if (c.startMs > 0L) seq.addGap(c.startMs * 1_000L)
+        seq.addItem(item)
+        return seq.build()
     }
 
     /** "1080p FHD" + 9:16 -> 1080x1920; short side = the number, both sides even. */

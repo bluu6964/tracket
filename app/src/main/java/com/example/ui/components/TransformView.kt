@@ -839,32 +839,15 @@ fun TransformView(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     when (currentTab) {
                         TransformTab.TWO_D -> {
-                            // Horizontal (0.0)
-                            RulerDialSlider(
-                                label = "Horizontal",
-                                value = horizontal,
-                                onValueChange = {
-                                    horizontal = it
+                            // Horizontal + Vertical in one swipe pad
+                            TransformMovePad(
+                                x = horizontal,
+                                y = vertical,
+                                onMove = { nx, ny ->
+                                    horizontal = nx
+                                    vertical = ny
                                     emitTransform()
-                                },
-                                min = -500f,
-                                max = 500f,
-                                unit = "",
-                                isPercentage = false
-                            )
-
-                            // Vertical (0.0)
-                            RulerDialSlider(
-                                label = "Vertical",
-                                value = vertical,
-                                onValueChange = {
-                                    vertical = it
-                                    emitTransform()
-                                },
-                                min = -500f,
-                                max = 500f,
-                                unit = "",
-                                isPercentage = false
+                                }
                             )
 
                             // Scale (100.0%)

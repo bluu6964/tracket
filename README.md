@@ -1,4 +1,6 @@
-# Tracket (v0.1.29)
+# Tracket (v0.1.30)
+
+**v0.1.30:** Transform 2D: Horizontal and Vertical sliders merged into one "Swipe here to move layer" pad with X/Y readouts.
 
 **v0.1.29:** squarer layers (2dp corners), left layer controls have no background (eye/check + thumbnail only), selected layers (single or multi-select) get an inner shadow instead of a border, lanes are shorter (30-36dp).
 

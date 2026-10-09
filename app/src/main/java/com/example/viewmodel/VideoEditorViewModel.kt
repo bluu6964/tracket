@@ -672,6 +672,97 @@ class VideoEditorViewModel : ViewModel() {
             rot3dY = 0f,
             warp = 0f
         )
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) clip.copy(transformKeyframes = emptyMap()) else clip
+            })
+        }
+    }
+
+    fun addOrUpdateTransformKeyframe(
+        clipId: String,
+        property: String,
+        value: Float,
+        timeMs: Long = _currentPlayheadMs.value,
+        easing: com.example.model.EasingType = com.example.model.EasingType.LINEAR
+    ) {
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id != clipId) return@map clip
+                val newMap = com.example.model.upsertKeyframe(
+                    clip.transformKeyframes, property, timeMs, value, easing
+                )
+                when (property) {
+                    "transformX" -> clip.copy(transformKeyframes = newMap, transformX = value, shapeOffsetX = value)
+                    "transformY" -> clip.copy(transformKeyframes = newMap, transformY = value, shapeOffsetY = value)
+                    "scalePercent" -> clip.copy(
+                        transformKeyframes = newMap,
+                        scalePercent = value,
+                        shapeScaleX = value / 100f,
+                        shapeScaleY = value / 100f
+                    )
+                    "rotationDeg" -> clip.copy(transformKeyframes = newMap, rotationDeg = value)
+                    "pivotX" -> clip.copy(transformKeyframes = newMap, pivotX = value)
+                    "pivotY" -> clip.copy(transformKeyframes = newMap, pivotY = value)
+                    "rotation3dX" -> clip.copy(transformKeyframes = newMap, rotation3dX = value)
+                    "rotation3dY" -> clip.copy(transformKeyframes = newMap, rotation3dY = value)
+                    "warpDistort" -> clip.copy(transformKeyframes = newMap, warpDistort = value)
+                    else -> clip.copy(transformKeyframes = newMap)
+                }
+            })
+        }
+    }
+
+    fun removeTransformKeyframe(clipId: String, property: String, timeMs: Long) {
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id != clipId) return@map clip
+                clip.copy(
+                    transformKeyframes = com.example.model.removeKeyframe(
+                        clip.transformKeyframes, property, timeMs
+                    )
+                )
+            })
+        }
+    }
+
+    fun setTransformKeyframeEasing(
+        clipId: String,
+        property: String,
+        timeMs: Long,
+        easing: com.example.model.EasingType
+    ) {
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id != clipId) return@map clip
+                clip.copy(
+                    transformKeyframes = com.example.model.setKeyframeEasing(
+                        clip.transformKeyframes, property, timeMs, easing
+                    )
+                )
+            })
+        }
+    }
+
+    fun setAllTransformEasing(
+        clipId: String,
+        easing: com.example.model.EasingType,
+        property: String? = null
+    ) {
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id != clipId) return@map clip
+                val newMap = clip.transformKeyframes.mapValues { (prop, list) ->
+                    if (property != null && prop != property) list
+                    else list.map { it.copy(easing = easing) }
+                }
+                clip.copy(transformKeyframes = newMap)
+            })
+        }
     }
 
 

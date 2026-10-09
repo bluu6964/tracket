@@ -135,12 +135,16 @@ fun CanvasArea(
                         tracks.any { tr -> tr.clips.any { it.isActiveAt(t) } }
                     }
                 }
-                val clipScale = (activeVideoClip?.scalePercent ?: 100f) / 100f
-                val clipRotZ = activeVideoClip?.rotationDeg ?: 0f
-                val clipRotX = activeVideoClip?.rotation3dX ?: 0f
-                val clipRotY = activeVideoClip?.rotation3dY ?: 0f
-                val clipTransX = activeVideoClip?.transformX ?: 0f
-                val clipTransY = activeVideoClip?.transformY ?: 0f
+                val tNow = playheadMs()
+                val av = activeVideoClip
+                val clipScale = (av?.evaluateTransform("scalePercent", tNow, av.scalePercent) ?: 100f) / 100f
+                val clipRotZ = av?.evaluateTransform("rotationDeg", tNow, av.rotationDeg) ?: 0f
+                val clipRotX = av?.evaluateTransform("rotation3dX", tNow, av.rotation3dX) ?: 0f
+                val clipRotY = av?.evaluateTransform("rotation3dY", tNow, av.rotation3dY) ?: 0f
+                val clipTransX = av?.evaluateTransform("transformX", tNow, av.transformX) ?: 0f
+                val clipTransY = av?.evaluateTransform("transformY", tNow, av.transformY) ?: 0f
+                val clipPivotX = av?.evaluateTransform("pivotX", tNow, av.pivotX) ?: 0.5f
+                val clipPivotY = av?.evaluateTransform("pivotY", tNow, av.pivotY) ?: 0.5f
 
                 if (player != null && hasMainMedia && activeVideoClip?.uri != null) {
                     // Real preview: ExoPlayer renders the active video layer with its transformations
@@ -156,8 +160,8 @@ fun CanvasArea(
                                 rotationX = clipRotX
                                 rotationY = clipRotY
                                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(
-                                    activeVideoClip?.pivotX ?: 0.5f,
-                                    activeVideoClip?.pivotY ?: 0.5f
+                                    clipPivotX,
+                                    clipPivotY
                                 )
                                 cameraDistance = 12f * density
                             },
@@ -232,9 +236,15 @@ fun CanvasArea(
                     val pattern = clip.shapePattern ?: "CIRCLE"
                     val isSelected = clip.id == selectedClipId
 
-                    val effectiveTransX = clip.transformX
-                    val effectiveTransY = clip.transformY
-                    val effectiveScale = clip.scalePercent / 100f
+                    val tNowShape = playheadMs()
+                    val effectiveTransX = clip.evaluateTransform("transformX", tNowShape, clip.transformX)
+                    val effectiveTransY = clip.evaluateTransform("transformY", tNowShape, clip.transformY)
+                    val effectiveScale = clip.evaluateTransform("scalePercent", tNowShape, clip.scalePercent) / 100f
+                    val effectiveRotZ = clip.evaluateTransform("rotationDeg", tNowShape, clip.rotationDeg)
+                    val effectiveRotX = clip.evaluateTransform("rotation3dX", tNowShape, clip.rotation3dX)
+                    val effectiveRotY = clip.evaluateTransform("rotation3dY", tNowShape, clip.rotation3dY)
+                    val effectivePivotX = clip.evaluateTransform("pivotX", tNowShape, clip.pivotX)
+                    val effectivePivotY = clip.evaluateTransform("pivotY", tNowShape, clip.pivotY)
                     val baseSize = 130.dp
 
                     Box(
@@ -245,10 +255,10 @@ fun CanvasArea(
                                 translationY = effectiveTransY
                                 scaleX = effectiveScale.coerceAtLeast(0.05f)
                                 scaleY = effectiveScale.coerceAtLeast(0.05f)
-                                rotationZ = clip.rotationDeg
-                                rotationX = clip.rotation3dX
-                                rotationY = clip.rotation3dY
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(clip.pivotX, clip.pivotY)
+                                rotationZ = effectiveRotZ
+                                rotationX = effectiveRotX
+                                rotationY = effectiveRotY
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(effectivePivotX, effectivePivotY)
                                 cameraDistance = 12f * density
                             }
                             .size(baseSize)

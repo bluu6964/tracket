@@ -677,6 +677,37 @@ fun VideoEditorScreen(
                                     warp = warp
                                 )
                             }
+                        },
+                        onAddKeyframe = { property, value, timeMs ->
+                            val targetId = selectedClip?.id ?: selectedClipId
+                            if (targetId != null) {
+                                viewModel.addOrUpdateTransformKeyframe(
+                                    clipId = targetId,
+                                    property = property,
+                                    value = value,
+                                    timeMs = timeMs
+                                )
+                            }
+                        },
+                        onRemoveKeyframe = { property, timeMs ->
+                            val targetId = selectedClip?.id ?: selectedClipId
+                            if (targetId != null) {
+                                viewModel.removeTransformKeyframe(targetId, property, timeMs)
+                            }
+                        },
+                        onSetEasing = { property, timeMs, easing ->
+                            val targetId = selectedClip?.id ?: selectedClipId
+                            if (targetId != null) {
+                                viewModel.setTransformKeyframeEasing(
+                                    targetId, property, timeMs, easing
+                                )
+                            }
+                        },
+                        onSetAllEasing = { property, easing ->
+                            val targetId = selectedClip?.id ?: selectedClipId
+                            if (targetId != null) {
+                                viewModel.setAllTransformEasing(targetId, easing, property)
+                            }
                         }
                     )
                 }

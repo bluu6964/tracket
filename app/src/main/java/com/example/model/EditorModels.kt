@@ -104,7 +104,13 @@ data class TimelineClip(
     val mimeType: String? = null,
     val isImage: Boolean = false,
     val sourceDurationMs: Long = 0L,
-    val trimStartMs: Long = 0L
+    val trimStartMs: Long = 0L,
+    /**
+     * Transform keyframes keyed by property name
+     * (e.g. "transformX", "transformY", "scalePercent", "rotationDeg", …).
+     * Empty list = no animation; the static field value is used.
+     */
+    val transformKeyframes: Map<String, List<TransformKeyframe>> = emptyMap()
 ) {
     val endMs: Long
         get() = startMs + durationMs
@@ -117,6 +123,119 @@ data class TimelineClip(
     fun overlaps(other: TimelineClip): Boolean {
         return startMs < other.endMs && other.startMs < endMs
     }
+
+    /** Evaluate a transform property at [timeMs] using keyframes + easing, or fall back to static value. */
+    fun evaluateTransform(property: String, timeMs: Long, staticValue: Float): Float {
+        val kfs = transformKeyframes[property].orEmpty().sortedBy { it.timeMs }
+        if (kfs.isEmpty()) return staticValue
+        return interpolateKeyframes(kfs, timeMs)
+    }
+}
+
+/** Easing / curve type applied between two consecutive keyframes. */
+enum class EasingType {
+    LINEAR,
+    EASE_IN,
+    EASE_OUT,
+    EASE_IN_OUT,
+    EASE_IN_CUBIC,
+    EASE_OUT_CUBIC,
+    EASE_IN_OUT_CUBIC,
+    HOLD
+}
+
+/**
+ * A single keyframe on a transform property graph.
+ * [timeMs] is absolute timeline time.
+ * [value] is the property value at that time.
+ * [easing] controls interpolation toward the *next* keyframe.
+ */
+data class TransformKeyframe(
+    val timeMs: Long,
+    val value: Float,
+    val easing: EasingType = EasingType.LINEAR
+)
+
+/** Apply easing curve to normalized t ∈ [0, 1]. */
+fun applyEasing(t: Float, type: EasingType): Float {
+    val x = t.coerceIn(0f, 1f)
+    return when (type) {
+        EasingType.LINEAR -> x
+        EasingType.HOLD -> 0f
+        EasingType.EASE_IN -> x * x
+        EasingType.EASE_OUT -> 1f - (1f - x) * (1f - x)
+        EasingType.EASE_IN_OUT -> if (x < 0.5f) 2f * x * x else 1f - (-2f * x + 2f).let { it * it } / 2f
+        EasingType.EASE_IN_CUBIC -> x * x * x
+        EasingType.EASE_OUT_CUBIC -> 1f - (1f - x).let { it * it * it }
+        EasingType.EASE_IN_OUT_CUBIC ->
+            if (x < 0.5f) 4f * x * x * x
+            else 1f - (-2f * x + 2f).let { it * it * it } / 2f
+    }
+}
+
+/** Interpolate a sorted list of keyframes at [timeMs]. */
+fun interpolateKeyframes(keyframes: List<TransformKeyframe>, timeMs: Long): Float {
+    if (keyframes.isEmpty()) return 0f
+    if (timeMs <= keyframes.first().timeMs) return keyframes.first().value
+    if (timeMs >= keyframes.last().timeMs) return keyframes.last().value
+
+    for (i in 0 until keyframes.size - 1) {
+        val a = keyframes[i]
+        val b = keyframes[i + 1]
+        if (timeMs in a.timeMs..b.timeMs) {
+            val span = (b.timeMs - a.timeMs).toFloat().coerceAtLeast(1f)
+            val t = (timeMs - a.timeMs) / span
+            val eased = applyEasing(t, a.easing)
+            return a.value + (b.value - a.value) * eased
+        }
+    }
+    return keyframes.last().value
+}
+
+/** Insert or update a keyframe at [timeMs] for the given property. Returns new map. */
+fun upsertKeyframe(
+    map: Map<String, List<TransformKeyframe>>,
+    property: String,
+    timeMs: Long,
+    value: Float,
+    easing: EasingType = EasingType.LINEAR,
+    toleranceMs: Long = 40L
+): Map<String, List<TransformKeyframe>> {
+    val existing = map[property].orEmpty().toMutableList()
+    val idx = existing.indexOfFirst { kotlin.math.abs(it.timeMs - timeMs) <= toleranceMs }
+    if (idx >= 0) {
+        existing[idx] = existing[idx].copy(value = value, easing = easing)
+    } else {
+        existing.add(TransformKeyframe(timeMs, value, easing))
+    }
+    return map + (property to existing.sortedBy { it.timeMs })
+}
+
+/** Remove keyframe nearest to [timeMs] (within tolerance). */
+fun removeKeyframe(
+    map: Map<String, List<TransformKeyframe>>,
+    property: String,
+    timeMs: Long,
+    toleranceMs: Long = 40L
+): Map<String, List<TransformKeyframe>> {
+    val existing = map[property].orEmpty().filter {
+        kotlin.math.abs(it.timeMs - timeMs) > toleranceMs
+    }
+    return if (existing.isEmpty()) map - property else map + (property to existing)
+}
+
+/** Set the easing of the keyframe at/near [timeMs] (affects segment to next kf). */
+fun setKeyframeEasing(
+    map: Map<String, List<TransformKeyframe>>,
+    property: String,
+    timeMs: Long,
+    easing: EasingType,
+    toleranceMs: Long = 40L
+): Map<String, List<TransformKeyframe>> {
+    val existing = map[property].orEmpty().map {
+        if (kotlin.math.abs(it.timeMs - timeMs) <= toleranceMs) it.copy(easing = easing) else it
+    }
+    return map + (property to existing)
 }
 
 /**

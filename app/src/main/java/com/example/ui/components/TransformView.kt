@@ -112,10 +112,19 @@ fun TransformView(
         rot3dY: Float,
         warp: Float
     ) -> Unit,
+    onAddKeyframe: (property: String, value: Float, timeMs: Long) -> Unit = { _, _, _ -> },
+    onRemoveKeyframe: (property: String, timeMs: Long) -> Unit = { _, _ -> },
+    onSetEasing: (property: String, timeMs: Long, easing: com.example.model.EasingType) -> Unit = { _, _, _ -> },
+    onSetAllEasing: (property: String, easing: com.example.model.EasingType) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     // Current active mode tab: 2D, Pivot, 3D, Warp
     var activeTab by remember { mutableStateOf(TransformTab.TWO_D) }
+
+    // Graph editor visibility + selected property
+    var showGraph by remember { mutableStateOf(false) }
+    var graphProperty by remember { mutableStateOf(GraphProperty.HORIZONTAL) }
+    var selectedEasing by remember { mutableStateOf(com.example.model.EasingType.LINEAR) }
 
     // 2D Transform state
     var horizontal by remember(clip?.id) { mutableFloatStateOf(clip?.transformX ?: 0.0f) }
@@ -148,6 +157,33 @@ fun TransformView(
         }
     }
 
+    // Live-evaluate keyframed values at playhead
+    LaunchedEffect(clip?.transformKeyframes, currentPlayheadMs, clip?.id) {
+        val c = clip ?: return@LaunchedEffect
+        if (c.transformKeyframes.isEmpty()) return@LaunchedEffect
+        horizontal = c.evaluateTransform("transformX", currentPlayheadMs, c.transformX)
+        vertical = c.evaluateTransform("transformY", currentPlayheadMs, c.transformY)
+        scale = c.evaluateTransform("scalePercent", currentPlayheadMs, c.scalePercent)
+        rotation = c.evaluateTransform("rotationDeg", currentPlayheadMs, c.rotationDeg)
+        pivotX = c.evaluateTransform("pivotX", currentPlayheadMs, c.pivotX)
+        pivotY = c.evaluateTransform("pivotY", currentPlayheadMs, c.pivotY)
+        rot3dX = c.evaluateTransform("rotation3dX", currentPlayheadMs, c.rotation3dX)
+        rot3dY = c.evaluateTransform("rotation3dY", currentPlayheadMs, c.rotation3dY)
+        warpDistort = c.evaluateTransform("warpDistort", currentPlayheadMs, c.warpDistort)
+    }
+
+    fun currentValueFor(prop: GraphProperty): Float = when (prop) {
+        GraphProperty.HORIZONTAL -> horizontal
+        GraphProperty.VERTICAL -> vertical
+        GraphProperty.SCALE -> scale
+        GraphProperty.ROTATION -> rotation
+        GraphProperty.PIVOT_X -> pivotX
+        GraphProperty.PIVOT_Y -> pivotY
+        GraphProperty.ROT_3D_X -> rot3dX
+        GraphProperty.ROT_3D_Y -> rot3dY
+        GraphProperty.WARP -> warpDistort
+    }
+
     fun emitTransform() {
         onApplyTransform(
             horizontal,
@@ -173,6 +209,21 @@ fun TransformView(
         rot3dY = 0.0f
         warpDistort = 0.0f
         emitTransform()
+    }
+
+    fun addKeyframeAtPlayhead() {
+        val props = if (showGraph) listOf(graphProperty) else when (activeTab) {
+            TransformTab.TWO_D -> listOf(
+                GraphProperty.HORIZONTAL, GraphProperty.VERTICAL,
+                GraphProperty.SCALE, GraphProperty.ROTATION
+            )
+            TransformTab.PIVOT -> listOf(GraphProperty.PIVOT_X, GraphProperty.PIVOT_Y)
+            TransformTab.THREE_D -> listOf(GraphProperty.ROT_3D_X, GraphProperty.ROT_3D_Y)
+            TransformTab.WARP -> listOf(GraphProperty.WARP)
+        }
+        props.forEach { p ->
+            onAddKeyframe(p.key, currentValueFor(p), currentPlayheadMs)
+        }
     }
 
     Column(
@@ -766,12 +817,18 @@ fun TransformView(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.End
                 ) {
+                    val hasKfAtPlayhead = clip?.transformKeyframes?.values?.any { list ->
+                        list.any { kotlin.math.abs(it.timeMs - currentPlayheadMs) <= 40L }
+                    } == true
                     Box(
                         modifier = Modifier
                             .size(20.dp)
                             .graphicsLayer { rotationZ = 45f }
-                            .background(Color(0xFF3B4150), RoundedCornerShape(2.dp))
-                            .bouncyClickable(onClick = {}),
+                            .background(
+                                if (hasKfAtPlayhead) Color(0xFFE91E63) else Color(0xFF3B4150),
+                                RoundedCornerShape(2.dp)
+                            )
+                            .bouncyClickable(onClick = { addKeyframeAtPlayhead() }),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -786,26 +843,109 @@ fun TransformView(
 
                     Spacer(modifier = Modifier.width(10.dp))
 
-                    // Easing S-Curve Icon (matching screenshot)
-                    Canvas(modifier = Modifier.size(18.dp)) {
-                        val path = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(0f, size.height)
-                            cubicTo(
-                                size.width * 0.4f, size.height,
-                                size.width * 0.6f, 0f,
-                                size.width, 0f
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (showGraph) Color(0xFF3A4150) else Color.Transparent)
+                            .bouncyClickable(onClick = {
+                                showGraph = !showGraph
+                                graphProperty = when (activeTab) {
+                                    TransformTab.TWO_D -> GraphProperty.HORIZONTAL
+                                    TransformTab.PIVOT -> GraphProperty.PIVOT_X
+                                    TransformTab.THREE_D -> GraphProperty.ROT_3D_X
+                                    TransformTab.WARP -> GraphProperty.WARP
+                                }
+                            }),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.size(18.dp)) {
+                            val path = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(0f, size.height)
+                                cubicTo(
+                                    size.width * 0.4f, size.height,
+                                    size.width * 0.6f, 0f,
+                                    size.width, 0f
+                                )
+                            }
+                            drawPath(
+                                path = path,
+                                color = if (showGraph) Color(0xFFE91E63) else Color(0xFF8E99AF),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
                             )
                         }
-                        drawPath(
-                            path = path,
-                            color = Color(0xFF8E99AF),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
-                        )
                     }
                 }
             }
         }
 
+        }
+
+        // Graph editor (curve view)
+        if (showGraph && clip != null) {
+            val kfs = clip.transformKeyframes[graphProperty.key].orEmpty()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val propsForTab = when (activeTab) {
+                    TransformTab.TWO_D -> listOf(
+                        GraphProperty.HORIZONTAL, GraphProperty.VERTICAL,
+                        GraphProperty.SCALE, GraphProperty.ROTATION
+                    )
+                    TransformTab.PIVOT -> listOf(GraphProperty.PIVOT_X, GraphProperty.PIVOT_Y)
+                    TransformTab.THREE_D -> listOf(GraphProperty.ROT_3D_X, GraphProperty.ROT_3D_Y)
+                    TransformTab.WARP -> listOf(GraphProperty.WARP)
+                }
+                propsForTab.forEach { prop ->
+                    val sel = graphProperty == prop
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (sel) Color(0xFFE91E63) else Color(0xFF252A35))
+                            .bouncyClickable { graphProperty = prop }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = prop.label,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+            TransformGraphEditor(
+                keyframes = kfs,
+                propertyLabel = graphProperty.label,
+                valueMin = graphProperty.min,
+                valueMax = graphProperty.max,
+                timeStartMs = clip.startMs,
+                timeEndMs = clip.endMs,
+                playheadMs = currentPlayheadMs,
+                selectedEasing = selectedEasing,
+                onAddKeyframe = { t, v -> onAddKeyframe(graphProperty.key, v, t) },
+                onMoveKeyframe = { oldT, newT, newV ->
+                    onRemoveKeyframe(graphProperty.key, oldT)
+                    onAddKeyframe(graphProperty.key, newV, newT)
+                },
+                onRemoveKeyframe = { t -> onRemoveKeyframe(graphProperty.key, t) },
+                onSelectEasing = { easing ->
+                    selectedEasing = easing
+                    onSetAllEasing(graphProperty.key, easing)
+                    val nearest = kfs.filter { it.timeMs <= currentPlayheadMs }
+                        .maxByOrNull { it.timeMs } ?: kfs.firstOrNull()
+                    if (nearest != null) {
+                        onSetEasing(graphProperty.key, nearest.timeMs, easing)
+                    }
+                },
+                onSeek = onSeekTo,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
         }
 
         // 6. Bottom Transform Panel (matching screenshot)
@@ -839,15 +979,32 @@ fun TransformView(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     when (currentTab) {
                         TransformTab.TWO_D -> {
-                            // Horizontal + Vertical in one swipe pad
-                            TransformMovePad(
-                                x = horizontal,
-                                y = vertical,
-                                onMove = { nx, ny ->
-                                    horizontal = nx
-                                    vertical = ny
+                            // Horizontal (0.0)
+                            RulerDialSlider(
+                                label = "Horizontal",
+                                value = horizontal,
+                                onValueChange = {
+                                    horizontal = it
                                     emitTransform()
-                                }
+                                },
+                                min = -500f,
+                                max = 500f,
+                                unit = "",
+                                isPercentage = false
+                            )
+
+                            // Vertical (0.0)
+                            RulerDialSlider(
+                                label = "Vertical",
+                                value = vertical,
+                                onValueChange = {
+                                    vertical = it
+                                    emitTransform()
+                                },
+                                min = -500f,
+                                max = 500f,
+                                unit = "",
+                                isPercentage = false
                             )
 
                             // Scale (100.0%)

@@ -375,18 +375,22 @@ private class LayerBitmapOverlay(
         for (clip in clips) {
             if (!clip.isActiveAt(timeMs)) continue
             if (clip.type == LayerType.SHAPE) {
-                drawShape(canvas, clip)
+                drawShape(canvas, clip, timeMs)
             } else if (clip.type == LayerType.TEXT || clip.text != null) {
-                drawText(canvas, clip)
+                drawText(canvas, clip, timeMs)
             }
         }
         return bmp
     }
 
-    private fun drawShape(canvas: Canvas, clip: TimelineClip) {
-        val cx = frameW / 2f + clip.transformX
-        val cy = frameH / 2f + clip.transformY
-        val scale = (clip.scalePercent / 100f).coerceAtLeast(0.05f)
+    private fun drawShape(canvas: Canvas, clip: TimelineClip, timeMs: Long = 0L) {
+        val tx = clip.evaluateTransform("transformX", timeMs, clip.transformX)
+        val ty = clip.evaluateTransform("transformY", timeMs, clip.transformY)
+        val scalePct = clip.evaluateTransform("scalePercent", timeMs, clip.scalePercent)
+        val rot = clip.evaluateTransform("rotationDeg", timeMs, clip.rotationDeg)
+        val cx = frameW / 2f + tx
+        val cy = frameH / 2f + ty
+        val scale = (scalePct / 100f).coerceAtLeast(0.05f)
         val base = minOf(frameW, frameH) * 0.18f * scale
         val color = argb(clip.textColor.takeIf { it != 0L } ?: clip.color, fallback = 0xFFFF3377)
         val strokeCol = argb(clip.strokeColor, fallback = 0xFFFFFFFF)
@@ -402,7 +406,7 @@ private class LayerBitmapOverlay(
 
         canvas.save()
         canvas.translate(cx, cy)
-        canvas.rotate(clip.rotationDeg)
+        canvas.rotate(rot)
         canvas.scale(scale, scale)
 
         val pattern = clip.shapePattern ?: "CIRCLE"
@@ -441,10 +445,14 @@ private class LayerBitmapOverlay(
         canvas.restore()
     }
 
-    private fun drawText(canvas: Canvas, clip: TimelineClip) {
+    private fun drawText(canvas: Canvas, clip: TimelineClip, timeMs: Long = 0L) {
         val content = clip.text?.ifBlank { null } ?: "Text"
         val textColor = argb(clip.textColor, fallback = 0xFFFFFFFF)
-        val scale = (clip.scalePercent / 100f).coerceAtLeast(0.05f)
+        val scalePct = clip.evaluateTransform("scalePercent", timeMs, clip.scalePercent)
+        val scale = (scalePct / 100f).coerceAtLeast(0.05f)
+        val rot = clip.evaluateTransform("rotationDeg", timeMs, clip.rotationDeg)
+        val tx = clip.evaluateTransform("transformX", timeMs, clip.transformX)
+        val ty = clip.evaluateTransform("transformY", timeMs, clip.transformY)
         val textSizePx = (minOf(frameW, frameH) * 0.06f * scale).coerceAtLeast(12f)
 
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -473,12 +481,12 @@ private class LayerBitmapOverlay(
         @Suppress("DEPRECATION")
         val layout = StaticLayout(content, tp, maxWidth, align, clip.lineHeightPercent / 100f, 0f, false)
 
-        val cx = frameW / 2f + clip.transformX
-        val cy = frameH / 2f + clip.transformY
+        val cx = frameW / 2f + tx
+        val cy = frameH / 2f + ty
 
         canvas.save()
         canvas.translate(cx - layout.width / 2f, cy - layout.height / 2f)
-        canvas.rotate(clip.rotationDeg, layout.width / 2f, layout.height / 2f)
+        canvas.rotate(rot, layout.width / 2f, layout.height / 2f)
 
         // Optional background box
         if (clip.bgOpacity > 0f) {

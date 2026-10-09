@@ -94,16 +94,6 @@ fun AudioClipBody(
                 .background(Color(0xFF34349A))
                 .padding(horizontal = 4.dp, vertical = 1.dp)
         )
-        Text(
-            text = clip.name,
-            color = Color.White,
-            fontSize = 10.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Clip,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 6.dp, bottom = 1.dp)
-        )
     }
 }
 

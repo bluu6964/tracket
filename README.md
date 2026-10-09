@@ -1,4 +1,4 @@
-# Tracket (v0.1.20)
+# Tracket (v0.1.23)
 
 **v0.1.20:** background #270423, no success pop-ups (only errors), thumbnail look-ahead of one screen (fixes periodic swipe stutter).
 

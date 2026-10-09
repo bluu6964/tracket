@@ -478,7 +478,7 @@ private fun LayerLaneControl(
             .fillMaxWidth()
             .clip(RoundedCornerShape(height / 2))
             .background(Color(0xFF1A1E28))
-            .bouncyClickable(pressedScale = 0.96f, onClick = { onSelect(clip.id) })
+            .bouncyClickable(pressedScale = 1f, onClick = { onSelect(clip.id) })
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -489,7 +489,7 @@ private fun LayerLaneControl(
             tint = if (clip.isVisible) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.35f),
             modifier = Modifier
                 .size(18.dp)
-                .bouncyClickable(onClick = { onToggleVisibility(clip.id) })
+                .bouncyClickable(pressedScale = 1f, onClick = { onToggleVisibility(clip.id) })
         )
         Box(
             modifier = Modifier
@@ -685,7 +685,7 @@ fun TimelineClipItem(
     waveform: FloatArray? = null
 ) {
     val selectScale by animateFloatAsState(
-        targetValue = if (isSelected) 1.03f else 1f,
+        targetValue = 1f, // no grow/pop on touch or select: layers stay perfectly still while scrolling
         animationSpec = spring(
             dampingRatio = 0.8f,
             stiffness = Spring.StiffnessMedium
@@ -694,12 +694,12 @@ fun TimelineClipItem(
     )
 
     val borderColor by androidx.compose.animation.animateColorAsState(
-        targetValue = if (isSelected) SelectedClipBorder else Color(0xFF2C3240),
+        targetValue = Color(0xFF2C3240), // no white selection border
         animationSpec = androidx.compose.animation.core.tween(120),
         label = "clipBorderColor"
     )
     val borderWidth by androidx.compose.animation.core.animateDpAsState(
-        targetValue = if (isSelected) 2.dp else 1.dp,
+        targetValue = 1.dp,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 900f),
         label = "clipBorderWidth"
     )
@@ -716,7 +716,7 @@ fun TimelineClipItem(
             }
             .clip(RoundedCornerShape(6.dp))
             .then(borderModifier)
-            .bouncyClickable(pressedScale = 0.95f, onClick = onClick)
+            .bouncyClickable(pressedScale = 1f, onClick = onClick)
     ) {
         when (clip.type) {
             LayerType.VIDEO -> {
@@ -857,49 +857,12 @@ fun TimelineClipItem(
                         .fillMaxSize()
                         .background(Color(clip.color)),
                     contentAlignment = Alignment.CenterStart
-                ) {
-                    Text(
-                        text = clip.name,
-                        color = TextPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
-                }
+                ) {}
             }
         }
 
-        Text(
-            text = clip.name,
-            color = Color.White.copy(alpha = 0.9f),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .background(Color.Black.copy(alpha = 0.5f))
-                .padding(horizontal = 4.dp, vertical = 1.dp)
-        )
-
         // Selected clip duration badge & keyframe diamond (matching screenshot)
         if (isSelected) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .height(28.dp)
-                    .clip(RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 4.dp, bottomEnd = 4.dp))
-                    .background(Color.White)
-                    .padding(horizontal = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = String.format(java.util.Locale.US, "%.1fs", clip.durationMs / 1000f),
-                    color = Color.Black,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)

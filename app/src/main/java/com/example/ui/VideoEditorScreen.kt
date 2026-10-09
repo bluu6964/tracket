@@ -112,6 +112,7 @@ fun VideoEditorScreen(
     val selectedAspectRatio by viewModel.selectedAspectRatio.collectAsState()
     val selectedResolution by viewModel.selectedResolution.collectAsState()
     val selectedClipId by viewModel.selectedClipId.collectAsState()
+    val multiSelectIds by viewModel.multiSelectIds.collectAsState()
     val isMasterMuted by viewModel.isMasterMuted.collectAsState()
     val tracks by viewModel.tracks.collectAsState()
     val canUndo by viewModel.canUndo.collectAsState()
@@ -287,6 +288,10 @@ fun VideoEditorScreen(
 
     // System back / gesture back closes Transform first instead of leaving the editor.
     BackHandler(enabled = showTransformMode) { showTransformMode = false }
+    // Back leaves multi-select first.
+    BackHandler(enabled = multiSelectIds.isNotEmpty() && !showTransformMode && editingTextId == null) {
+        viewModel.exitMultiSelect()
+    }
     BackHandler(enabled = editingTextId != null) {
         if (eyedropperCallback != null) eyedropperCallback = null else editingTextId = null
     }
@@ -383,7 +388,13 @@ fun VideoEditorScreen(
                     selectedClipId = selectedClipId,
                     isMasterMuted = isMasterMuted,
                     onSeekTo = { viewModel.seekTo(it) },
-                    onClipSelect = { viewModel.selectClip(it) },
+                    // While several layers are checked, taps/drags on layer bodies must not
+                    // switch to single selection (that would leave multi-select).
+                    onClipSelect = { id -> if (multiSelectIds.isEmpty()) viewModel.selectClip(id) },
+                    multiSelectIds = multiSelectIds,
+                    onLongPressLane = { id -> viewModel.enterMultiSelect(id) },
+                    onToggleMulti = { id -> viewModel.toggleMultiSelect(id) },
+                    onMultiAction = { viewModel.applyMultiAction(it) },
                     onSplitClip = {
                         viewModel.splitSelectedClip()
                     },

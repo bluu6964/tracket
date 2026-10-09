@@ -1,4 +1,6 @@
-# Tracket (v0.1.26)
+# Tracket (v0.1.27)
+
+**v0.1.27:** multi-select — long-press a layer's left control to check layers (tap to check/uncheck, Back to leave); a bar at the bottom of the timeline adapts to the playhead: inside layers = delete-left / split / delete-right, before them = extend start / move start to playhead, after them = extend end / move end to playhead; right side = align starts / arrange one after another / align ends.
 
 **v0.1.20:** background #270423, no success pop-ups (only errors), thumbnail look-ahead of one screen (fixes periodic swipe stutter).
 

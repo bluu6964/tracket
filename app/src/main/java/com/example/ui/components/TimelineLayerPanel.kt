@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
@@ -53,6 +55,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -74,7 +77,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -90,6 +95,9 @@ import coil.request.ImageRequest
 import coil.request.videoFrameMillis
 import com.example.R
 import com.example.model.LayerType
+import com.example.model.MultiAction
+import com.example.model.MultiBarMode
+import com.example.model.MultiSelectOps
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
@@ -102,6 +110,7 @@ import com.example.ui.theme.PlayheadColor
 import com.example.ui.theme.SelectedClipBorder
 import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
+import com.example.ui.util.enterPop
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -139,8 +148,17 @@ fun TimelineLayerPanel(
     pxPerMs: Float = TIMELINE_PX_PER_MS,
     onPxPerMsChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
-    waveforms: Map<String, FloatArray> = emptyMap()
+    waveforms: Map<String, FloatArray> = emptyMap(),
+    /** Layers checked in multi-select mode (empty = mode is off). */
+    multiSelectIds: Set<String> = emptySet(),
+    /** Long press on a layer's left control starts multi-select with that layer. */
+    onLongPressLane: (clipId: String) -> Unit = {},
+    /** Tap on a layer's left control while multi-select is on: check / uncheck it. */
+    onToggleMulti: (clipId: String) -> Unit = {},
+    /** A button of the multi-select bar. */
+    onMultiAction: (MultiAction) -> Unit = {}
 ) {
+    val isMulti = multiSelectIds.isNotEmpty()
     val coroutineScope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
     val latestPxPerMs by rememberUpdatedState(pxPerMs)
@@ -305,7 +323,7 @@ fun TimelineLayerPanel(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(verticalScrollState)
-                .padding(vertical = 4.dp)
+                .padding(top = 4.dp, bottom = if (isMulti) 68.dp else 4.dp)
         ) {
             // Left rail — Alight Motion style: eye + layer preview for each lane.
             Column(
@@ -319,8 +337,12 @@ fun TimelineLayerPanel(
                     LayerLaneControl(
                         clip = clip,
                         height = rowH,
+                        isMulti = isMulti,
+                        isChecked = clip != null && clip.id in multiSelectIds,
                         onToggleVisibility = { id -> onToggleClipVisibility(id) },
-                        onSelect = { id -> onClipSelect(id) }
+                        onSelect = { id -> onClipSelect(id) },
+                        onLongPress = onLongPressLane,
+                        onToggleMulti = onToggleMulti
                     )
                 }
             }
@@ -366,7 +388,7 @@ fun TimelineLayerPanel(
         }
 
         // 2. Quick actions + master speaker (bottom-left, clear of the layer rail)
-        Column(
+        if (!isMulti) Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 8.dp, bottom = 8.dp),
@@ -457,16 +479,54 @@ fun TimelineLayerPanel(
                 strokeWidth = 2.dp.toPx()
             )
         }
+
+        // 5. Multi-select bar (drawn after the playhead line so the line passes behind it).
+        if (isMulti) {
+            MultiBarHost(
+                tracks = tracks,
+                multiSelectIds = multiSelectIds,
+                playheadMs = playheadMs,
+                onAction = onMultiAction,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .enterPop(fromBottom = true)
+            )
+        }
     }
 }
 
+
+/**
+ * Reads the playhead itself, so while scrubbing only this small bar recomposes (not the whole
+ * timeline) when the option group changes (split / start / end).
+ */
+@Composable
+private fun MultiBarHost(
+    tracks: List<TimelineTrack>,
+    multiSelectIds: Set<String>,
+    playheadMs: () -> Long,
+    onAction: (MultiAction) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val mode by remember(tracks, multiSelectIds) {
+        derivedStateOf {
+            val checked = tracks.flatMap { it.clips }.filter { it.id in multiSelectIds }
+            MultiSelectOps.barMode(checked, playheadMs())
+        }
+    }
+    MultiSelectBar(mode = mode, onAction = onAction, modifier = modifier)
+}
 
 @Composable
 private fun LayerLaneControl(
     clip: TimelineClip?,
     height: Dp,
+    isMulti: Boolean,
+    isChecked: Boolean,
     onToggleVisibility: (String) -> Unit,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    onLongPress: (String) -> Unit,
+    onToggleMulti: (String) -> Unit
 ) {
     if (clip == null) {
         Spacer(modifier = Modifier.height(height))
@@ -481,18 +541,60 @@ private fun LayerLaneControl(
     )
     // Alight Motion style: a pill glued to the left edge of the screen, rounded only on the
     // right end, big outlined eye + a square layer thumbnail.
+    val haptic = LocalHapticFeedback.current
+    val latestSelect by rememberUpdatedState(onSelect)
+    val latestLong by rememberUpdatedState(onLongPress)
+    val latestToggle by rememberUpdatedState(onToggleMulti)
+    val latestMulti by rememberUpdatedState(isMulti)
+    val pillColor by animateColorAsState(
+        targetValue = if (isMulti && isChecked) Color(0xFF00FFA8) else Color(0xFF2A2F3E),
+        label = "lanePill"
+    )
     Row(
         modifier = Modifier
             .height(height)
             .fillMaxWidth()
             .clip(RoundedCornerShape(topEnd = height / 2, bottomEnd = height / 2))
-            .background(Color(0xFF2A2F3E))
-            .bouncyClickable(pressedScale = 1f, onClick = { onSelect(clip.id) })
+            .background(pillColor)
+            // Tap = select (or check/uncheck in multi-select); long press = start multi-select.
+            .pointerInput(clip.id) {
+                detectTapGestures(
+                    onLongPress = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (latestMulti) latestToggle(clip.id) else latestLong(clip.id)
+                    },
+                    onTap = {
+                        if (latestMulti) latestToggle(clip.id) else latestSelect(clip.id)
+                    }
+                )
+            }
             .padding(start = 10.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(
+        if (isMulti) {
+            // Multi-select: the eye turns into a check circle (empty when not checked).
+            Box(
+                modifier = Modifier.size(26.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isChecked) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .background(Color(0xFF1B5A4D), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Selected",
+                            tint = Color(0xFF3CFFC0),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        } else Icon(
             imageVector = if (clip.isVisible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
             contentDescription = if (clip.isVisible) "Hide layer" else "Show layer",
             tint = if (clip.isVisible) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.35f),

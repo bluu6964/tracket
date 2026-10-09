@@ -10,6 +10,8 @@ import com.example.model.ExportSettings
 import com.example.model.ImportedMedia
 import com.example.model.LaneLayout
 import com.example.model.LayerType
+import com.example.model.MultiAction
+import com.example.model.MultiSelectOps
 import com.example.model.PreviewResolution
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
@@ -41,6 +43,10 @@ class VideoEditorViewModel : ViewModel() {
 
     private val _selectedClipId = MutableStateFlow<String?>(null)
     val selectedClipId: StateFlow<String?> = _selectedClipId.asStateFlow()
+
+    private val _multiSelectIds = MutableStateFlow<Set<String>>(emptySet())
+    /** Layers checked in multi-select mode (empty = mode is off). */
+    val multiSelectIds: StateFlow<Set<String>> = _multiSelectIds.asStateFlow()
 
     private val _isMasterMuted = MutableStateFlow(false)
     val isMasterMuted: StateFlow<Boolean> = _isMasterMuted.asStateFlow()
@@ -146,7 +152,39 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     fun selectClip(clipId: String?) {
-        _selectedClipId.value = clipId
+        setSelected(clipId)
+    }
+
+    /** Every selection change goes through here: choosing a normal layer leaves multi-select. */
+    private fun setSelected(id: String?) {
+        _selectedClipId.value = id
+        if (id != null && _multiSelectIds.value.isNotEmpty()) _multiSelectIds.value = emptySet()
+    }
+
+    // ---- Multi-select (long-press a layer's left control) -------------------
+
+    fun enterMultiSelect(clipId: String) {
+        _selectedClipId.value = null
+        _multiSelectIds.value = setOf(clipId)
+    }
+
+    fun toggleMultiSelect(clipId: String) {
+        val cur = _multiSelectIds.value
+        _multiSelectIds.value = if (clipId in cur) cur - clipId else cur + clipId
+    }
+
+    fun exitMultiSelect() {
+        _multiSelectIds.value = emptySet()
+    }
+
+    /** Runs one button of the multi-select bar on all checked layers (one undo step). */
+    fun applyMultiAction(action: MultiAction) {
+        val ids = _multiSelectIds.value
+        if (ids.isEmpty()) return
+        val next = MultiSelectOps.apply(_tracks.value, ids, action, _currentPlayheadMs.value) ?: return
+        pushHistory()
+        _tracks.value = next
+        recomputeTotal()
     }
 
     fun setAspectRatio(ratio: AspectRatio) {
@@ -238,7 +276,7 @@ class VideoEditorViewModel : ViewModel() {
             track.copy(clips = track.clips.map { if (it.id == clipId) part1 else it })
         }
         _tracks.value = LaneLayout.place(LaneLayout.normalize(withPart1), part2)
-        _selectedClipId.value = part2.id
+        setSelected(part2.id)
         recomputeTotal()
     }
 
@@ -251,7 +289,7 @@ class VideoEditorViewModel : ViewModel() {
             track.copy(clips = track.clips.filter { it.id != clipId })
         }
         _tracks.value = LaneLayout.normalize(withoutClip)
-        _selectedClipId.value = null
+        setSelected(null)
         recomputeTotal()
     }
 
@@ -266,7 +304,7 @@ class VideoEditorViewModel : ViewModel() {
             startMs = clip.endMs + 200
         )
         _tracks.value = LaneLayout.place(LaneLayout.normalize(_tracks.value), duplicated)
-        _selectedClipId.value = duplicated.id
+        setSelected(duplicated.id)
         recomputeTotal()
     }
 
@@ -533,7 +571,7 @@ class VideoEditorViewModel : ViewModel() {
 
         // Alight Motion style: every layer gets its own exclusive lane (1 layer = 1 line).
         _tracks.value = LaneLayout.place(_tracks.value, newClip)
-        _selectedClipId.value = newClip.id
+        setSelected(newClip.id)
         recomputeTotal()
     }
 
@@ -696,7 +734,7 @@ class VideoEditorViewModel : ViewModel() {
             return
         }
         _tracks.value = updated
-        _selectedClipId.value = lastId
+        setSelected(lastId)
         recomputeTotal()
     }
 
@@ -770,7 +808,7 @@ class VideoEditorViewModel : ViewModel() {
             lastId = clip.id
         }
         _tracks.value = updated
-        _selectedClipId.value = lastId
+        setSelected(lastId)
         recomputeTotal()
     }
 
@@ -803,5 +841,11 @@ class VideoEditorViewModel : ViewModel() {
         val maxEnd = _tracks.value.flatMap { it.clips }.maxOfOrNull { it.endMs }
         _totalDurationMs.value = maxEnd ?: 0L
         _currentPlayheadMs.value = _currentPlayheadMs.value.coerceAtMost(_totalDurationMs.value)
+        val multi = _multiSelectIds.value
+        if (multi.isNotEmpty()) {
+            val alive = _tracks.value.flatMap { it.clips }.map { it.id }.toSet()
+            val kept = multi.filter { it in alive }.toSet()
+            if (kept != multi) _multiSelectIds.value = kept
+        }
     }
 }

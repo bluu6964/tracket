@@ -226,6 +226,18 @@ fun TransformView(
         }
     }
 
+    /** When property already has keyframes, slider changes auto-upsert keyframe at playhead. */
+    fun onValueChangeWithAutoKeyframe(prop: GraphProperty, newValue: Float, applyLocal: (Float) -> Unit) {
+        applyLocal(newValue)
+        // Update local first then emit; auto-keyframe if already animated
+        val alreadyKeyed = !clip?.transformKeyframes?.get(prop.key).isNullOrEmpty()
+        if (alreadyKeyed) {
+            onAddKeyframe(prop.key, newValue, currentPlayheadMs)
+        } else {
+            emitTransform()
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -250,14 +262,32 @@ fun TransformView(
                 playheadMs = { currentPlayheadMs },
                 totalDurationMs = totalDurationMs
             )
+            val hasKfAtPlayhead = clip?.transformKeyframes?.values?.any { list ->
+                list.any { kotlin.math.abs(it.timeMs - currentPlayheadMs) <= 40L }
+            } == true
             TransformLayerStrip(
                 clip = clip,
                 currentPlayheadMs = currentPlayheadMs,
                 totalDurationMs = totalDurationMs,
                 onSeekTo = onSeekTo,
-                onReset = { resetAll() }
+                onReset = { resetAll() },
+                onAddKeyframe = { addKeyframeAtPlayhead() },
+                onToggleGraph = {
+                    showGraph = !showGraph
+                    graphProperty = when (activeTab) {
+                        TransformTab.TWO_D -> GraphProperty.HORIZONTAL
+                        TransformTab.PIVOT -> GraphProperty.PIVOT_X
+                        TransformTab.THREE_D -> GraphProperty.ROT_3D_X
+                        TransformTab.WARP -> GraphProperty.WARP
+                    }
+                },
+                hasKeyframeAtPlayhead = hasKfAtPlayhead,
+                showGraph = showGraph
             )
-            Spacer(modifier = Modifier.weight(1f))
+            // Don't eat all space when graph is open — leave room for graph + bottom panel
+            if (!showGraph) {
+                Spacer(modifier = Modifier.weight(1f))
+            }
         }
 
         if (!panelOnly) {
@@ -984,8 +1014,7 @@ fun TransformView(
                                 label = "Horizontal",
                                 value = horizontal,
                                 onValueChange = {
-                                    horizontal = it
-                                    emitTransform()
+                                    onValueChangeWithAutoKeyframe(GraphProperty.HORIZONTAL, it) { horizontal = it }
                                 },
                                 min = -500f,
                                 max = 500f,
@@ -998,8 +1027,7 @@ fun TransformView(
                                 label = "Vertical",
                                 value = vertical,
                                 onValueChange = {
-                                    vertical = it
-                                    emitTransform()
+                                    onValueChangeWithAutoKeyframe(GraphProperty.VERTICAL, it) { vertical = it }
                                 },
                                 min = -500f,
                                 max = 500f,
@@ -1012,8 +1040,7 @@ fun TransformView(
                                 label = "Scale",
                                 value = scale,
                                 onValueChange = {
-                                    scale = it
-                                    emitTransform()
+                                    onValueChangeWithAutoKeyframe(GraphProperty.SCALE, it) { scale = it }
                                 },
                                 min = 10f,
                                 max = 400f,
@@ -1026,8 +1053,7 @@ fun TransformView(
                                 label = "Rotation",
                                 value = rotation,
                                 onValueChange = {
-                                    rotation = it
-                                    emitTransform()
+                                    onValueChangeWithAutoKeyframe(GraphProperty.ROTATION, it) { rotation = it }
                                 },
                                 min = -180f,
                                 max = 180f,

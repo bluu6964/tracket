@@ -232,6 +232,10 @@ fun TransformLayerStrip(
     totalDurationMs: Long,
     onSeekTo: (Long) -> Unit,
     onReset: () -> Unit,
+    onAddKeyframe: () -> Unit = {},
+    onToggleGraph: () -> Unit = {},
+    hasKeyframeAtPlayhead: Boolean = false,
+    showGraph: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -353,7 +357,7 @@ fun TransformLayerStrip(
             Icon(Icons.Default.Refresh, "Reset Transform", tint = IconActive, modifier = Modifier.size(18.dp))
         }
 
-        // 3. Keyframe + easing icons (right)
+        // 3. Keyframe + easing icons (right) — real logic
         Row(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -364,8 +368,16 @@ fun TransformLayerStrip(
                 modifier = Modifier
                     .size(22.dp)
                     .graphicsLayer { rotationZ = 45f }
-                    .border(1.5.dp, Color.White, RoundedCornerShape(4.dp))
-                    .bouncyClickable(onClick = {}),
+                    .background(
+                        if (hasKeyframeAtPlayhead) Color(0xFFE91E63) else Color.Transparent,
+                        RoundedCornerShape(4.dp)
+                    )
+                    .border(
+                        1.5.dp,
+                        if (hasKeyframeAtPlayhead) Color(0xFFE91E63) else Color.White,
+                        RoundedCornerShape(4.dp)
+                    )
+                    .bouncyClickable(onClick = onAddKeyframe),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -375,13 +387,26 @@ fun TransformLayerStrip(
                     modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = -45f }
                 )
             }
-            Spacer(modifier = Modifier.width(18.dp))
-            Canvas(modifier = Modifier.size(20.dp)) {
-                val path = Path().apply {
-                    moveTo(0f, size.height)
-                    cubicTo(size.width * 0.4f, size.height, size.width * 0.6f, 0f, size.width, 0f)
+            Spacer(modifier = Modifier.width(14.dp))
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (showGraph) Color(0xFF3A4150) else Color.Transparent)
+                    .bouncyClickable(onClick = onToggleGraph),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.size(20.dp)) {
+                    val path = Path().apply {
+                        moveTo(0f, size.height)
+                        cubicTo(size.width * 0.4f, size.height, size.width * 0.6f, 0f, size.width, 0f)
+                    }
+                    drawPath(
+                        path,
+                        color = if (showGraph) Color(0xFFE91E63) else Color(0xFF8E99AF),
+                        style = Stroke(width = 2.dp.toPx())
+                    )
                 }
-                drawPath(path, color = Color(0xFF8E99AF), style = Stroke(width = 2.dp.toPx()))
             }
         }
 

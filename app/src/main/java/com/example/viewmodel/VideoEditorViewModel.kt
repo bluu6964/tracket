@@ -686,7 +686,12 @@ class VideoEditorViewModel : ViewModel() {
         timeMs: Long = _currentPlayheadMs.value,
         easing: com.example.model.EasingType = com.example.model.EasingType.LINEAR
     ) {
-        pushHistory()
+        // Push history only when inserting a NEW keyframe time (not continuous value drag)
+        val existing = _tracks.value.flatMap { it.clips }.find { it.id == clipId }
+            ?.transformKeyframes?.get(property).orEmpty()
+        val isNewTime = existing.none { kotlin.math.abs(it.timeMs - timeMs) <= 40L }
+        if (isNewTime) pushHistory()
+
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
                 if (clip.id != clipId) return@map clip

@@ -1,4 +1,8 @@
-# Tracket (v0.1.27)
+# Tracket (v0.1.29)
+
+**v0.1.29:** squarer layers (2dp corners), left layer controls have no background (eye/check + thumbnail only), selected layers (single or multi-select) get an inner shadow instead of a border, lanes are shorter (30-36dp).
+
+**v0.1.28:** background #07051B; new layer design (gradient bodies with light top edge, labels, grip, rounded selection border, midnight lane pills with bordered rounded thumbnails).
 
 **v0.1.27:** multi-select — long-press a layer's left control to check layers (tap to check/uncheck, Back to leave); a bar at the bottom of the timeline adapts to the playhead: inside layers = delete-left / split / delete-right, before them = extend start / move start to playhead, after them = extend end / move end to playhead; right side = align starts / arrange one after another / align ends.
 

@@ -55,7 +55,6 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -69,8 +68,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -83,6 +84,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -333,7 +335,7 @@ fun TimelineLayerPanel(
             ) {
                 tracks.forEach { track ->
                     val clip = track.clips.firstOrNull()
-                    val rowH = clip?.let { laneHeightFor(it.type) } ?: 40.dp
+                    val rowH = clip?.let { laneHeightFor(it.type) } ?: 32.dp
                     LayerLaneControl(
                         clip = clip,
                         height = rowH,
@@ -379,7 +381,8 @@ fun TimelineLayerPanel(
                             pxPerMs = pxPerMs,
                             visibleFromMs = visibleFromMs,
                             visibleToMs = visibleToMs,
-                            waveforms = waveforms
+                            waveforms = waveforms,
+                            multiSelectIds = multiSelectIds
                         )
                         }
                     }
@@ -546,16 +549,11 @@ private fun LayerLaneControl(
     val latestLong by rememberUpdatedState(onLongPress)
     val latestToggle by rememberUpdatedState(onToggleMulti)
     val latestMulti by rememberUpdatedState(isMulti)
-    val pillColor by animateColorAsState(
-        targetValue = if (isMulti && isChecked) Color(0xFF00FFA8) else Color(0xFF2A2F3E),
-        label = "lanePill"
-    )
     Row(
         modifier = Modifier
             .height(height)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(topEnd = height / 2, bottomEnd = height / 2))
-            .background(pillColor)
+            // No background: just eye/check + thumbnail.
             // Tap = select (or check/uncheck in multi-select); long press = start multi-select.
             .pointerInput(clip.id) {
                 detectTapGestures(
@@ -582,13 +580,13 @@ private fun LayerLaneControl(
                     Box(
                         modifier = Modifier
                             .size(26.dp)
-                            .background(Color(0xFF1B5A4D), CircleShape),
+                            .background(Color(0xFF00FFA8), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = "Selected",
-                            tint = Color(0xFF3CFFC0),
+                            tint = Color(0xFF053B2E),
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -604,8 +602,9 @@ private fun LayerLaneControl(
         )
         Box(
             modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(3.dp))
+                .size(26.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(2.dp))
                 .background(
                     when (clip.type) {
                         LayerType.VIDEO -> Color(0xFF000000)
@@ -661,10 +660,11 @@ fun TimelineTrackRow(
     pxPerMs: Float = TIMELINE_PX_PER_MS,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4,
-    waveforms: Map<String, FloatArray> = emptyMap()
+    waveforms: Map<String, FloatArray> = emptyMap(),
+    multiSelectIds: Set<String> = emptySet()
 ) {
     // Alight Motion: one layer per line → fixed row height by layer type.
-    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 40.dp
+    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 32.dp
     val density = LocalDensity.current
     val pxPerDp = density.density
     // How many vertical pixels ≈ one lane step for reorder.
@@ -770,6 +770,7 @@ fun TimelineTrackRow(
                     clip = clip,
                     width = clipWidth,
                     isSelected = isSelected || isDragging,
+                    isMultiSelected = clip.id in multiSelectIds,
                     onClick = { onClipSelect(clip.id) },
                     visibleFromMs = visibleFromMs,
                     visibleToMs = visibleToMs,
@@ -821,14 +822,13 @@ private fun TrimHandle(
     onTrim: (Long) -> Unit
 ) {
     val latestOnTrim by rememberUpdatedState(onTrim)
-    val r = height / 2
     Box(
         modifier = modifier
             .width(TrimHandleWidth)
             .height(height)
             .clip(
-                if (isLeft) RoundedCornerShape(topStart = r, bottomStart = r, topEnd = 4.dp, bottomEnd = 4.dp)
-                else RoundedCornerShape(topEnd = r, bottomEnd = r, topStart = 4.dp, bottomStart = 4.dp)
+                if (isLeft) RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 1.dp, bottomEnd = 1.dp)
+                else RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp, topStart = 1.dp, bottomStart = 1.dp)
             )
             .background(Color(0xFF454A58))
             .pointerInput(pxPerMs, pxPerDp) {
@@ -860,11 +860,11 @@ private fun TrimHandle(
 }
 
 private fun laneHeightFor(type: LayerType): Dp = when (type) {
-    LayerType.VIDEO -> 44.dp
-    LayerType.AUDIO -> 44.dp
-    LayerType.SHAPE -> 40.dp
-    LayerType.OVERLAY, LayerType.TEXT -> 42.dp
-    else -> 36.dp
+    LayerType.VIDEO -> 36.dp
+    LayerType.AUDIO -> 36.dp
+    LayerType.SHAPE -> 32.dp
+    LayerType.OVERLAY, LayerType.TEXT -> 34.dp
+    else -> 30.dp
 }
 
 @Composable
@@ -873,6 +873,7 @@ fun TimelineClipItem(
     width: Dp,
     isSelected: Boolean,
     onClick: () -> Unit,
+    isMultiSelected: Boolean = false,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4,
     waveform: FloatArray? = null
@@ -895,8 +896,30 @@ fun TimelineClipItem(
                 scaleY = selectScale
                 alpha = if (clip.isVisible) 1f else 0.35f
             }
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(2.dp))
             .bouncyClickable(pressedScale = 1f, onClick = onClick)
+            // Selected (single or multi-select): inner shadow on all four edges.
+            .drawWithContent {
+                drawContent()
+                if (isSelected || isMultiSelected) {
+                    val e = 11.dp.toPx().coerceAtMost(size.height / 2f)
+                    val dark = Color.Black.copy(alpha = 0.55f)
+                    val none = Color.Transparent
+                    drawRect(Brush.verticalGradient(listOf(dark, none), 0f, e), size = androidx.compose.ui.geometry.Size(size.width, e))
+                    drawRect(
+                        Brush.verticalGradient(listOf(none, dark), size.height - e, size.height),
+                        topLeft = Offset(0f, size.height - e),
+                        size = androidx.compose.ui.geometry.Size(size.width, e)
+                    )
+                    val ex = e.coerceAtMost(size.width / 2f)
+                    drawRect(Brush.horizontalGradient(listOf(dark, none), 0f, ex), size = androidx.compose.ui.geometry.Size(ex, size.height))
+                    drawRect(
+                        Brush.horizontalGradient(listOf(none, dark), size.width - ex, size.width),
+                        topLeft = Offset(size.width - ex, 0f),
+                        size = androidx.compose.ui.geometry.Size(ex, size.height)
+                    )
+                }
+            }
     ) {
         when (clip.type) {
             LayerType.VIDEO -> {
@@ -982,26 +1005,73 @@ fun TimelineClipItem(
                 }
             }
 
-            LayerType.SHAPE -> StripedBar(Color(0xFF4FBFC9))
-            LayerType.TEXT -> StripedBar(Color(0xFFF7CB60))
-            LayerType.OVERLAY, LayerType.STICKER -> StripedBar(Color(0xFFF5A44B))
+            LayerType.SHAPE -> StripedBar(Color(0xFF4FBFC9), clip.name)
+            LayerType.TEXT -> StripedBar(
+                Color(0xFFF7CB60),
+                clip.text?.takeIf { it.isNotBlank() } ?: clip.name
+            )
+            LayerType.OVERLAY, LayerType.STICKER -> StripedBar(Color(0xFFF5A44B), clip.name)
 
-            else -> StripedBar(Color(0xFFF5A44B))
+            else -> StripedBar(Color(0xFFF5A44B), clip.name)
+        }
+
+        // Video: file name chip so layers are easy to tell apart.
+        if (clip.type == LayerType.VIDEO) {
+            Text(
+                text = clip.name,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 6.dp, bottom = 4.dp, end = 26.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(2.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp)
+            )
+        }
+        // Grip (three lines) at the right end, like a drag handle.
+        Grip(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp))
+    }
+}
+
+@Composable
+private fun Grip(modifier: Modifier = Modifier) {
+    androidx.compose.foundation.layout.Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        repeat(3) {
+            Box(
+                Modifier
+                    .width(14.dp)
+                    .height(2.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(1.dp))
+            )
         }
     }
 }
 
 
 /**
- * Flat colour bar with soft vertical stripes (Alight Motion style layer body).
+ * Layer body: soft top-to-bottom gradient, light top edge, faint vertical stripes and a label.
  * Drawn once into a display list; scrolling only moves it.
  */
 @Composable
-private fun StripedBar(color: Color) {
+private fun StripedBar(color: Color, label: String? = null) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(color)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        lerpColor(color, Color.White, 0.18f),
+                        color,
+                        lerpColor(color, Color.Black, 0.12f)
+                    )
+                )
+            )
             .drawBehind {
                 val stripe = 12.dp.toPx()
                 var x = stripe
@@ -1009,7 +1079,7 @@ private fun StripedBar(color: Color) {
                 while (x < size.width + stripe) {
                     if (odd) {
                         drawRect(
-                            color = Color.White.copy(alpha = 0.07f),
+                            color = Color.White.copy(alpha = 0.06f),
                             topLeft = Offset(x - stripe, 0f),
                             size = androidx.compose.ui.geometry.Size(stripe, size.height)
                         )
@@ -1017,9 +1087,30 @@ private fun StripedBar(color: Color) {
                     odd = !odd
                     x += stripe
                 }
-            }
-    )
+                // light top edge
+                drawRect(
+                    color = Color.White.copy(alpha = 0.35f),
+                    size = androidx.compose.ui.geometry.Size(size.width, 1.5.dp.toPx())
+                )
+            },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (!label.isNullOrBlank()) {
+            Text(
+                text = label,
+                color = Color(0xFF14121F),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 32.dp)
+            )
+        }
+    }
 }
+
+private fun lerpColor(a: Color, b: Color, t: Float): Color =
+    androidx.compose.ui.graphics.lerp(a, b, t)
 
 /** Lower = longer glide after a swipe. Alight-Motion-like smooth coast. */
 private const val FLING_FRICTION = 0.35f

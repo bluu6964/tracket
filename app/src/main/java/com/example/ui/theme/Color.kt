@@ -2,9 +2,12 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Tracket dark palette: deep plum (#270423) app theme, full-black canvas.
-val EditorBackground = Color(0xFF270423)
+// Tracket dark palette: deep midnight (#07051B) app theme, full-black canvas.
+val EditorBackground = Color(0xFF07051B)
 val EditorSurface = Color(0xFF2E2E2E)
+// Timeline lane controls (left pills)
+val LanePill = Color(0xFF1A1838)
+val LanePillBorder = Color(0xFF2E2B5A)
 val EditorSurfaceVariant = Color(0xFF383838)
 val EditorDivider = Color(0xFF474747)
 val GlassSurface = Color(0xFF303030)

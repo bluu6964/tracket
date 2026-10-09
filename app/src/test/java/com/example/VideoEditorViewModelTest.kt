@@ -216,13 +216,16 @@ class VideoEditorViewModelTest {
         importVideo("a", 20_000L)
         viewModel.seekTo(8_000L)
         viewModel.splitSelectedClip()
-        val clips = mainClips()
+        val clips = mainClips().sortedBy { it.startMs }
         assertEquals(2, clips.size)
         assertEquals(8_000L, clips[0].durationMs)
         assertEquals(8_000L, clips[1].startMs)
         assertEquals(8_000L, clips[1].trimStartMs)
         assertEquals(12_000L, clips[1].durationMs)
         assertEquals(20_000L, viewModel.totalDurationMs.value)
+        // Alight Motion: each half is its own layer (own lane).
+        assertEquals(2, viewModel.tracks.value.count { t -> t.clips.any { it.type == LayerType.VIDEO } })
+        assertTrue(viewModel.tracks.value.all { it.clips.size <= 1 })
     }
 
     @Test
@@ -350,10 +353,11 @@ class VideoEditorViewModelTest {
         viewModel.setAudioSpeed(id, 2f)            // now 10 s long on the timeline
         viewModel.seekTo(4_000L)
         viewModel.splitSelectedClip()
-        val parts = clipsOf(LayerType.AUDIO)
+        val parts = clipsOf(LayerType.AUDIO).sortedBy { it.startMs }
         assertEquals(2, parts.size)
         assertEquals(4_000L, parts[0].durationMs)
         assertEquals(8_000L, parts[1].trimStartMs)  // 4 s on the timeline = 8 s of the song
+        assertTrue(viewModel.tracks.value.all { it.clips.size <= 1 })
     }
 
     @Test

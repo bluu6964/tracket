@@ -214,36 +214,31 @@ class VideoEditorViewModel : ViewModel() {
         val clipId = _selectedClipId.value ?: return
         val playhead = _currentPlayheadMs.value
 
+        val clip = _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId } ?: return
+        // Need room on both sides so each half is usable.
+        if (playhead <= clip.startMs + 500 || playhead >= clip.endMs - 500) return
+
         pushHistory()
-        val newTracks = _tracks.value.map { track ->
-            val clipIndex = track.clips.indexOfFirst { it.id == clipId }
-            if (clipIndex != -1) {
-                val clip = track.clips[clipIndex]
-                if (playhead > clip.startMs + 500 && playhead < clip.endMs - 500) {
-                    val duration1 = playhead - clip.startMs
-                    val duration2 = clip.endMs - playhead
-                    val part1 = clip.copy(durationMs = duration1, fadeOutMs = 0L)
-                    val part2 = clip.copy(
-                        id = UUID.randomUUID().toString(),
-                        name = "${clip.name} (Split)",
-                        startMs = playhead,
-                        durationMs = duration2,
-                        // Source time moves `speed` times faster than timeline time.
-                        trimStartMs = clip.trimStartMs + (duration1 * clip.speed).toLong(),
-                        fadeInMs = 0L
-                    )
-                    val updatedClips = track.clips.toMutableList()
-                    updatedClips[clipIndex] = part1
-                    updatedClips.add(clipIndex + 1, part2)
-                    track.copy(clips = updatedClips.sortedBy { it.startMs })
-                } else {
-                    track
-                }
-            } else {
-                track
-            }
+        val duration1 = playhead - clip.startMs
+        val duration2 = clip.endMs - playhead
+        val part1 = clip.copy(durationMs = duration1, fadeOutMs = 0L)
+        val part2 = clip.copy(
+            id = UUID.randomUUID().toString(),
+            name = "${clip.name} (Split)",
+            startMs = playhead,
+            durationMs = duration2,
+            // Source time moves `speed` times faster than timeline time.
+            trimStartMs = clip.trimStartMs + (duration1 * clip.speed).toLong(),
+            fadeInMs = 0L
+        )
+
+        // Alight Motion style: 1 layer = 1 line.
+        // Keep part1 in the original lane; put part2 on its own new lane.
+        val withPart1 = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { if (it.id == clipId) part1 else it })
         }
-        _tracks.value = newTracks
+        _tracks.value = LaneLayout.place(LaneLayout.normalize(withPart1), part2)
+        _selectedClipId.value = part2.id
         recomputeTotal()
     }
 

@@ -234,7 +234,6 @@ fun VideoEditorScreen(
                     snackbarHostState.showSnackbar("Could not read the selected files")
                 } else {
                     viewModel.importMedia(items)
-                    snackbarHostState.showSnackbar("Imported ${items.size} item(s)")
                 }
             }
         }
@@ -257,7 +256,6 @@ fun VideoEditorScreen(
                     snackbarHostState.showSnackbar("Could not read the selected audio")
                 } else {
                     viewModel.importAudio(items)
-                    snackbarHostState.showSnackbar("Added ${items.size} audio layer(s)")
                 }
             }
         }
@@ -328,7 +326,6 @@ fun VideoEditorScreen(
                     height = headerH,
                     aspectRatio = selectedAspectRatio,
                     onBackClick = {
-                        scope.launch { snackbarHostState.showSnackbar("Project autosaved") }
                     },
                     onAspectRatioClick = { showAspectRatioSheet = true },
                     onExportClick = { showExportDialog = true }
@@ -389,21 +386,15 @@ fun VideoEditorScreen(
                     onClipSelect = { viewModel.selectClip(it) },
                     onSplitClip = {
                         viewModel.splitSelectedClip()
-                        scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }
                     },
                     onDeleteClip = {
                         viewModel.deleteSelectedClip()
-                        scope.launch { snackbarHostState.showSnackbar("Clip removed") }
                     },
                     onDuplicateClip = {
                         viewModel.duplicateSelectedClip()
-                        scope.launch { snackbarHostState.showSnackbar("Clip duplicated") }
                     },
                     onToggleMasterAudio = {
                         viewModel.toggleMasterAudio()
-                        scope.launch {
-                            snackbarHostState.showSnackbar(if (!isMasterMuted) "Master Audio Muted" else "Master Audio Unmuted")
-                        }
                     },
                     waveforms = waveforms,
                     onMoveClipInTime = { id, delta -> viewModel.moveClipInTime(id, delta) },
@@ -441,7 +432,6 @@ fun VideoEditorScreen(
                             onDeselect = { viewModel.selectClip(null) },
                             onSplit = {
                                 viewModel.splitSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Audio split at playhead") }
                             },
                             onVolume = {
                                 viewModel.beginAdjust()
@@ -453,7 +443,6 @@ fun VideoEditorScreen(
                             },
                             onDelete = {
                                 viewModel.deleteSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Audio deleted") }
                             },
                             onSpeed = {
                                 viewModel.beginAdjust()
@@ -462,20 +451,17 @@ fun VideoEditorScreen(
                             onReverse = comingSoon,
                             onDuplicate = {
                                 viewModel.duplicateSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Audio duplicated") }
                             }
                         ) else ClipEditToolsPanel(
                             height = toolbarH,
                             onDeselect = { viewModel.selectClip(null) },
                             onSplit = {
                                 viewModel.splitSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Clip split at playhead") }
                             },
                             onEffects = comingSoon,
                             onAnimations = comingSoon,
                             onCopy = {
                                 viewModel.duplicateSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Clip duplicated") }
                             },
                             onReplace = comingSoon,
                             onColor = comingSoon,
@@ -491,16 +477,13 @@ fun VideoEditorScreen(
                             onCrop = comingSoon,
                             onDelete = {
                                 viewModel.deleteSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Clip deleted") }
                             },
                             onBlend = comingSoon,
                             onFlipHorizontal = {
                                 viewModel.flipHorizontalSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Flipped horizontally") }
                             },
                             onFlipVertical = {
                                 viewModel.flipVerticalSelectedClip()
-                                scope.launch { snackbarHostState.showSnackbar("Flipped vertically") }
                             },
                             onEditText = if (tracks.flatMap { it.clips }
                                     .any { it.id == targetClipId && it.type == LayerType.TEXT }
@@ -769,7 +752,6 @@ fun VideoEditorScreen(
                     text = text,
                     textColor = color
                 )
-                scope.launch { snackbarHostState.showSnackbar("Added text layer") }
             },
             onDismiss = { showAddTextSheet = false }
         )
@@ -788,7 +770,6 @@ fun VideoEditorScreen(
                     pattern = pattern,
                     durationMs = clipDuration
                 )
-                scope.launch { snackbarHostState.showSnackbar("Added shape: $name") }
             },
             onDismiss = { showAddShapeSheet = false }
         )
@@ -853,7 +834,6 @@ fun VideoEditorScreen(
                         strokeWidth = strokeW,
                         strokeColor = strokeColorLong
                     )
-                    scope.launch { snackbarHostState.showSnackbar("Added ${shapeType.label} to canvas") }
                 },
                 modifier = Modifier.fillMaxSize().enterPop()
             )
@@ -866,7 +846,6 @@ fun VideoEditorScreen(
             currentEffect = selectedClip?.effectName,
             onEffectSelect = { effect ->
                 viewModel.setClipEffect(effect)
-                scope.launch { snackbarHostState.showSnackbar("Applied $effect effect") }
             },
             onDismiss = { showClipEffectsSheet = false }
         )
@@ -878,7 +857,6 @@ fun VideoEditorScreen(
             currentAnim = selectedClip?.animationName,
             onAnimSelect = { anim ->
                 viewModel.setClipAnimation(anim)
-                scope.launch { snackbarHostState.showSnackbar("Applied $anim animation") }
             },
             onDismiss = { showClipAnimationsSheet = false }
         )
@@ -888,7 +866,6 @@ fun VideoEditorScreen(
         ClipReplaceSheet(
             onMediaSelected = { res, name ->
                 viewModel.replaceSelectedClipMedia(res, name)
-                scope.launch { snackbarHostState.showSnackbar("Replaced with $name") }
             },
             onDismiss = { showClipReplaceSheet = false }
         )
@@ -900,7 +877,6 @@ fun VideoEditorScreen(
             currentBlend = selectedClip?.blendMode ?: "Normal",
             onBlendSelected = { mode ->
                 viewModel.setClipBlendMode(mode)
-                scope.launch { snackbarHostState.showSnackbar("Blend mode: $mode") }
             },
             onDismiss = { showClipBlendSheet = false }
         )
@@ -957,7 +933,6 @@ fun VideoEditorScreen(
                 onDismiss = { showAppliedEffectsMode = false },
                 onEffectApplied = { effectName ->
                     viewModel.setClipEffect(effectName)
-                    scope.launch { snackbarHostState.showSnackbar("Applied $effectName") }
                 },
                 modifier = Modifier.fillMaxSize().enterPop()
             )

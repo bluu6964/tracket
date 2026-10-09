@@ -2,8 +2,8 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Tracket dark palette: off-black (#252525) app theme, full-black canvas.
-val EditorBackground = Color(0xFF252525)
+// Tracket dark palette: deep plum (#270423) app theme, full-black canvas.
+val EditorBackground = Color(0xFF270423)
 val EditorSurface = Color(0xFF2E2E2E)
 val EditorSurfaceVariant = Color(0xFF383838)
 val EditorDivider = Color(0xFF474747)

@@ -272,8 +272,11 @@ fun TimelineLayerPanel(
         // Time window that is actually on screen (+ margin) so only visible thumbnails load.
         // The window is snapped to 2 s steps: while swiping, the clips only recompose when the
         // window steps (every ~2 s), not on every frame. The margin (~2.2 s) is larger than the step.
-        val marginMs = (100f / pxPerMs).toLong()
-        val windowStepMs = 2_000L
+        // Look-ahead of one full screen on each side and a 3 s step: thumbnails are composed and
+        // requested long before they scroll into view, so swiping never waits for them (this was
+        // the periodic stutter).
+        val marginMs = (screenWidth.value / pxPerMs).toLong()
+        val windowStepMs = 3_000L
         // derivedStateOf: the panel recomposes only when the 2 s window steps, never per frame.
         val visibleFromMs by remember(pxPerMs, screenWidth) {
             derivedStateOf {
@@ -984,12 +987,15 @@ private fun VideoFrameStrip(
                 frameMs = (srcMs / 200L) * 200L // snap so nearby tiles/redraws share the cache
                 key = "${clip.uri}@$frameMs"
             }
-            val request = ImageRequest.Builder(context)
-                .data(clip.uri)
-                .size(tilePxW, tilePxH)
-                .memoryCacheKey(key)
-                .apply { if (!clip.isImage) videoFrameMillis(frameMs) }
-                .build()
+            val request = remember(clip.uri, key, tilePxW, tilePxH) {
+                ImageRequest.Builder(context)
+                    .data(clip.uri)
+                    .size(tilePxW, tilePxH)
+                    .memoryCacheKey(key)
+                    .crossfade(false)
+                    .apply { if (!clip.isImage) videoFrameMillis(frameMs) }
+                    .build()
+            }
 
             AsyncImage(
                 model = request,

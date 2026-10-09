@@ -1,4 +1,6 @@
-# Tracket (v0.1.19)
+# Tracket (v0.1.20)
+
+**v0.1.20:** background #270423, no success pop-ups (only errors), thumbnail look-ahead of one screen (fixes periodic swipe stutter).
 
 **v0.1.18:** fast spring entrance (enterPop) on every dialog, Text edit and Transform panel; all remaining taps use bouncyClickable; faster tab cross-fades.
 

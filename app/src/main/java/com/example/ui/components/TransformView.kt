@@ -196,7 +196,7 @@ fun TransformView(
             )
             TimescaleSection(
                 height = 28.dp,
-                currentPlayheadMs = currentPlayheadMs,
+                playheadMs = { currentPlayheadMs },
                 totalDurationMs = totalDurationMs
             )
             TransformLayerStrip(

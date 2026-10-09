@@ -666,7 +666,7 @@ fun FullscreenPlayerModal(
             CanvasArea(
                 height = 360.dp,
                 aspectRatio = aspectRatio,
-                currentPlayheadMs = currentPlayheadMs,
+                playheadMs = { currentPlayheadMs },
                 isPlaying = isPlaying,
                 tracks = emptyList(),
                 onTogglePlayPause = onTogglePlay,

@@ -1,4 +1,4 @@
-# Tracket (v0.1.18)
+# Tracket (v0.1.19)
 
 **v0.1.18:** fast spring entrance (enterPop) on every dialog, Text edit and Transform panel; all remaining taps use bouncyClickable; faster tab cross-fades.
 

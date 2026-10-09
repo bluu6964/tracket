@@ -1,4 +1,15 @@
-# Tracket (v0.1.15)
+# Tracket (v0.1.18)
+
+**v0.1.18:** fast spring entrance (enterPop) on every dialog, Text edit and Transform panel; all remaining taps use bouncyClickable; faster tab cross-fades.
+
+**v0.1.17 – animations:** springy lane reorder/add slide, layer lift while dragging, animated selection border, fast slide+fade toolbar swap.
+
+**v0.1.16 – smoothness:** the playhead no longer recomposes the whole editor every frame (it is read only in
+draw/layout phases), the timeline scrolls with a graphicsLayer translation, playback moves the playhead once per
+display frame (not every 33 ms), swipe detection measures the touch slop from finger-down (slow swipes work),
+a layer drag no longer scrubs the timeline at the same time, scrubbing seeks/audio sync are throttled, and
+`bouncyClickable` reacts on the first touch frame with a spring (no more ~100 ms press delay in scrollables).
+
 
 Android video editor. v0.1 scope: import videos/photos, edit the main track
 (trim, split, delete with ripple, duplicate, flip, mute), preview with ExoPlayer,

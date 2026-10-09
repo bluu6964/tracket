@@ -1,6 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.exponentialDecay
@@ -48,6 +50,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -107,7 +110,7 @@ import kotlin.math.roundToLong
 fun TimelineLayerPanel(
     height: Dp,
     tracks: List<TimelineTrack>,
-    currentPlayheadMs: Long,
+    playheadMs: () -> Long,
     totalDurationMs: Long,
     selectedClipId: String?,
     isMasterMuted: Boolean,
@@ -139,7 +142,7 @@ fun TimelineLayerPanel(
     // The gesture block below is created ONCE (key = Unit). Before, it was keyed on
     // currentPlayheadMs, so every drag frame restarted it and the swipe was dropped
     // after a short distance. These always hold the latest values without restarting it.
-    val latestPlayheadMs by rememberUpdatedState(currentPlayheadMs)
+    val latestPlayheadProvider by rememberUpdatedState(playheadMs)
     val latestTotalMs by rememberUpdatedState(totalDurationMs)
     val latestSeek by rememberUpdatedState(onSeekTo)
 
@@ -157,14 +160,19 @@ fun TimelineLayerPanel(
                 val touchSlop = viewConfiguration.touchSlop
 
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(requireUnconsumed = false)
                     flingJob?.cancel()
                     velocityTracker.resetTracking()
-                    var posMs = latestPlayheadMs.toFloat()
+                    velocityTracker.addPosition(down.uptimeMillis, down.position)
+                    var posMs = latestPlayheadProvider().toFloat()
                     var pastTouchSlop = false
                     var isPinch = false
                     var lastSpan = 0f
                     var didScrub = false
+                    // Slop is measured from the finger-down point (not per event), otherwise a
+                    // slow swipe never reached the slop and the timeline felt dead/laggy.
+                    val downPos = down.position
+                    var lastX = down.position.x
 
                     while (true) {
                         val event = awaitPointerEvent()
@@ -193,22 +201,23 @@ fun TimelineLayerPanel(
                         } else if (!isPinch) {
                             // ---- Single-finger horizontal scrub ----
                             val change = pressed[0]
-                            val dx = change.position.x - change.previousPosition.x
-                            val dy = change.position.y - change.previousPosition.y
+                            // A child (vertical scroll, layer drag) already took this gesture.
+                            if (change.isConsumed) break
+                            val totalDx = change.position.x - downPos.x
+                            val totalDy = change.position.y - downPos.y
                             if (!pastTouchSlop) {
-                                val totalDx = change.position.x - change.previousPosition.x
-                                // accumulate via position vs down would be better; use slop on movement
-                                if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
+                                if (abs(totalDx) > touchSlop || abs(totalDy) > touchSlop) {
+                                    // Mostly vertical: leave it to verticalScroll.
+                                    if (abs(totalDy) > abs(totalDx) * 1.2f) break
                                     pastTouchSlop = true
-                                    // If mostly vertical, don't steal — let verticalScroll handle it
-                                    if (abs(dy) > abs(dx) * 1.2f) {
-                                        break
-                                    }
+                                    lastX = downPos.x // include the distance travelled to reach the slop
                                 }
                             }
                             if (pastTouchSlop) {
                                 change.consume()
                                 velocityTracker.addPosition(change.uptimeMillis, change.position)
+                                val dx = change.position.x - lastX
+                                lastX = change.position.x
                                 val deltaMs = -(dx / pxPerDp) / latestPxPerMs
                                 posMs = (posMs + deltaMs).coerceIn(0f, latestTotalMs.toFloat())
                                 latestSeek(posMs.roundToLong())
@@ -265,11 +274,20 @@ fun TimelineLayerPanel(
         // window steps (every ~2 s), not on every frame. The margin (~2.2 s) is larger than the step.
         val marginMs = (100f / pxPerMs).toLong()
         val windowStepMs = 2_000L
-        val rawFromMs = currentPlayheadMs - (centerLineX.value / pxPerMs).toLong() - marginMs
-        val rawToMs = currentPlayheadMs +
-            ((screenWidth - centerLineX).value / pxPerMs).toLong() + marginMs
-        val visibleFromMs = Math.floorDiv(rawFromMs, windowStepMs) * windowStepMs
-        val visibleToMs = (Math.floorDiv(rawToMs, windowStepMs) + 1L) * windowStepMs
+        // derivedStateOf: the panel recomposes only when the 2 s window steps, never per frame.
+        val visibleFromMs by remember(pxPerMs, screenWidth) {
+            derivedStateOf {
+                val rawFromMs = playheadMs() - (centerLineX.value / pxPerMs).toLong() - marginMs
+                Math.floorDiv(rawFromMs, windowStepMs) * windowStepMs
+            }
+        }
+        val visibleToMs by remember(pxPerMs, screenWidth) {
+            derivedStateOf {
+                val rawToMs = playheadMs() +
+                    ((screenWidth - centerLineX).value / pxPerMs).toLong() + marginMs
+                (Math.floorDiv(rawToMs, windowStepMs) + 1L) * windowStepMs
+            }
+        }
 
         // 1. Left layer controls (eye + thumb) + timeline tracks, shared vertical scroll.
         val leftRailWidth = 56.dp
@@ -309,15 +327,14 @@ fun TimelineLayerPanel(
                 Column(
                     modifier = Modifier
                         .width(contentWidth)
-                        .offset {
-                            IntOffset(
-                                x = ((centerLineX.value - latestPlayheadMs * pxPerMs) * dpToPx - railPx).roundToInt(),
-                                y = 0
-                            )
+                        // graphicsLayer = draw phase only: no measure/layout per frame while scrolling.
+                        .graphicsLayer {
+                            translationX = (centerLineX.value - playheadMs() * pxPerMs) * dpToPx - railPx
                         },
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     tracks.forEachIndexed { laneIndex, track ->
+                        androidx.compose.runtime.key(track.id) {
                         TimelineTrackRow(
                             track = track,
                             laneIndex = laneIndex,
@@ -332,6 +349,7 @@ fun TimelineLayerPanel(
                             visibleToMs = visibleToMs,
                             waveforms = waveforms
                         )
+                        }
                     }
                 }
             }
@@ -541,29 +559,54 @@ fun TimelineTrackRow(
     var dragOffsetY by remember { mutableStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
 
+    // Lane slides smoothly to its new row after a reorder / when a lane above is added or removed.
+    val slideY = remember { Animatable(0f) }
+    var prevLaneIndex by remember { mutableStateOf(laneIndex) }
+    LaunchedEffect(laneIndex) {
+        if (prevLaneIndex != laneIndex) {
+            slideY.snapTo((prevLaneIndex - laneIndex) * laneStepPx)
+            prevLaneIndex = laneIndex
+            slideY.animateTo(0f, spring(dampingRatio = 0.82f, stiffness = 700f))
+        }
+    }
+    // Lift animation while a layer is held / dragged.
+    val lift by animateFloatAsState(
+        targetValue = if (isDragging) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 900f),
+        label = "laneLift"
+    )
+    // New lane pops in.
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 600f)) }
+
     Box(
         modifier = Modifier
             .height(trackHeight)
             .fillMaxWidth()
             .graphicsLayer {
-                // Live feedback while reordering vertically.
-                translationY = if (isDragging) dragOffsetY else 0f
-                alpha = if (isDragging) 0.92f else 1f
-                shadowElevation = if (isDragging) 8f else 0f
+                translationY = (if (isDragging) dragOffsetY else slideY.value)
+                val s = 1f + 0.03f * lift
+                scaleY = s * (0.85f + 0.15f * appear.value)
+                alpha = appear.value * (1f - 0.08f * lift)
+                shadowElevation = 12f * lift
             }
             .background(Color(0xFF13161F).copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
         contentAlignment = Alignment.CenterStart
     ) {
         // Exactly one clip per lane in Alight Motion mode.
         track.clips.forEach { clip ->
-            val clipOffset = (clip.startMs * pxPerMs).dp
             val clipWidth = (clip.durationMs * pxPerMs).dp.coerceAtLeast(36.dp)
             val isSelected = clip.id == selectedClipId
 
             Box(
                 modifier = Modifier
-                    .offset(x = clipOffset + if (isDragging) (dragOffsetX / pxPerDp).dp else 0.dp)
-                    .pointerInput(clip.id, laneIndex, laneCount) {
+                    .offset {
+                        IntOffset(
+                            x = (clip.startMs * pxPerMs * pxPerDp + if (isDragging) dragOffsetX else 0f).roundToInt(),
+                            y = 0
+                        )
+                    }
+                    .pointerInput(clip.id, laneIndex, laneCount, pxPerMs) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 isDragging = true
@@ -641,17 +684,23 @@ fun TimelineClipItem(
     val selectScale by animateFloatAsState(
         targetValue = if (isSelected) 1.03f else 1f,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow
+            dampingRatio = 0.8f,
+            stiffness = Spring.StiffnessMedium
         ),
         label = "clipSelectScale"
     )
 
-    val borderModifier = if (isSelected) {
-        Modifier.border(2.dp, SelectedClipBorder, RoundedCornerShape(6.dp))
-    } else {
-        Modifier.border(1.dp, Color(0xFF2C3240), RoundedCornerShape(6.dp))
-    }
+    val borderColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (isSelected) SelectedClipBorder else Color(0xFF2C3240),
+        animationSpec = androidx.compose.animation.core.tween(120),
+        label = "clipBorderColor"
+    )
+    val borderWidth by androidx.compose.animation.core.animateDpAsState(
+        targetValue = if (isSelected) 2.dp else 1.dp,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 900f),
+        label = "clipBorderWidth"
+    )
+    val borderModifier = Modifier.border(borderWidth, borderColor, RoundedCornerShape(6.dp))
 
     Box(
         modifier = Modifier

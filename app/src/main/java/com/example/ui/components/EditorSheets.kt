@@ -10,6 +10,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.example.ui.util.enterPop
+import com.example.ui.util.bouncyClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -75,7 +77,6 @@ import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-import com.example.ui.util.bouncyClickable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -250,6 +251,7 @@ fun ExportModalDialog(
     ) {
         Box(
             modifier = Modifier
+                .enterPop()
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
                 .background(EditorSurface)
@@ -493,7 +495,7 @@ fun AddTextSheet(
                                 color = if (selectedColor == colorValue) Color.White else Color.Transparent,
                                 shape = CircleShape
                             )
-                            .clickable { selectedColor = colorValue }
+                            .bouncyClickable(pressedScale = 0.85f) { selectedColor = colorValue }
                     )
                 }
             }
@@ -655,6 +657,7 @@ fun FullscreenPlayerModal(
     ) {
         Box(
             modifier = Modifier
+                .enterPop()
                 .fillMaxSize()
                 .background(Color.Black),
             contentAlignment = Alignment.Center

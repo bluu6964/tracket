@@ -13,6 +13,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.example.ui.util.enterPop
+import com.example.ui.util.bouncyClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -56,7 +58,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.ui.theme.TextPrimary
-import com.example.ui.util.bouncyClickable
 import java.util.Locale
 
 /** Colors used by the Text edit panel (taken from the reference screenshots). */
@@ -108,7 +109,7 @@ fun TextColorRow(
                             if (c == selected) Modifier.border(2.5.dp, Color.White, RoundedCornerShape(11.dp))
                             else Modifier.border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(11.dp))
                         )
-                        .clickable { onSelect(c) }
+                        .bouncyClickable(pressedScale = 0.85f) { onSelect(c) }
                 )
             }
         }
@@ -119,7 +120,7 @@ fun TextColorRow(
                 .clip(RoundedCornerShape(11.dp))
                 .background(if (isCustom) Color(selected) else Color.Transparent)
                 .border(2.dp, Color.White.copy(alpha = if (isCustom) 1f else 0.85f), RoundedCornerShape(11.dp))
-                .clickable { showPicker = true },
+                .bouncyClickable(pressedScale = 0.88f) { showPicker = true },
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Default.Palette, "Custom color", tint = Color.White, modifier = Modifier.size(22.dp))
@@ -130,7 +131,7 @@ fun TextColorRow(
                 .size(44.dp)
                 .clip(RoundedCornerShape(11.dp))
                 .background(ChipBg)
-                .clickable { onEyedropper(onSelect) },
+                .bouncyClickable(pressedScale = 0.88f) { onEyedropper(onSelect) },
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Default.Colorize, "Pick from canvas", tint = TextPrimary, modifier = Modifier.size(22.dp))
@@ -169,6 +170,7 @@ fun ColorPickerDialog(
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
+                .enterPop()
                 .clip(RoundedCornerShape(20.dp))
                 .background(SheetBg)
                 .padding(18.dp)

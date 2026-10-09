@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.example.ui.util.bouncyClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -209,7 +210,7 @@ private fun SheetChip(
             .height(48.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(if (selected) ChipSelectedBg else ChipBg)
-            .clickable(onClick = onClick)
+            .bouncyClickable(pressedScale = 0.9f, onClick = onClick)
             .padding(horizontal = 22.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -343,7 +344,7 @@ private fun FontChip(name: String, selected: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(14.dp))
             .background(ChipBg)
             .then(if (selected) Modifier.border(2.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier)
-            .clickable(onClick = onClick)
+            .bouncyClickable(pressedScale = 0.9f, onClick = onClick)
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -378,7 +379,7 @@ private fun StyleTab(
                     .clip(RoundedCornerShape(14.dp))
                     .background(ChipBg)
                     .then(if (isCurrent) Modifier.border(2.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier)
-                    .clickable { onUpdate { preset.applyTo(it) } },
+                    .bouncyClickable(pressedScale = 0.93f) { onUpdate { preset.applyTo(it) } },
                 contentAlignment = Alignment.Center
             ) {
                 TextLayerContent(clip = preset.applyTo(PreviewClip), frameWidth = 290.dp)
@@ -403,7 +404,7 @@ private fun StyleTab(
                         .height(52.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(if (clip.fontWeight == w) ChipSelectedBg else ChipBg)
-                        .clickable { onUpdate { it.copy(fontWeight = w) } },
+                        .bouncyClickable(pressedScale = 0.92f) { onUpdate { it.copy(fontWeight = w) } },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -447,7 +448,7 @@ private fun StyleToggle(
             .height(52.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(if (on) ChipSelectedBg else ChipBg)
-            .clickable(onClick = onClick),
+            .bouncyClickable(pressedScale = 0.9f, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -529,7 +530,7 @@ private fun AlignButton(icon: ImageVector, on: Boolean, modifier: Modifier, onCl
             .height(52.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(if (on) ChipSelectedBg else ChipBg)
-            .clickable(onClick = onClick),
+            .bouncyClickable(pressedScale = 0.9f, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, null, tint = if (on) Color(0xFF1C1D20) else Color.White, modifier = Modifier.size(26.dp))

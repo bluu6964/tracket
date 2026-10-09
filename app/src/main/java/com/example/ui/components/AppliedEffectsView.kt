@@ -504,7 +504,10 @@ fun AppliedEffectsView(
 
                 AnimatedContent(
                     targetState = screenMode,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
+                    transitionSpec = {
+                    fadeIn(androidx.compose.animation.core.tween(120, delayMillis = 30)) togetherWith
+                        fadeOut(androidx.compose.animation.core.tween(70))
+                },
                     label = "effectsPanelTransition"
                 ) { mode ->
                     when (mode) {

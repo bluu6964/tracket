@@ -32,6 +32,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.TextEditSheet
+import com.example.ui.util.enterPop
 import com.example.ui.components.pickColorFromWindow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -52,6 +53,7 @@ import com.example.engine.MediaImporter
 import com.example.engine.VideoExporter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -101,7 +103,10 @@ fun VideoEditorScreen(
     viewModel: VideoEditorViewModel = viewModel(),
     modifier: Modifier = Modifier
 ) {
-    val currentPlayheadMs by viewModel.currentPlayheadMs.collectAsState()
+    // The playhead changes every frame. It is held as a State and only READ in lambdas / draw /
+    // layout phases (or inside modes that are open), so the whole editor no longer recomposes per frame.
+    val playheadState = viewModel.currentPlayheadMs.collectAsState()
+    val playheadProvider: () -> Long = remember { { playheadState.value } }
     val totalDurationMs by viewModel.totalDurationMs.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val selectedAspectRatio by viewModel.selectedAspectRatio.collectAsState()
@@ -149,9 +154,20 @@ fun VideoEditorScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // Audio layers follow the playhead (play, pause, scrub, volume/fade/speed/mute changes).
-    LaunchedEffect(tracks, currentPlayheadMs, isPlaying, isMasterMuted) {
-        audioPreview.sync(tracks, currentPlayheadMs, isPlaying, isMasterMuted)
+    // Audio layers follow the playhead. While playing they are synced 10x/s (not per frame);
+    // while scrubbing the sync is debounced so swiping stays fluid.
+    LaunchedEffect(tracks, isPlaying, isMasterMuted) {
+        if (isPlaying) {
+            while (isActive) {
+                audioPreview.sync(tracks, viewModel.currentPlayheadMs.value, true, isMasterMuted)
+                delay(100L)
+            }
+        } else {
+            viewModel.currentPlayheadMs.collectLatest { ms ->
+                delay(100L)
+                audioPreview.sync(tracks, ms, false, isMasterMuted)
+            }
+        }
     }
     // Decode the waveform of every audio file once, in the background.
     LaunchedEffect(tracks) {
@@ -170,11 +186,23 @@ fun VideoEditorScreen(
     }
     LaunchedEffect(isMasterMuted) { editorPlayer.setMuted(isMasterMuted) }
 
-    // Scrubbing / seeking while paused moves the player to the playhead.
-    LaunchedEffect(currentPlayheadMs, isPlaying) {
+    // Scrubbing / seeking while paused moves the player to the playhead. Seeks are throttled
+    // (fast keyframe seeks while the finger moves, one exact seek when it settles).
+    LaunchedEffect(isPlaying) {
         if (!isPlaying) {
-            editorPlayer.setScrubbing(true)
-            editorPlayer.seekTo(currentPlayheadMs)
+            var lastSeekAt = 0L
+            viewModel.currentPlayheadMs.collectLatest { ms ->
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastSeekAt >= 45L) {
+                    lastSeekAt = now
+                    editorPlayer.setScrubbing(true)
+                    editorPlayer.seekTo(ms)
+                }
+                delay(140L)
+                editorPlayer.setScrubbing(false)
+                editorPlayer.seekTo(ms, force = true)
+                lastSeekAt = 0L
+            }
         }
     }
     // Play / pause: ExoPlayer is the clock and feeds the playhead back to the ViewModel when media exists.
@@ -187,8 +215,9 @@ fun VideoEditorScreen(
             editorPlayer.seekTo(viewModel.currentPlayheadMs.value, force = true)
             editorPlayer.player.play()
             while (isActive) {
+                // Once per display frame (60/90/120 Hz) instead of every 33 ms: smooth timeline scroll.
+                androidx.compose.runtime.withFrameNanos { }
                 viewModel.updatePlayhead(editorPlayer.timelinePositionMs())
-                delay(33L)
             }
         } else {
             editorPlayer.player.pause()
@@ -309,7 +338,7 @@ fun VideoEditorScreen(
                 CanvasArea(
                     height = canvasH,
                     aspectRatio = selectedAspectRatio,
-                    currentPlayheadMs = currentPlayheadMs,
+                    playheadMs = playheadProvider,
                     isPlaying = isPlaying,
                     tracks = tracks,
                     selectedClipId = selectedClipId,
@@ -343,7 +372,7 @@ fun VideoEditorScreen(
                 // 4. Timescale Section (1/30 of screen)
                 TimescaleSection(
                     height = timescaleH,
-                    currentPlayheadMs = currentPlayheadMs,
+                    playheadMs = playheadProvider,
                     totalDurationMs = totalDurationMs,
                     pxPerMs = timelinePxPerMs
                 )
@@ -352,7 +381,7 @@ fun VideoEditorScreen(
                 TimelineLayerPanel(
                     height = layerPanelH,
                     tracks = tracks,
-                    currentPlayheadMs = currentPlayheadMs,
+                    playheadMs = playheadProvider,
                     totalDurationMs = totalDurationMs,
                     selectedClipId = selectedClipId,
                     isMasterMuted = isMasterMuted,
@@ -388,11 +417,18 @@ fun VideoEditorScreen(
                 // 6. Footer: Clip Edit Tools Panel if clip is selected, otherwise Main Bottom Toolbar
                 AnimatedContent(
                     targetState = selectedClipId,
+                    // Fast, springy swap (Alight Motion style): new bar slides up a little and fades in,
+                    // the old one fades out quickly. No slow tween, no scale pop.
                     transitionSpec = {
-                        (fadeIn(animationSpec = androidx.compose.animation.core.tween(220)) +
-                                scaleIn(initialScale = 0.96f, animationSpec = androidx.compose.animation.core.tween(260))) togetherWith
-                        (fadeOut(animationSpec = androidx.compose.animation.core.tween(160)) +
-                                scaleOut(targetScale = 0.96f, animationSpec = androidx.compose.animation.core.tween(180)))
+                        (fadeIn(androidx.compose.animation.core.tween(110, delayMillis = 40)) +
+                            androidx.compose.animation.slideInVertically(
+                                animationSpec = androidx.compose.animation.core.spring(
+                                    dampingRatio = 0.8f,
+                                    stiffness = 900f
+                                ),
+                                initialOffsetY = { it / 3 }
+                            )) togetherWith
+                            fadeOut(androidx.compose.animation.core.tween(80))
                     },
                     label = "toolbarTransition"
                 ) { targetClipId ->
@@ -447,7 +483,7 @@ fun VideoEditorScreen(
                                 // Open Transform on the selected layer: if the playhead is outside it,
                                 // jump to the layer's start so the layer is visible straight away.
                                 val target = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-                                if (target != null && !target.isActiveAt(currentPlayheadMs)) {
+                                if (target != null && !target.isActiveAt(playheadState.value)) {
                                     viewModel.seekTo(target.startMs)
                                 }
                                 showTransformMode = true
@@ -481,7 +517,7 @@ fun VideoEditorScreen(
                             onAudioClick = { audioPicker.launch(arrayOf("audio/*")) },
                             onTextClick = {
                                 // New text layer at the playhead, opened straight in Text edit.
-                                val remaining = totalDurationMs - currentPlayheadMs
+                                val remaining = totalDurationMs - playheadState.value
                                 val id = viewModel.addTextLayer(
                                     if (totalDurationMs > 0L && remaining >= 1000L) minOf(4000L, remaining) else 4000L
                                 )
@@ -518,6 +554,7 @@ fun VideoEditorScreen(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .zIndex(31f)
+                        .enterPop()
                 )
 
                 TextEditSheet(
@@ -527,7 +564,8 @@ fun VideoEditorScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .zIndex(30f),
+                        .zIndex(30f)
+                        .enterPop(fromBottom = true),
                     fullHeight = totalHeight - headerH - canvasH
                 )
                 // The layer can disappear while editing (undo / delete): close the editor then.
@@ -589,6 +627,7 @@ fun VideoEditorScreen(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .zIndex(21f)
+                        .enterPop()
                 )
 
                 // Bottom area: playback row, timescale, the layer's strip and the transform panel.
@@ -603,6 +642,7 @@ fun VideoEditorScreen(
                         .fillMaxWidth()
                         .height(transformAreaH)
                         .zIndex(20f)
+                        .enterPop(fromBottom = true)
                         .background(EditorBackground)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
@@ -613,7 +653,7 @@ fun VideoEditorScreen(
                     com.example.ui.components.TransformView(
                         clip = selectedClip,
                         aspectRatio = selectedAspectRatio,
-                        currentPlayheadMs = currentPlayheadMs,
+                        currentPlayheadMs = playheadState.value,
                         totalDurationMs = totalDurationMs,
                         isPlaying = isPlaying,
                         player = editorPlayer.player,
@@ -738,8 +778,8 @@ fun VideoEditorScreen(
     if (showAddShapeSheet) {
         AddShapeSheet(
             onAddShape = { name, pattern ->
-                val clipDuration = if (totalDurationMs > 0L && currentPlayheadMs < totalDurationMs) {
-                    minOf(4000L, (totalDurationMs - currentPlayheadMs).coerceAtLeast(1000L))
+                val clipDuration = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
+                    minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
                 } else {
                     4000L
                 }
@@ -757,7 +797,7 @@ fun VideoEditorScreen(
     if (showFullscreenPlayer) {
         FullscreenPlayerModal(
             aspectRatio = selectedAspectRatio,
-            currentPlayheadMs = currentPlayheadMs,
+            currentPlayheadMs = playheadState.value,
             totalDurationMs = totalDurationMs,
             isPlaying = isPlaying,
             onTogglePlay = { viewModel.togglePlayPause() },
@@ -772,7 +812,7 @@ fun VideoEditorScreen(
         ) {
             com.example.ui.components.EditShapeView(
                 aspectRatio = selectedAspectRatio,
-                currentPlayheadMs = currentPlayheadMs,
+                currentPlayheadMs = playheadState.value,
                 totalDurationMs = totalDurationMs,
                 isPlaying = isPlaying,
                 player = editorPlayer.player,
@@ -781,8 +821,8 @@ fun VideoEditorScreen(
                 onSeekTo = { viewModel.seekTo(it) },
                 onDismiss = { showEditShapeMode = false },
                 onSaveShape = { shapeType, w, h, color, feather, offX, offY, strokeW, strokeCol ->
-                    val clipDuration = if (totalDurationMs > 0L && currentPlayheadMs < totalDurationMs) {
-                        minOf(4000L, (totalDurationMs - currentPlayheadMs).coerceAtLeast(1000L))
+                    val clipDuration = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
+                        minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
                     } else {
                         4000L
                     }
@@ -815,7 +855,7 @@ fun VideoEditorScreen(
                     )
                     scope.launch { snackbarHostState.showSnackbar("Added ${shapeType.label} to canvas") }
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().enterPop()
             )
         }
     }
@@ -877,7 +917,7 @@ fun VideoEditorScreen(
             com.example.ui.components.CropView(
                 clip = selectedClip,
                 aspectRatio = selectedAspectRatio,
-                currentPlayheadMs = currentPlayheadMs,
+                currentPlayheadMs = playheadState.value,
                 totalDurationMs = totalDurationMs,
                 isPlaying = isPlaying,
                 player = editorPlayer.player,
@@ -902,7 +942,7 @@ fun VideoEditorScreen(
                         )
                     }
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().enterPop()
             )
         }
     }
@@ -919,7 +959,7 @@ fun VideoEditorScreen(
                     viewModel.setClipEffect(effectName)
                     scope.launch { snackbarHostState.showSnackbar("Applied $effectName") }
                 },
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().enterPop()
             )
         }
     }

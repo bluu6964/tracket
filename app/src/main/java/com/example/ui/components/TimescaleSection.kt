@@ -34,12 +34,11 @@ import java.util.Locale
 @Composable
 fun TimescaleSection(
     height: Dp,
-    currentPlayheadMs: Long,
+    playheadMs: () -> Long,
     totalDurationMs: Long,
     pxPerMs: Float = TIMELINE_PX_PER_MS,
     modifier: Modifier = Modifier
 ) {
-    val currentTimeStr = formatTimeCode(currentPlayheadMs)
     val totalTimeStr = formatTimeCode(totalDurationMs)
 
     BoxWithConstraints(
@@ -60,14 +59,7 @@ fun TimescaleSection(
                 .align(Alignment.CenterStart),
             contentAlignment = Alignment.CenterEnd
         ) {
-            Text(
-                text = currentTimeStr,
-                color = TextPrimary,
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.End
-            )
+            PlayheadTimeText(playheadMs)
         }
 
         // 2. Center Divider line (|) - collinear with the locked vertical playhead below
@@ -116,6 +108,7 @@ fun TimescaleSection(
             contentAlignment = Alignment.CenterStart
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
+                val currentPlayheadMs = playheadMs() // read in the draw phase only
                 val h = size.height
 
                 // Calculate time window visible in ruler canvas
@@ -152,6 +145,19 @@ fun TimescaleSection(
             }
         }
     }
+}
+
+/** Only this tiny text recomposes while the playhead moves. */
+@Composable
+private fun PlayheadTimeText(playheadMs: () -> Long) {
+    Text(
+        text = formatTimeCode(playheadMs()),
+        color = TextPrimary,
+        fontSize = 13.sp,
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Bold,
+        textAlign = TextAlign.End
+    )
 }
 
 fun formatTimeCode(ms: Long): String {

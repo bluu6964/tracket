@@ -61,8 +61,8 @@ fun PlayControlsSection(
     val playPauseScale by animateFloatAsState(
         targetValue = if (isPlaying) 1.08f else 1.0f,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
+            dampingRatio = 0.6f,
+            stiffness = Spring.StiffnessMedium
         ),
         label = "playPauseSpring"
     )

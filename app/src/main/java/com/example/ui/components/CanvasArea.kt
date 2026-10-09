@@ -34,6 +34,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -73,7 +74,7 @@ import com.example.ui.theme.NeonGreen
 fun CanvasArea(
     height: Dp,
     aspectRatio: AspectRatio,
-    currentPlayheadMs: Long,
+    playheadMs: () -> Long,
     isPlaying: Boolean,
     tracks: List<TimelineTrack>,
     selectedClipId: String? = null,
@@ -120,9 +121,20 @@ fun CanvasArea(
                     .shadow(elevation = 6.dp, shape = RoundedCornerShape(8.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                val activeVideoClip = tracks
-                    .flatMap { it.clips }
-                    .find { it.type == LayerType.VIDEO && it.isVisible && it.isActiveAt(currentPlayheadMs) }
+                // derivedStateOf: recomposes only when the ACTIVE clip changes, not every frame.
+                val activeVideoClip by remember(tracks) {
+                    derivedStateOf {
+                        val t = playheadMs()
+                        tracks.flatMap { it.clips }
+                            .find { it.type == LayerType.VIDEO && it.isVisible && it.isActiveAt(t) }
+                    }
+                }
+                val anyActiveClip by remember(tracks) {
+                    derivedStateOf {
+                        val t = playheadMs()
+                        tracks.any { tr -> tr.clips.any { it.isActiveAt(t) } }
+                    }
+                }
                 val clipScale = (activeVideoClip?.scalePercent ?: 100f) / 100f
                 val clipRotZ = activeVideoClip?.rotationDeg ?: 0f
                 val clipRotX = activeVideoClip?.rotation3dX ?: 0f
@@ -144,8 +156,8 @@ fun CanvasArea(
                                 rotationX = clipRotX
                                 rotationY = clipRotY
                                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(
-                                    activeVideoClip.pivotX,
-                                    activeVideoClip.pivotY
+                                    activeVideoClip?.pivotX ?: 0.5f,
+                                    activeVideoClip?.pivotY ?: 0.5f
                                 )
                                 cameraDistance = 12f * density
                             },
@@ -160,7 +172,7 @@ fun CanvasArea(
                         },
                         update = { it.player = player }
                     )
-                } else if (tracks.flatMap { it.clips }.none { it.isActiveAt(currentPlayheadMs) }) {
+                } else if (!anyActiveClip) {
                     // Clean Alight Motion style canvas with subtle center indicator
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -177,10 +189,15 @@ fun CanvasArea(
 
                 // Render dynamic text or sticker overlays if active at current playhead
                 // Lane order = stacking order: the bottom lane is drawn first, the top lane last.
-                val activeOverlayClips = tracks
-                    .asReversed()
-                    .flatMap { it.clips }
-                    .filter { it.isVisible && (it.type == LayerType.SHAPE || it.text != null) && it.isActiveAt(currentPlayheadMs) }
+                val activeOverlayClips by remember(tracks) {
+                    derivedStateOf {
+                        val t = playheadMs()
+                        tracks
+                            .asReversed()
+                            .flatMap { it.clips }
+                            .filter { it.isVisible && (it.type == LayerType.SHAPE || it.text != null) && it.isActiveAt(t) }
+                    }
+                }
 
                 activeOverlayClips.forEach { clip ->
                   if (clip.type != LayerType.SHAPE) {

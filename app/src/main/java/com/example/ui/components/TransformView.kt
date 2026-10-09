@@ -830,7 +830,10 @@ fun TransformView(
             // Dial Sliders depending on Active Mode
             AnimatedContent(
                 targetState = activeTab,
-                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                transitionSpec = {
+                    fadeIn(androidx.compose.animation.core.tween(120, delayMillis = 30)) togetherWith
+                        fadeOut(androidx.compose.animation.core.tween(70))
+                },
                 label = "transformTabTransition"
             ) { currentTab ->
                 Column(modifier = Modifier.fillMaxWidth()) {

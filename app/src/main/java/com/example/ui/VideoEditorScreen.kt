@@ -400,6 +400,7 @@ fun VideoEditorScreen(
                     onMoveClipInTime = { id, delta -> viewModel.moveClipInTime(id, delta) },
                     onBeginClipTimeDrag = { viewModel.beginAdjust() },
                     onReorderLane = { from, to -> viewModel.reorderLane(from, to) },
+                    onTrimClipEdge = { id, left, d -> viewModel.trimClipEdge(id, left, d) },
                     onToggleClipVisibility = { id -> viewModel.toggleClipVisibility(id) },
                     pxPerMs = timelinePxPerMs,
                     onPxPerMsChange = { timelinePxPerMs = it }

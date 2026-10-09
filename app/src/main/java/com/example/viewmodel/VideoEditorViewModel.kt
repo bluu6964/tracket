@@ -417,6 +417,42 @@ class VideoEditorViewModel : ViewModel() {
         recomputeTotal()
     }
 
+    /**
+     * Trims a layer from one edge (the two arrow handles of a selected layer).
+     * Left edge: start moves, and for media the in-point (trimStartMs) moves with it.
+     * Right edge: only the length changes. Media can't be stretched past its source length.
+     * Call [beginAdjust] once before a drag session so undo is a single step.
+     */
+    fun trimClipEdge(clipId: String, isLeft: Boolean, deltaMs: Long) {
+        if (deltaMs == 0L) return
+        val minLen = 100L
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { c ->
+                if (c.id != clipId) return@map c
+                val hasSource = c.uri != null && !c.isImage
+                val spd = c.speed.coerceAtLeast(0.01f)
+                if (isLeft) {
+                    var d = deltaMs.coerceAtLeast(-c.startMs)
+                    if (hasSource) d = d.coerceAtLeast(-(c.trimStartMs / spd).toLong())
+                    d = d.coerceAtMost(c.durationMs - minLen)
+                    c.copy(
+                        startMs = c.startMs + d,
+                        durationMs = c.durationMs - d,
+                        trimStartMs = if (hasSource) (c.trimStartMs + d * spd).toLong().coerceAtLeast(0L) else c.trimStartMs
+                    )
+                } else {
+                    var d = deltaMs.coerceAtLeast(-(c.durationMs - minLen))
+                    if (hasSource && c.sourceDurationMs > 0L) {
+                        val maxLen = ((c.sourceDurationMs - c.trimStartMs) / spd).toLong()
+                        d = d.coerceAtMost((maxLen - c.durationMs).coerceAtLeast(0L))
+                    }
+                    c.copy(durationMs = c.durationMs + d)
+                }
+            })
+        }
+        recomputeTotal()
+    }
+
     /** Sets absolute start time of a layer on the timeline. */
     fun setClipStartMs(clipId: String, startMs: Long) {
         _tracks.value = LaneLayout.setClipStart(_tracks.value, clipId, startMs)

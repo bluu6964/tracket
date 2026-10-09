@@ -38,9 +38,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
@@ -61,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -126,6 +131,8 @@ fun TimelineLayerPanel(
     onBeginClipTimeDrag: () -> Unit = {},
     /** Vertical reorder: move lane fromIndex → toIndex (0 = top). */
     onReorderLane: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
+    /** Trim handles of the selected layer: edge (true = left) and ms delta. */
+    onTrimClipEdge: (clipId: String, isLeft: Boolean, deltaMs: Long) -> Unit = { _, _, _ -> },
     /** Eye control: toggle layer visibility on canvas/export. */
     onToggleClipVisibility: (clipId: String) -> Unit = {},
     /** Timeline scale in px-per-ms (supports pinch zoom). */
@@ -267,7 +274,7 @@ fun TimelineLayerPanel(
             totalDurationMs,
             tracks.maxOfOrNull { t -> t.clips.maxOfOrNull { it.endMs } ?: 0L } ?: 0L
         )
-        val contentWidth = (contentEndMs * pxPerMs).dp + screenWidth + 64.dp
+        val contentWidth = (contentEndMs * pxPerMs).dp + screenWidth + 64.dp + TrimHandleWidth
 
         // Time window that is actually on screen (+ margin) so only visible thumbnails load.
         // The window is snapped to 2 s steps: while swiping, the clips only recompose when the
@@ -293,7 +300,7 @@ fun TimelineLayerPanel(
         }
 
         // 1. Left layer controls (eye + thumb) + timeline tracks, shared vertical scroll.
-        val leftRailWidth = 56.dp
+        val leftRailWidth = 76.dp
         Row(
             modifier = Modifier
                 .fillMaxSize()
@@ -303,8 +310,7 @@ fun TimelineLayerPanel(
             // Left rail — Alight Motion style: eye + layer preview for each lane.
             Column(
                 modifier = Modifier
-                    .width(leftRailWidth)
-                    .padding(start = 6.dp, end = 4.dp),
+                    .width(leftRailWidth), // flush with the screen's left edge, no side padding
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 tracks.forEach { track ->
@@ -332,7 +338,7 @@ fun TimelineLayerPanel(
                         .width(contentWidth)
                         // graphicsLayer = draw phase only: no measure/layout per frame while scrolling.
                         .graphicsLayer {
-                            translationX = (centerLineX.value - playheadMs() * pxPerMs) * dpToPx - railPx
+                            translationX = (centerLineX.value - playheadMs() * pxPerMs) * dpToPx - railPx - TrimHandleWidth.toPx()
                         },
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
@@ -347,6 +353,7 @@ fun TimelineLayerPanel(
                             onMoveClipInTime = onMoveClipInTime,
                             onBeginClipTimeDrag = onBeginClipTimeDrag,
                             onReorderLane = onReorderLane,
+                            onTrimClipEdge = onTrimClipEdge,
                             pxPerMs = pxPerMs,
                             visibleFromMs = visibleFromMs,
                             visibleToMs = visibleToMs,
@@ -472,32 +479,34 @@ private fun LayerLaneControl(
         blue = (raw and 0xFF).toInt() / 255f,
         alpha = 1f
     )
+    // Alight Motion style: a pill glued to the left edge of the screen, rounded only on the
+    // right end, big outlined eye + a square layer thumbnail.
     Row(
         modifier = Modifier
             .height(height)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(height / 2))
-            .background(Color(0xFF1A1E28))
+            .clip(RoundedCornerShape(topEnd = height / 2, bottomEnd = height / 2))
+            .background(Color(0xFF2A2F3E))
             .bouncyClickable(pressedScale = 1f, onClick = { onSelect(clip.id) })
-            .padding(horizontal = 4.dp),
+            .padding(start = 10.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Icon(
-            imageVector = if (clip.isVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+            imageVector = if (clip.isVisible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
             contentDescription = if (clip.isVisible) "Hide layer" else "Show layer",
             tint = if (clip.isVisible) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.35f),
             modifier = Modifier
-                .size(18.dp)
+                .size(24.dp)
                 .bouncyClickable(pressedScale = 1f, onClick = { onToggleVisibility(clip.id) })
         )
         Box(
             modifier = Modifier
-                .size(22.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .size(28.dp)
+                .clip(RoundedCornerShape(3.dp))
                 .background(
                     when (clip.type) {
-                        LayerType.VIDEO -> Color(0xFF2A4365)
+                        LayerType.VIDEO -> Color(0xFF000000)
                         LayerType.AUDIO -> Color(0xFF1B4332)
                         LayerType.SHAPE -> thumbColor
                         LayerType.TEXT -> Color(0xFF5C3D10)
@@ -546,6 +555,7 @@ fun TimelineTrackRow(
     onMoveClipInTime: (clipId: String, deltaMs: Long) -> Unit = { _, _ -> },
     onBeginClipTimeDrag: () -> Unit = {},
     onReorderLane: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
+    onTrimClipEdge: (clipId: String, isLeft: Boolean, deltaMs: Long) -> Unit = { _, _, _ -> },
     pxPerMs: Float = TIMELINE_PX_PER_MS,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4,
@@ -558,6 +568,8 @@ fun TimelineTrackRow(
     // How many vertical pixels ≈ one lane step for reorder.
     val laneStepPx = with(density) { (trackHeight + 6.dp).toPx() }
 
+    // Room on the left so the left trim handle of a layer at 0:00 is still inside the lane.
+    val handlePx = with(density) { TrimHandleWidth.toPx() }
     var dragOffsetX by remember { mutableStateOf(0f) }
     var dragOffsetY by remember { mutableStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
@@ -593,7 +605,7 @@ fun TimelineTrackRow(
                 alpha = appear.value * (1f - 0.08f * lift)
                 shadowElevation = 12f * lift
             }
-            .background(Color(0xFF13161F).copy(alpha = 0.5f), RoundedCornerShape(4.dp)),
+        ,
         contentAlignment = Alignment.CenterStart
     ) {
         // Exactly one clip per lane in Alight Motion mode.
@@ -605,7 +617,7 @@ fun TimelineTrackRow(
                 modifier = Modifier
                     .offset {
                         IntOffset(
-                            x = (clip.startMs * pxPerMs * pxPerDp + if (isDragging) dragOffsetX else 0f).roundToInt(),
+                            x = (clip.startMs * pxPerMs * pxPerDp + handlePx + if (isDragging) dragOffsetX else 0f).roundToInt(),
                             y = 0
                         )
                     }
@@ -662,7 +674,86 @@ fun TimelineTrackRow(
                     waveform = clip.uri?.let { waveforms[it] }
                 )
             }
+
+            // Two arrow handles flank a selected layer: drag to shorten / lengthen it.
+            if (isSelected && !isDragging && !clip.isLocked) {
+                val barPx = clipWidth.value * pxPerDp
+                TrimHandle(
+                    isLeft = true,
+                    height = trackHeight,
+                    modifier = Modifier.offset {
+                        IntOffset((clip.startMs * pxPerMs * pxPerDp).roundToInt(), 0)
+                    },
+                    pxPerMs = pxPerMs,
+                    pxPerDp = pxPerDp,
+                    onBegin = onBeginClipTimeDrag,
+                    onTrim = { d -> onTrimClipEdge(clip.id, true, d) }
+                )
+                TrimHandle(
+                    isLeft = false,
+                    height = trackHeight,
+                    modifier = Modifier.offset {
+                        IntOffset((clip.startMs * pxPerMs * pxPerDp + handlePx + barPx).roundToInt(), 0)
+                    },
+                    pxPerMs = pxPerMs,
+                    pxPerDp = pxPerDp,
+                    onBegin = onBeginClipTimeDrag,
+                    onTrim = { d -> onTrimClipEdge(clip.id, false, d) }
+                )
+            }
         }
+    }
+}
+
+private val TrimHandleWidth = 34.dp
+
+/** Grey arrow tab on one side of a selected layer (Alight Motion style). Drag = trim. */
+@Composable
+private fun TrimHandle(
+    isLeft: Boolean,
+    height: Dp,
+    modifier: Modifier,
+    pxPerMs: Float,
+    pxPerDp: Float,
+    onBegin: () -> Unit,
+    onTrim: (Long) -> Unit
+) {
+    val latestOnTrim by rememberUpdatedState(onTrim)
+    val r = height / 2
+    Box(
+        modifier = modifier
+            .width(TrimHandleWidth)
+            .height(height)
+            .clip(
+                if (isLeft) RoundedCornerShape(topStart = r, bottomStart = r, topEnd = 4.dp, bottomEnd = 4.dp)
+                else RoundedCornerShape(topEnd = r, bottomEnd = r, topStart = 4.dp, bottomStart = 4.dp)
+            )
+            .background(Color(0xFF454A58))
+            .pointerInput(pxPerMs, pxPerDp) {
+                var acc = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { acc = 0f; onBegin() },
+                    onDragEnd = { acc = 0f },
+                    onDragCancel = { acc = 0f },
+                    onHorizontalDrag = { change, dx ->
+                        change.consume()
+                        acc += dx / pxPerDp / pxPerMs
+                        val whole = acc.toLong()
+                        if (whole != 0L) {
+                            acc -= whole
+                            latestOnTrim(whole)
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (isLeft) Icons.Default.ChevronLeft else Icons.Default.ChevronRight,
+            contentDescription = if (isLeft) "Trim start" else "Trim end",
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.size(24.dp)
+        )
     }
 }
 
@@ -693,18 +784,6 @@ fun TimelineClipItem(
         label = "clipSelectScale"
     )
 
-    val borderColor by androidx.compose.animation.animateColorAsState(
-        targetValue = Color(0xFF2C3240), // no white selection border
-        animationSpec = androidx.compose.animation.core.tween(120),
-        label = "clipBorderColor"
-    )
-    val borderWidth by androidx.compose.animation.core.animateDpAsState(
-        targetValue = 1.dp,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 900f),
-        label = "clipBorderWidth"
-    )
-    val borderModifier = Modifier.border(borderWidth, borderColor, RoundedCornerShape(6.dp))
-
     Box(
         modifier = Modifier
             .width(width)
@@ -714,8 +793,7 @@ fun TimelineClipItem(
                 scaleY = selectScale
                 alpha = if (clip.isVisible) 1f else 0.35f
             }
-            .clip(RoundedCornerShape(6.dp))
-            .then(borderModifier)
+            .clip(RoundedCornerShape(8.dp))
             .bouncyClickable(pressedScale = 1f, onClick = onClick)
     ) {
         when (clip.type) {
@@ -802,89 +880,44 @@ fun TimelineClipItem(
                 }
             }
 
-            LayerType.SHAPE -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF0F2537))
-                ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val dotSpacing = 8.dp.toPx()
-                        val cols = (size.width / dotSpacing).toInt()
-                        val rows = (size.height / dotSpacing).toInt()
-                        for (r in 1 until rows) {
-                            for (c in 1 until cols) {
-                                drawCircle(
-                                    color = NeonCyan,
-                                    radius = 1.6.dp.toPx(),
-                                    center = Offset(c * dotSpacing, r * dotSpacing)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            LayerType.SHAPE -> StripedBar(Color(0xFF4FBFC9))
+            LayerType.TEXT -> StripedBar(Color(0xFFF7CB60))
+            LayerType.OVERLAY, LayerType.STICKER -> StripedBar(Color(0xFFF5A44B))
 
-            LayerType.OVERLAY -> {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF2A1C2C))
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_cyan_dots_1791121437975),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Image(
-                        painter = painterResource(id = R.drawable.sample_portrait_1791121452621),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                    )
-                }
-            }
-
-            else -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(clip.color)),
-                    contentAlignment = Alignment.CenterStart
-                ) {}
-            }
-        }
-
-        // Selected clip duration badge & keyframe diamond (matching screenshot)
-        if (isSelected) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 12.dp)
-                    .size(20.dp)
-                    .graphicsLayer { rotationZ = 45f }
-                    .background(Color(0xFF374151).copy(alpha = 0.85f), RoundedCornerShape(2.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier
-                        .size(12.dp)
-                        .graphicsLayer { rotationZ = -45f }
-                )
-            }
+            else -> StripedBar(Color(0xFFF5A44B))
         }
     }
 }
 
+
+/**
+ * Flat colour bar with soft vertical stripes (Alight Motion style layer body).
+ * Drawn once into a display list; scrolling only moves it.
+ */
+@Composable
+private fun StripedBar(color: Color) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(color)
+            .drawBehind {
+                val stripe = 12.dp.toPx()
+                var x = stripe
+                var odd = false
+                while (x < size.width + stripe) {
+                    if (odd) {
+                        drawRect(
+                            color = Color.White.copy(alpha = 0.07f),
+                            topLeft = Offset(x - stripe, 0f),
+                            size = androidx.compose.ui.geometry.Size(stripe, size.height)
+                        )
+                    }
+                    odd = !odd
+                    x += stripe
+                }
+            }
+    )
+}
 
 /** Lower = longer glide after a swipe. Alight-Motion-like smooth coast. */
 private const val FLING_FRICTION = 0.35f

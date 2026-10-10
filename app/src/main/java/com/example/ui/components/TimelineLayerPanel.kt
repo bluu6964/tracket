@@ -132,6 +132,8 @@ fun TimelineLayerPanel(
     isMasterMuted: Boolean,
     onSeekTo: (Long) -> Unit,
     onSeekFinished: (Long) -> Unit = {},
+    /** True while the user is dragging/flinging the timeline — freeze thumbnail window. */
+    isScrubbing: () -> Boolean = { false },
     onClipSelect: (String?) -> Unit,
     onSplitClip: () -> Unit,
     onDeleteClip: () -> Unit,
@@ -312,17 +314,39 @@ fun TimelineLayerPanel(
         val marginMs = (screenWidth.value / pxPerMs).toLong()
         val windowStepMs = 3_000L
         // derivedStateOf: the panel recomposes only when the 2 s window steps, never per frame.
+        val latestScrubbing by rememberUpdatedState(isScrubbing)
+        // Snapshotted window while scrubbing (written only when scrub starts).
+        val scrubWindow = remember { mutableStateOf<Pair<Long, Long>?>(null) }
+        val rawFromNow = playheadMs() - (centerLineX.value / pxPerMs).toLong() - marginMs
+        val rawToNow = playheadMs() + ((screenWidth - centerLineX).value / pxPerMs).toLong() + marginMs
+        // NOTE: playheadMs() in composition would recompose every frame — avoid.
+        // Keep derivedStateOf; freeze by capturing first stepped values in a ref.
+        val scrubHold = remember { object { var from: Long? = null; var to: Long? = null } }
         val visibleFromMs by remember(pxPerMs, screenWidth) {
             derivedStateOf {
                 val rawFromMs = playheadMs() - (centerLineX.value / pxPerMs).toLong() - marginMs
-                Math.floorDiv(rawFromMs, windowStepMs) * windowStepMs
+                val stepped = Math.floorDiv(rawFromMs, windowStepMs) * windowStepMs
+                if (latestScrubbing()) {
+                    if (scrubHold.from == null) scrubHold.from = stepped
+                    scrubHold.from!!
+                } else {
+                    scrubHold.from = null
+                    stepped
+                }
             }
         }
         val visibleToMs by remember(pxPerMs, screenWidth) {
             derivedStateOf {
                 val rawToMs = playheadMs() +
                     ((screenWidth - centerLineX).value / pxPerMs).toLong() + marginMs
-                (Math.floorDiv(rawToMs, windowStepMs) + 1L) * windowStepMs
+                val stepped = (Math.floorDiv(rawToMs, windowStepMs) + 1L) * windowStepMs
+                if (latestScrubbing()) {
+                    if (scrubHold.to == null) scrubHold.to = stepped
+                    scrubHold.to!!
+                } else {
+                    scrubHold.to = null
+                    stepped
+                }
             }
         }
 

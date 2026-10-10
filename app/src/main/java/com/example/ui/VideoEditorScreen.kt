@@ -153,17 +153,27 @@ fun VideoEditorScreen(
         }
     }
 
-    val onScrubUi: (Long) -> Unit = { ms ->
-        isScrubbing.value = true
-        playheadMs.longValue = ms.coerceAtLeast(0L)
-    }
+    // Scrub job: UI-only while finger moves; auto-commit shortly after last tick
+    // so panels that never call onSeekFinished still settle cleanly.
+    var scrubCommitJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val onScrubFinished: (Long) -> Unit = { ms ->
-        val clamped = ms.coerceAtLeast(0L)
+        scrubCommitJob?.cancel()
+        scrubCommitJob = null
+        val clamped = ms.coerceIn(0L, totalDurationMs.coerceAtLeast(0L))
         playheadMs.longValue = clamped
         viewModel.seekTo(clamped)
         editorPlayer.setScrubbing(false)
         editorPlayer.seekTo(clamped, force = true)
         isScrubbing.value = false
+    }
+    val onScrubUi: (Long) -> Unit = { ms ->
+        isScrubbing.value = true
+        playheadMs.longValue = if (totalDurationMs > 0L) ms.coerceIn(0L, totalDurationMs) else ms.coerceAtLeast(0L)
+        scrubCommitJob?.cancel()
+        scrubCommitJob = scope.launch {
+            kotlinx.coroutines.delay(180L)
+            onScrubFinished(playheadMs.longValue)
+        }
     }
 
     // Leaving the app stops playback (video and audio layers).
@@ -404,6 +414,7 @@ fun VideoEditorScreen(
                     isMasterMuted = isMasterMuted,
                     onSeekTo = onScrubUi,
                     onSeekFinished = onScrubFinished,
+                    isScrubbing = { isScrubbing.value },
                     // While several layers are checked, taps/drags on layer bodies must not
                     // switch to single selection (that would leave multi-select).
                     onClipSelect = { id -> if (multiSelectIds.isEmpty()) viewModel.selectClip(id) },

@@ -33,7 +33,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
+import android.view.LayoutInflater
 import androidx.media3.ui.PlayerView
+import com.example.R
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -157,7 +159,10 @@ fun CanvasArea(
                                 cameraDistance = 12f * density
                             },
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
+                            // texture_view surface: graphicsLayer 3D transforms composite smoothly
+                            // (SurfaceView punches a hole and fights with Compose transforms).
+                            (LayoutInflater.from(ctx)
+                                .inflate(R.layout.player_texture, null, false) as PlayerView).apply {
                                 useController = false
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                                 setShutterBackgroundColor(CanvasBackground.toArgb())

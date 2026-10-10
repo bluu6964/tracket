@@ -651,18 +651,33 @@ class VideoEditorViewModel : ViewModel() {
             rot3dY = rot3dY,
             warp = warp
         )
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id != clipId) {
-                    clip
-                } else if (clip.keyframes.isNotEmpty()) {
-                    // Keyframed layer: every edit writes / updates the keyframe at the playhead.
-                    clip.withKeyframeAt(playhead, values)
-                } else {
-                    clip.withStaticTransform(values)
-                }
-            })
+        // Only rebuild the track that owns the clip; other tracks keep the same instance
+        // so Compose can skip their subtrees when structural equality holds.
+        val tracks = _tracks.value
+        var found = false
+        val next = ArrayList<TimelineTrack>(tracks.size)
+        for (track in tracks) {
+            val idx = track.clips.indexOfFirst { it.id == clipId }
+            if (idx < 0) {
+                next.add(track)
+                continue
+            }
+            found = true
+            val clip = track.clips[idx]
+            val updated = if (clip.keyframes.isNotEmpty()) {
+                clip.withKeyframeAt(playhead, values)
+            } else {
+                clip.withStaticTransform(values)
+            }
+            if (updated === clip) {
+                next.add(track)
+            } else {
+                val clips = track.clips.toMutableList()
+                clips[idx] = updated
+                next.add(track.copy(clips = clips))
+            }
         }
+        if (found) _tracks.value = next
     }
 
     /** Diamond button: adds a keyframe at the playhead (first one turns keyframes on) or removes the one there. */

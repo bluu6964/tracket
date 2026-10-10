@@ -236,6 +236,8 @@ fun TransformLayerStrip(
     onToggleGraph: () -> Unit = {},
     hasKeyframeAtPlayhead: Boolean = false,
     showGraph: Boolean = false,
+    /** Keyframe times RELATIVE to the layer start; drawn as small diamonds on the strip. */
+    keyframeTimesMs: List<Long> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -337,6 +339,25 @@ fun TransformLayerStrip(
                             visibleFromMs = visibleFromMs,
                             visibleToMs = visibleToMs
                         )
+                    }
+                    if (keyframeTimesMs.isNotEmpty()) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val r = 4.5.dp.toPx()
+                            val cy = size.height - r - 3.dp.toPx()
+                            keyframeTimesMs.forEach { rel ->
+                                val cx = rel * TIMELINE_PX_PER_MS * this.density
+                                if (cx < -r || cx > size.width + r) return@forEach
+                                val outer = Path().apply {
+                                    moveTo(cx, cy - r - 1.5.dp.toPx()); lineTo(cx + r + 1.5.dp.toPx(), cy)
+                                    lineTo(cx, cy + r + 1.5.dp.toPx()); lineTo(cx - r - 1.5.dp.toPx(), cy); close()
+                                }
+                                val inner = Path().apply {
+                                    moveTo(cx, cy - r); lineTo(cx + r, cy); lineTo(cx, cy + r); lineTo(cx - r, cy); close()
+                                }
+                                drawPath(outer, Color.White)
+                                drawPath(inner, Color(0xFFE91E63))
+                            }
+                        }
                     }
                 }
             }

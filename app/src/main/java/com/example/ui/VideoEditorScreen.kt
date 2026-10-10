@@ -708,7 +708,20 @@ fun VideoEditorScreen(
                             if (targetId != null) {
                                 viewModel.setAllTransformEasing(targetId, easing, property)
                             }
-                        }
+                        },
+                        onMoveKeyframe = { property, oldTimeMs, newTimeMs, newValue ->
+                            val targetId = selectedClip?.id ?: selectedClipId
+                            if (targetId != null) {
+                                viewModel.moveTransformKeyframe(targetId, property, oldTimeMs, newTimeMs, newValue)
+                            }
+                        },
+                        onSetCurve = { property, timeMs, handles ->
+                            val targetId = selectedClip?.id ?: selectedClipId
+                            if (targetId != null) {
+                                viewModel.setTransformKeyframeCurve(targetId, property, timeMs, handles)
+                            }
+                        },
+                        onBeginKeyframeEdit = { viewModel.beginKeyframeEdit() }
                     )
                 }
             }

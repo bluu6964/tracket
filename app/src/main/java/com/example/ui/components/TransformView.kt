@@ -116,6 +116,9 @@ fun TransformView(
     onRemoveKeyframe: (property: String, timeMs: Long) -> Unit = { _, _ -> },
     onSetEasing: (property: String, timeMs: Long, easing: com.example.model.EasingType) -> Unit = { _, _, _ -> },
     onSetAllEasing: (property: String, easing: com.example.model.EasingType) -> Unit = { _, _ -> },
+    onMoveKeyframe: (property: String, oldTimeMs: Long, newTimeMs: Long, newValue: Float) -> Unit = { _, _, _, _ -> },
+    onSetCurve: (property: String, timeMs: Long, handles: com.example.model.BezierHandles) -> Unit = { _, _, _ -> },
+    onBeginKeyframeEdit: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Current active mode tab: 2D, Pivot, 3D, Warp
@@ -124,7 +127,6 @@ fun TransformView(
     // Graph editor visibility + selected property
     var showGraph by remember { mutableStateOf(false) }
     var graphProperty by remember { mutableStateOf(GraphProperty.HORIZONTAL) }
-    var selectedEasing by remember { mutableStateOf(com.example.model.EasingType.LINEAR) }
 
     // 2D Transform state
     var horizontal by remember(clip?.id) { mutableFloatStateOf(clip?.transformX ?: 0.0f) }
@@ -211,18 +213,35 @@ fun TransformView(
         emitTransform()
     }
 
+    /** Properties that belong to the keyframe button right now (graph property, or the whole open tab). */
+    fun targetProps(): List<GraphProperty> = if (showGraph) listOf(graphProperty) else when (activeTab) {
+        TransformTab.TWO_D -> listOf(
+            GraphProperty.HORIZONTAL, GraphProperty.VERTICAL,
+            GraphProperty.SCALE, GraphProperty.ROTATION
+        )
+        TransformTab.PIVOT -> listOf(GraphProperty.PIVOT_X, GraphProperty.PIVOT_Y)
+        TransformTab.THREE_D -> listOf(GraphProperty.ROT_3D_X, GraphProperty.ROT_3D_Y)
+        TransformTab.WARP -> listOf(GraphProperty.WARP)
+    }
+
+    /** True when every target property already has a keyframe at the playhead. */
+    fun allTargetsKeyedAtPlayhead(): Boolean {
+        val c = clip ?: return false
+        return targetProps().all { c.hasKeyframeNear(currentPlayheadMs, 40L, listOf(it.key)) }
+    }
+
+    /** Diamond button: add keyframes at the playhead, or remove them when they are all already there. */
     fun addKeyframeAtPlayhead() {
-        val props = if (showGraph) listOf(graphProperty) else when (activeTab) {
-            TransformTab.TWO_D -> listOf(
-                GraphProperty.HORIZONTAL, GraphProperty.VERTICAL,
-                GraphProperty.SCALE, GraphProperty.ROTATION
-            )
-            TransformTab.PIVOT -> listOf(GraphProperty.PIVOT_X, GraphProperty.PIVOT_Y)
-            TransformTab.THREE_D -> listOf(GraphProperty.ROT_3D_X, GraphProperty.ROT_3D_Y)
-            TransformTab.WARP -> listOf(GraphProperty.WARP)
-        }
-        props.forEach { p ->
-            onAddKeyframe(p.key, currentValueFor(p), currentPlayheadMs)
+        val c = clip ?: return
+        val props = targetProps()
+        if (allTargetsKeyedAtPlayhead()) {
+            props.forEach { p -> onRemoveKeyframe(p.key, currentPlayheadMs) }
+        } else {
+            props.forEach { p ->
+                if (!c.hasKeyframeNear(currentPlayheadMs, 40L, listOf(p.key))) {
+                    onAddKeyframe(p.key, currentValueFor(p), currentPlayheadMs)
+                }
+            }
         }
     }
 
@@ -262,9 +281,9 @@ fun TransformView(
                 playheadMs = { currentPlayheadMs },
                 totalDurationMs = totalDurationMs
             )
-            val hasKfAtPlayhead = clip?.transformKeyframes?.values?.any { list ->
-                list.any { kotlin.math.abs(it.timeMs - currentPlayheadMs) <= 40L }
-            } == true
+            val hasKfAtPlayhead = clip != null && targetProps().any {
+                clip.hasKeyframeNear(currentPlayheadMs, 40L, listOf(it.key))
+            }
             TransformLayerStrip(
                 clip = clip,
                 currentPlayheadMs = currentPlayheadMs,
@@ -282,7 +301,8 @@ fun TransformView(
                     }
                 },
                 hasKeyframeAtPlayhead = hasKfAtPlayhead,
-                showGraph = showGraph
+                showGraph = showGraph,
+                keyframeTimesMs = clip?.transformKeyframes?.values?.flatten()?.map { it.timeMs }?.distinct().orEmpty()
             )
             // Don't eat all space when graph is open — leave room for graph + bottom panel
             if (!showGraph) {
@@ -847,9 +867,9 @@ fun TransformView(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.End
                 ) {
-                    val hasKfAtPlayhead = clip?.transformKeyframes?.values?.any { list ->
-                        list.any { kotlin.math.abs(it.timeMs - currentPlayheadMs) <= 40L }
-                    } == true
+                    val hasKfAtPlayhead = clip != null && targetProps().any {
+                        clip.hasKeyframeNear(currentPlayheadMs, 40L, listOf(it.key))
+                    }
                     Box(
                         modifier = Modifier
                             .size(20.dp)
@@ -913,7 +933,7 @@ fun TransformView(
 
         // Graph editor (curve view)
         if (showGraph && clip != null) {
-            val kfs = clip.transformKeyframes[graphProperty.key].orEmpty()
+            val kfs = clip.keyframesAbs(graphProperty.key)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -952,25 +972,17 @@ fun TransformView(
                 propertyLabel = graphProperty.label,
                 valueMin = graphProperty.min,
                 valueMax = graphProperty.max,
+                currentValue = currentValueFor(graphProperty),
                 timeStartMs = clip.startMs,
                 timeEndMs = clip.endMs,
                 playheadMs = currentPlayheadMs,
-                selectedEasing = selectedEasing,
                 onAddKeyframe = { t, v -> onAddKeyframe(graphProperty.key, v, t) },
-                onMoveKeyframe = { oldT, newT, newV ->
-                    onRemoveKeyframe(graphProperty.key, oldT)
-                    onAddKeyframe(graphProperty.key, newV, newT)
-                },
+                onMoveKeyframe = { oldT, newT, newV -> onMoveKeyframe(graphProperty.key, oldT, newT, newV) },
                 onRemoveKeyframe = { t -> onRemoveKeyframe(graphProperty.key, t) },
-                onSelectEasing = { easing ->
-                    selectedEasing = easing
-                    onSetAllEasing(graphProperty.key, easing)
-                    val nearest = kfs.filter { it.timeMs <= currentPlayheadMs }
-                        .maxByOrNull { it.timeMs } ?: kfs.firstOrNull()
-                    if (nearest != null) {
-                        onSetEasing(graphProperty.key, nearest.timeMs, easing)
-                    }
-                },
+                onSetPreset = { t, easing -> onSetEasing(graphProperty.key, t, easing) },
+                onSetCurve = { t, handles -> onSetCurve(graphProperty.key, t, handles) },
+                onApplyPresetToAll = { easing -> onSetAllEasing(graphProperty.key, easing) },
+                onEditStart = onBeginKeyframeEdit,
                 onSeek = onSeekTo,
                 modifier = Modifier
                     .fillMaxWidth()

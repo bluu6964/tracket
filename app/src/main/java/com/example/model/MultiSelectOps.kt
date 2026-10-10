@@ -62,7 +62,8 @@ object MultiSelectOps {
                         startMs = p,
                         durationMs = c.durationMs - d,
                         trimStartMs = if (hasSource(c)) c.trimStartMs + (d * c.speed).toLong() else c.trimStartMs,
-                        fadeInMs = 0L
+                        fadeInMs = 0L,
+                        transformKeyframes = shiftKeyframes(c.transformKeyframes, -d)
                     )
                 } else c
             }
@@ -84,7 +85,8 @@ object MultiSelectOps {
                     if (d <= 0L) c else c.copy(
                         startMs = c.startMs - d,
                         durationMs = c.durationMs + d,
-                        trimStartMs = if (hasSource(c)) (c.trimStartMs - (d * c.speed).toLong()).coerceAtLeast(0L) else c.trimStartMs
+                        trimStartMs = if (hasSource(c)) (c.trimStartMs - (d * c.speed).toLong()).coerceAtLeast(0L) else c.trimStartMs,
+                        transformKeyframes = shiftKeyframes(c.transformKeyframes, d)
                     )
                 } else c
             }
@@ -170,7 +172,8 @@ object MultiSelectOps {
                         startMs = p,
                         durationMs = c.endMs - p,
                         trimStartMs = c.trimStartMs + (d1 * c.speed).toLong(),
-                        fadeInMs = 0L
+                        fadeInMs = 0L,
+                        transformKeyframes = shiftKeyframes(c.transformKeyframes, -d1)
                     )
                     c.copy(durationMs = d1, fadeOutMs = 0L)
                 } else c

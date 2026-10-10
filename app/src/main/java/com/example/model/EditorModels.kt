@@ -109,6 +109,7 @@ data class TimelineClip(
      * Transform keyframes keyed by property name
      * (e.g. "transformX", "transformY", "scalePercent", "rotationDeg", …).
      * Empty list = no animation; the static field value is used.
+     * Keyframe times are RELATIVE to [startMs] so moving a layer keeps its animation.
      */
     val transformKeyframes: Map<String, List<TransformKeyframe>> = emptyMap()
 ) {
@@ -124,15 +125,37 @@ data class TimelineClip(
         return startMs < other.endMs && other.startMs < endMs
     }
 
-    /** Evaluate a transform property at [timeMs] using keyframes + easing, or fall back to static value. */
+    /**
+     * Evaluate a transform property at the absolute timeline time [timeMs] using keyframes + curves,
+     * or fall back to the static value. Keyframe times are stored relative to [startMs], so moving
+     * the layer on the timeline keeps its animation attached.
+     */
     fun evaluateTransform(property: String, timeMs: Long, staticValue: Float): Float {
-        val kfs = transformKeyframes[property].orEmpty().sortedBy { it.timeMs }
-        if (kfs.isEmpty()) return staticValue
-        return interpolateKeyframes(kfs, timeMs)
+        val kfs = transformKeyframes[property]
+        if (kfs.isNullOrEmpty()) return staticValue
+        return interpolateKeyframes(kfs, timeMs - startMs)
+    }
+
+    /** Keyframes of [property] with absolute timeline times (what the UI draws and edits). */
+    fun keyframesAbs(property: String): List<TransformKeyframe> =
+        transformKeyframes[property].orEmpty().map { it.copy(timeMs = it.timeMs + startMs) }
+
+    /** True when any transform property has a keyframe within [toleranceMs] of the absolute time. */
+    fun hasKeyframeNear(absTimeMs: Long, toleranceMs: Long = 40L, properties: Collection<String>? = null): Boolean {
+        val rel = absTimeMs - startMs
+        return transformKeyframes.any { (prop, list) ->
+            (properties == null || prop in properties) && list.any { kotlin.math.abs(it.timeMs - rel) <= toleranceMs }
+        }
+    }
+
+    /** Moves every keyframe by [deltaMs] (relative time) — used when the layer start moves but the content must stay put. */
+    fun withKeyframesShifted(deltaMs: Long): TimelineClip {
+        if (deltaMs == 0L || transformKeyframes.isEmpty()) return this
+        return copy(transformKeyframes = shiftKeyframes(transformKeyframes, deltaMs))
     }
 }
 
-/** Easing / curve type applied between two consecutive keyframes. */
+/** Easing / curve type applied between two consecutive keyframes. CUSTOM uses the keyframe's own bezier handles. */
 enum class EasingType {
     LINEAR,
     EASE_IN,
@@ -141,74 +164,183 @@ enum class EasingType {
     EASE_IN_CUBIC,
     EASE_OUT_CUBIC,
     EASE_IN_OUT_CUBIC,
-    HOLD
+    HOLD,
+    CUSTOM
+}
+
+/**
+ * Cubic-bezier easing handles of one segment, CSS style: the curve runs from (0,0) to (1,1) and
+ * (x1,y1) / (x2,y2) are the two control points. x must stay in 0..1 (time never runs backwards);
+ * y may leave 0..1 to overshoot (bounce / anticipation).
+ */
+data class BezierHandles(val x1: Float, val y1: Float, val x2: Float, val y2: Float) {
+    fun sanitized() = BezierHandles(
+        x1.coerceIn(0f, 1f), y1.coerceIn(BEZIER_Y_MIN, BEZIER_Y_MAX),
+        x2.coerceIn(0f, 1f), y2.coerceIn(BEZIER_Y_MIN, BEZIER_Y_MAX)
+    )
+
+    companion object {
+        const val BEZIER_Y_MIN = -1f
+        const val BEZIER_Y_MAX = 2f
+    }
+}
+
+/** The bezier handles behind each preset, so the editor can show (and start editing from) the real curve. */
+fun easingHandles(type: EasingType): BezierHandles = when (type) {
+    EasingType.LINEAR, EasingType.HOLD, EasingType.CUSTOM -> BezierHandles(0.33f, 0.33f, 0.67f, 0.67f)
+    EasingType.EASE_IN -> BezierHandles(0.11f, 0f, 0.5f, 0f)
+    EasingType.EASE_OUT -> BezierHandles(0.5f, 1f, 0.89f, 1f)
+    EasingType.EASE_IN_OUT -> BezierHandles(0.45f, 0f, 0.55f, 1f)
+    EasingType.EASE_IN_CUBIC -> BezierHandles(0.32f, 0f, 0.67f, 0f)
+    EasingType.EASE_OUT_CUBIC -> BezierHandles(0.33f, 1f, 0.68f, 1f)
+    EasingType.EASE_IN_OUT_CUBIC -> BezierHandles(0.65f, 0f, 0.35f, 1f)
 }
 
 /**
  * A single keyframe on a transform property graph.
- * [timeMs] is absolute timeline time.
+ * [timeMs] is relative to the layer's start (so the animation travels with the layer).
  * [value] is the property value at that time.
- * [easing] controls interpolation toward the *next* keyframe.
+ * [easing] / [handles] control interpolation toward the *next* keyframe.
  */
 data class TransformKeyframe(
     val timeMs: Long,
     val value: Float,
-    val easing: EasingType = EasingType.LINEAR
-)
+    val easing: EasingType = EasingType.LINEAR,
+    /** Only used when [easing] is CUSTOM. */
+    val handles: BezierHandles? = null
+) {
+    /** The bezier handles that actually shape the segment after this keyframe. */
+    fun curve(): BezierHandles =
+        if (easing == EasingType.CUSTOM) (handles ?: easingHandles(EasingType.LINEAR)) else easingHandles(easing)
+}
 
-/** Apply easing curve to normalized t ∈ [0, 1]. */
+private fun bezierAxis(s: Float, a: Float, b: Float): Float {
+    val u = 1f - s
+    return 3f * u * u * s * a + 3f * u * s * s * b + s * s * s
+}
+
+private fun bezierAxisSlope(s: Float, a: Float, b: Float): Float {
+    val u = 1f - s
+    return 3f * u * u * a + 6f * u * s * (b - a) + 3f * s * s * (1f - b)
+}
+
+/** y of the cubic bezier (0,0)-(x1,y1)-(x2,y2)-(1,1) at time fraction [x] ∈ [0,1]. */
+fun cubicBezierEase(x: Float, h: BezierHandles): Float {
+    val t = x.coerceIn(0f, 1f)
+    if (t == 0f || t == 1f) return t
+    if (h.x1 == h.y1 && h.x2 == h.y2) return t // straight line
+    // Newton–Raphson, with bisection as a fallback when the slope is flat.
+    var s = t
+    for (i in 0 until 8) {
+        val err = bezierAxis(s, h.x1, h.x2) - t
+        if (kotlin.math.abs(err) < 1e-5f) return bezierAxis(s, h.y1, h.y2)
+        val slope = bezierAxisSlope(s, h.x1, h.x2)
+        if (kotlin.math.abs(slope) < 1e-4f) break
+        s = (s - err / slope).coerceIn(0f, 1f)
+    }
+    var lo = 0f
+    var hi = 1f
+    s = t
+    for (i in 0 until 24) {
+        val err = bezierAxis(s, h.x1, h.x2) - t
+        if (kotlin.math.abs(err) < 1e-5f) break
+        if (err > 0f) hi = s else lo = s
+        s = (lo + hi) / 2f
+    }
+    return bezierAxis(s, h.y1, h.y2)
+}
+
+/** Apply a preset easing curve to normalized t ∈ [0, 1]. */
 fun applyEasing(t: Float, type: EasingType): Float {
     val x = t.coerceIn(0f, 1f)
     return when (type) {
-        EasingType.LINEAR -> x
         EasingType.HOLD -> 0f
-        EasingType.EASE_IN -> x * x
-        EasingType.EASE_OUT -> 1f - (1f - x) * (1f - x)
-        EasingType.EASE_IN_OUT -> if (x < 0.5f) 2f * x * x else 1f - (-2f * x + 2f).let { it * it } / 2f
-        EasingType.EASE_IN_CUBIC -> x * x * x
-        EasingType.EASE_OUT_CUBIC -> 1f - (1f - x).let { it * it * it }
-        EasingType.EASE_IN_OUT_CUBIC ->
-            if (x < 0.5f) 4f * x * x * x
-            else 1f - (-2f * x + 2f).let { it * it * it } / 2f
+        EasingType.LINEAR -> x
+        else -> cubicBezierEase(x, easingHandles(type))
     }
 }
 
-/** Interpolate a sorted list of keyframes at [timeMs]. */
+/** Eased progress (0..1, may overshoot with custom handles) of the segment that starts at [from]. */
+fun applyKeyframeCurve(t: Float, from: TransformKeyframe): Float {
+    val x = t.coerceIn(0f, 1f)
+    return when (from.easing) {
+        EasingType.HOLD -> 0f
+        EasingType.LINEAR -> x
+        else -> cubicBezierEase(x, from.curve())
+    }
+}
+
+/** Interpolate a sorted list of keyframes at [timeMs] (same time base as the keyframes). */
 fun interpolateKeyframes(keyframes: List<TransformKeyframe>, timeMs: Long): Float {
     if (keyframes.isEmpty()) return 0f
-    if (timeMs <= keyframes.first().timeMs) return keyframes.first().value
-    if (timeMs >= keyframes.last().timeMs) return keyframes.last().value
+    val sorted = if (keyframes.size < 2 || keyframes.zipWithNext().all { it.first.timeMs <= it.second.timeMs }) keyframes
+    else keyframes.sortedBy { it.timeMs }
+    if (timeMs <= sorted.first().timeMs) return sorted.first().value
+    if (timeMs >= sorted.last().timeMs) return sorted.last().value
 
-    for (i in 0 until keyframes.size - 1) {
-        val a = keyframes[i]
-        val b = keyframes[i + 1]
+    for (i in 0 until sorted.size - 1) {
+        val a = sorted[i]
+        val b = sorted[i + 1]
         if (timeMs in a.timeMs..b.timeMs) {
             val span = (b.timeMs - a.timeMs).toFloat().coerceAtLeast(1f)
             val t = (timeMs - a.timeMs) / span
-            val eased = applyEasing(t, a.easing)
+            val eased = applyKeyframeCurve(t, a)
             return a.value + (b.value - a.value) * eased
         }
     }
-    return keyframes.last().value
+    return sorted.last().value
 }
 
-/** Insert or update a keyframe at [timeMs] for the given property. Returns new map. */
+/**
+ * Insert or update a keyframe at [timeMs] for the given property. Returns new map.
+ * Updating an existing keyframe keeps its curve unless [easing] / [handles] are given.
+ */
 fun upsertKeyframe(
     map: Map<String, List<TransformKeyframe>>,
     property: String,
     timeMs: Long,
     value: Float,
-    easing: EasingType = EasingType.LINEAR,
+    easing: EasingType? = null,
+    handles: BezierHandles? = null,
     toleranceMs: Long = 40L
 ): Map<String, List<TransformKeyframe>> {
     val existing = map[property].orEmpty().toMutableList()
     val idx = existing.indexOfFirst { kotlin.math.abs(it.timeMs - timeMs) <= toleranceMs }
     if (idx >= 0) {
-        existing[idx] = existing[idx].copy(value = value, easing = easing)
+        val old = existing[idx]
+        existing[idx] = old.copy(
+            value = value,
+            easing = easing ?: old.easing,
+            handles = if (easing != null || handles != null) handles else old.handles
+        )
     } else {
-        existing.add(TransformKeyframe(timeMs, value, easing))
+        existing.add(TransformKeyframe(timeMs, value, easing ?: EasingType.LINEAR, handles))
     }
     return map + (property to existing.sortedBy { it.timeMs })
+}
+
+/**
+ * Move one keyframe in time and value in a single step, keeping its curve. The new time is clamped
+ * between its neighbours so keyframes can never swap places or merge by accident.
+ */
+fun moveKeyframe(
+    map: Map<String, List<TransformKeyframe>>,
+    property: String,
+    oldTimeMs: Long,
+    newTimeMs: Long,
+    newValue: Float,
+    minGapMs: Long = 50L,
+    toleranceMs: Long = 40L
+): Map<String, List<TransformKeyframe>> {
+    val list = map[property].orEmpty().sortedBy { it.timeMs }
+    val idx = list.indexOfFirst { kotlin.math.abs(it.timeMs - oldTimeMs) <= toleranceMs }
+    if (idx < 0) return map
+    val lo = if (idx > 0) list[idx - 1].timeMs + minGapMs else Long.MIN_VALUE
+    val hi = if (idx < list.lastIndex) list[idx + 1].timeMs - minGapMs else Long.MAX_VALUE
+    val t = if (lo > hi) list[idx].timeMs else newTimeMs.coerceIn(lo, hi)
+    val out = list.toMutableList()
+    out[idx] = list[idx].copy(timeMs = t, value = newValue)
+    return map + (property to out)
 }
 
 /** Remove keyframe nearest to [timeMs] (within tolerance). */
@@ -224,7 +356,7 @@ fun removeKeyframe(
     return if (existing.isEmpty()) map - property else map + (property to existing)
 }
 
-/** Set the easing of the keyframe at/near [timeMs] (affects segment to next kf). */
+/** Set a preset easing on the keyframe at/near [timeMs] (affects the segment to the next kf). */
 fun setKeyframeEasing(
     map: Map<String, List<TransformKeyframe>>,
     property: String,
@@ -233,10 +365,32 @@ fun setKeyframeEasing(
     toleranceMs: Long = 40L
 ): Map<String, List<TransformKeyframe>> {
     val existing = map[property].orEmpty().map {
-        if (kotlin.math.abs(it.timeMs - timeMs) <= toleranceMs) it.copy(easing = easing) else it
+        if (kotlin.math.abs(it.timeMs - timeMs) <= toleranceMs) it.copy(easing = easing, handles = null) else it
     }
     return map + (property to existing)
 }
+
+/** Set custom bezier handles on the keyframe at/near [timeMs] (the segment to the next kf becomes CUSTOM). */
+fun setKeyframeCurve(
+    map: Map<String, List<TransformKeyframe>>,
+    property: String,
+    timeMs: Long,
+    handles: BezierHandles,
+    toleranceMs: Long = 40L
+): Map<String, List<TransformKeyframe>> {
+    val clean = handles.sanitized()
+    val existing = map[property].orEmpty().map {
+        if (kotlin.math.abs(it.timeMs - timeMs) <= toleranceMs) it.copy(easing = EasingType.CUSTOM, handles = clean) else it
+    }
+    return map + (property to existing)
+}
+
+/** Shift all keyframe times by [deltaMs] (keeps them ≥ 0 relative to the layer start is NOT enforced: content may be trimmed away). */
+fun shiftKeyframes(
+    map: Map<String, List<TransformKeyframe>>,
+    deltaMs: Long
+): Map<String, List<TransformKeyframe>> =
+    if (deltaMs == 0L) map else map.mapValues { (_, list) -> list.map { it.copy(timeMs = it.timeMs + deltaMs) } }
 
 /**
  * One horizontal line (lane) of the timeline (Alight Motion style).

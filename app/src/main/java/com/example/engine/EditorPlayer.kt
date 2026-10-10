@@ -66,7 +66,7 @@ class EditorPlayer(context: Context) {
     /** Timeline ms -> (playlist index, offset inside that clip). */
     fun seekTo(timelineMs: Long, force: Boolean = false) {
         if (clips.isEmpty()) return
-        if (!force && kotlin.math.abs(timelinePositionMs() - timelineMs) < 60) return
+        if (!force && kotlin.math.abs(timelinePositionMs() - timelineMs) < 120) return
         var acc = 0L
         for ((i, c) in clips.withIndex()) {
             if (timelineMs < acc + c.durationMs || i == clips.lastIndex) {

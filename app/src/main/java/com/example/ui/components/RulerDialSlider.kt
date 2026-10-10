@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.animateDecay
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
@@ -12,12 +15,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -26,6 +34,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.TextPrimary
 import java.util.Locale
+import kotlin.math.abs
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+
+/** Lower = longer coast after a flick (feed-like inertia). */
+private const val DIAL_FLING_FRICTION = 0.14f
+private const val DIAL_FLING_VELOCITY_BOOST = 1.25f
 
 @Composable
 fun RulerDialSlider(
@@ -43,6 +58,8 @@ fun RulerDialSlider(
     val currentMin by rememberUpdatedState(min)
     val currentMax by rememberUpdatedState(max)
     val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val scope = rememberCoroutineScope()
+    var flingJob by remember { mutableStateOf<Job?>(null) }
 
     val displayValue = if (unit.isNotEmpty()) {
         String.format(Locale.US, "%.1f%s", value, unit)
@@ -58,7 +75,6 @@ fun RulerDialSlider(
             .height(44.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 1. Label on left (e.g., "Width", "Height", "Intensity", "Rotation", "Edge Hardness")
         Text(
             text = label,
             color = TextPrimary,
@@ -67,22 +83,53 @@ fun RulerDialSlider(
             modifier = Modifier.width(labelWidth)
         )
 
-        // 2. Interactive Ruler Tick Slider with Red Center Needle
-        // Alight Motion style: 1 tick = 1 unit, major tick every 5 units
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
                 .pointerInput(Unit) {
-                    // Fixed px-per-unit so drag distance maps 1:1 to tick marks
                     val pxPerUnit = 8.dp.toPx()
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        // Drag left → value up (ruler slides under the needle)
-                        val delta = -dragAmount.x / pxPerUnit
-                        val newValue = (currentValue + delta).coerceIn(currentMin, currentMax)
-                        currentOnValueChange(newValue)
-                    }
+                    val velocityTracker = VelocityTracker()
+                    detectDragGestures(
+                        onDragStart = {
+                            flingJob?.cancel()
+                            velocityTracker.resetTracking()
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
+                            // Drag left → value up (ruler slides under the needle)
+                            val delta = -dragAmount.x / pxPerUnit
+                            val newValue = (currentValue + delta).coerceIn(currentMin, currentMax)
+                            if (abs(newValue - currentValue) >= 0.001f) {
+                                currentOnValueChange(newValue)
+                            }
+                        },
+                        onDragEnd = {
+                            val vx = velocityTracker.calculateVelocity().x
+                            // px/sec → units/sec; negative vx (drag left) increases value
+                            val velUnits = -vx / pxPerUnit * DIAL_FLING_VELOCITY_BOOST
+                            if (abs(velUnits) > 8f) {
+                                val start = currentValue
+                                flingJob = scope.launch {
+                                    AnimationState(
+                                        initialValue = start,
+                                        initialVelocity = velUnits
+                                    ).animateDecay(
+                                        exponentialDecay(
+                                            frictionMultiplier = DIAL_FLING_FRICTION,
+                                            absVelocityThreshold = 2f
+                                        )
+                                    ) {
+                                        val v = value.coerceIn(currentMin, currentMax)
+                                        currentOnValueChange(v)
+                                        if (v <= currentMin || v >= currentMax) cancelAnimation()
+                                    }
+                                }
+                            }
+                        },
+                        onDragCancel = { flingJob?.cancel() }
+                    )
                 },
             contentAlignment = Alignment.Center
         ) {
@@ -90,7 +137,6 @@ fun RulerDialSlider(
                 val w = size.width
                 val h = size.height
                 val centerX = w / 2f
-                // 1 unit of value = 1 tick spacing (same as drag mapping)
                 val pxPerUnit = 8.dp.toPx()
                 val halfUnits = (w / 2f / pxPerUnit).toInt() + 2
                 val startUnit = kotlin.math.floor(value - halfUnits).toInt()
@@ -114,19 +160,17 @@ fun RulerDialSlider(
                     )
                 }
 
-                // Center Red Indicator Line (needle)
                 val redNeedleHeight = h * 0.82f
                 val needleStart = (h - redNeedleHeight) / 2f
                 drawLine(
                     color = Color(0xFFFF3B5C),
                     start = Offset(centerX, needleStart),
-                    end = Offset(x = centerX, y = needleStart + redNeedleHeight),
+                    end = Offset(centerX, needleStart + redNeedleHeight),
                     strokeWidth = 2.5.dp.toPx()
                 )
             }
         }
 
-        // 3. Current Value on right (e.g., "20%", "45°", "0%")
         Text(
             text = displayValue,
             color = TextPrimary,

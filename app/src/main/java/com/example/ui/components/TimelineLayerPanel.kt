@@ -256,9 +256,10 @@ fun TimelineLayerPanel(
                     // Fling after a horizontal scrub (not after pinch / vertical scroll).
                     if (didScrub && !isPinch) {
                         val velocityPxPerSec = velocityTracker.calculateVelocity().x
-                        if (abs(velocityPxPerSec) > 120f) {
+                        // Low threshold + boosted velocity + low friction = long feed-like coast
+                        if (abs(velocityPxPerSec) > 60f) {
                             val startMs = posMs
-                            val velocityMsPerSec = -(velocityPxPerSec / pxPerDp) / latestPxPerMs
+                            val velocityMsPerSec = -(velocityPxPerSec / pxPerDp) / latestPxPerMs * FLING_VELOCITY_BOOST
                             flingJob = coroutineScope.launch {
                                 AnimationState(
                                     initialValue = startMs,
@@ -266,7 +267,7 @@ fun TimelineLayerPanel(
                                 ).animateDecay(
                                     exponentialDecay(
                                         frictionMultiplier = FLING_FRICTION,
-                                        absVelocityThreshold = 25f
+                                        absVelocityThreshold = 8f
                                     )
                                 ) {
                                     val total = latestTotalMs.toFloat()
@@ -1113,7 +1114,9 @@ private fun lerpColor(a: Color, b: Color, t: Float): Color =
     androidx.compose.ui.graphics.lerp(a, b, t)
 
 /** Lower = longer glide after a swipe. Alight-Motion-like smooth coast. */
-private const val FLING_FRICTION = 0.35f
+private const val FLING_FRICTION = 0.12f
+/** Multiplier on release velocity so a normal flick travels farther. */
+private const val FLING_VELOCITY_BOOST = 1.35f
 
 private val ThumbTileWidth = 44.dp
 private val ThumbTileHeight = 44.dp

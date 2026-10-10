@@ -221,7 +221,8 @@ fun TransformPlaybackRow(
 
 private val StripLeftInset = 56.dp
 private val KeyframeAccent = Color(0xFFFFC21A)
-private const val STRIP_FLING_FRICTION = 0.55f
+private const val STRIP_FLING_FRICTION = 0.12f
+private const val STRIP_FLING_VELOCITY_BOOST = 1.35f
 
 /**
  * The selected layer on its own, drawn at the real timeline scale and scrolled under a fixed centre
@@ -275,13 +276,13 @@ fun TransformLayerStrip(
                     },
                     onDragEnd = {
                         val vx = velocityTracker.calculateVelocity().x
-                        if (abs(vx) > 200f) {
+                        if (abs(vx) > 60f) {
                             val startMs = posMs
-                            val velMsPerSec = -(vx / density) / TIMELINE_PX_PER_MS
+                            val velMsPerSec = -(vx / density) / TIMELINE_PX_PER_MS * STRIP_FLING_VELOCITY_BOOST
                             flingJob = scope.launch {
                                 AnimationState(initialValue = startMs, initialVelocity = velMsPerSec)
                                     .animateDecay(
-                                        exponentialDecay(frictionMultiplier = STRIP_FLING_FRICTION, absVelocityThreshold = 40f)
+                                        exponentialDecay(frictionMultiplier = STRIP_FLING_FRICTION, absVelocityThreshold = 8f)
                                     ) {
                                         val total = latestTotalMs.toFloat()
                                         val ms = value.coerceIn(0f, total)

@@ -43,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,6 +71,9 @@ import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.keyframeIndexAt
 import com.example.model.transformAt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
@@ -130,6 +134,10 @@ fun TransformView(
     // Current active mode tab: Position, Z Axis, Size, Rotation, 3D
     var activeTab by remember { mutableStateOf(TransformTab.POSITION) }
     var showBezierEditor by remember { mutableStateOf(false) }
+    val emitScope = rememberCoroutineScope()
+    var emitJob by remember { mutableStateOf<Job?>(null) }
+    var lastEmitAt by remember { mutableStateOf(0L) }
+
 
     val easingAtPlayhead: com.example.model.KeyframeEasing = run {
         val c = clip ?: return@run com.example.model.KeyframeEasing.LINEAR
@@ -176,18 +184,35 @@ fun TransformView(
     }
 
     fun emitTransform() {
-        onApplyTransform(
-            horizontal,
-            vertical,
-            scale,
-            rotation,
-            pivotX,
-            pivotY,
-            rot3dX,
-            rot3dY,
-            warpDistort,
-            zAxis
-        )
+        // Throttle model writes (~40fps). Local slider state still updates every frame so the
+        // dial feels liquid; only the expensive tracks StateFlow update is limited.
+        val now = android.os.SystemClock.uptimeMillis()
+        val apply = {
+            onApplyTransform(
+                horizontal,
+                vertical,
+                scale,
+                rotation,
+                pivotX,
+                pivotY,
+                rot3dX,
+                rot3dY,
+                warpDistort,
+                zAxis
+            )
+        }
+        if (now - lastEmitAt >= 24L) {
+            lastEmitAt = now
+            emitJob?.cancel()
+            apply()
+        } else {
+            emitJob?.cancel()
+            emitJob = emitScope.launch {
+                delay(24L - (now - lastEmitAt).coerceAtLeast(0L))
+                lastEmitAt = android.os.SystemClock.uptimeMillis()
+                apply()
+            }
+        }
     }
 
     fun resetAll() {

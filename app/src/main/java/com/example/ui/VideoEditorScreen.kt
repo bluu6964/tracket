@@ -56,6 +56,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -103,10 +104,14 @@ fun VideoEditorScreen(
     viewModel: VideoEditorViewModel = viewModel(),
     modifier: Modifier = Modifier
 ) {
-    // The playhead changes every frame. It is held as a State and only READ in lambdas / draw /
-    // layout phases (or inside modes that are open), so the whole editor no longer recomposes per frame.
-    val playheadState = viewModel.currentPlayheadMs.collectAsState()
-    val playheadProvider: () -> Long = remember { { playheadState.value } }
+    // Playhead ticks every frame while playing / scrubbing. Keep it in a mutableLongState and
+    // ONLY read it inside lambdas / graphicsLayer (draw phase) so the editor body does not
+    // recompose 60×/sec — that was the main source of sticky scrubbing and slider lag.
+    val playheadMs = remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        viewModel.currentPlayheadMs.collect { playheadMs.longValue = it }
+    }
+    val playheadProvider: () -> Long = remember { { playheadMs.longValue } }
     val totalDurationMs by viewModel.totalDurationMs.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val selectedAspectRatio by viewModel.selectedAspectRatio.collectAsState()
@@ -187,19 +192,18 @@ fun VideoEditorScreen(
     }
     LaunchedEffect(isMasterMuted) { editorPlayer.setMuted(isMasterMuted) }
 
-    // Scrubbing / seeking while paused moves the player to the playhead. Seeks are throttled
-    // (fast keyframe seeks while the finger moves, one exact seek when it settles).
+    // Scrubbing: throttle player seeks so UI stays fluid; exact frame settles after finger rests.
     LaunchedEffect(isPlaying) {
         if (!isPlaying) {
             var lastSeekAt = 0L
             viewModel.currentPlayheadMs.collectLatest { ms ->
                 val now = android.os.SystemClock.uptimeMillis()
-                if (now - lastSeekAt >= 45L) {
+                if (now - lastSeekAt >= 80L) {
                     lastSeekAt = now
                     editorPlayer.setScrubbing(true)
                     editorPlayer.seekTo(ms)
                 }
-                delay(140L)
+                delay(150L)
                 editorPlayer.setScrubbing(false)
                 editorPlayer.seekTo(ms, force = true)
                 lastSeekAt = 0L
@@ -481,7 +485,7 @@ fun VideoEditorScreen(
                                 // Open Transform on the selected layer: if the playhead is outside it,
                                 // jump to the layer's start so the layer is visible straight away.
                                 val target = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-                                if (target != null && !target.isActiveAt(playheadState.value)) {
+                                if (target != null && !target.isActiveAt(playheadMs.longValue)) {
                                     viewModel.seekTo(target.startMs)
                                 }
                                 showTransformMode = true
@@ -512,7 +516,7 @@ fun VideoEditorScreen(
                             onAudioClick = { audioPicker.launch(arrayOf("audio/*")) },
                             onTextClick = {
                                 // New text layer at the playhead, opened straight in Text edit.
-                                val remaining = totalDurationMs - playheadState.value
+                                val remaining = totalDurationMs - playheadMs.longValue
                                 val id = viewModel.addTextLayer(
                                     if (totalDurationMs > 0L && remaining >= 1000L) minOf(4000L, remaining) else 4000L
                                 )
@@ -648,7 +652,7 @@ fun VideoEditorScreen(
                     com.example.ui.components.TransformView(
                         clip = selectedClip,
                         aspectRatio = selectedAspectRatio,
-                        currentPlayheadMs = playheadState.value,
+                        currentPlayheadMs = playheadMs.longValue,
                         totalDurationMs = totalDurationMs,
                         isPlaying = isPlaying,
                         player = editorPlayer.player,
@@ -785,8 +789,8 @@ fun VideoEditorScreen(
     if (showAddShapeSheet) {
         AddShapeSheet(
             onAddShape = { name, pattern ->
-                val clipDuration = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
-                    minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
+                val clipDuration = if (totalDurationMs > 0L && playheadMs.longValue < totalDurationMs) {
+                    minOf(4000L, (totalDurationMs - playheadMs.longValue).coerceAtLeast(1000L))
                 } else {
                     4000L
                 }
@@ -803,7 +807,7 @@ fun VideoEditorScreen(
     if (showFullscreenPlayer) {
         FullscreenPlayerModal(
             aspectRatio = selectedAspectRatio,
-            currentPlayheadMs = playheadState.value,
+            currentPlayheadMs = playheadMs.longValue,
             totalDurationMs = totalDurationMs,
             isPlaying = isPlaying,
             onTogglePlay = { viewModel.togglePlayPause() },
@@ -818,7 +822,7 @@ fun VideoEditorScreen(
         ) {
             com.example.ui.components.EditShapeView(
                 aspectRatio = selectedAspectRatio,
-                currentPlayheadMs = playheadState.value,
+                currentPlayheadMs = playheadMs.longValue,
                 totalDurationMs = totalDurationMs,
                 isPlaying = isPlaying,
                 player = editorPlayer.player,
@@ -827,8 +831,8 @@ fun VideoEditorScreen(
                 onSeekTo = { viewModel.seekTo(it) },
                 onDismiss = { showEditShapeMode = false },
                 onSaveShape = { shapeType, w, h, color, feather, offX, offY, strokeW, strokeCol ->
-                    val clipDuration = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
-                        minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
+                    val clipDuration = if (totalDurationMs > 0L && playheadMs.longValue < totalDurationMs) {
+                        minOf(4000L, (totalDurationMs - playheadMs.longValue).coerceAtLeast(1000L))
                     } else {
                         4000L
                     }
@@ -918,7 +922,7 @@ fun VideoEditorScreen(
             com.example.ui.components.CropView(
                 clip = selectedClip,
                 aspectRatio = selectedAspectRatio,
-                currentPlayheadMs = playheadState.value,
+                currentPlayheadMs = playheadMs.longValue,
                 totalDurationMs = totalDurationMs,
                 isPlaying = isPlaying,
                 player = editorPlayer.player,

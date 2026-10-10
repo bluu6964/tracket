@@ -67,17 +67,19 @@ fun RulerDialSlider(
             modifier = Modifier.width(labelWidth)
         )
 
-        // 2. Interactive Ruler Tick Slider with Red Center Needle (matching screenshot)
+        // 2. Interactive Ruler Tick Slider with Red Center Needle
+        // Alight Motion style: 1 tick = 1 unit, major tick every 5 units
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
                 .pointerInput(Unit) {
+                    // Fixed px-per-unit so drag distance maps 1:1 to tick marks
+                    val pxPerUnit = 8.dp.toPx()
                     detectDragGestures { change, dragAmount ->
                         change.consume()
-                        // Sensitivity: smooth drag adjustment
-                        val sensitivity = (currentMax - currentMin) / 250f
-                        val delta = dragAmount.x * sensitivity.coerceAtLeast(0.4f)
+                        // Drag left → value up (ruler slides under the needle)
+                        val delta = -dragAmount.x / pxPerUnit
                         val newValue = (currentValue + delta).coerceIn(currentMin, currentMax)
                         currentOnValueChange(newValue)
                     }
@@ -88,17 +90,18 @@ fun RulerDialSlider(
                 val w = size.width
                 val h = size.height
                 val centerX = w / 2f
-                val tickSpacing = 10.dp.toPx()
-                val tickCount = (w / tickSpacing).toInt() + 6
+                // 1 unit of value = 1 tick spacing (same as drag mapping)
+                val pxPerUnit = 8.dp.toPx()
+                val halfUnits = (w / 2f / pxPerUnit).toInt() + 2
+                val startUnit = kotlin.math.floor(value - halfUnits).toInt()
+                val endUnit = kotlin.math.ceil(value + halfUnits).toInt()
 
-                // Offset ticks continuously based on current value so the ruler slides
-                val scrollOffset = ((value - currentMin) * 2.5f) % tickSpacing
+                for (u in startUnit..endUnit) {
+                    if (u.toFloat() < currentMin - 0.5f || u.toFloat() > currentMax + 0.5f) continue
+                    val x = centerX + (u - value) * pxPerUnit
+                    if (x < -2f || x > w + 2f) continue
 
-                for (i in -tickCount / 2..tickCount / 2) {
-                    val x = centerX + i * tickSpacing - scrollOffset
-                    if (x < 0 || x > w) continue
-
-                    val isMajorTick = (i % 5 == 0)
+                    val isMajorTick = (u % 5 == 0)
                     val tickHeight = if (isMajorTick) h * 0.75f else h * 0.42f
                     val yStart = (h - tickHeight) / 2f
                     val yEnd = yStart + tickHeight
@@ -107,17 +110,17 @@ fun RulerDialSlider(
                         color = Color(0xFF4B5262),
                         start = Offset(x, yStart),
                         end = Offset(x, yEnd),
-                        strokeWidth = 1.5.dp.toPx()
+                        strokeWidth = if (isMajorTick) 1.8.dp.toPx() else 1.4.dp.toPx()
                     )
                 }
 
-                // Center Red Indicator Line (needle) matching screenshot
+                // Center Red Indicator Line (needle)
                 val redNeedleHeight = h * 0.82f
                 val needleStart = (h - redNeedleHeight) / 2f
                 drawLine(
                     color = Color(0xFFFF3B5C),
                     start = Offset(centerX, needleStart),
-                    end = Offset(centerX, needleStart + redNeedleHeight),
+                    end = Offset(x = centerX, y = needleStart + redNeedleHeight),
                     strokeWidth = 2.5.dp.toPx()
                 )
             }

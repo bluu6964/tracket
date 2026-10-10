@@ -45,6 +45,8 @@ import com.example.model.ExportSettings
 import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
+import com.example.model.transformAt
+import com.example.model.withStaticTransform
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.roundToInt
@@ -374,10 +376,12 @@ private class LayerBitmapOverlay(
         val timeMs = presentationTimeUs / 1_000L
         for (clip in clips) {
             if (!clip.isActiveAt(timeMs)) continue
+            // Keyframed layers: bake the interpolated Transform of this frame into a copy.
+            val frameClip = if (clip.keyframes.isEmpty()) clip else clip.withStaticTransform(clip.transformAt(timeMs))
             if (clip.type == LayerType.SHAPE) {
-                drawShape(canvas, clip)
+                drawShape(canvas, frameClip)
             } else if (clip.type == LayerType.TEXT || clip.text != null) {
-                drawText(canvas, clip)
+                drawText(canvas, frameClip)
             }
         }
         return bmp

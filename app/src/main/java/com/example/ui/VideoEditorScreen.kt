@@ -661,6 +661,15 @@ fun VideoEditorScreen(
                         onRedo = { viewModel.redo() },
                         onDismiss = { showTransformMode = false },
                         panelOnly = true,
+                        onToggleKeyframe = {
+                            (selectedClip?.id ?: selectedClipId)?.let { viewModel.toggleTransformKeyframe(it) }
+                        },
+                        onCycleEasing = {
+                            (selectedClip?.id ?: selectedClipId)?.let { viewModel.cycleKeyframeEasing(it) }
+                        },
+                        onResetTransform = {
+                            (selectedClip?.id ?: selectedClipId)?.let { viewModel.resetClipTransform(it) }
+                        },
                         onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp ->
                             val targetId = selectedClip?.id ?: selectedClipId
                             if (targetId != null) {

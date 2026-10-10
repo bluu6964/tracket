@@ -38,6 +38,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +65,8 @@ import com.example.R
 import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.TimelineTrack
+import com.example.model.TransformValues
+import com.example.model.transformAt
 import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.NeonCyan
@@ -135,30 +138,22 @@ fun CanvasArea(
                         tracks.any { tr -> tr.clips.any { it.isActiveAt(t) } }
                     }
                 }
-                val clipScale = (activeVideoClip?.scalePercent ?: 100f) / 100f
-                val clipRotZ = activeVideoClip?.rotationDeg ?: 0f
-                val clipRotX = activeVideoClip?.rotation3dX ?: 0f
-                val clipRotY = activeVideoClip?.rotation3dY ?: 0f
-                val clipTransX = activeVideoClip?.transformX ?: 0f
-                val clipTransY = activeVideoClip?.transformY ?: 0f
-
                 if (player != null && hasMainMedia && activeVideoClip?.uri != null) {
                     // Real preview: ExoPlayer renders the active video layer with its transformations
                     AndroidView(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
-                                scaleX = clipScale
-                                scaleY = clipScale
-                                translationX = clipTransX
-                                translationY = clipTransY
-                                rotationZ = clipRotZ
-                                rotationX = clipRotX
-                                rotationY = clipRotY
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(
-                                    activeVideoClip?.pivotX ?: 0.5f,
-                                    activeVideoClip?.pivotY ?: 0.5f
-                                )
+                                // Read the playhead here (draw phase) so keyframes animate without recomposition.
+                                val tf = activeVideoClip?.transformAt(playheadMs()) ?: TransformValues.Identity
+                                scaleX = tf.scalePercent / 100f
+                                scaleY = tf.scalePercent / 100f
+                                translationX = tf.x
+                                translationY = tf.y
+                                rotationZ = tf.rotationDeg
+                                rotationX = tf.rot3dX
+                                rotationY = tf.rot3dY
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(tf.pivotX, tf.pivotY)
                                 cameraDistance = 12f * density
                             },
                         factory = { ctx ->
@@ -208,6 +203,7 @@ fun CanvasArea(
                         onMove = onUpdateClipTransform,
                         onTap = onClipSelect,
                         onDoubleTap = onTextDoubleTap,
+                        playheadMs = playheadMs,
                         modifier = Modifier.align(Alignment.Center)
                     )
                   } else {
@@ -232,33 +228,33 @@ fun CanvasArea(
                     val pattern = clip.shapePattern ?: "CIRCLE"
                     val isSelected = clip.id == selectedClipId
 
-                    val effectiveTransX = clip.transformX
-                    val effectiveTransY = clip.transformY
-                    val effectiveScale = clip.scalePercent / 100f
                     val baseSize = 130.dp
+                    val latestShapeClip by rememberUpdatedState(clip)
 
                     Box(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .graphicsLayer {
-                                translationX = effectiveTransX
-                                translationY = effectiveTransY
-                                scaleX = effectiveScale.coerceAtLeast(0.05f)
-                                scaleY = effectiveScale.coerceAtLeast(0.05f)
-                                rotationZ = clip.rotationDeg
-                                rotationX = clip.rotation3dX
-                                rotationY = clip.rotation3dY
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(clip.pivotX, clip.pivotY)
+                                val tf = clip.transformAt(playheadMs())
+                                translationX = tf.x
+                                translationY = tf.y
+                                scaleX = (tf.scalePercent / 100f).coerceAtLeast(0.05f)
+                                scaleY = (tf.scalePercent / 100f).coerceAtLeast(0.05f)
+                                rotationZ = tf.rotationDeg
+                                rotationX = tf.rot3dX
+                                rotationY = tf.rot3dY
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(tf.pivotX, tf.pivotY)
                                 cameraDistance = 12f * density
                             }
                             .size(baseSize)
                             .pointerInput(clip.id) {
-                                var currentDragX = effectiveTransX
-                                var currentDragY = effectiveTransY
+                                var currentDragX = 0f
+                                var currentDragY = 0f
                                 detectDragGestures(
                                     onDragStart = {
-                                        currentDragX = effectiveTransX
-                                        currentDragY = effectiveTransY
+                                        val tf = latestShapeClip.transformAt(playheadMs())
+                                        currentDragX = tf.x
+                                        currentDragY = tf.y
                                     },
                                     onDrag = { change, dragAmount ->
                                         change.consume()

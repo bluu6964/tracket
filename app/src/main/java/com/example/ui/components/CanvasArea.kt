@@ -35,7 +35,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import android.view.LayoutInflater
 import androidx.media3.ui.PlayerView
-import com.example.R
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -63,7 +62,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.TimelineTrack
@@ -162,7 +160,7 @@ fun CanvasArea(
                             // texture_view surface: graphicsLayer 3D transforms composite smoothly
                             // (SurfaceView punches a hole and fights with Compose transforms).
                             (LayoutInflater.from(ctx)
-                                .inflate(R.layout.player_texture, null, false) as PlayerView).apply {
+                                .inflate(com.example.R.layout.player_texture, null, false) as PlayerView).apply {
                                 useController = false
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                                 setShutterBackgroundColor(CanvasBackground.toArgb())

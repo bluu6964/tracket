@@ -66,7 +66,6 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import android.view.LayoutInflater
 import androidx.media3.ui.PlayerView
-import com.example.R
 import com.example.model.AspectRatio
 import com.example.model.KeyframeEasing
 import com.example.model.LayerType
@@ -391,7 +390,7 @@ fun TransformView(
                                     cameraDistance = 12f * density
                                 },
                             factory = { ctx ->
-                                (LayoutInflater.from(ctx).inflate(R.layout.player_texture, null, false) as PlayerView).apply {
+                                (LayoutInflater.from(ctx).inflate(com.example.R.layout.player_texture, null, false) as PlayerView).apply {
                                     useController = false
                                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                                     this.player = player
@@ -451,7 +450,7 @@ fun TransformView(
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
                             factory = { ctx ->
-                                (LayoutInflater.from(ctx).inflate(R.layout.player_texture, null, false) as PlayerView).apply {
+                                (LayoutInflater.from(ctx).inflate(com.example.R.layout.player_texture, null, false) as PlayerView).apply {
                                     useController = false
                                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                                     this.player = player

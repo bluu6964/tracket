@@ -156,6 +156,9 @@ fun VideoEditorScreen(
     // Scrub job: UI-only while finger moves; auto-commit shortly after last tick
     // so panels that never call onSeekFinished still settle cleanly.
     var scrubCommitJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    // Throttle decoder seeks during a drag. The playhead remains immediate, while the
+    // preview follows at a sustainable rate instead of seeking on every pointer event.
+    var lastScrubPreviewSeekAt by remember { mutableLongStateOf(0L) }
     val onScrubFinished: (Long) -> Unit = { ms ->
         scrubCommitJob?.cancel()
         scrubCommitJob = null
@@ -168,7 +171,14 @@ fun VideoEditorScreen(
     }
     val onScrubUi: (Long) -> Unit = { ms ->
         isScrubbing.value = true
-        playheadMs.longValue = if (totalDurationMs > 0L) ms.coerceIn(0L, totalDurationMs) else ms.coerceAtLeast(0L)
+        editorPlayer.setScrubbing(true)
+        val clamped = if (totalDurationMs > 0L) ms.coerceIn(0L, totalDurationMs) else ms.coerceAtLeast(0L)
+        playheadMs.longValue = clamped
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastScrubPreviewSeekAt >= 100L) {
+            lastScrubPreviewSeekAt = now
+            editorPlayer.seekTo(clamped, force = true)
+        }
         scrubCommitJob?.cancel()
         scrubCommitJob = scope.launch {
             kotlinx.coroutines.delay(180L)

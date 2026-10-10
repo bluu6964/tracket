@@ -364,8 +364,17 @@ fun TransformView(
                                 change.consume()
                                 startDragH += dragAmount.x
                                 startDragV += dragAmount.y
+                                // Keep gesture feedback in Compose-local state. The graphicsLayer
+                                // above updates immediately; don't rebuild project tracks per pointer event.
                                 horizontal = startDragH
                                 vertical = startDragV
+                            },
+                            onDragEnd = {
+                                // Commit once after the gesture, not 60-120+ times per second.
+                                emitTransform()
+                            },
+                            onDragCancel = {
+                                // Preserve the last visible value if the gesture is cancelled.
                                 emitTransform()
                             }
                         )

@@ -670,7 +670,7 @@ fun VideoEditorScreen(
                         onResetTransform = {
                             (selectedClip?.id ?: selectedClipId)?.let { viewModel.resetClipTransform(it) }
                         },
-                        onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp ->
+                        onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp, z ->
                             val targetId = selectedClip?.id ?: selectedClipId
                             if (targetId != null) {
                                 viewModel.updateClipFullTransform(
@@ -683,7 +683,8 @@ fun VideoEditorScreen(
                                     pivotY = py,
                                     rot3dX = r3x,
                                     rot3dY = r3y,
-                                    warp = warp
+                                    warp = warp,
+                                    transformZ = z
                                 )
                             }
                         }

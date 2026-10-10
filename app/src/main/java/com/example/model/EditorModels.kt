@@ -69,9 +69,10 @@ data class TimelineClip(
     val shapeScaleY: Float = 1.0f,
     val strokeWidth: Float = 0f,
     val strokeColor: Long = 0xFFFFFFFF,
-    // Transform parameters (2D, Pivot, 3D, Warp)
+    // Transform parameters (2D, Z, Pivot, 3D, Warp)
     val transformX: Float = 0f,
     val transformY: Float = 0f,
+    val transformZ: Float = 0f,
     val scalePercent: Float = 100f,
     val rotationDeg: Float = 0f,
     val pivotX: Float = 0.5f,

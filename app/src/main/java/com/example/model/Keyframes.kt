@@ -2,10 +2,11 @@ package com.example.model
 
 import kotlin.math.abs
 
-/** All Transform properties of a layer at one moment (2D + Pivot + 3D + Warp). */
+/** All Transform properties of a layer at one moment (2D + Z + Pivot + 3D + Warp). */
 data class TransformValues(
     val x: Float = 0f,
     val y: Float = 0f,
+    val z: Float = 0f,
     val scalePercent: Float = 100f,
     val rotationDeg: Float = 0f,
     val pivotX: Float = 0.5f,
@@ -76,6 +77,7 @@ private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 private fun lerp(a: TransformValues, b: TransformValues, t: Float) = TransformValues(
     x = lerp(a.x, b.x, t),
     y = lerp(a.y, b.y, t),
+    z = lerp(a.z, b.z, t),
     scalePercent = lerp(a.scalePercent, b.scalePercent, t),
     rotationDeg = lerp(a.rotationDeg, b.rotationDeg, t),
     pivotX = lerp(a.pivotX, b.pivotX, t),
@@ -89,6 +91,7 @@ private fun lerp(a: TransformValues, b: TransformValues, t: Float) = TransformVa
 fun TimelineClip.staticTransform() = TransformValues(
     x = transformX,
     y = transformY,
+    z = transformZ,
     scalePercent = scalePercent,
     rotationDeg = rotationDeg,
     pivotX = pivotX,
@@ -102,6 +105,7 @@ fun TimelineClip.staticTransform() = TransformValues(
 fun TimelineClip.withStaticTransform(v: TransformValues) = copy(
     transformX = v.x,
     transformY = v.y,
+    transformZ = v.z,
     scalePercent = v.scalePercent,
     rotationDeg = v.rotationDeg,
     pivotX = v.pivotX,

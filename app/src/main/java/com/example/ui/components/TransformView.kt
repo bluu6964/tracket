@@ -79,10 +79,11 @@ import com.example.ui.theme.TextSecondary
 import com.example.ui.util.bouncyClickable
 
 enum class TransformTab(val title: String) {
-    TWO_D("2D"),
-    PIVOT("Pivot"),
-    THREE_D("3D"),
-    WARP("Warp")
+    POSITION("Position"),
+    Z_AXIS("Z Axis"),
+    SIZE("Size"),
+    ROTATION("Rotation"),
+    THREE_D("3D")
 }
 
 @Composable
@@ -117,20 +118,22 @@ fun TransformView(
         pivotY: Float,
         rot3dX: Float,
         rot3dY: Float,
-        warp: Float
+        warp: Float,
+        z: Float
     ) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Current active mode tab: 2D, Pivot, 3D, Warp
-    var activeTab by remember { mutableStateOf(TransformTab.TWO_D) }
+    // Current active mode tab: Position, Z Axis, Size, Rotation, 3D
+    var activeTab by remember { mutableStateOf(TransformTab.POSITION) }
 
     // 2D Transform state
     var horizontal by remember(clip?.id) { mutableFloatStateOf(clip?.transformX ?: 0.0f) }
     var vertical by remember(clip?.id) { mutableFloatStateOf(clip?.transformY ?: 0.0f) }
+    var zAxis by remember(clip?.id) { mutableFloatStateOf(clip?.transformZ ?: 0.0f) }
     var scale by remember(clip?.id) { mutableFloatStateOf(clip?.scalePercent ?: 100.0f) }
     var rotation by remember(clip?.id) { mutableFloatStateOf(clip?.rotationDeg ?: 0.0f) }
 
-    // Pivot state
+    // Pivot state (kept for transform origin; no dedicated tab)
     var pivotX by remember(clip?.id) { mutableFloatStateOf(clip?.pivotX ?: 0.5f) }
     var pivotY by remember(clip?.id) { mutableFloatStateOf(clip?.pivotY ?: 0.5f) }
 
@@ -138,7 +141,7 @@ fun TransformView(
     var rot3dX by remember(clip?.id) { mutableFloatStateOf(clip?.rotation3dX ?: 0.0f) }
     var rot3dY by remember(clip?.id) { mutableFloatStateOf(clip?.rotation3dY ?: 0.0f) }
 
-    // Warp state
+    // Warp state (kept for model compatibility; no dedicated tab)
     var warpDistort by remember(clip?.id) { mutableFloatStateOf(clip?.warpDistort ?: 0.0f) }
 
     // Keep the controls in step with the layer. With keyframes the shown values follow the playhead
@@ -150,6 +153,7 @@ fun TransformView(
             val tf = clip.transformAt(currentPlayheadMs)
             horizontal = tf.x
             vertical = tf.y
+            zAxis = tf.z
             scale = tf.scalePercent
             rotation = tf.rotationDeg
             pivotX = tf.pivotX
@@ -170,13 +174,15 @@ fun TransformView(
             pivotY,
             rot3dX,
             rot3dY,
-            warpDistort
+            warpDistort,
+            zAxis
         )
     }
 
     fun resetAll() {
         horizontal = 0.0f
         vertical = 0.0f
+        zAxis = 0.0f
         scale = 100.0f
         rotation = 0.0f
         pivotX = 0.5f
@@ -340,6 +346,7 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
+                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation
@@ -364,6 +371,7 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
+                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation
@@ -466,6 +474,7 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
+                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation
@@ -569,6 +578,7 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
+                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation
@@ -853,8 +863,8 @@ fun TransformView(
             ) { currentTab ->
                 Column(modifier = Modifier.fillMaxWidth()) {
                     when (currentTab) {
-                        TransformTab.TWO_D -> {
-                            // Horizontal + Vertical in one swipe pad
+                        TransformTab.POSITION -> {
+                            // XY swipe pad in its own Position panel
                             TransformMovePad(
                                 x = horizontal,
                                 y = vertical,
@@ -864,8 +874,24 @@ fun TransformView(
                                     emitTransform()
                                 }
                             )
+                        }
 
-                            // Scale (100.0%)
+                        TransformTab.Z_AXIS -> {
+                            RulerDialSlider(
+                                label = "Z Axis",
+                                value = zAxis,
+                                onValueChange = {
+                                    zAxis = it
+                                    emitTransform()
+                                },
+                                min = -500f,
+                                max = 500f,
+                                unit = "",
+                                isPercentage = false
+                            )
+                        }
+
+                        TransformTab.SIZE -> {
                             RulerDialSlider(
                                 label = "Scale",
                                 value = scale,
@@ -878,8 +904,9 @@ fun TransformView(
                                 unit = "",
                                 isPercentage = true
                             )
+                        }
 
-                            // Rotation (0.0°)
+                        TransformTab.ROTATION -> {
                             RulerDialSlider(
                                 label = "Rotation",
                                 value = rotation,
@@ -892,58 +919,6 @@ fun TransformView(
                                 unit = "°",
                                 isPercentage = false
                             )
-                        }
-
-                        TransformTab.PIVOT -> {
-                            RulerDialSlider(
-                                label = "Pivot X",
-                                value = (pivotX - 0.5f) * 100f,
-                                onValueChange = {
-                                    pivotX = (it / 100f) + 0.5f
-                                    emitTransform()
-                                },
-                                min = -100f,
-                                max = 100f,
-                                unit = "%",
-                                isPercentage = false
-                            )
-
-                            RulerDialSlider(
-                                label = "Pivot Y",
-                                value = (pivotY - 0.5f) * 100f,
-                                onValueChange = {
-                                    pivotY = (it / 100f) + 0.5f
-                                    emitTransform()
-                                },
-                                min = -100f,
-                                max = 100f,
-                                unit = "%",
-                                isPercentage = false
-                            )
-
-                            // Preset anchors
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf("Top-Left" to (0f to 0f), "Center" to (0.5f to 0.5f), "Bottom-Right" to (1f to 1f)).forEach { (name, point) ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF232732))
-                                            .bouncyClickable {
-                                                pivotX = point.first
-                                                pivotY = point.second
-                                                emitTransform()
-                                            }
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                                    }
-                                }
-                            }
                         }
 
                         TransformTab.THREE_D -> {
@@ -973,28 +948,13 @@ fun TransformView(
                                 isPercentage = false
                             )
                         }
-
-                        TransformTab.WARP -> {
-                            RulerDialSlider(
-                                label = "Warp Distort",
-                                value = warpDistort,
-                                onValueChange = {
-                                    warpDistort = it
-                                    emitTransform()
-                                },
-                                min = -100f,
-                                max = 100f,
-                                unit = "%",
-                                isPercentage = false
-                            )
-                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Bottom Mode Switcher Tabs: [2D] [Pivot] [3D] [Warp] (matching screenshot)
+            // Bottom Mode Switcher Tabs: [Position] [Z Axis] [Size] [Rotation] [3D]
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1018,8 +978,9 @@ fun TransformView(
                         Text(
                             text = tab.title,
                             color = if (isSelected) Color(0xFF111317) else Color(0xFFE5E7EB),
-                            fontSize = 14.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1
                         )
                     }
                 }

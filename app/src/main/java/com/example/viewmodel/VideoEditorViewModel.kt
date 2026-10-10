@@ -634,12 +634,14 @@ class VideoEditorViewModel : ViewModel() {
         pivotY: Float = 0.5f,
         rot3dX: Float = 0f,
         rot3dY: Float = 0f,
-        warp: Float = 0f
+        warp: Float = 0f,
+        transformZ: Float = 0f
     ) {
         val playhead = _currentPlayheadMs.value
         val values = TransformValues(
             x = transformX,
             y = transformY,
+            z = transformZ,
             scalePercent = scalePercent,
             rotationDeg = rotationDeg,
             pivotX = pivotX,
@@ -731,7 +733,8 @@ class VideoEditorViewModel : ViewModel() {
             pivotY = 0.5f,
             rot3dX = 0f,
             rot3dY = 0f,
-            warp = 0f
+            warp = 0f,
+            transformZ = 0f
         )
     }
 

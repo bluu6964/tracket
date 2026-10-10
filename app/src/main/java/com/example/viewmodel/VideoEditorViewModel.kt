@@ -21,6 +21,7 @@ import com.example.model.splitKeyframes
 import com.example.model.transformAt
 import com.example.model.withKeyframeAt
 import com.example.model.withKeyframesShiftedForStart
+import com.example.model.withEasingAt
 import com.example.model.withNextEasingAt
 import com.example.model.withStaticTransform
 import com.example.model.withoutKeyframeAt
@@ -690,6 +691,19 @@ class VideoEditorViewModel : ViewModel() {
         pushHistory()
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { if (it.id == clipId) it.withNextEasingAt(playhead) else it })
+        }
+    }
+
+    /** Apply a custom / preset cubic-bezier easing on the keyframe at the playhead. */
+    fun setKeyframeEasing(clipId: String, easing: com.example.model.KeyframeEasing) {
+        val playhead = _currentPlayheadMs.value
+        val clip = _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId } ?: return
+        if (clip.keyframeIndexAt(playhead) < 0) return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map {
+                if (it.id == clipId) it.withEasingAt(playhead, easing) else it
+            })
         }
     }
 

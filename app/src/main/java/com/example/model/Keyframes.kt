@@ -22,27 +22,22 @@ data class TransformValues(
 
 /**
  * Speed curve of the segment that starts at a keyframe and ends at the next one.
- * Bezier control points (x1, y1, x2, y2) like CSS cubic-bezier; HOLD keeps the value until the next keyframe.
+ * Bezier control points (x1, y1, x2, y2) like CSS cubic-bezier; [isHold] keeps the value until the next keyframe.
+ * Presets live in the companion; any custom (x1,y1,x2,y2) is a valid easing.
  */
-enum class KeyframeEasing(
-    val label: String,
-    val x1: Float,
-    val y1: Float,
-    val x2: Float,
-    val y2: Float,
-    val isHold: Boolean = false
+data class KeyframeEasing(
+    val x1: Float = 0f,
+    val y1: Float = 0f,
+    val x2: Float = 1f,
+    val y2: Float = 1f,
+    val isHold: Boolean = false,
+    val label: String = "Custom"
 ) {
-    LINEAR("Linear", 0f, 0f, 1f, 1f),
-    EASE_IN_OUT("Ease in-out", 0.42f, 0f, 0.58f, 1f),
-    EASE_IN("Ease in", 0.42f, 0f, 1f, 1f),
-    EASE_OUT("Ease out", 0f, 0f, 0.58f, 1f),
-    HOLD("Hold", 0f, 0f, 1f, 1f, isHold = true);
-
     /** Maps linear progress 0..1 to eased progress 0..1. */
     fun apply(t: Float): Float {
         val p = t.coerceIn(0f, 1f)
         if (isHold) return if (p >= 1f) 1f else 0f
-        if (this == LINEAR) return p
+        if (x1 == 0f && y1 == 0f && x2 == 1f && y2 == 1f) return p
         // Solve x(s) = p for s by bisection, then return y(s).
         var lo = 0f
         var hi = 1f
@@ -54,7 +49,49 @@ enum class KeyframeEasing(
         return bezier(s, y1, y2)
     }
 
-    fun next(): KeyframeEasing = values()[(ordinal + 1) % values().size]
+    /** Cycles through built-in presets (used by the small easing icon tap). */
+    fun next(): KeyframeEasing {
+        val idx = PRESETS.indexOfFirst { it.sameCurve(this) }
+        return if (idx < 0) LINEAR else PRESETS[(idx + 1) % PRESETS.size]
+    }
+
+    fun sameCurve(other: KeyframeEasing): Boolean =
+        isHold == other.isHold &&
+            abs(x1 - other.x1) < 0.001f && abs(y1 - other.y1) < 0.001f &&
+            abs(x2 - other.x2) < 0.001f && abs(y2 - other.y2) < 0.001f
+
+    companion object {
+        val LINEAR = KeyframeEasing(0f, 0f, 1f, 1f, label = "Linear")
+        val EASE_IN_OUT = KeyframeEasing(0.42f, 0f, 0.58f, 1f, label = "Ease in-out")
+        val EASE_IN = KeyframeEasing(0.42f, 0f, 1f, 1f, label = "Ease in")
+        val EASE_OUT = KeyframeEasing(0f, 0f, 0.58f, 1f, label = "Ease out")
+        val HOLD = KeyframeEasing(0f, 0f, 1f, 1f, isHold = true, label = "Hold")
+        /** Soft ease-in (bottom-left heavy). */
+        val EASE_IN_SOFT = KeyframeEasing(0.55f, 0f, 1f, 1f, label = "Ease in soft")
+        /** Soft ease-out (top-right heavy). */
+        val EASE_OUT_SOFT = KeyframeEasing(0f, 0f, 0.45f, 1f, label = "Ease out soft")
+        /** Strong S-curve. */
+        val EASE_IN_OUT_STRONG = KeyframeEasing(0.7f, 0f, 0.3f, 1f, label = "Ease in-out strong")
+
+        val PRESETS: List<KeyframeEasing> = listOf(
+            LINEAR, EASE_IN_OUT, EASE_IN, EASE_OUT, HOLD
+        )
+
+        /** Side-panel presets shown in the cubic-bezier editor (matches Alight Motion layout). */
+        val EDITOR_PRESETS: List<KeyframeEasing> = listOf(
+            LINEAR,
+            EASE_IN_SOFT,
+            EASE_OUT_SOFT,
+            EASE_IN_OUT,
+            EASE_IN_OUT_STRONG,
+            HOLD
+        )
+
+        private fun bezier(s: Float, c1: Float, c2: Float): Float {
+            val u = 1f - s
+            return 3f * u * u * s * c1 + 3f * u * s * s * c2 + s * s * s
+        }
+    }
 
     private fun bezier(s: Float, c1: Float, c2: Float): Float {
         val u = 1f - s
@@ -178,6 +215,13 @@ fun TimelineClip.withNextEasingAt(absTimeMs: Long): TimelineClip {
     val idx = keyframeIndexAt(absTimeMs)
     if (idx < 0) return this
     return copy(keyframes = keyframes.mapIndexed { i, k -> if (i == idx) k.copy(easing = k.easing.next()) else k })
+}
+
+/** Sets a custom (or preset) easing on the keyframe at [absTimeMs]. */
+fun TimelineClip.withEasingAt(absTimeMs: Long, easing: KeyframeEasing): TimelineClip {
+    val idx = keyframeIndexAt(absTimeMs)
+    if (idx < 0) return this
+    return copy(keyframes = keyframes.mapIndexed { i, k -> if (i == idx) k.copy(easing = easing) else k })
 }
 
 /**

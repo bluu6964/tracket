@@ -65,8 +65,10 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.example.model.AspectRatio
+import com.example.model.KeyframeEasing
 import com.example.model.LayerType
 import com.example.model.TimelineClip
+import com.example.model.keyframeIndexAt
 import com.example.model.transformAt
 import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
@@ -105,8 +107,10 @@ fun TransformView(
     panelOnly: Boolean = false,
     /** Diamond button: add / remove a keyframe at the playhead. */
     onToggleKeyframe: () -> Unit = {},
-    /** Easing icon: next speed curve for the keyframe at the playhead. */
+    /** Easing icon: opens the cubic-bezier editor (or cycles if [onSetEasing] is null). */
     onCycleEasing: () -> Unit = {},
+    /** Apply a custom cubic-bezier easing to the keyframe at the playhead. */
+    onSetEasing: ((com.example.model.KeyframeEasing) -> Unit)? = null,
     /** Reset button: back to the default Transform and keyframes off. Falls back to a plain emit when null. */
     onResetTransform: (() -> Unit)? = null,
     onApplyTransform: (
@@ -125,6 +129,13 @@ fun TransformView(
 ) {
     // Current active mode tab: Position, Z Axis, Size, Rotation, 3D
     var activeTab by remember { mutableStateOf(TransformTab.POSITION) }
+    var showBezierEditor by remember { mutableStateOf(false) }
+
+    val easingAtPlayhead: com.example.model.KeyframeEasing = run {
+        val c = clip ?: return@run com.example.model.KeyframeEasing.LINEAR
+        val idx = c.keyframeIndexAt(currentPlayheadMs)
+        if (idx >= 0) c.keyframes[idx].easing else com.example.model.KeyframeEasing.LINEAR
+    }
 
     // 2D Transform state
     var horizontal by remember(clip?.id) { mutableFloatStateOf(clip?.transformX ?: 0.0f) }
@@ -194,11 +205,14 @@ fun TransformView(
         if (reset != null) reset() else emitTransform()
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(if (panelOnly) EditorBackground else Color(0xFF0F1116))
             .testTag("transform_screen")
+    ) {
+    Column(
+        modifier = Modifier.fillMaxSize()
     ) {
         if (panelOnly) {
             // Playback controls, timescale and the selected layer's own strip, then the panel at the bottom.
@@ -225,7 +239,15 @@ fun TransformView(
                 onSeekTo = onSeekTo,
                 onReset = { resetAll() },
                 onToggleKeyframe = onToggleKeyframe,
-                onCycleEasing = onCycleEasing
+                onCycleEasing = {
+                    // Open cubic-bezier editor when a keyframe is under the playhead
+                    val idx = clip?.keyframeIndexAt(currentPlayheadMs) ?: -1
+                    if (idx >= 0 && onSetEasing != null) {
+                        showBezierEditor = true
+                    } else {
+                        onCycleEasing()
+                    }
+                }
             )
             Spacer(modifier = Modifier.weight(1f))
         }
@@ -982,7 +1004,17 @@ fun TransformView(
                 }
             }
         }
-    }
+    } // end Column
+
+        if (showBezierEditor && onSetEasing != null) {
+            BezierEasingEditor(
+                initial = easingAtPlayhead,
+                onApply = { easing -> onSetEasing.invoke(easing) },
+                onDismiss = { showBezierEditor = false },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    } // end Box
 }
 
 /**

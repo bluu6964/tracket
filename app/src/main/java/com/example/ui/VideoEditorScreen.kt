@@ -667,6 +667,9 @@ fun VideoEditorScreen(
                         onCycleEasing = {
                             (selectedClip?.id ?: selectedClipId)?.let { viewModel.cycleKeyframeEasing(it) }
                         },
+                        onSetEasing = { easing ->
+                            (selectedClip?.id ?: selectedClipId)?.let { viewModel.setKeyframeEasing(it, easing) }
+                        },
                         onResetTransform = {
                             (selectedClip?.id ?: selectedClipId)?.let { viewModel.resetClipTransform(it) }
                         },

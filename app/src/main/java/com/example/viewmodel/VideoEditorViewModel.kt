@@ -15,6 +15,15 @@ import com.example.model.MultiSelectOps
 import com.example.model.PreviewResolution
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
+import com.example.model.TransformValues
+import com.example.model.keyframeIndexAt
+import com.example.model.splitKeyframes
+import com.example.model.transformAt
+import com.example.model.withKeyframeAt
+import com.example.model.withKeyframesShiftedForStart
+import com.example.model.withNextEasingAt
+import com.example.model.withStaticTransform
+import com.example.model.withoutKeyframeAt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -259,7 +268,8 @@ class VideoEditorViewModel : ViewModel() {
         pushHistory()
         val duration1 = playhead - clip.startMs
         val duration2 = clip.endMs - playhead
-        val part1 = clip.copy(durationMs = duration1, fadeOutMs = 0L)
+        val (leftKeys, rightKeys) = clip.splitKeyframes(playhead)
+        val part1 = clip.copy(durationMs = duration1, fadeOutMs = 0L, keyframes = leftKeys)
         val part2 = clip.copy(
             id = UUID.randomUUID().toString(),
             name = "${clip.name} (Split)",
@@ -268,8 +278,7 @@ class VideoEditorViewModel : ViewModel() {
             // Source time moves `speed` times faster than timeline time.
             trimStartMs = clip.trimStartMs + (duration1 * clip.speed).toLong(),
             fadeInMs = 0L,
-            // The right half starts later, but its animation must stay where it was on the timeline.
-            transformKeyframes = com.example.model.shiftKeyframes(clip.transformKeyframes, -duration1)
+            keyframes = rightKeys
         )
 
         // Alight Motion style: 1 layer = 1 line.
@@ -475,12 +484,10 @@ class VideoEditorViewModel : ViewModel() {
                     var d = deltaMs.coerceAtLeast(-c.startMs)
                     if (hasSource) d = d.coerceAtLeast(-(c.trimStartMs / spd).toLong())
                     d = d.coerceAtMost(c.durationMs - minLen)
-                    c.copy(
+                    c.withKeyframesShiftedForStart(d).copy(
                         startMs = c.startMs + d,
                         durationMs = c.durationMs - d,
-                        trimStartMs = if (hasSource) (c.trimStartMs + d * spd).toLong().coerceAtLeast(0L) else c.trimStartMs,
-                        // Content stays put on the timeline, so keyframes shift against the new start.
-                        transformKeyframes = com.example.model.shiftKeyframes(c.transformKeyframes, -d)
+                        trimStartMs = if (hasSource) (c.trimStartMs + d * spd).toLong().coerceAtLeast(0L) else c.trimStartMs
                     )
                 } else {
                     var d = deltaMs.coerceAtLeast(-(c.durationMs - minLen))
@@ -586,9 +593,23 @@ class VideoEditorViewModel : ViewModel() {
         scaleX: Float = 1f,
         scaleY: Float = 1f
     ) {
+        val playhead = _currentPlayheadMs.value
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) {
+                if (clip.id != clipId) {
+                    clip
+                } else if (clip.keyframes.isNotEmpty()) {
+                    // Keyframed layer: moving it writes a keyframe at the playhead.
+                    val cur = clip.transformAt(playhead)
+                    clip.withKeyframeAt(
+                        playhead,
+                        cur.copy(
+                            x = offsetX,
+                            y = offsetY,
+                            scalePercent = if (scaleX != 1f) (scaleX * 100f).coerceAtLeast(10f) else cur.scalePercent
+                        )
+                    )
+                } else {
                     clip.copy(
                         shapeOffsetX = offsetX,
                         shapeOffsetY = offsetY,
@@ -598,7 +619,7 @@ class VideoEditorViewModel : ViewModel() {
                         transformY = offsetY,
                         scalePercent = if (scaleX != 1f) (scaleX * 100f).coerceAtLeast(10f) else clip.scalePercent
                     )
-                } else clip
+                }
             })
         }
     }
@@ -615,26 +636,58 @@ class VideoEditorViewModel : ViewModel() {
         rot3dY: Float = 0f,
         warp: Float = 0f
     ) {
+        val playhead = _currentPlayheadMs.value
+        val values = TransformValues(
+            x = transformX,
+            y = transformY,
+            scalePercent = scalePercent,
+            rotationDeg = rotationDeg,
+            pivotX = pivotX,
+            pivotY = pivotY,
+            rot3dX = rot3dX,
+            rot3dY = rot3dY,
+            warp = warp
+        )
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) {
-                    clip.copy(
-                        transformX = transformX,
-                        transformY = transformY,
-                        scalePercent = scalePercent,
-                        rotationDeg = rotationDeg,
-                        pivotX = pivotX,
-                        pivotY = pivotY,
-                        rotation3dX = rot3dX,
-                        rotation3dY = rot3dY,
-                        warpDistort = warp,
-                        shapeOffsetX = transformX,
-                        shapeOffsetY = transformY,
-                        shapeScaleX = scalePercent / 100f,
-                        shapeScaleY = scalePercent / 100f
-                    )
-                } else clip
+                if (clip.id != clipId) {
+                    clip
+                } else if (clip.keyframes.isNotEmpty()) {
+                    // Keyframed layer: every edit writes / updates the keyframe at the playhead.
+                    clip.withKeyframeAt(playhead, values)
+                } else {
+                    clip.withStaticTransform(values)
+                }
             })
+        }
+    }
+
+    /** Diamond button: adds a keyframe at the playhead (first one turns keyframes on) or removes the one there. */
+    fun toggleTransformKeyframe(clipId: String) {
+        val playhead = _currentPlayheadMs.value
+        if (_tracks.value.flatMap { it.clips }.none { it.id == clipId }) return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id != clipId) {
+                    clip
+                } else if (clip.keyframeIndexAt(playhead) >= 0) {
+                    clip.withoutKeyframeAt(playhead)
+                } else {
+                    clip.withKeyframeAt(playhead, clip.transformAt(playhead))
+                }
+            })
+        }
+    }
+
+    /** Easing icon: next speed curve for the keyframe at the playhead. */
+    fun cycleKeyframeEasing(clipId: String) {
+        val playhead = _currentPlayheadMs.value
+        val clip = _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId } ?: return
+        if (clip.keyframeIndexAt(playhead) < 0) return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { if (it.id == clipId) it.withNextEasingAt(playhead) else it })
         }
     }
 
@@ -664,6 +717,10 @@ class VideoEditorViewModel : ViewModel() {
 
     fun resetClipTransform(clipId: String) {
         pushHistory()
+        // Reset also turns keyframes off.
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { if (it.id == clipId) it.copy(keyframes = emptyList()) else it })
+        }
         updateClipFullTransform(
             clipId = clipId,
             transformX = 0f,
@@ -676,142 +733,6 @@ class VideoEditorViewModel : ViewModel() {
             rot3dY = 0f,
             warp = 0f
         )
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id == clipId) clip.copy(transformKeyframes = emptyMap()) else clip
-            })
-        }
-    }
-
-    private fun clipById(clipId: String): TimelineClip? =
-        _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId }
-
-    private fun editClipKeyframes(
-        clipId: String,
-        change: (clip: TimelineClip, map: Map<String, List<com.example.model.TransformKeyframe>>) ->
-            Map<String, List<com.example.model.TransformKeyframe>>
-    ) {
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id != clipId) clip
-                else clip.copy(transformKeyframes = change(clip, clip.transformKeyframes))
-            })
-        }
-    }
-
-    /** One undo step for a whole keyframe / curve drag session (call once when the drag starts). */
-    fun beginKeyframeEdit() = pushHistory()
-
-    /**
-     * Adds a keyframe at the absolute timeline time [timeMs] (stored relative to the layer start),
-     * or updates the value of the one already there. An existing keyframe keeps its curve.
-     */
-    fun addOrUpdateTransformKeyframe(
-        clipId: String,
-        property: String,
-        value: Float,
-        timeMs: Long = _currentPlayheadMs.value,
-        easing: com.example.model.EasingType? = null
-    ) {
-        val clip0 = clipById(clipId) ?: return
-        val rel0 = timeMs - clip0.startMs
-        // Push history only when inserting a NEW keyframe time (not continuous value drag)
-        val isNewTime = clip0.transformKeyframes[property].orEmpty()
-            .none { kotlin.math.abs(it.timeMs - rel0) <= 40L }
-        if (isNewTime) pushHistory()
-
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id != clipId) return@map clip
-                val newMap = com.example.model.upsertKeyframe(
-                    clip.transformKeyframes, property, timeMs - clip.startMs, value, easing
-                )
-                when (property) {
-                    "transformX" -> clip.copy(transformKeyframes = newMap, transformX = value, shapeOffsetX = value)
-                    "transformY" -> clip.copy(transformKeyframes = newMap, transformY = value, shapeOffsetY = value)
-                    "scalePercent" -> clip.copy(
-                        transformKeyframes = newMap,
-                        scalePercent = value,
-                        shapeScaleX = value / 100f,
-                        shapeScaleY = value / 100f
-                    )
-                    "rotationDeg" -> clip.copy(transformKeyframes = newMap, rotationDeg = value)
-                    "pivotX" -> clip.copy(transformKeyframes = newMap, pivotX = value)
-                    "pivotY" -> clip.copy(transformKeyframes = newMap, pivotY = value)
-                    "rotation3dX" -> clip.copy(transformKeyframes = newMap, rotation3dX = value)
-                    "rotation3dY" -> clip.copy(transformKeyframes = newMap, rotation3dY = value)
-                    "warpDistort" -> clip.copy(transformKeyframes = newMap, warpDistort = value)
-                    else -> clip.copy(transformKeyframes = newMap)
-                }
-            })
-        }
-    }
-
-    fun removeTransformKeyframe(clipId: String, property: String, timeMs: Long) {
-        pushHistory()
-        editClipKeyframes(clipId) { clip, map ->
-            com.example.model.removeKeyframe(map, property, timeMs - clip.startMs)
-        }
-    }
-
-    /**
-     * Drag of one keyframe in the graph: time + value change in one step and the curve is kept.
-     * No undo step here — call [beginKeyframeEdit] once when the drag starts.
-     */
-    fun moveTransformKeyframe(
-        clipId: String,
-        property: String,
-        oldTimeMs: Long,
-        newTimeMs: Long,
-        newValue: Float
-    ) {
-        editClipKeyframes(clipId) { clip, map ->
-            com.example.model.moveKeyframe(
-                map, property, oldTimeMs - clip.startMs, newTimeMs - clip.startMs, newValue
-            )
-        }
-    }
-
-    /** Picks a preset curve for the segment that starts at the keyframe at [timeMs]. */
-    fun setTransformKeyframeEasing(
-        clipId: String,
-        property: String,
-        timeMs: Long,
-        easing: com.example.model.EasingType
-    ) {
-        pushHistory()
-        editClipKeyframes(clipId) { clip, map ->
-            com.example.model.setKeyframeEasing(map, property, timeMs - clip.startMs, easing)
-        }
-    }
-
-    /**
-     * Live bezier-handle edit of the segment that starts at the keyframe at [timeMs].
-     * No undo step here — call [beginKeyframeEdit] once when the handle drag starts.
-     */
-    fun setTransformKeyframeCurve(
-        clipId: String,
-        property: String,
-        timeMs: Long,
-        handles: com.example.model.BezierHandles
-    ) {
-        editClipKeyframes(clipId) { clip, map ->
-            com.example.model.setKeyframeCurve(map, property, timeMs - clip.startMs, handles)
-        }
-    }
-
-    fun setAllTransformEasing(
-        clipId: String,
-        easing: com.example.model.EasingType,
-        property: String? = null
-    ) {
-        pushHistory()
-        editClipKeyframes(clipId) { _, map ->
-            map.mapValues { (prop, list) ->
-                if (property != null && prop != property) list
-                else list.map { it.copy(easing = easing, handles = null) }
-            }
-        }
     }
 
 

@@ -58,12 +58,11 @@ object MultiSelectOps {
             MultiAction.DELETE_LEFT -> mapSelected(tracks, ids) { c ->
                 if (p > c.startMs && c.endMs - p >= MIN_LEN) {
                     val d = p - c.startMs
-                    c.copy(
+                    c.withKeyframesShiftedForStart(d).copy(
                         startMs = p,
                         durationMs = c.durationMs - d,
                         trimStartMs = if (hasSource(c)) c.trimStartMs + (d * c.speed).toLong() else c.trimStartMs,
-                        fadeInMs = 0L,
-                        transformKeyframes = shiftKeyframes(c.transformKeyframes, -d)
+                        fadeInMs = 0L
                     )
                 } else c
             }
@@ -82,11 +81,10 @@ object MultiSelectOps {
                         val spd = c.speed.coerceAtLeast(0.01f)
                         d = minOf(d, (c.trimStartMs / spd).toLong())
                     }
-                    if (d <= 0L) c else c.copy(
+                    if (d <= 0L) c else c.withKeyframesShiftedForStart(-d).copy(
                         startMs = c.startMs - d,
                         durationMs = c.durationMs + d,
-                        trimStartMs = if (hasSource(c)) (c.trimStartMs - (d * c.speed).toLong()).coerceAtLeast(0L) else c.trimStartMs,
-                        transformKeyframes = shiftKeyframes(c.transformKeyframes, d)
+                        trimStartMs = if (hasSource(c)) (c.trimStartMs - (d * c.speed).toLong()).coerceAtLeast(0L) else c.trimStartMs
                     )
                 } else c
             }
@@ -166,6 +164,7 @@ object MultiSelectOps {
             lane.copy(clips = lane.clips.map { c ->
                 if (c.id in ids && p - c.startMs >= MIN_LEN && c.endMs - p >= MIN_LEN) {
                     val d1 = p - c.startMs
+                    val (leftKeys, rightKeys) = c.splitKeyframes(p)
                     rightHalves += c.copy(
                         id = UUID.randomUUID().toString(),
                         name = "${c.name} (Split)",
@@ -173,9 +172,9 @@ object MultiSelectOps {
                         durationMs = c.endMs - p,
                         trimStartMs = c.trimStartMs + (d1 * c.speed).toLong(),
                         fadeInMs = 0L,
-                        transformKeyframes = shiftKeyframes(c.transformKeyframes, -d1)
+                        keyframes = rightKeys
                     )
-                    c.copy(durationMs = d1, fadeOutMs = 0L)
+                    c.copy(durationMs = d1, fadeOutMs = 0L, keyframes = leftKeys)
                 } else c
             })
         }

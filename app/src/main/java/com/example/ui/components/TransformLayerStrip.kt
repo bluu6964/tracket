@@ -67,9 +67,11 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.KeyframeEasing
 import com.example.model.LayerType
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
+import com.example.model.keyframeIndexAt
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.PlayheadColor
@@ -218,6 +220,7 @@ fun TransformPlaybackRow(
 }
 
 private val StripLeftInset = 56.dp
+private val KeyframeAccent = Color(0xFFFFC21A)
 private const val STRIP_FLING_FRICTION = 0.55f
 
 /**
@@ -232,13 +235,9 @@ fun TransformLayerStrip(
     totalDurationMs: Long,
     onSeekTo: (Long) -> Unit,
     onReset: () -> Unit,
-    onAddKeyframe: () -> Unit = {},
-    onToggleGraph: () -> Unit = {},
-    hasKeyframeAtPlayhead: Boolean = false,
-    showGraph: Boolean = false,
-    /** Keyframe times RELATIVE to the layer start; drawn as small diamonds on the strip. */
-    keyframeTimesMs: List<Long> = emptyList(),
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onToggleKeyframe: () -> Unit = {},
+    onCycleEasing: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
@@ -340,22 +339,28 @@ fun TransformLayerStrip(
                             visibleToMs = visibleToMs
                         )
                     }
-                    if (keyframeTimesMs.isNotEmpty()) {
+                    // Keyframe diamonds on the layer (the one under the playhead is highlighted).
+                    if (clip.keyframes.isNotEmpty()) {
+                        val activeIdx = clip.keyframeIndexAt(currentPlayheadMs)
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            val r = 4.5.dp.toPx()
-                            val cy = size.height - r - 3.dp.toPx()
-                            keyframeTimesMs.forEach { rel ->
-                                val cx = rel * TIMELINE_PX_PER_MS * this.density
-                                if (cx < -r || cx > size.width + r) return@forEach
-                                val outer = Path().apply {
-                                    moveTo(cx, cy - r - 1.5.dp.toPx()); lineTo(cx + r + 1.5.dp.toPx(), cy)
-                                    lineTo(cx, cy + r + 1.5.dp.toPx()); lineTo(cx - r - 1.5.dp.toPx(), cy); close()
+                            val r = 5.dp.toPx()
+                            clip.keyframes.forEachIndexed { i, k ->
+                                val cx = k.timeMs * TIMELINE_PX_PER_MS * density
+                                val cy = size.height / 2f
+                                val diamond = Path().apply {
+                                    moveTo(cx, cy - r)
+                                    lineTo(cx + r, cy)
+                                    lineTo(cx, cy + r)
+                                    lineTo(cx - r, cy)
+                                    close()
                                 }
-                                val inner = Path().apply {
-                                    moveTo(cx, cy - r); lineTo(cx + r, cy); lineTo(cx, cy + r); lineTo(cx - r, cy); close()
-                                }
-                                drawPath(outer, Color.White)
-                                drawPath(inner, Color(0xFFE91E63))
+                                val on = i == activeIdx
+                                drawPath(diamond, color = if (on) KeyframeAccent else Color.White)
+                                drawPath(
+                                    diamond,
+                                    color = Color(0xFF07051B),
+                                    style = Stroke(width = 1.2.dp.toPx())
+                                )
                             }
                         }
                     }
@@ -378,7 +383,11 @@ fun TransformLayerStrip(
             Icon(Icons.Default.Refresh, "Reset Transform", tint = IconActive, modifier = Modifier.size(18.dp))
         }
 
-        // 3. Keyframe + easing icons (right) — real logic
+        // 3. Keyframe diamond + easing curve (right)
+        val keyIdx = clip?.keyframeIndexAt(currentPlayheadMs) ?: -1
+        val onKeyframe = keyIdx >= 0
+        val hasKeys = clip?.keyframes?.isNotEmpty() == true
+        val easing = if (onKeyframe) clip!!.keyframes[keyIdx].easing else KeyframeEasing.LINEAR
         Row(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -389,42 +398,63 @@ fun TransformLayerStrip(
                 modifier = Modifier
                     .size(22.dp)
                     .graphicsLayer { rotationZ = 45f }
-                    .background(
-                        if (hasKeyframeAtPlayhead) Color(0xFFE91E63) else Color.Transparent,
-                        RoundedCornerShape(4.dp)
-                    )
+                    .background(if (onKeyframe) KeyframeAccent else Color.Transparent, RoundedCornerShape(4.dp))
                     .border(
                         1.5.dp,
-                        if (hasKeyframeAtPlayhead) Color(0xFFE91E63) else Color.White,
+                        if (onKeyframe || hasKeys) KeyframeAccent else Color.White,
                         RoundedCornerShape(4.dp)
                     )
-                    .bouncyClickable(onClick = onAddKeyframe),
+                    .bouncyClickable(enabled = clip != null, onClick = onToggleKeyframe)
+                    .testTag("transform_keyframe_button"),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Keyframe",
-                    tint = Color.White,
-                    modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = -45f }
-                )
+                Box(
+                    modifier = Modifier.graphicsLayer { rotationZ = -45f },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (onKeyframe) {
+                        // minus: tap again removes this keyframe
+                        Box(
+                            Modifier
+                                .width(10.dp)
+                                .height(2.dp)
+                                .background(Color(0xFF07051B), RoundedCornerShape(1.dp))
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add keyframe",
+                            tint = if (hasKeys) KeyframeAccent else Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
             }
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(18.dp))
             Box(
                 modifier = Modifier
-                    .size(24.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(if (showGraph) Color(0xFF3A4150) else Color.Transparent)
-                    .bouncyClickable(onClick = onToggleGraph),
+                    .size(28.dp)
+                    .bouncyClickable(enabled = onKeyframe, onClick = onCycleEasing)
+                    .testTag("transform_easing_button"),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(modifier = Modifier.size(20.dp)) {
-                    val path = Path().apply {
-                        moveTo(0f, size.height)
-                        cubicTo(size.width * 0.4f, size.height, size.width * 0.6f, 0f, size.width, 0f)
+                    val path = Path()
+                    if (easing.isHold) {
+                        path.moveTo(0f, size.height)
+                        path.lineTo(size.width, size.height)
+                        path.lineTo(size.width, 0f)
+                    } else {
+                        path.moveTo(0f, size.height)
+                        path.cubicTo(
+                            size.width * easing.x1, size.height * (1f - easing.y1),
+                            size.width * easing.x2, size.height * (1f - easing.y2),
+                            size.width, 0f
+                        )
                     }
                     drawPath(
                         path,
-                        color = if (showGraph) Color(0xFFE91E63) else Color(0xFF8E99AF),
+                        color = if (onKeyframe) KeyframeAccent else Color(0xFF8E99AF).copy(alpha = 0.5f),
                         style = Stroke(width = 2.dp.toPx())
                     )
                 }

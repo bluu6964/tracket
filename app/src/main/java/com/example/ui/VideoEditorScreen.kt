@@ -661,6 +661,15 @@ fun VideoEditorScreen(
                         onRedo = { viewModel.redo() },
                         onDismiss = { showTransformMode = false },
                         panelOnly = true,
+                        onToggleKeyframe = {
+                            (selectedClip?.id ?: selectedClipId)?.let { viewModel.toggleTransformKeyframe(it) }
+                        },
+                        onCycleEasing = {
+                            (selectedClip?.id ?: selectedClipId)?.let { viewModel.cycleKeyframeEasing(it) }
+                        },
+                        onResetTransform = {
+                            (selectedClip?.id ?: selectedClipId)?.let { viewModel.resetClipTransform(it) }
+                        },
                         onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp ->
                             val targetId = selectedClip?.id ?: selectedClipId
                             if (targetId != null) {
@@ -677,51 +686,7 @@ fun VideoEditorScreen(
                                     warp = warp
                                 )
                             }
-                        },
-                        onAddKeyframe = { property, value, timeMs ->
-                            val targetId = selectedClip?.id ?: selectedClipId
-                            if (targetId != null) {
-                                viewModel.addOrUpdateTransformKeyframe(
-                                    clipId = targetId,
-                                    property = property,
-                                    value = value,
-                                    timeMs = timeMs
-                                )
-                            }
-                        },
-                        onRemoveKeyframe = { property, timeMs ->
-                            val targetId = selectedClip?.id ?: selectedClipId
-                            if (targetId != null) {
-                                viewModel.removeTransformKeyframe(targetId, property, timeMs)
-                            }
-                        },
-                        onSetEasing = { property, timeMs, easing ->
-                            val targetId = selectedClip?.id ?: selectedClipId
-                            if (targetId != null) {
-                                viewModel.setTransformKeyframeEasing(
-                                    targetId, property, timeMs, easing
-                                )
-                            }
-                        },
-                        onSetAllEasing = { property, easing ->
-                            val targetId = selectedClip?.id ?: selectedClipId
-                            if (targetId != null) {
-                                viewModel.setAllTransformEasing(targetId, easing, property)
-                            }
-                        },
-                        onMoveKeyframe = { property, oldTimeMs, newTimeMs, newValue ->
-                            val targetId = selectedClip?.id ?: selectedClipId
-                            if (targetId != null) {
-                                viewModel.moveTransformKeyframe(targetId, property, oldTimeMs, newTimeMs, newValue)
-                            }
-                        },
-                        onSetCurve = { property, timeMs, handles ->
-                            val targetId = selectedClip?.id ?: selectedClipId
-                            if (targetId != null) {
-                                viewModel.setTransformKeyframeCurve(targetId, property, timeMs, handles)
-                            }
-                        },
-                        onBeginKeyframeEdit = { viewModel.beginKeyframeEdit() }
+                        }
                     )
                 }
             }

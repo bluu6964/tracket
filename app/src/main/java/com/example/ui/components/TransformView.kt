@@ -346,7 +346,6 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
-                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation
@@ -371,7 +370,6 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
-                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation
@@ -474,7 +472,6 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
-                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation
@@ -578,7 +575,6 @@ fun TransformView(
                                 .graphicsLayer {
                                     translationX = horizontal
                                     translationY = vertical
-                                    translationZ = zAxis
                                     scaleX = (scale / 100f).coerceAtLeast(0.05f)
                                     scaleY = (scale / 100f).coerceAtLeast(0.05f)
                                     rotationZ = rotation

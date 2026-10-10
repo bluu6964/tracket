@@ -150,7 +150,6 @@ fun CanvasArea(
                                 scaleY = tf.scalePercent / 100f
                                 translationX = tf.x
                                 translationY = tf.y
-                                translationZ = tf.z
                                 rotationZ = tf.rotationDeg
                                 rotationX = tf.rot3dX
                                 rotationY = tf.rot3dY
@@ -239,7 +238,6 @@ fun CanvasArea(
                                 val tf = clip.transformAt(playheadMs())
                                 translationX = tf.x
                                 translationY = tf.y
-                                translationZ = tf.z
                                 scaleX = (tf.scalePercent / 100f).coerceAtLeast(0.05f)
                                 scaleY = (tf.scalePercent / 100f).coerceAtLeast(0.05f)
                                 rotationZ = tf.rotationDeg

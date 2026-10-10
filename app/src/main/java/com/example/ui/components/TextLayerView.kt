@@ -164,7 +164,6 @@ fun TextLayerOnCanvas(
                 val tf = clip.transformAt(playheadMs())
                 translationX = tf.x
                 translationY = tf.y
-                translationZ = tf.z
                 scaleX = (tf.scalePercent / 100f).coerceAtLeast(0.1f)
                 scaleY = (tf.scalePercent / 100f).coerceAtLeast(0.1f)
                 rotationZ = tf.rotationDeg

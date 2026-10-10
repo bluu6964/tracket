@@ -235,6 +235,7 @@ fun TransformLayerStrip(
     currentPlayheadMs: Long,
     totalDurationMs: Long,
     onSeekTo: (Long) -> Unit,
+    onSeekFinished: (Long) -> Unit = {},
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
     onToggleKeyframe: () -> Unit = {},
@@ -245,6 +246,7 @@ fun TransformLayerStrip(
     val latestPlayheadMs by rememberUpdatedState(currentPlayheadMs)
     val latestTotalMs by rememberUpdatedState(totalDurationMs)
     val latestSeek by rememberUpdatedState(onSeekTo)
+    val latestSeekFinished by rememberUpdatedState(onSeekFinished)
     val density = LocalDensity.current.density
 
     BoxWithConstraints(
@@ -280,19 +282,27 @@ fun TransformLayerStrip(
                             val startMs = posMs
                             val velMsPerSec = -(vx / density) / TIMELINE_PX_PER_MS * STRIP_FLING_VELOCITY_BOOST
                             flingJob = scope.launch {
+                                var last = startMs
                                 AnimationState(initialValue = startMs, initialVelocity = velMsPerSec)
                                     .animateDecay(
                                         exponentialDecay(frictionMultiplier = STRIP_FLING_FRICTION, absVelocityThreshold = 8f)
                                     ) {
                                         val total = latestTotalMs.toFloat()
                                         val ms = value.coerceIn(0f, total)
+                                        last = ms
                                         latestSeek(ms.roundToLong())
                                         if (ms <= 0f || ms >= total) cancelAnimation()
                                     }
+                                latestSeekFinished(last.roundToLong())
                             }
+                        } else {
+                            latestSeekFinished(posMs.roundToLong())
                         }
                     },
-                    onDragCancel = { flingJob?.cancel() }
+                    onDragCancel = {
+                        flingJob?.cancel()
+                        latestSeekFinished(posMs.roundToLong())
+                    }
                 )
             }
     ) {

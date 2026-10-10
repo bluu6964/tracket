@@ -105,6 +105,7 @@ fun TransformView(
     canRedo: Boolean = false,
     onTogglePlay: () -> Unit,
     onSeekTo: (Long) -> Unit,
+    onSeekFinished: (Long) -> Unit = {},
     onUndo: () -> Unit = {},
     onRedo: () -> Unit = {},
     onDismiss: () -> Unit,
@@ -183,36 +184,21 @@ fun TransformView(
         }
     }
 
+    /** Commit local transform values into the ViewModel (expensive). Call only on gesture end. */
     fun emitTransform() {
-        // Throttle model writes (~40fps). Local slider state still updates every frame so the
-        // dial feels liquid; only the expensive tracks StateFlow update is limited.
-        val now = android.os.SystemClock.uptimeMillis()
-        val apply = {
-            onApplyTransform(
-                horizontal,
-                vertical,
-                scale,
-                rotation,
-                pivotX,
-                pivotY,
-                rot3dX,
-                rot3dY,
-                warpDistort,
-                zAxis
-            )
-        }
-        if (now - lastEmitAt >= 24L) {
-            lastEmitAt = now
-            emitJob?.cancel()
-            apply()
-        } else {
-            emitJob?.cancel()
-            emitJob = emitScope.launch {
-                delay(24L - (now - lastEmitAt).coerceAtLeast(0L))
-                lastEmitAt = android.os.SystemClock.uptimeMillis()
-                apply()
-            }
-        }
+        emitJob?.cancel()
+        onApplyTransform(
+            horizontal,
+            vertical,
+            scale,
+            rotation,
+            pivotX,
+            pivotY,
+            rot3dX,
+            rot3dY,
+            warpDistort,
+            zAxis
+        )
     }
 
     fun resetAll() {
@@ -262,6 +248,7 @@ fun TransformView(
                 currentPlayheadMs = currentPlayheadMs,
                 totalDurationMs = totalDurationMs,
                 onSeekTo = onSeekTo,
+                onSeekFinished = onSeekFinished,
                 onReset = { resetAll() },
                 onToggleKeyframe = onToggleKeyframe,
                 onCycleEasing = {
@@ -914,8 +901,8 @@ fun TransformView(
                                 onMove = { nx, ny ->
                                     horizontal = nx
                                     vertical = ny
-                                    emitTransform()
-                                }
+                                },
+                                onMoveFinished = { emitTransform() }
                             )
                         }
 
@@ -923,10 +910,8 @@ fun TransformView(
                             RulerDialSlider(
                                 label = "Z Axis",
                                 value = zAxis,
-                                onValueChange = {
-                                    zAxis = it
-                                    emitTransform()
-                                },
+                                onValueChange = { zAxis = it },
+                                onValueChangeFinished = { emitTransform() },
                                 min = -500f,
                                 max = 500f,
                                 unit = "",
@@ -938,10 +923,8 @@ fun TransformView(
                             RulerDialSlider(
                                 label = "Scale",
                                 value = scale,
-                                onValueChange = {
-                                    scale = it
-                                    emitTransform()
-                                },
+                                onValueChange = { scale = it },
+                                onValueChangeFinished = { emitTransform() },
                                 min = 10f,
                                 max = 400f,
                                 unit = "",
@@ -953,10 +936,8 @@ fun TransformView(
                             RulerDialSlider(
                                 label = "Rotation",
                                 value = rotation,
-                                onValueChange = {
-                                    rotation = it
-                                    emitTransform()
-                                },
+                                onValueChange = { rotation = it },
+                                onValueChangeFinished = { emitTransform() },
                                 min = -180f,
                                 max = 180f,
                                 unit = "°",
@@ -968,10 +949,8 @@ fun TransformView(
                             RulerDialSlider(
                                 label = "Rotation X",
                                 value = rot3dX,
-                                onValueChange = {
-                                    rot3dX = it
-                                    emitTransform()
-                                },
+                                onValueChange = { rot3dX = it },
+                                onValueChangeFinished = { emitTransform() },
                                 min = -90f,
                                 max = 90f,
                                 unit = "°",
@@ -981,10 +960,8 @@ fun TransformView(
                             RulerDialSlider(
                                 label = "Rotation Y",
                                 value = rot3dY,
-                                onValueChange = {
-                                    rot3dY = it
-                                    emitTransform()
-                                },
+                                onValueChange = { rot3dY = it },
+                                onValueChangeFinished = { emitTransform() },
                                 min = -90f,
                                 max = 90f,
                                 unit = "°",

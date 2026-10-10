@@ -131,6 +131,7 @@ fun TimelineLayerPanel(
     selectedClipId: String?,
     isMasterMuted: Boolean,
     onSeekTo: (Long) -> Unit,
+    onSeekFinished: (Long) -> Unit = {},
     onClipSelect: (String?) -> Unit,
     onSplitClip: () -> Unit,
     onDeleteClip: () -> Unit,
@@ -172,6 +173,7 @@ fun TimelineLayerPanel(
     val latestPlayheadProvider by rememberUpdatedState(playheadMs)
     val latestTotalMs by rememberUpdatedState(totalDurationMs)
     val latestSeek by rememberUpdatedState(onSeekTo)
+    val latestSeekFinished by rememberUpdatedState(onSeekFinished)
 
     BoxWithConstraints(
         modifier = modifier
@@ -256,11 +258,11 @@ fun TimelineLayerPanel(
                     // Fling after a horizontal scrub (not after pinch / vertical scroll).
                     if (didScrub && !isPinch) {
                         val velocityPxPerSec = velocityTracker.calculateVelocity().x
-                        // Low threshold + boosted velocity + low friction = long feed-like coast
                         if (abs(velocityPxPerSec) > 60f) {
                             val startMs = posMs
                             val velocityMsPerSec = -(velocityPxPerSec / pxPerDp) / latestPxPerMs * FLING_VELOCITY_BOOST
                             flingJob = coroutineScope.launch {
+                                var last = startMs
                                 AnimationState(
                                     initialValue = startMs,
                                     initialVelocity = velocityMsPerSec
@@ -272,10 +274,14 @@ fun TimelineLayerPanel(
                                 ) {
                                     val total = latestTotalMs.toFloat()
                                     val ms = value.coerceIn(0f, total)
+                                    last = ms
                                     latestSeek(ms.roundToLong())
                                     if (ms <= 0f || ms >= total) cancelAnimation()
                                 }
+                                latestSeekFinished(last.roundToLong())
                             }
+                        } else {
+                            latestSeekFinished(posMs.roundToLong())
                         }
                     }
                 }

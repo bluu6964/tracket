@@ -52,12 +52,15 @@ fun RulerDialSlider(
     unit: String = "%",
     isPercentage: Boolean = true,
     labelWidth: Dp = 105.dp,
+    /** Called when the finger lifts or a fling finishes — use this to commit expensive model writes. */
+    onValueChangeFinished: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val currentValue by rememberUpdatedState(value)
     val currentMin by rememberUpdatedState(min)
     val currentMax by rememberUpdatedState(max)
     val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnFinished by rememberUpdatedState(onValueChangeFinished)
     val scope = rememberCoroutineScope()
     var flingJob by remember { mutableStateOf<Job?>(null) }
 
@@ -107,7 +110,6 @@ fun RulerDialSlider(
                         },
                         onDragEnd = {
                             val vx = velocityTracker.calculateVelocity().x
-                            // px/sec → units/sec; negative vx (drag left) increases value
                             val velUnits = -vx / pxPerUnit * DIAL_FLING_VELOCITY_BOOST
                             if (abs(velUnits) > 8f) {
                                 val start = currentValue
@@ -125,10 +127,16 @@ fun RulerDialSlider(
                                         currentOnValueChange(v)
                                         if (v <= currentMin || v >= currentMax) cancelAnimation()
                                     }
+                                    currentOnFinished()
                                 }
+                            } else {
+                                currentOnFinished()
                             }
                         },
-                        onDragCancel = { flingJob?.cancel() }
+                        onDragCancel = {
+                            flingJob?.cancel()
+                            currentOnFinished()
+                        }
                     )
                 },
             contentAlignment = Alignment.Center

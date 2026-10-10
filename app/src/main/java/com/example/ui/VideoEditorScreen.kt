@@ -108,8 +108,11 @@ fun VideoEditorScreen(
     // ONLY read it inside lambdas / graphicsLayer (draw phase) so the editor body does not
     // recompose 60×/sec — that was the main source of sticky scrubbing and slider lag.
     val playheadMs = remember { mutableLongStateOf(0L) }
+    val isScrubbing = remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        viewModel.currentPlayheadMs.collect { playheadMs.longValue = it }
+        viewModel.currentPlayheadMs.collect { ms ->
+            if (!isScrubbing.value) playheadMs.longValue = ms
+        }
     }
     val playheadProvider: () -> Long = remember { { playheadMs.longValue } }
     val totalDurationMs by viewModel.totalDurationMs.collectAsState()
@@ -148,6 +151,19 @@ fun VideoEditorScreen(
             editorPlayer.release()
             audioPreview.release()
         }
+    }
+
+    val onScrubUi: (Long) -> Unit = { ms ->
+        isScrubbing.value = true
+        playheadMs.longValue = ms.coerceAtLeast(0L)
+    }
+    val onScrubFinished: (Long) -> Unit = { ms ->
+        val clamped = ms.coerceAtLeast(0L)
+        playheadMs.longValue = clamped
+        viewModel.seekTo(clamped)
+        editorPlayer.setScrubbing(false)
+        editorPlayer.seekTo(clamped, force = true)
+        isScrubbing.value = false
     }
 
     // Leaving the app stops playback (video and audio layers).
@@ -192,21 +208,16 @@ fun VideoEditorScreen(
     }
     LaunchedEffect(isMasterMuted) { editorPlayer.setMuted(isMasterMuted) }
 
-    // Scrubbing: throttle player seeks so UI stays fluid; exact frame settles after finger rests.
+    // Player seeks only when NOT actively scrubbing (commit happens in scrubFinished).
+    // Continuous seeks during drag were a major source of main-thread jank.
     LaunchedEffect(isPlaying) {
         if (!isPlaying) {
-            var lastSeekAt = 0L
             viewModel.currentPlayheadMs.collectLatest { ms ->
-                val now = android.os.SystemClock.uptimeMillis()
-                if (now - lastSeekAt >= 80L) {
-                    lastSeekAt = now
-                    editorPlayer.setScrubbing(true)
-                    editorPlayer.seekTo(ms)
-                }
-                delay(150L)
+                if (isScrubbing.value) return@collectLatest
+                delay(120L)
+                if (isScrubbing.value) return@collectLatest
                 editorPlayer.setScrubbing(false)
                 editorPlayer.seekTo(ms, force = true)
-                lastSeekAt = 0L
             }
         }
     }
@@ -391,7 +402,8 @@ fun VideoEditorScreen(
                     totalDurationMs = totalDurationMs,
                     selectedClipId = selectedClipId,
                     isMasterMuted = isMasterMuted,
-                    onSeekTo = { viewModel.seekTo(it) },
+                    onSeekTo = onScrubUi,
+                    onSeekFinished = onScrubFinished,
                     // While several layers are checked, taps/drags on layer bodies must not
                     // switch to single selection (that would leave multi-select).
                     onClipSelect = { id -> if (multiSelectIds.isEmpty()) viewModel.selectClip(id) },
@@ -660,7 +672,8 @@ fun VideoEditorScreen(
                         canUndo = canUndo,
                         canRedo = canRedo,
                         onTogglePlay = { viewModel.togglePlayPause() },
-                        onSeekTo = { viewModel.seekTo(it) },
+                        onSeekTo = onScrubUi,
+                        onSeekFinished = onScrubFinished,
                         onUndo = { viewModel.undo() },
                         onRedo = { viewModel.redo() },
                         onDismiss = { showTransformMode = false },
@@ -828,7 +841,7 @@ fun VideoEditorScreen(
                 player = editorPlayer.player,
                 hasMainMedia = mediaClips.isNotEmpty(),
                 onTogglePlay = { viewModel.togglePlayPause() },
-                onSeekTo = { viewModel.seekTo(it) },
+                onSeekTo = onScrubUi,
                 onDismiss = { showEditShapeMode = false },
                 onSaveShape = { shapeType, w, h, color, feather, offX, offY, strokeW, strokeCol ->
                     val clipDuration = if (totalDurationMs > 0L && playheadMs.longValue < totalDurationMs) {
@@ -930,7 +943,7 @@ fun VideoEditorScreen(
                 canUndo = canUndo,
                 canRedo = canRedo,
                 onTogglePlay = { viewModel.togglePlayPause() },
-                onSeekTo = { viewModel.seekTo(it) },
+                onSeekTo = onScrubUi,
                 onUndo = { viewModel.undo() },
                 onRedo = { viewModel.redo() },
                 onDismiss = { showClipCropSheet = false },

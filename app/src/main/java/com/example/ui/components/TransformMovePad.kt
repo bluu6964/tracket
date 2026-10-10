@@ -45,11 +45,13 @@ fun TransformMovePad(
     onMove: (x: Float, y: Float) -> Unit,
     min: Float = -500f,
     max: Float = 500f,
+    onMoveFinished: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val curX by rememberUpdatedState(x)
     val curY by rememberUpdatedState(y)
     val latestMove by rememberUpdatedState(onMove)
+    val latestFinished by rememberUpdatedState(onMoveFinished)
     val density = LocalDensity.current.density
 
     Box(
@@ -60,13 +62,17 @@ fun TransformMovePad(
             .clip(RoundedCornerShape(10.dp))
             .background(PadBg)
             .pointerInput(min, max) {
-                detectDragGestures { change, drag ->
-                    change.consume()
-                    // 1 dp of finger travel = 1 unit.
-                    val nx = (curX + drag.x / density).coerceIn(min, max)
-                    val ny = (curY + drag.y / density).coerceIn(min, max)
-                    latestMove(nx, ny)
-                }
+                detectDragGestures(
+                    onDrag = { change, drag ->
+                        change.consume()
+                        // 1 dp of finger travel = 1 unit.
+                        val nx = (curX + drag.x / density).coerceIn(min, max)
+                        val ny = (curY + drag.y / density).coerceIn(min, max)
+                        latestMove(nx, ny)
+                    },
+                    onDragEnd = { latestFinished() },
+                    onDragCancel = { latestFinished() }
+                )
             }
     ) {
         // Corner brackets

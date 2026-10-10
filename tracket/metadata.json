@@ -1,0 +1,5 @@
+{
+  "name": "Tracket",
+  "description": "Professional mobile video editor with timeline, aspect ratio controls, canvas preview, multi-layer tracks, audio, text, shapes, and overlays.",
+  "requestFramePermissions": []
+}

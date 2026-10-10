@@ -67,7 +67,6 @@ import androidx.media3.ui.PlayerView
 import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.TimelineClip
-import com.example.model.transformAt
 import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
@@ -102,12 +101,6 @@ fun TransformView(
     onRedo: () -> Unit = {},
     onDismiss: () -> Unit,
     panelOnly: Boolean = false,
-    /** Diamond button: add / remove a keyframe at the playhead. */
-    onToggleKeyframe: () -> Unit = {},
-    /** Easing icon: next speed curve for the keyframe at the playhead. */
-    onCycleEasing: () -> Unit = {},
-    /** Reset button: back to the default Transform and keyframes off. Falls back to a plain emit when null. */
-    onResetTransform: (() -> Unit)? = null,
     onApplyTransform: (
         horizontal: Float,
         vertical: Float,
@@ -141,22 +134,17 @@ fun TransformView(
     // Warp state
     var warpDistort by remember(clip?.id) { mutableFloatStateOf(clip?.warpDistort ?: 0.0f) }
 
-    // Keep the controls in step with the layer. With keyframes the shown values follow the playhead
-    // (interpolated between keyframes); without keyframes this only runs when another layer is picked.
-    // The keyframe COUNT is a key so removing a keyframe refreshes the controls right away.
-    val hasKeyframes = clip?.keyframes?.isNotEmpty() == true
-    LaunchedEffect(clip?.id, hasKeyframes, clip?.keyframes?.size, if (hasKeyframes) currentPlayheadMs else 0L) {
+    LaunchedEffect(clip?.id) {
         if (clip != null) {
-            val tf = clip.transformAt(currentPlayheadMs)
-            horizontal = tf.x
-            vertical = tf.y
-            scale = tf.scalePercent
-            rotation = tf.rotationDeg
-            pivotX = tf.pivotX
-            pivotY = tf.pivotY
-            rot3dX = tf.rot3dX
-            rot3dY = tf.rot3dY
-            warpDistort = tf.warp
+            horizontal = clip.transformX
+            vertical = clip.transformY
+            scale = clip.scalePercent
+            rotation = clip.rotationDeg
+            pivotX = clip.pivotX
+            pivotY = clip.pivotY
+            rot3dX = clip.rotation3dX
+            rot3dY = clip.rotation3dY
+            warpDistort = clip.warpDistort
         }
     }
 
@@ -184,8 +172,7 @@ fun TransformView(
         rot3dX = 0.0f
         rot3dY = 0.0f
         warpDistort = 0.0f
-        val reset = onResetTransform
-        if (reset != null) reset() else emitTransform()
+        emitTransform()
     }
 
     Column(
@@ -217,9 +204,7 @@ fun TransformView(
                 currentPlayheadMs = currentPlayheadMs,
                 totalDurationMs = totalDurationMs,
                 onSeekTo = onSeekTo,
-                onReset = { resetAll() },
-                onToggleKeyframe = onToggleKeyframe,
-                onCycleEasing = onCycleEasing
+                onReset = { resetAll() }
             )
             Spacer(modifier = Modifier.weight(1f))
         }

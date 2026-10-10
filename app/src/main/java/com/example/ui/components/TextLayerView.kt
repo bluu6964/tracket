@@ -30,7 +30,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.model.TimelineClip
-import com.example.model.transformAt
 import com.example.ui.text.rememberFontFamily
 import kotlin.math.cos
 import kotlin.math.max
@@ -148,12 +147,12 @@ fun TextLayerOnCanvas(
     onMove: (clipId: String, offsetX: Float, offsetY: Float) -> Unit,
     onTap: (clipId: String) -> Unit,
     onDoubleTap: (clipId: String) -> Unit,
-    modifier: Modifier = Modifier,
-    /** Current playhead; read only in draw / gesture code so keyframes animate without recomposition. */
-    playheadMs: () -> Long = { 0L }
+    modifier: Modifier = Modifier
 ) {
-    val latestClip by rememberUpdatedState(clip)
-    val latestPlayhead by rememberUpdatedState(playheadMs)
+    val x by rememberUpdatedState(clip.transformX)
+    val y by rememberUpdatedState(clip.transformY)
+    val scale by rememberUpdatedState((clip.scalePercent / 100f).coerceAtLeast(0.1f))
+    val rotation by rememberUpdatedState(clip.rotationDeg)
     val move by rememberUpdatedState(onMove)
     val tap by rememberUpdatedState(onTap)
     val doubleTap by rememberUpdatedState(onDoubleTap)
@@ -161,15 +160,14 @@ fun TextLayerOnCanvas(
     Box(
         modifier = modifier
             .graphicsLayer {
-                val tf = clip.transformAt(playheadMs())
-                translationX = tf.x
-                translationY = tf.y
-                scaleX = (tf.scalePercent / 100f).coerceAtLeast(0.1f)
-                scaleY = (tf.scalePercent / 100f).coerceAtLeast(0.1f)
-                rotationZ = tf.rotationDeg
-                rotationX = tf.rot3dX
-                rotationY = tf.rot3dY
-                transformOrigin = TransformOrigin(tf.pivotX, tf.pivotY)
+                translationX = clip.transformX
+                translationY = clip.transformY
+                scaleX = (clip.scalePercent / 100f).coerceAtLeast(0.1f)
+                scaleY = (clip.scalePercent / 100f).coerceAtLeast(0.1f)
+                rotationZ = clip.rotationDeg
+                rotationX = clip.rotation3dX
+                rotationY = clip.rotation3dY
+                transformOrigin = TransformOrigin(clip.pivotX, clip.pivotY)
                 cameraDistance = 12f * density
             }
             .pointerInput(clip.id) {
@@ -183,18 +181,15 @@ fun TextLayerOnCanvas(
                 var dragY = 0f
                 detectDragGestures(
                     onDragStart = {
-                        val start = latestClip.transformAt(latestPlayhead())
-                        dragX = start.x
-                        dragY = start.y
+                        dragX = x
+                        dragY = y
                         tap(clip.id)
                     },
                     onDrag = { change, amount ->
                         change.consume()
                         // The drag arrives in the layer's own (scaled + rotated) space:
                         // turn it back into canvas pixels.
-                        val tf = latestClip.transformAt(latestPlayhead())
-                        val scale = (tf.scalePercent / 100f).coerceAtLeast(0.1f)
-                        val rad = Math.toRadians(tf.rotationDeg.toDouble())
+                        val rad = Math.toRadians(rotation.toDouble())
                         val c = cos(rad).toFloat()
                         val s = sin(rad).toFloat()
                         dragX += (amount.x * c - amount.y * s) * scale

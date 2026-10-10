@@ -79,8 +79,6 @@ data class TimelineClip(
     val rotation3dX: Float = 0f,
     val rotation3dY: Float = 0f,
     val warpDistort: Float = 0f,
-    /** Transform keyframes (sorted by time, measured from the layer start). Empty = fixed Transform. */
-    val keyframes: List<TransformKeyframe> = emptyList(),
     // Crop parameters
     val cropWidthPercent: Float = 100f,
     val cropHeightPercent: Float = 100f,

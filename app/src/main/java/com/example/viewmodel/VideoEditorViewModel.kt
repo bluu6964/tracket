@@ -15,15 +15,6 @@ import com.example.model.MultiSelectOps
 import com.example.model.PreviewResolution
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
-import com.example.model.TransformValues
-import com.example.model.keyframeIndexAt
-import com.example.model.splitKeyframes
-import com.example.model.transformAt
-import com.example.model.withKeyframeAt
-import com.example.model.withKeyframesShiftedForStart
-import com.example.model.withNextEasingAt
-import com.example.model.withStaticTransform
-import com.example.model.withoutKeyframeAt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -268,8 +259,7 @@ class VideoEditorViewModel : ViewModel() {
         pushHistory()
         val duration1 = playhead - clip.startMs
         val duration2 = clip.endMs - playhead
-        val (leftKeys, rightKeys) = clip.splitKeyframes(playhead)
-        val part1 = clip.copy(durationMs = duration1, fadeOutMs = 0L, keyframes = leftKeys)
+        val part1 = clip.copy(durationMs = duration1, fadeOutMs = 0L)
         val part2 = clip.copy(
             id = UUID.randomUUID().toString(),
             name = "${clip.name} (Split)",
@@ -277,8 +267,7 @@ class VideoEditorViewModel : ViewModel() {
             durationMs = duration2,
             // Source time moves `speed` times faster than timeline time.
             trimStartMs = clip.trimStartMs + (duration1 * clip.speed).toLong(),
-            fadeInMs = 0L,
-            keyframes = rightKeys
+            fadeInMs = 0L
         )
 
         // Alight Motion style: 1 layer = 1 line.
@@ -484,7 +473,7 @@ class VideoEditorViewModel : ViewModel() {
                     var d = deltaMs.coerceAtLeast(-c.startMs)
                     if (hasSource) d = d.coerceAtLeast(-(c.trimStartMs / spd).toLong())
                     d = d.coerceAtMost(c.durationMs - minLen)
-                    c.withKeyframesShiftedForStart(d).copy(
+                    c.copy(
                         startMs = c.startMs + d,
                         durationMs = c.durationMs - d,
                         trimStartMs = if (hasSource) (c.trimStartMs + d * spd).toLong().coerceAtLeast(0L) else c.trimStartMs
@@ -593,23 +582,9 @@ class VideoEditorViewModel : ViewModel() {
         scaleX: Float = 1f,
         scaleY: Float = 1f
     ) {
-        val playhead = _currentPlayheadMs.value
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
-                if (clip.id != clipId) {
-                    clip
-                } else if (clip.keyframes.isNotEmpty()) {
-                    // Keyframed layer: moving it writes a keyframe at the playhead.
-                    val cur = clip.transformAt(playhead)
-                    clip.withKeyframeAt(
-                        playhead,
-                        cur.copy(
-                            x = offsetX,
-                            y = offsetY,
-                            scalePercent = if (scaleX != 1f) (scaleX * 100f).coerceAtLeast(10f) else cur.scalePercent
-                        )
-                    )
-                } else {
+                if (clip.id == clipId) {
                     clip.copy(
                         shapeOffsetX = offsetX,
                         shapeOffsetY = offsetY,
@@ -619,7 +594,7 @@ class VideoEditorViewModel : ViewModel() {
                         transformY = offsetY,
                         scalePercent = if (scaleX != 1f) (scaleX * 100f).coerceAtLeast(10f) else clip.scalePercent
                     )
-                }
+                } else clip
             })
         }
     }
@@ -636,58 +611,26 @@ class VideoEditorViewModel : ViewModel() {
         rot3dY: Float = 0f,
         warp: Float = 0f
     ) {
-        val playhead = _currentPlayheadMs.value
-        val values = TransformValues(
-            x = transformX,
-            y = transformY,
-            scalePercent = scalePercent,
-            rotationDeg = rotationDeg,
-            pivotX = pivotX,
-            pivotY = pivotY,
-            rot3dX = rot3dX,
-            rot3dY = rot3dY,
-            warp = warp
-        )
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
-                if (clip.id != clipId) {
-                    clip
-                } else if (clip.keyframes.isNotEmpty()) {
-                    // Keyframed layer: every edit writes / updates the keyframe at the playhead.
-                    clip.withKeyframeAt(playhead, values)
-                } else {
-                    clip.withStaticTransform(values)
-                }
+                if (clip.id == clipId) {
+                    clip.copy(
+                        transformX = transformX,
+                        transformY = transformY,
+                        scalePercent = scalePercent,
+                        rotationDeg = rotationDeg,
+                        pivotX = pivotX,
+                        pivotY = pivotY,
+                        rotation3dX = rot3dX,
+                        rotation3dY = rot3dY,
+                        warpDistort = warp,
+                        shapeOffsetX = transformX,
+                        shapeOffsetY = transformY,
+                        shapeScaleX = scalePercent / 100f,
+                        shapeScaleY = scalePercent / 100f
+                    )
+                } else clip
             })
-        }
-    }
-
-    /** Diamond button: adds a keyframe at the playhead (first one turns keyframes on) or removes the one there. */
-    fun toggleTransformKeyframe(clipId: String) {
-        val playhead = _currentPlayheadMs.value
-        if (_tracks.value.flatMap { it.clips }.none { it.id == clipId }) return
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { clip ->
-                if (clip.id != clipId) {
-                    clip
-                } else if (clip.keyframeIndexAt(playhead) >= 0) {
-                    clip.withoutKeyframeAt(playhead)
-                } else {
-                    clip.withKeyframeAt(playhead, clip.transformAt(playhead))
-                }
-            })
-        }
-    }
-
-    /** Easing icon: next speed curve for the keyframe at the playhead. */
-    fun cycleKeyframeEasing(clipId: String) {
-        val playhead = _currentPlayheadMs.value
-        val clip = _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId } ?: return
-        if (clip.keyframeIndexAt(playhead) < 0) return
-        pushHistory()
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { if (it.id == clipId) it.withNextEasingAt(playhead) else it })
         }
     }
 
@@ -717,10 +660,6 @@ class VideoEditorViewModel : ViewModel() {
 
     fun resetClipTransform(clipId: String) {
         pushHistory()
-        // Reset also turns keyframes off.
-        _tracks.value = _tracks.value.map { track ->
-            track.copy(clips = track.clips.map { if (it.id == clipId) it.copy(keyframes = emptyList()) else it })
-        }
         updateClipFullTransform(
             clipId = clipId,
             transformX = 0f,

@@ -1,6 +1,4 @@
-# Tracket (v0.1.31)
-
-**v0.1.31:** Transform keyframes. The diamond on the layer strip adds a keyframe at the playhead (tap again on a keyframe to remove it). Once a layer has keyframes, every Transform edit (move pad, scale, rotation, pivot, 3D, warp, or dragging on the canvas) writes a keyframe at the playhead, and the controls follow the playhead. The curve icon next to the diamond cycles the speed curve of the keyframe under the playhead (Linear, Ease in-out, Ease in, Ease out, Hold). Keyframes show as diamonds on the layer strip; the preview and the exported shape/text layers play the animation. Reset clears keyframes. Split and trim keep keyframes on the same moment of the layer.
+# Tracket (v0.1.30)
 
 **v0.1.30:** Transform 2D: Horizontal and Vertical sliders merged into one "Swipe here to move layer" pad with X/Y readouts.
 

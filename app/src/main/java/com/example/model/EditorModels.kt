@@ -138,6 +138,18 @@ data class TimelineClip(
     val shapeCornerRadius: Float = -1f,
     val strokeWidth: Float = 0f,
     val strokeColor: Long = 0xFFFFFFFF,
+    /**
+     * Stroke trim (draw-on, Alight Motion's `drawing.progress`): the visible part of the shape's outline,
+     * as fractions of its length (0..1). The defaults show the whole outline. Animatable (STROKE_TRIM:
+     * a = start, b = end).
+     */
+    val strokeTrimStart: Float = 0f,
+    val strokeTrimEnd: Float = 1f,
+    /**
+     * True when the layer's paint IS its path (an imported line, baked to a thin rectangle): the trim then
+     * gates the fill along the rectangle's length instead of gating a stroke.
+     */
+    val strokeTrimFill: Boolean = false,
     // Transform parameters (2D, Pivot, 3D, Warp)
     val transformX: Float = 0f,
     val transformY: Float = 0f,

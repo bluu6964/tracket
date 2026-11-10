@@ -71,7 +71,9 @@ import kotlin.math.sin
  *    (axis 3) composed into the SCALE track; `oscillate` / `oscillate3` / `swing` / `swing2` are procedural, so
  *    they are BAKED into the POSITION / ROTATION keyframes at the scene fps, composed over the layer's own
  *    keyframes. `textprogress` is stored as a [TextAnimator] like the other text effects (not drawn yet).
- *    `drawing.progress` has no stroke-trim in the app model, so it stays a warning.
+ *    `drawing.progress` -> the clip's stroke trim: `start` / `end` (percent of the path) become fractions,
+ *    keyframed on the STROKE_TRIM track; on a line the trim gates the fill (the line's paint is its path),
+ *    on text / group layers and on shapes without a stroke it stays a warning.
  *  - `<audio>` layer (pass 3): an audio clip with its timing; `inTime` / `outTime` become the trim and
  *    `mediaFillMode` "stretch" a playback speed. The `src` is a content:// URI of the exporting phone, so
  *    the clip stays silent until the file is picked again (a warning says so).
@@ -625,6 +627,8 @@ object AlightXmlImporter {
             color = SHAPE_COLOR,
             textColor = lineColor,
             fillMode = FILL_SOLID,
+            // The line's paint is its path: a drawing.progress trim gates this fill, not a stroke.
+            strokeTrimFill = true,
             shapePattern = "RECT",
             shapeScaleX = length / box,
             shapeScaleY = thickness / box,
@@ -821,11 +825,7 @@ object AlightXmlImporter {
             clip = when (id) {
                 SOLIDCOLOR -> applySolidColor(fx, clip, ctx, durMs, target)
                 GRADIENTOVERLAY -> applyGradientOverlay(fx, clip, ctx, durMs, target)
-                DRAWING_PROGRESS -> {
-                    // The app model has no stroke trim / draw-on progress, so there is nothing to map to yet.
-                    ctx.warnings += "Effect drawing.progress is not supported yet: skipped"
-                    clip
-                }
+                DRAWING_PROGRESS -> applyDrawingProgress(fx, clip, ctx, durMs, target)
                 SCALEASSIST -> applyScaleAssist(fx, clip, ctx, durMs)
                 TEXTSPACING -> applyTextSpacing(fx, clip, ctx, target)
                 OSCILLATE, OSCILLATE3 -> applyOscillate(fx, clip, ctx, durMs, id)
@@ -870,6 +870,54 @@ object AlightXmlImporter {
                     clip
                 }
             }
+        }
+        return clip
+    }
+
+    /**
+     * `com.alightcreative.effects.drawing.progress`: the draw-on of a layer's path. Alight stores `start` and
+     * `end` in PERCENT of the path length, each constant or keyframed; the app stores fractions
+     * ([com.example.model.TimelineClip.strokeTrimStart] / `strokeTrimEnd`) and animates them on the STROKE_TRIM
+     * track, whose keyframes sit at the union of the two tracks' key times (each track is sampled there; the
+     * easing of a segment comes from the Alight keyframe it ends at, the `start` track first — the same rule as
+     * the composed size keyframes). What is trimmed is the layer's stroke; an imported line has no stroke (its
+     * paint is its path), so its trim gates the fill instead (the line reader sets `strokeTrimFill`). On a text
+     * or group layer there is nothing to trim, and a shape without a stroke has no outline to draw on: both
+     * stay warnings.
+     */
+    private fun applyDrawingProgress(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long, target: FxTarget): TimelineClip {
+        val w = ctx.warnings
+        if (target != FxTarget.SHAPE) {
+            w += "Effect drawing.progress is only supported on shape layers yet: skipped"
+            return clip0
+        }
+        if (clip0.strokeWidth <= 0f && !clip0.strokeTrimFill) {
+            w += "Effect drawing.progress on a shape without a stroke: there is no outline to trim: skipped"
+            return clip0
+        }
+        val props = fxProps(fx)
+        val startT = props["start"]
+        val endT = props["end"]
+        if (startT == null && endT == null) {
+            w += "Effect drawing.progress has no start or end property: skipped"
+            return clip0
+        }
+        // Percent (0..100, the fallback is in percent too) -> the app's fraction (0..1).
+        fun frac(t: Track?, at: Float, fallbackPct: Float): Float =
+            ((t?.valueAt(at)?.firstOrNull() ?: fallbackPct) / 100f).coerceIn(0f, 1f)
+        var clip = clip0.copy(
+            strokeTrimStart = frac(startT, 0f, 0f),
+            strokeTrimEnd = frac(endT, 0f, 100f)
+        )
+        val times = ((startT?.keys ?: emptyList()) + (endT?.keys ?: emptyList())).map { it.t }.distinct().sorted()
+        if (times.size >= 2) {
+            val keys = times.mapIndexed { i, t ->
+                val next = times.getOrNull(i + 1)
+                val e = if (next == null) Easing.LINEAR
+                else startT?.keyAt(next)?.easing ?: endT?.keyAt(next)?.easing ?: Easing.LINEAR
+                Keyframe((t.coerceIn(0f, 1f) * durMs).roundToLong(), frac(startT, t, 0f), frac(endT, t, 100f), e)
+            }.distinctBy { it.timeMs }
+            if (keys.size >= 2) clip = clip.copy(keyframes = clip.keyframes + (AnimProp.STROKE_TRIM to keys))
         }
         return clip
     }

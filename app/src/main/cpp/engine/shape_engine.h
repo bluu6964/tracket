@@ -35,6 +35,10 @@ struct Request {
     int fillImgMode = 0;               // 0 fill (cover), 1 fit, 2 stretch
     float strokeW = 0.f;               // local units (scaled with the layer, like Canvas)
     uint32_t strokeArgb = 0xFFFFFFFFu;
+    float trimStart = 0.f;             // stroke trim (draw-on): the visible outline runs from trimStart ..
+    float trimEnd = 1.f;               // .. to trimEnd, as fractions of the outline length (0, 1 = whole)
+    bool trimFill = false;             // the paint IS the path (an imported line): the trim gates the RECT fill
+                                       // along local x instead of gating a stroke
 };
 
 /** Draws one shape onto a premultiplied RGBA8888 bitmap (source-over). False = invalid request, nothing drawn. */

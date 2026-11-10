@@ -165,6 +165,7 @@ ClipValues LayerAnim::clipAt(int64_t timeMs, int64_t trackMs) const {
     const KeyValue cp = get(P_CROP_POS, st.cropHorizontalPercent, st.cropVerticalPercent);
     const KeyValue op = get(P_OPACITY, st.opacity, 0.f);
     const KeyValue sp = get(P_SPEED, st.speed, 0.f);
+    const KeyValue tr = get(P_STROKE_TRIM, st.strokeTrimStart, st.strokeTrimEnd);
     ClipValues o;
     o.rotX = get(P_ROT_X, st.rotation3dX, 0.f).a;
     o.rotY = get(P_ROT_Y, st.rotation3dY, 0.f).a;
@@ -196,6 +197,8 @@ ClipValues LayerAnim::clipAt(int64_t timeMs, int64_t trackMs) const {
     o.cropYPercent = cp.b;
     o.opacityPercent = op.a;
     o.speed = clampf(sp.a, kMinSpeed, kMaxSpeed);
+    o.strokeTrimStart = std::min(1.f, std::max(0.f, tr.a));
+    o.strokeTrimEnd = std::min(1.f, std::max(0.f, tr.b));
     return o;
 }
 

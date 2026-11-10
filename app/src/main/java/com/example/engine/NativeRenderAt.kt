@@ -72,7 +72,9 @@ internal object NativeRenderAt {
                 rotation3dX = v[11], rotation3dY = v[12],
                 textColor = col(AnimProp.FILL_COLOR, 13, c.textColor),
                 gradColor1 = col(AnimProp.GRAD_COLOR_1, 15, c.gradColor1),
-                gradColor2 = col(AnimProp.GRAD_COLOR_2, 17, c.gradColor2)
+                gradColor2 = col(AnimProp.GRAD_COLOR_2, 17, c.gradColor2),
+                strokeTrimStart = if (kf[AnimProp.STROKE_TRIM].isNullOrEmpty()) c.strokeTrimStart else v[19],
+                strokeTrimEnd = if (kf[AnimProp.STROKE_TRIM].isNullOrEmpty()) c.strokeTrimEnd else v[20]
             )
         }
     }

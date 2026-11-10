@@ -14,7 +14,7 @@ import com.example.model.opacityFraction
 internal object ShapeNative {
     @JvmStatic external fun nativeAvailable(): Boolean
 
-    /** p = 24 floats, c = 4 ARGB ints; see shape_jni.cpp. Draws onto an ARGB_8888 bitmap, false = not drawn. */
+    /** p = 27 floats, c = 4 ARGB ints; see shape_jni.cpp. Draws onto an ARGB_8888 bitmap, false = not drawn. */
     @JvmStatic external fun nativeDrawShape(bitmap: Bitmap, p: FloatArray, c: IntArray, fillBitmap: Bitmap?): Boolean
 
     /** p = 9 floats; see shape_jni.cpp. */
@@ -34,7 +34,7 @@ internal class NativeShapePainter(
     /** Picture of a picture fill: the export waits for it ([FillImages.loadSync]). */
     private val fillImage: (String) -> Bitmap? = { FillImages.loadSync(it) }
 ) {
-    private val p = FloatArray(24)
+    private val p = FloatArray(27)
     private val c = IntArray(4)
     private val sp = FloatArray(9)
 
@@ -78,6 +78,11 @@ internal class NativeShapePainter(
         p[13] = if (crop != null) 1f else 0f
         p[14] = if (clip.fillMode == FILL_NONE) 0f else 1f
         p[15] = (clip.strokeWidth.coerceAtLeast(0f) * density * k).coerceAtLeast(0f)
+        // Stroke trim (draw-on): the visible outline fractions, and whether the trim gates the fill
+        // (an imported line, whose paint is its path) instead of a stroke.
+        p[24] = clip.strokeTrimStart.coerceIn(0f, 1f)
+        p[25] = clip.strokeTrimEnd.coerceIn(0f, 1f)
+        p[26] = if (clip.strokeTrimFill) 1f else 0f
         c[0] = argb(clip.textColor.takeIf { it != 0L } ?: clip.color, 0xFFFF3377)
         c[1] = argb(clip.strokeColor, 0xFFFFFFFF)
         var fillBmp: Bitmap? = null

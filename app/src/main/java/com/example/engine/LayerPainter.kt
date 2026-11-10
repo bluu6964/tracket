@@ -195,12 +195,37 @@ internal class LayerPainter(
             )
         }
 
+        // Stroke trim (draw-on): only the outline between the clip's trim fractions is drawn. An imported
+        // line (strokeTrimFill) has no stroke — its fill IS the path, so the trim clips the fill along the
+        // box's x axis (the line runs along it before the layer's own rotation is applied by the canvas).
+        val trimOn = clip.strokeTrimStart > 0f || clip.strokeTrimEnd < 1f
+        if (trimOn && clip.strokeTrimFill) {
+            canvas.clipRect(
+                -base + clip.strokeTrimStart * 2f * base, -base,
+                -base + clip.strokeTrimEnd * 2f * base, base
+            )
+        }
+        fun drawStrokePath(outline: Path) {
+            if (stroke.strokeWidth <= 0f) return
+            if (!trimOn || clip.strokeTrimFill) {
+                canvas.drawPath(outline, stroke)
+                return
+            }
+            val measure = android.graphics.PathMeasure(outline, false)
+            val len = measure.length
+            if (len <= 0f || clip.strokeTrimEnd <= clip.strokeTrimStart) return
+            val seg = Path()
+            if (measure.getSegment(len * clip.strokeTrimStart, len * clip.strokeTrimEnd, seg, true)) {
+                canvas.drawPath(seg, stroke)
+            }
+        }
+
         val pattern = clip.shapePattern ?: "CIRCLE"
         when (pattern.uppercase()) {
             "RECT", "RECTANGLE", "SQUARE" -> {
                 val r = RectF(-base, -base, base, base)
                 canvas.drawRect(r, paint)
-                if (stroke.strokeWidth > 0f) canvas.drawRect(r, stroke)
+                drawStrokePath(Path().apply { addRect(r, Path.Direction.CW) })
             }
             "ROUNDED", "ROUNDED_RECT" -> {
                 val r = RectF(-base, -base, base, base)
@@ -209,12 +234,12 @@ internal class LayerPainter(
                     (clip.shapeCornerRadius * density * k).coerceIn(0f, base)
                 } else base * 0.25f
                 canvas.drawRoundRect(r, rad, rad, paint)
-                if (stroke.strokeWidth > 0f) canvas.drawRoundRect(r, rad, rad, stroke)
+                drawStrokePath(Path().apply { addRoundRect(r, rad, rad, Path.Direction.CW) })
             }
             "OVAL", "ELLIPSE" -> {
                 val r = RectF(-base * 1.2f, -base * 0.75f, base * 1.2f, base * 0.75f)
                 canvas.drawOval(r, paint)
-                if (stroke.strokeWidth > 0f) canvas.drawOval(r, stroke)
+                drawStrokePath(Path().apply { addOval(r, Path.Direction.CW) })
             }
             "TRIANGLE" -> {
                 val path = Path().apply {
@@ -224,11 +249,11 @@ internal class LayerPainter(
                     close()
                 }
                 canvas.drawPath(path, paint)
-                if (stroke.strokeWidth > 0f) canvas.drawPath(path, stroke)
+                drawStrokePath(path)
             }
             else -> { // CIRCLE
                 canvas.drawCircle(0f, 0f, base, paint)
-                if (stroke.strokeWidth > 0f) canvas.drawCircle(0f, 0f, base, stroke)
+                drawStrokePath(Path().apply { addCircle(0f, 0f, base, Path.Direction.CW) })
             }
         }
         canvas.restore()

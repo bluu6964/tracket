@@ -395,7 +395,6 @@ $layers
     @Test
     fun laterPassEffectsStayWarningsOnTheRealFile() {
         val r = threeResult()
-        assertTrue(r.warnings.any { it.contains("progress") })
         assertTrue(r.warnings.any { it.contains("solidcolor") })
         assertTrue(r.warnings.any { it.contains("movealongpath3") })
         assertTrue(r.warnings.any { it.contains("\"mask\"") })
@@ -572,7 +571,7 @@ $layers
     }
 
     @Test
-    fun drawingProgressStaysAWarning() {
+    fun drawingProgressBecomesStrokeTrimKeyframes() {
         val xml = scene(
             """<shape id="1" label="Ring" startTime="0" endTime="2000" fillType="none" s=".circle">
   <transform><location value="540,960,0" /><scale value="1,1" /></transform>
@@ -581,8 +580,105 @@ $layers
   <property name="size" type="vec2" value="100,100" /></shape>"""
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
-        assertEquals(1, r.snapshot.tracks.flatMap { it.clips }.size)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        // Percent -> fractions; the fields hold the first values, the animation is on the STROKE_TRIM track.
+        assertEquals(1f, c.strokeTrimStart, 0.001f)
+        assertEquals(1f, c.strokeTrimEnd, 0.001f)
+        assertFalse(c.strokeTrimFill)
+        val keys = c.keyframes[AnimProp.STROKE_TRIM]!!
+        assertEquals(listOf(0L, 2000L), keys.map { it.timeMs })
+        assertEquals(1f, keys[0].a, 0.001f)
+        assertEquals(1f, keys[0].b, 0.001f)
+        assertEquals(0f, keys[1].a, 0.001f)
+        assertEquals(1f, keys[1].b, 0.001f)
+        assertFalse(r.warnings.any { it.contains("drawing.progress") })
+    }
+
+    @Test
+    fun drawingProgressConstantValuesBecomeAStaticTrim() {
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="1000" fillType="color" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effects.drawing.progress" locallyApplied="false"><property name="start" type="float" value="25" /><property name="end" type="float" value="75" /></effect>
+  <path-stroke direction="centered"><color value="#ffffffff" /><size value="10" /></path-stroke>
+  <property name="size" type="vec2" value="100,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(0.25f, c.strokeTrimStart, 0.001f)
+        assertEquals(0.75f, c.strokeTrimEnd, 0.001f)
+        assertFalse(c.keyframes.containsKey(AnimProp.STROKE_TRIM))
+        assertFalse(r.warnings.any { it.contains("drawing.progress") })
+    }
+
+    @Test
+    fun drawingProgressOnALineTrimsTheFillAndUnionsBothTracks() {
+        // The "ST Intro" file's lines: start runs 100 -> 0 first, end follows 100 -> 0 (a comet sweep).
+        val xml = scene(
+            """<shape id="7" label="Line 1" startTime="0" endTime="2000" fillType="none" s=".line">
+  <transform><location value="960,540,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.drawing.progress" locallyApplied="true"><property name="start" type="float"><kf t="0.015004" v="100.000000" /><kf t="0.661959" v="0.000000" e="cubicBezier 0.0 0.44 0.37 1.0" /></property><property name="end" type="float"><kf t="0.338041" v="100.000000" /><kf t="0.985878" v="0.000000" e="cubicBezier 0.0 0.43676466 0.37 1.0" /></property></effect>
+  <path-stroke direction="centered" end-size="1.500000"><color value="#ffb891ff" /><size value="20.000000" /></path-stroke>
+  <property name="p1" type="vec2" value="-100.000000,100.000000" />
+  <property name="p2" type="vec2" value="100.000000,-100.000000" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        // A line's paint is its path: the trim gates the baked rectangle's fill.
+        assertTrue(c.strokeTrimFill)
+        assertEquals(1f, c.strokeTrimStart, 0.001f)
+        assertEquals(1f, c.strokeTrimEnd, 0.001f)
+        val keys = c.keyframes[AnimProp.STROKE_TRIM]!!
+        // The union of both tracks' key times; each track is sampled at the other's times.
+        assertEquals(listOf(30L, 676L, 1324L, 1972L), keys.map { it.timeMs })
+        assertEquals(1f, keys[0].a, 0.001f)
+        assertEquals(1f, keys[0].b, 0.001f)
+        assertEquals(0.5007f, keys[1].a, 0.001f)   // start, halfway between its own keys
+        assertEquals(1f, keys[1].b, 0.001f)
+        assertEquals(0f, keys[2].a, 0.001f)
+        assertEquals(0.5f, keys[2].b, 0.001f)      // end, halfway between its own keys
+        assertEquals(0f, keys[3].a, 0.001f)
+        assertEquals(0f, keys[3].b, 0.001f)
+        // The easing of a segment comes from the Alight keyframe it ends at (start track first).
+        assertTrue(keys[0].easing.isLinear)
+        assertEquals(com.example.model.Easing(0f, 0.44f, 0.37f, 1f), keys[1].easing)
+        assertEquals(com.example.model.Easing(0f, 0.43676466f, 0.37f, 1f), keys[2].easing)
+        assertTrue(keys[3].easing.isLinear)
+        assertFalse(r.warnings.any { it.contains("drawing.progress") })
+    }
+
+    @Test
+    fun drawingProgressOnTextStaysAWarning() {
+        val xml = scene(
+            """<text id="1" label="A" startTime="0" endTime="2000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.drawing.progress" locallyApplied="true"><property name="start" type="float" value="0" /><property name="end" type="float" value="50" /></effect>
+  <content>A</content></text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(0f, c.strokeTrimStart, 0f)
+        assertEquals(1f, c.strokeTrimEnd, 0f)
         assertTrue(r.warnings.any { it.contains("drawing.progress") })
+    }
+
+    @Test
+    fun drawingProgressFromTheRealFileTrimsTheCircleStrokes() {
+        val r = threeResult()
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        // "Circle 3" of the file "3": start keyframed 100 -> 0 (eased), end constant 100, on a stroked circle.
+        val circle = clips.first { it.name == "Circle 3" }
+        assertTrue(circle.strokeWidth > 0f)
+        assertFalse(circle.strokeTrimFill)
+        assertEquals(1f, circle.strokeTrimEnd, 0.001f)
+        val keys = circle.keyframes[AnimProp.STROKE_TRIM]!!
+        assertEquals(2, keys.size)
+        assertEquals(1f, keys.first().a, 0.001f)
+        assertEquals(0f, keys.last().a, 0.001f)
+        assertEquals(1f, keys.first().b, 0.001f)
+        assertEquals(com.example.model.Easing(1f, 0f, 0.63666666f, 1f), keys.first().easing)
+        assertFalse(r.warnings.any { it.contains("drawing.progress") })
     }
 
     @Test

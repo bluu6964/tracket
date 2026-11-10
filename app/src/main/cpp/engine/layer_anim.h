@@ -23,7 +23,9 @@ struct Key {
 // Properties of a layer. Colour props hold the ARGB colour packed in (a, b) exactly like Kotlin packColor.
 enum Prop { P_POSITION = 0, P_SCALE, P_ROTATION, P_POS_Z, P_CROP_SIZE, P_CROP_POS, P_OPACITY, P_SPEED,
             // text / shape / sticker layers (preview only, the export pose ignores them):
-            P_ROT_X, P_ROT_Y, P_FILL_COLOR, P_GRAD_COLOR_1, P_GRAD_COLOR_2, P_COUNT };
+            P_ROT_X, P_ROT_Y, P_FILL_COLOR, P_GRAD_COLOR_1, P_GRAD_COLOR_2,
+            // shape layers: stroke trim (draw-on), a = outline start, b = outline end, 0..1 of the outline length
+            P_STROKE_TRIM, P_COUNT };
 
 struct KeyValue { float a, b; };
 
@@ -41,6 +43,7 @@ struct LayerStatic {
     float opacity = 100;  // percent
     float speed = 1;
     float rotation3dX = 0, rotation3dY = 0;
+    float strokeTrimStart = 0, strokeTrimEnd = 1;  // outline fractions, see P_STROKE_TRIM
     bool flipH = false, flipV = false;
 };
 
@@ -66,6 +69,8 @@ struct ClipValues {
     float rotX, rotY;
     // Packed colour (a, b) at the time; only meaningful when the layer has keyframes for that colour.
     float fillA, fillB, grad1A, grad1B, grad2A, grad2B;
+    // Stroke trim at the time (outline fractions); the statics when the layer has no trim keyframes.
+    float strokeTrimStart = 0, strokeTrimEnd = 1;
 };
 
 class LayerAnim {

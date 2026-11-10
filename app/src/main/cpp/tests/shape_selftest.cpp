@@ -159,6 +159,42 @@ int main() {
         drawShape(e.px.data(), e.w, e.h, e.w * 4, u);
         ok(e.coverage() > 6.0 * 10 * 45 && e.at(200, 200)[3] == 0, "star outline only");
     }
+    {   // stroke trim (draw-on): only the outline between the trim fractions is drawn
+        const double ring = pi * (105.0 * 105 - 95.0 * 95);
+        Bmp b(400, 400); Request r = base(CIRCLE); r.fillOn = false; r.strokeW = 10.f; r.strokeArgb = 0xFFFF0000u;
+        r.trimStart = 0.f; r.trimEnd = 0.25f;  // first quarter: +x axis clockwise (y down) = bottom-right quadrant
+        drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
+        near(b.coverage(), ring / 4, ring * 0.02, "circle trim = a quarter of the ring");
+        ok(b.at(271, 271)[3] == 255 && b.at(271, 129)[3] == 0 && b.at(129, 271)[3] == 0, "circle trim quadrant");
+
+        Bmp c(400, 400); Request q = base(RECT); q.fillOn = false; q.strokeW = 20.f; q.strokeArgb = 0xFFFFFFFFu;
+        q.trimStart = 0.5f; q.trimEnd = 1.f;  // second half: bottom edge (right to left) + left edge
+        drawShape(c.px.data(), c.w, c.h, c.w * 4, q);
+        ok(c.at(200, 100)[3] == 0 && c.at(300, 200)[3] == 0, "rect trim hides top + right");
+        ok(c.at(200, 300)[3] == 255 && c.at(100, 200)[3] == 255, "rect trim keeps bottom + left");
+
+        Bmp d(400, 400); Request u = base(ROUNDED); u.corner = 25.f; u.fillOn = false; u.strokeW = 10.f;
+        u.strokeArgb = 0xFFFFFFFFu; u.trimEnd = 0.125f;  // 0.125 * (8*75 + 2pi*25) = 94.6 of the 150 long top edge
+        drawShape(d.px.data(), d.w, d.h, d.w * 4, u);
+        ok(d.at(150, 100)[3] == 255 && d.at(250, 100)[3] == 0, "rounded trim runs along the top edge");
+
+        Bmp e(400, 400); Request v = base(TRIANGLE); v.fillOn = false; v.strokeW = 10.f; v.strokeArgb = 0xFFFFFFFFu;
+        v.trimEnd = 0.2f;  // stays on the apex -> bottom-right edge (its share is 223.6 / 647.2 of the outline)
+        drawShape(e.px.data(), e.w, e.h, e.w * 4, v);
+        ok(e.at(225, 150)[3] == 255 && e.at(200, 300)[3] == 0, "triangle trim starts at the apex");
+
+        Bmp f(400, 400); Request w = base(CIRCLE); w.fillOn = false; w.strokeW = 10.f; w.strokeArgb = 0xFFFFFFFFu;
+        w.trimStart = 0.5f; w.trimEnd = 0.5f;  // an empty window draws nothing
+        drawShape(f.px.data(), f.w, f.h, f.w * 4, w);
+        near(f.coverage(), 0, 0.001, "empty trim window");
+    }
+    {   // an imported line (trimFill): the trim gates the RECT fill along local x
+        Bmp b(400, 400); Request r = base(RECT);
+        r.trimFill = true; r.trimStart = 0.25f; r.trimEnd = 0.75f;
+        drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
+        near(b.coverage(), 100.0 * 200.0, 100.0 * 200 * 0.01, "line trim = the middle half");
+        ok(b.at(200, 200)[3] == 255 && b.at(120, 200)[3] == 0 && b.at(280, 200)[3] == 0, "line trim position");
+    }
     ok(!drawShape(nullptr, 1, 1, 4, base(CIRCLE)), "null target refused");
     Request z = base(CIRCLE); z.base = 0.f;
     Bmp t(8, 8);

@@ -27,7 +27,10 @@ enum class AnimProp(val isColor: Boolean = false) {
     OPACITY,
 
     /** Playback speed (0.1x..4x). Time-remaps the layer's media (see [sourceOffsetMs]). */
-    SPEED
+    SPEED,
+
+    /** Stroke trim (draw-on): a = visible outline start, b = visible outline end, both 0..1 of the outline length. */
+    STROKE_TRIM
 }
 
 /** ARGB colour -> (A,R) and (G,B) packed as two exact floats (each < 65536). */
@@ -232,6 +235,7 @@ fun TimelineClip.propValues(p: AnimProp): Pair<Float, Float> = when (p) {
     AnimProp.CROP_POS -> cropHorizontalPercent to cropVerticalPercent
     AnimProp.OPACITY -> opacity to 0f
     AnimProp.SPEED -> speed to 0f
+    AnimProp.STROKE_TRIM -> strokeTrimStart to strokeTrimEnd
 }
 
 fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when (p) {
@@ -248,6 +252,7 @@ fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when 
     AnimProp.CROP_POS -> copy(cropHorizontalPercent = a, cropVerticalPercent = b)
     AnimProp.OPACITY -> copy(opacity = a)
     AnimProp.SPEED -> copy(speed = a.coerceIn(MIN_SPEED, MAX_SPEED))
+    AnimProp.STROKE_TRIM -> copy(strokeTrimStart = a.coerceIn(0f, 1f), strokeTrimEnd = b.coerceIn(0f, 1f))
 }
 
 /**

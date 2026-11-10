@@ -161,6 +161,119 @@ float outlineDistance(int kind, float base, float corner, const Poly* poly, floa
     }
 }
 
+/**
+ * Arc-length fraction (0..1) of the outline point closest to the local point (x, y) — the parameter the stroke
+ * trim gates on. Only meaningful near the outline (inside the stroke band), where the closest point is unique
+ * except at corners, whose two answers agree. The traversal matches the Canvas fallback (LayerPainter): it runs
+ * clockwise (screen space, y down) from the outline's path start — circle / oval at the +x axis, rectangle /
+ * rounded rectangle at the top-left corner along the top edge, triangle at its apex, polygons at their first
+ * (top) vertex. Alight's own path starts are not documented; for a line (trimmed as a RECT fill) the fraction is
+ * exact, for closed shapes the start point is this convention.
+ */
+float outlineParam(int kind, float base, float corner, const Poly* poly, float x, float y) {
+    const float twoPi = 6.28318530718f;
+    switch (kind) {
+        case RECT: {
+            // Closest edge: the smaller inset wins. Start at the top-left corner, then top, right, bottom, left.
+            const float dx = base - std::fabs(x), dy = base - std::fabs(y);
+            float s;
+            if (dx < dy) {  // left / right edge
+                s = (x > 0.f) ? (2.f * base + (y + base)) : (6.f * base + (base - y));
+            } else {  // top / bottom edge
+                s = (y < 0.f) ? (x + base) : (4.f * base + (base - x));
+            }
+            return s / (8.f * base);
+        }
+        case ROUNDED: {
+            const float rad = std::min(base, corner > 0.f ? corner : base * 0.25f);
+            const float e = base - rad;               // straight edges run -e..e, length 2e
+            const float arc = 1.57079632679f * rad;   // one quarter arc
+            const float total = 8.f * e + 4.f * arc;
+            const float ax = std::fabs(x), ay = std::fabs(y);
+            float s;
+            if (ax > e && ay > e) {  // corner arc of this quadrant; centres at (+-e, +-e)
+                float phi = std::atan2(y - (y > 0.f ? e : -e), x - (x > 0.f ? e : -e));  // -pi..pi
+                if (x > 0.f && y < 0.f) {         // top-right: phi -pi/2..0, after the top edge
+                    s = 2.f * e + (phi + 1.57079632679f) * rad;
+                } else if (x > 0.f) {             // bottom-right: phi 0..pi/2, after top edge + arc + right edge
+                    s = 4.f * e + arc + phi * rad;
+                } else if (y > 0.f) {             // bottom-left: phi pi/2..pi
+                    s = 6.f * e + 2.f * arc + (phi - 1.57079632679f) * rad;
+                } else {                          // top-left: phi -pi..-pi/2 -> pi..3pi/2, the last piece
+                    if (phi < 0.f) phi += twoPi;
+                    s = 8.f * e + 3.f * arc + (phi - 3.14159265359f) * rad;
+                }
+            } else if (ax >= ay) {   // left / right edge
+                s = (x > 0.f) ? (2.f * e + arc + (y + e)) : (6.f * e + 3.f * arc + (e - y));
+            } else {                 // top / bottom edge
+                s = (y < 0.f) ? (x + e) : (4.f * e + 2.f * arc + (e - x));
+            }
+            return total > 0.f ? s / total : 0.f;
+        }
+        case TRIANGLE: {
+            // apex A (0,-base) -> B (base,base) -> C (-base,base); the closest edge has the largest plane value
+            // (the same planes as outlineDistance).
+            const float inv = 0.4472135955f;  // 1 / sqrt(5)
+            const float bottom = y - base;
+            const float right = (2.f * x - y - base) * inv;
+            const float left = (-2.f * x - y - base) * inv;
+            const float diag = base * 2.2360679775f;  // base * sqrt(5)
+            const float total = 2.f * diag + 2.f * base;
+            float s;
+            if (right >= bottom && right >= left) {
+                const float t = std::min(1.f, std::max(0.f, ((x + 2.f * (y + base)) / (5.f * base))));
+                s = t * diag;
+            } else if (bottom >= left) {
+                s = diag + (base - x);
+            } else {
+                const float t = std::min(1.f, std::max(0.f, ((x - 2.f * y + 3.f * base) / (5.f * base))));
+                s = diag + 2.f * base + t * diag;
+            }
+            return s / total;
+        }
+        case PENTAGON: {
+            // Vertices at -90 + 72i degrees (first tip up), edges in vertex order; edge i's outward normal
+            // sits at -54 + 72i degrees (the planes of outlineDistance), the closest edge has the largest value.
+            const float apothem = base * 0.80901699437f;
+            int best = 0;
+            float bestV = -1e30f;
+            for (int i = 0; i < 5; ++i) {
+                const float a = (float)((-54.0 + 72.0 * i) * 0.017453292519943295);
+                const float v = std::cos(a) * x + std::sin(a) * y - apothem;
+                if (v > bestV) { bestV = v; best = i; }
+            }
+            const float a0 = (float)((best * 72.0 - 90.0) * 0.017453292519943295);
+            const float a1 = (float)(((best + 1) * 72.0 - 90.0) * 0.017453292519943295);
+            const float ex = base * std::cos(a1) - base * std::cos(a0), ey = base * std::sin(a1) - base * std::sin(a0);
+            const float wx = x - base * std::cos(a0), wy = y - base * std::sin(a0);
+            const float t = std::min(1.f, std::max(0.f, (wx * ex + wy * ey) / (ex * ex + ey * ey)));
+            return ((float)best + t) / 5.f;
+        }
+        case STAR: {
+            if (!poly) return 0.f;
+            float bestD2 = 1e30f, bestS = 0.f, acc = 0.f, total = 0.f;
+            for (int i = 0; i < poly->n; ++i) {
+                const int j = (i + 1) % poly->n;
+                const float ax2 = poly->x[i], ay2 = poly->y[i], bx2 = poly->x[j], by2 = poly->y[j];
+                const float ex = bx2 - ax2, ey = by2 - ay2, wx = x - ax2, wy = y - ay2;
+                const float len = std::hypot(ex, ey);
+                const float t = len > 0.f ? std::min(1.f, std::max(0.f, (wx * ex + wy * ey) / (len * len))) : 0.f;
+                const float ddx = wx - ex * t, ddy = wy - ey * t;
+                const float d2 = ddx * ddx + ddy * ddy;
+                if (d2 < bestD2) { bestD2 = d2; bestS = acc + t * len; }
+                acc += len;
+                total = acc;
+            }
+            return total > 0.f ? bestS / total : 0.f;
+        }
+        default: {  // CIRCLE, OVAL: angle from the +x axis, clockwise in y-down space
+            float u = std::atan2(y, x) / twoPi;
+            if (u < 0.f) u += 1.f;
+            return u;
+        }
+    }
+}
+
 inline float cover(float distPx) { return std::min(1.f, std::max(0.f, 0.5f - distPx)); }
 
 inline void overPx(uint8_t* d, float r, float g, float b, float a) {  // premultiplied 0..255 source
@@ -229,10 +342,16 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
                 if (clipCov <= 0.f) continue;
             }
             const float s = outlineDistance(rq.kind, base, rq.corner, poly, lx, ly);
+            const bool trimActive = rq.trimStart > 0.f || rq.trimEnd < 1.f;
 
             float outR = 0.f, outG = 0.f, outB = 0.f, outA = 0.f;  // premultiplied 0..255
             if (fillOn) {
-                const float cf = cover(s * rq.scale);
+                float cf = cover(s * rq.scale);
+                // An imported line (trimFill): its fill is the path, drawn along local x.
+                if (cf > 0.f && trimActive && rq.trimFill && rq.kind == RECT) {
+                    const float u = (lx + base) / (2.f * base);
+                    if (u < rq.trimStart || u > rq.trimEnd) cf = 0.f;
+                }
                 if (cf > 0.f) {
                     Rgba col = fillStraight;
                     if (rq.fillKind == 1) col = gradientAt(rq, boxW, boxH, lx + base, ly + base);
@@ -242,7 +361,11 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
                 }
             }
             if (strokeOn) {
-                const float cstroke = cover((std::fabs(s) - sw * 0.5f) * rq.scale);
+                float cstroke = cover((std::fabs(s) - sw * 0.5f) * rq.scale);
+                if (cstroke > 0.f && trimActive && !rq.trimFill) {
+                    const float u = outlineParam(rq.kind, base, rq.corner, poly, lx, ly);
+                    if (u < rq.trimStart || u > rq.trimEnd) cstroke = 0.f;
+                }
                 if (cstroke > 0.f) {
                     const float a = sk * cstroke;  // 0..1
                     const float inv = 1.f - a;

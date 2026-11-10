@@ -29,16 +29,18 @@ extern "C" {
 
 JNIEXPORT jboolean JNICALL Java_com_example_engine_ShapeNative_nativeAvailable(JNIEnv*, jclass) { return JNI_TRUE; }
 
-// p[24]: 0 kind, 1 base, 2 cx, 3 cy, 4 scale, 5 rotationDeg, 6 flipX, 7 flipY, 8 alpha, 9..12 crop l t r b, 13 hasCrop,
+// p[27]: 0 kind, 1 base, 2 cx, 3 cy, 4 scale, 5 rotationDeg, 6 flipX, 7 flipY, 8 alpha, 9..12 crop l t r b, 13 hasCrop,
 //        14 fillOn, 15 strokeW, 16 fillKind (0 solid, 1 gradient, 2 picture), 17 gradType, 18..21 gradient x1 y1 x2 y2,
-//        22 picture mode, 23 corner radius (ROUNDED)
+//        22 picture mode, 23 corner radius (ROUNDED), 24..25 stroke trim start / end (outline fractions),
+//        26 trim targets the fill (an imported line). 24..26 are read only when the array carries them.
 // c[4]: fill, stroke, gradient colour 1, gradient colour 2 (ARGB ints)
 JNIEXPORT jboolean JNICALL Java_com_example_engine_ShapeNative_nativeDrawShape(
     JNIEnv* env, jclass, jobject bitmap, jfloatArray pA, jintArray cA, jobject fillBitmap) {
     if (!bitmap || !pA || !cA || env->GetArrayLength(pA) < 24 || env->GetArrayLength(cA) < 4) return JNI_FALSE;
-    float p[24];
+    float p[27] = {};
     jint c[4];
-    env->GetFloatArrayRegion(pA, 0, 24, p);
+    const int pn = env->GetArrayLength(pA) < 27 ? env->GetArrayLength(pA) : 27;
+    env->GetFloatArrayRegion(pA, 0, pn, p);
     env->GetIntArrayRegion(cA, 0, 4, c);
 
     am::shape::Request r;
@@ -50,6 +52,11 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_ShapeNative_nativeDrawShape(
     r.fillKind = (int)p[16]; r.gradType = (int)p[17];
     r.gx1 = p[18]; r.gy1 = p[19]; r.gx2 = p[20]; r.gy2 = p[21]; r.fillImgMode = (int)p[22]; r.corner = p[23];
     r.fillArgb = (uint32_t)c[0]; r.strokeArgb = (uint32_t)c[1]; r.grad1 = (uint32_t)c[2]; r.grad2 = (uint32_t)c[3];
+    if (pn >= 27) {
+        r.trimStart = p[24];
+        r.trimEnd = p[25];
+        r.trimFill = p[26] > 0.5f;
+    }
 
     Locked dst(env, bitmap);
     if (!dst.ok) return JNI_FALSE;

@@ -51,12 +51,13 @@ internal class NativeLayerAnim private constructor(private var ptr: Long) : Auto
         return out
     }
 
-    private val clipOut = FloatArray(19)
+    private val clipOut = FloatArray(21)
 
     /**
      * Preview: the clip fields at [timeMs] (keyframes + tracking of the picture at [trackMs]), same as Kotlin
      * renderAt. [0] posX [1] posY [2] posZ [3] scale% [4] rotationDeg [5] cropW% [6] cropH% [7] cropX% [8] cropY%
-     * [9] opacity% [10] speed [11] rotX [12] rotY [13..14] fill a,b [15..16] grad1 a,b [17..18] grad2 a,b. The returned array is reused by the next call.
+     * [9] opacity% [10] speed [11] rotX [12] rotY [13..14] fill a,b [15..16] grad1 a,b [17..18] grad2 a,b
+     * [19] strokeTrimStart [20] strokeTrimEnd. The returned array is reused by the next call.
      */
     fun clipAt(timeMs: Long, trackMs: Long): FloatArray {
         AnimNative.nativeClipAt(ptr, timeMs, trackMs, clipOut)
@@ -75,7 +76,8 @@ internal class NativeLayerAnim private constructor(private var ptr: Long) : Auto
         private val ORDER = listOf(
             AnimProp.POSITION, AnimProp.SCALE, AnimProp.ROTATION, AnimProp.POS_Z,
             AnimProp.CROP_SIZE, AnimProp.CROP_POS, AnimProp.OPACITY, AnimProp.SPEED,
-            AnimProp.ROT_X, AnimProp.ROT_Y, AnimProp.FILL_COLOR, AnimProp.GRAD_COLOR_1, AnimProp.GRAD_COLOR_2
+            AnimProp.ROT_X, AnimProp.ROT_Y, AnimProp.FILL_COLOR, AnimProp.GRAD_COLOR_1, AnimProp.GRAD_COLOR_2,
+            AnimProp.STROKE_TRIM
         )
 
         /** Null when the native library is not available or the clip could not be handed over. */
@@ -97,7 +99,7 @@ internal class NativeLayerAnim private constructor(private var ptr: Long) : Auto
             val stat = floatArrayOf(
                 c.transformX, c.transformY, c.transformZ, c.scalePercent, c.rotationDeg, c.pivotX, c.pivotY,
                 c.cropWidthPercent, c.cropHeightPercent, c.cropHorizontalPercent, c.cropVerticalPercent,
-                c.opacity, c.speed, c.rotation3dX, c.rotation3dY
+                c.opacity, c.speed, c.rotation3dX, c.rotation3dY, c.strokeTrimStart, c.strokeTrimEnd
             )
             val flags = (if (c.isFlippedH) 1 else 0) or (if (c.isFlippedV) 2 else 0)
             val f = c.trackFollow

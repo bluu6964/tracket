@@ -359,6 +359,19 @@ class NativePreviewEngine(context: Context) {
         return s
     }
 
+    /**
+     * Effects as the renderer runs them at [timeMs]: Motion Blur is resolved from the layer's own
+     * motion over one 33 ms frame (the 30 fps default: the preview has no project fps). [sample] is
+     * the clip the motion is sampled from — the original, not the rendered copy, so a rig adjustment
+     * can never hide the keyframes.
+     */
+    private fun fxOpsOf(c: TimelineClip, timeMs: Long, sample: TimelineClip = c): FloatArray? =
+        ClipFxLibrary.toNative(
+            MotionBlurEval.resolve(c.effects, { ms ->
+                NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg) }
+            }, timeMs, 33L, MotionBlurEval.canvasHeightPx(PreviewFrameRef.widthPx, outW, outH))
+        )
+
     private fun drawFrame() {
         val r = renderer ?: return
         if (!outputOn || released) return
@@ -391,18 +404,6 @@ class NativePreviewEngine(context: Context) {
         val rig = parentRig()
         val cam = CameraRig(liveTracks, rig)
         val firstMedia = media.firstOrNull()
-        // Effects as the renderer runs them this frame: Motion Blur is resolved from the layer's
-        // own motion (33 ms = the 30 fps default frame: the preview has no project fps). [sample]
-        // is the clip the motion is sampled from — the original, not the rendered copy, so a rig
-        // adjustment can never hide the keyframes.
-        val frameMs = 33L
-        val canvasH = MotionBlurEval.canvasHeightPx(previewW, outW, outH)
-        fun fxOpsOf(c: TimelineClip, sample: TimelineClip = c): FloatArray? =
-            ClipFxLibrary.toNative(
-                MotionBlurEval.resolve(c.effects, { ms ->
-                    NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg) }
-                }, t, frameMs, canvasH)
-            )
         val groupIds = GroupOps.groupIdsOf(liveTracks)
         // Depth of a layer or group: bigger Z = nearer = drawn later.
         // Under a 3D camera it is the distance from the camera instead (CameraRig.stackKey), also for shapes / text / stickers.
@@ -452,7 +453,7 @@ class NativePreviewEngine(context: Context) {
             if (img != null) {
                 if (!placeByCamera(cam, c, t, anim, fp, p, img.w, img.h, previewW)) return
                 // Effects of the Effects panel on a photo (before crop / transform, like on a video).
-                val imgOps = fxOpsOf(c)
+                val imgOps = fxOpsOf(c, t)
                 val imgMasks = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
                 if (imgOps != null || imgMasks != null) {
                     val fxTex = r.applyFx(
@@ -481,7 +482,7 @@ class NativePreviewEngine(context: Context) {
             val srcMs = anim.sourceMs(t)
             val faceMask = NativeFxMasks.face(r, c, slot, srcMs, strict = false)
             val cutMask = NativeFxMasks.cutout(r, c, slot, srcMs, strict = false)
-            val fxOps = fxOpsOf(c)
+            val fxOps = fxOpsOf(c, t)
             val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
             if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
                 val fxTex = r.applyFx(
@@ -523,7 +524,7 @@ class NativePreviewEngine(context: Context) {
             val tex = r.endGroup()
             if (tex == 0) return
             val blendId = BlendModes.find(c.blendMode).shaderId
-            val fxOps = fxOpsOf(c)
+            val fxOps = fxOpsOf(c, t)
             val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
             var drawTex = tex
             if (fxOps != null || maskOps != null) {
@@ -722,7 +723,7 @@ class NativePreviewEngine(context: Context) {
             var contH = h
             var boxLp: LayerParams? = null
             if (g.fx) {
-                val ops = fxOpsOf(texts[0], layout[i].clips.firstOrNull { it.id == texts[0].id } ?: texts[0])
+                val ops = fxOpsOf(texts[0], t, layout[i].clips.firstOrNull { it.id == texts[0].id } ?: texts[0])
                 if (ops != null) {
                     val reg = g.region
                     val fxTex = r.applyFx(

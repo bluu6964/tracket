@@ -140,6 +140,22 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun shapeCornerRadiusRoundTripsAndDefaultsToUnsetInOldFiles() {
+        val pill = TimelineClip(
+            id = "s", name = "Pill", type = LayerType.SHAPE, startMs = 0L, durationMs = 1000L, color = 0xFFFF3377L,
+            shapePattern = "ROUNDED_RECT", shapeCornerRadius = 41.5f
+        )
+        val snap = ProjectSnapshot(tracks = listOf(TimelineTrack("t", "L", clips = listOf(pill))))
+        val text = ProjectStore.encode(snap)
+        assertTrue(text.contains("\"shapeCornerRadius\":41.5"))
+        assertEquals(41.5f, ProjectStore.decode(text).tracks[0].clips[0].shapeCornerRadius, 0.001f)
+
+        // A file written before the field existed has no such key: the radius loads as unset (-1).
+        val old = """{"tracks":[{"id":"t","name":"L","clips":[{"id":"s","name":"Pill","type":"SHAPE","startMs":0,"durationMs":1000,"color":4294908775,"shapePattern":"ROUNDED_RECT"}]}]}"""
+        assertEquals(-1f, ProjectStore.decode(old).tracks[0].clips[0].shapeCornerRadius, 0f)
+    }
+
+    @Test
     fun unknownEnumValueFallsBackToTheDefault() {
         val text = """{"previewResolution":"EIGHT_K","tracks":[]}"""
         assertEquals(PreviewResolution.FULL, ProjectStore.decode(text).previewResolution)

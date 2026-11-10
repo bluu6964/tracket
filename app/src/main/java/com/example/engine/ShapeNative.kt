@@ -54,7 +54,12 @@ internal class NativeShapePainter(
             "STAR" -> 6f
             else -> 0f
         }
-        p[23] = when ((clip.shapePattern ?: "").uppercase()) {
+        // Corner radius slot (px; the C++ side clamps it to the box and reads <= 0 as its own default): the clip's
+        // own radius when one is set (dp of the 130 dp box, like the built-in corners below), else the built-in
+        // corners. The 0.01 px floor keeps a stored 0 a square corner instead of the C++ "default" reading.
+        p[23] = if (p[0] == 2f && clip.shapeCornerRadius >= 0f) {
+            (base * clip.shapeCornerRadius / 65f).coerceIn(0.01f, base)
+        } else when ((clip.shapePattern ?: "").uppercase()) {
             "WIDE_ROUNDED_RECT" -> base * 10f / 65f
             else -> base * 16f / 65f
         }

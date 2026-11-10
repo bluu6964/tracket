@@ -131,6 +131,11 @@ data class TimelineClip(
     val shapeOffsetY: Float = 0f,
     val shapeScaleX: Float = 1.0f,
     val shapeScaleY: Float = 1.0f,
+    /**
+     * Corner radius of a rounded shape, in dp inside the 130 dp shape box (the same dp as [strokeWidth]);
+     * -1 = not set, the renderers then use their built-in corner (about 16 dp). Only read for rounded patterns.
+     */
+    val shapeCornerRadius: Float = -1f,
     val strokeWidth: Float = 0f,
     val strokeColor: Long = 0xFFFFFFFF,
     // Transform parameters (2D, Pivot, 3D, Warp)

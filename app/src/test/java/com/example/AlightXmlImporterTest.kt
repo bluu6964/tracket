@@ -398,9 +398,51 @@ $layers
         assertTrue(r.warnings.any { it.contains("progress") })
         assertTrue(r.warnings.any { it.contains("solidcolor") })
         assertTrue(r.warnings.any { it.contains("movealongpath3") })
-        assertTrue(r.warnings.any { it.contains("corner radius") })
         assertTrue(r.warnings.any { it.contains("\"mask\"") })
         assertTrue(r.warnings.any { it.contains("plain line") })
+    }
+
+    @Test
+    fun roundRectCornerRadiusIsImportedAsBoxDp() {
+        val r = threeResult()
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val radii = clips.filter { it.shapePattern == "ROUNDED_RECT" }.map { it.shapeCornerRadius }
+        assertTrue(radii.isNotEmpty())
+        assertTrue(radii.all { it >= 0f })
+        // Real file "3": size 100 x 100 with cornerRadius 32 -> 130 * 32 / 100 dp of the shape box.
+        assertTrue(radii.any { abs(it - 130f * 32f / 100f) < 0.01f })
+        // Size 522 x 136 with cornerRadius 373: Alight clamps to half the smaller side (68) -> 130 * 68 / 522.
+        assertTrue(radii.any { abs(it - 130f * 68f / 522f) < 0.01f })
+        // No shape keeps the old "not supported" warning, and shapes without the property stay unset (-1).
+        assertFalse(r.warnings.any { it.contains("corner radius") })
+        assertTrue(clips.filter { it.shapePattern != "ROUNDED_RECT" }.all { it.shapeCornerRadius == -1f })
+    }
+
+    @Test
+    fun keyframedCornerRadiusUsesTheFirstValueWithANote() {
+        val xml = scene(
+            """<shape id="9" label="Pill" startTime="0" endTime="1000" fillType="color" mediaFillMode="stretch" s=".roundrect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <property name="size" type="vec2" value="200,100" />
+  <property name="cornerRadius" type="float"><kf t="0.000000" v="20.000000" /><kf t="1.000000" v="80.000000" /></property></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        // First value 20 (smaller side 100, so no clamp) -> 130 * 20 / 200.
+        assertEquals(130f * 20f / 200f, c.shapeCornerRadius, 0.01f)
+        assertTrue(r.warnings.any { it.contains("corner radius") && it.contains("first value") })
+    }
+
+    @Test
+    fun cornerRadiusOnAPlainRectIsIgnored() {
+        val xml = scene(
+            """<shape id="9" label="Sq" startTime="0" endTime="1000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <property name="size" type="vec2" value="200,100" />
+  <property name="cornerRadius" type="float" value="20.000000" /></shape>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(-1f, c.shapeCornerRadius, 0f)
     }
 
     @Test

@@ -59,7 +59,7 @@ import kotlin.math.sin
  *  - `<text>` layer: start / end time, content, font weight, align, colour, size, location / scale / rotation / opacity
  *    (a constant or `<kf>` keyframes), `texttransform` + `randomdisplace` effects stored as [TextAnimator]
  *  - `<shape>` layer (`.rect` / `.circle` / `.roundrect`): fill colour (or no fill, or a picture fill by uri),
- *    `size` x transform scale -> the shape's size, position / rotation / opacity, a `path-stroke` -> stroke
+ *    `size` x transform scale -> the shape's size, `cornerRadius` -> its corner radius, position / rotation / opacity, a `path-stroke` -> stroke
  *    colour + width, keyframed size / scale -> SCALE keyframes. `.line` / `.arrow` become a thin rectangle
  *    between their two points (the arrow head is not drawn). A freehand `<path>` shape is skipped.
  *  - `<embedScene>`: a real Group layer (see GroupOps) holding the layers of the nested `<scene>`; the group's
@@ -464,10 +464,24 @@ object AlightXmlImporter {
 
         val sizeT = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "size" }
             ?.let { readTrack(it) }
-        val corner = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "cornerRadius" }
-            ?.getAttribute("value")?.toFloatOrNull()
-        if (corner != null && pattern == "ROUNDED_RECT") {
-            w += "Shape corner radius is not supported yet: the app's own rounded corner is used"
+        // Corner radius (only `.roundrect` carries one): Alight measures it in the shape's own units and clamps
+        // it to half the smaller side. The app stores dp of its 130 dp shape box, so the stored value keeps the
+        // same share of the shape's width: dp = 130 * r / sizeW, after Alight's own clamp.
+        var shapeCornerRadius = -1f
+        val cornerT = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "cornerRadius" }
+            ?.let { readTrack(it) }
+        if (cornerT != null && pattern == "ROUNDED_RECT") {
+            if (cornerT.keys.size >= 2) {
+                w += "Keyframed corner radius of a shape is not supported yet: the first value is used"
+            }
+            val rLocal = cornerT.first().firstOrNull()
+            val sizeFirst = sizeT?.first() ?: listOf(100f, 100f)
+            val sizeW = sizeFirst.getOrNull(0) ?: 100f
+            val sizeH = sizeFirst.getOrNull(1) ?: sizeW
+            if (rLocal != null && sizeW > 0f) {
+                val rEff = minOf(rLocal, minOf(sizeW, sizeH) / 2f).coerceAtLeast(0f)
+                shapeCornerRadius = (APP_SHAPE_BOX_DP * rEff / sizeW).coerceIn(0f, APP_SHAPE_BOX_DP / 2f)
+            }
         }
 
         // Rendered size in scene pixels = size x transform scale; the app size is measured against its 130 dp box.
@@ -509,6 +523,7 @@ object AlightXmlImporter {
             shapePattern = pattern,
             shapeScaleX = rendW / box,
             shapeScaleY = rendH / box,
+            shapeCornerRadius = shapeCornerRadius,
             strokeWidth = strokeWidth,
             strokeColor = strokeColor,
             transformX = posX,

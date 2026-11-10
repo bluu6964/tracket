@@ -204,7 +204,10 @@ internal class LayerPainter(
             }
             "ROUNDED", "ROUNDED_RECT" -> {
                 val r = RectF(-base, -base, base, base)
-                val rad = base * 0.25f
+                // The clip's own corner radius (dp of the shape box) when set, else the built-in corner.
+                val rad = if (clip.shapeCornerRadius >= 0f) {
+                    (clip.shapeCornerRadius * density * k).coerceIn(0f, base)
+                } else base * 0.25f
                 canvas.drawRoundRect(r, rad, rad, paint)
                 if (stroke.strokeWidth > 0f) canvas.drawRoundRect(r, rad, rad, stroke)
             }

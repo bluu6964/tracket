@@ -47,14 +47,17 @@ class CornerPin(
     fun indexAt(t: Long): Int {
         val n = timesMs.size
         if (n == 0) return -1
-        val key = t + FRAME_TOL_MS
-        if (key < timesMs[0]) return 0
+        if (t < timesMs[0]) return 0
         var lo = 0
         var hi = n - 1
         while (lo < hi) {
             val mid = (lo + hi + 1) ushr 1
-            if (timesMs[mid] <= key) lo = mid else hi = mid - 1
+            if (timesMs[mid] <= t) lo = mid else hi = mid - 1
         }
+        // The LAST frame already counts shortly before its time (within FRAME_TOL_MS): its quad is the
+        // final one, so the end of a clip must not fall back to the previous frame over a rounding gap.
+        // Middle frames are NOT snapped early: a frame holds until the next one's time (see the test).
+        if (lo < n - 1 && timesMs[n - 1] - t < FRAME_TOL_MS) return n - 1
         return lo
     }
 

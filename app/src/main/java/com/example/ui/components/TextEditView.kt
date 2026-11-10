@@ -59,6 +59,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.engine.AlightXmlImporter
+import com.example.engine.TextRevealValues
 import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.ui.text.FontCatalog
@@ -440,6 +442,33 @@ private fun StyleTab(
                 onUpdate { it.copy(isStrikethrough = !it.isStrikethrough) }
             }
         }
+    }
+
+    // Reveal (typewriter window, Alight `textprogress`, build 82 renders it): a static start/end
+    // window of the text that is shown. An imported keyframed reveal is preserved — the sliders
+    // stay hidden while it is animated, and only an explicit tap replaces it with a static window
+    // frozen at the finished state (see TextRevealValues).
+    Spacer(Modifier.height(10.dp))
+    Text("Reveal", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+    val reveal = clip.textAnimators.firstOrNull { it.effectId == AlightXmlImporter.TEXTPROGRESS }
+    if (TextRevealValues.isKeyframed(reveal)) {
+        Text(
+            "Animated reveal — the window is keyframed in Alight Motion, so it changes over time.",
+            color = TextSecondary, fontSize = 15.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        SheetChip(label = "Use static window", selected = false, onClick = {
+            val (s, e) = TextRevealValues.windowAt(reveal, 1f)
+            onUpdate { it.copy(textAnimators = TextRevealValues.withStaticWindow(it.textAnimators, s, e)) }
+        })
+    } else {
+        val (revealStart, revealEnd) = TextRevealValues.windowAt(reveal, 0f)
+        TextRulerSlider("Reveal start", revealStart * 100f, { v ->
+            onUpdate { it.copy(textAnimators = TextRevealValues.withStaticWindow(it.textAnimators, v / 100f, revealEnd)) }
+        })
+        TextRulerSlider("Reveal end", revealEnd * 100f, { v ->
+            onUpdate { it.copy(textAnimators = TextRevealValues.withStaticWindow(it.textAnimators, revealStart, v / 100f)) }
+        })
     }
 }
 

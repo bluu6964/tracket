@@ -10,6 +10,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import kotlin.math.abs
 
 class AlightXmlImporterTest {
 
@@ -436,5 +437,231 @@ $layers
         )
         assertEquals(null, AlightXmlImporter.parseEasing(""))
         assertEquals(null, AlightXmlImporter.parseEasing("nonsense"))
+    }
+
+    // ---- Pass 2: fills, spacing, scale assist, baked oscillation -------------------------------------------------
+
+    @Test
+    fun solidColorSetsTextColourAndMultipliesOpacity() {
+        val xml = scene(
+            """<text id="1" label="A" startTime="0" endTime="1000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <transform><location value="540,960,0" /><scale value="1,1" /><opacity value="0.5" /></transform>
+  <effect id="com.alightcreative.solidcolor" locallyApplied="true"><property name="color" type="color" value="#ff112233" /><property name="alpha" type="float" value="0.5" /><property name="blendMode" type="int" value="0" /></effect>
+  <content>A</content></text>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(0xFF112233L, c.textColor)
+        assertEquals(25f, c.opacity, 0.001f)   // layer 50 % x the effect's alpha 0.5
+    }
+
+    @Test
+    fun keyframedSolidColorBecomesFillColorKeyframes() {
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="2000" fillType="color" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.solidcolor" locallyApplied="true"><property name="color" type="color"><kf t="0" v="#ff000000" /><kf t="1" v="#ffffffff" /></property><property name="alpha" type="float" value="1" /><property name="blendMode" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(0xFF000000L, c.textColor)   // fallback = the first keyframe
+        val keys = c.keyframes[AnimProp.FILL_COLOR]!!
+        assertEquals(listOf(0L, 2000L), keys.map { it.timeMs })
+        assertEquals(packColor(0xFF000000L), keys[0].a to keys[0].b)
+        assertEquals(packColor(0xFFFFFFFFL), keys[1].a to keys[1].b)
+    }
+
+    @Test
+    fun solidColorOnTheRealStrokeOnlyShapeKeepsTheStrokeColour() {
+        // The "Outline" of the real file "3": solidcolor flashes white -> green, but its only paint is the stroke.
+        val outline = threeClips().first { it.name == "Outline" }
+        assertEquals(0xFF009DFFL, outline.strokeColor)
+        val keys = outline.keyframes[AnimProp.FILL_COLOR]!!
+        assertEquals(packColor(0xFFFFFFFFL), keys[0].a to keys[0].b)
+        assertEquals(packColor(0xFF14FD6AL), keys[1].a to keys[1].b)
+    }
+
+    @Test
+    fun gradientOverlayBecomesTheGradientFill() {
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="1000" fillType="color" s=".rect">
+  <transform><location value="500,500,0" /><scale value="10,10" /></transform>
+  <fillColor value="#ff000000" />
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ff0000ff" /><property name="color2" type="color" value="#ffff0000" /><property name="angle" type="float" value="0" /><property name="offset" type="vec2" value="0,0" /><property name="scale" type="float" value="1" /><property name="alpha" type="float" value="1" /><property name="gradType" type="int" value="0" /><property name="blendMode" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>""", 1000, 1000
+        )
+        val c = AlightXmlImporter.parse(xml, 1000f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(com.example.model.FILL_GRADIENT, c.fillMode)
+        assertEquals(com.example.model.GRAD_LINEAR, c.gradType)
+        assertEquals(0xFF0000FFL, c.gradColor1)
+        assertEquals(0xFFFF0000L, c.gradColor2)
+        // Angle 0, no offset, scale 1: the gradient runs from the middle of the left edge to the right one.
+        assertEquals(0f, c.gradX1, 0.001f)
+        assertEquals(0.5f, c.gradY1, 0.001f)
+        assertEquals(1f, c.gradX2, 0.001f)
+        assertEquals(0.5f, c.gradY2, 0.001f)
+    }
+
+    @Test
+    fun textSpacingMapsToLetterSpacingAndLineHeight() {
+        val xml = scene(
+            """<text id="1" label="A" startTime="0" endTime="1000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <effect id="com.alightcreative.effects.textspacing" locallyApplied="true"><property name="letterspacing" type="float" value="0.13" /><property name="linespacing" type="float" value="1.0" /></effect>
+  <content>A</content></text>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(13f, c.letterSpacing, 0.01f)   // 0.13 of the font size, in percent
+        assertEquals(100f, c.lineHeightPercent, 0.01f)
+    }
+
+    @Test
+    fun textProgressIsStoredAsAnAnimator() {
+        val xml = scene(
+            """<text id="1" label="A" startTime="0" endTime="2000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <effect id="com.alightcreative.effects.textprogress" locallyApplied="true"><property name="start" type="float" value="0" /><property name="end" type="float"><kf t="0" v="0" /><kf t="0.6" v="1" /></property><property name="cursor" type="int" value="0" /><property name="blink" type="bool" value="false" /></effect>
+  <content>HELLO</content></text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val a = c.textAnimators.first { it.effectId == AlightXmlImporter.TEXTPROGRESS }
+        assertEquals(2, a.props["end"]!!.keys.size)
+        assertEquals(listOf(0f), a.props["cursor"]!!.value)
+        assertTrue(r.warnings.any { it.contains("textprogress is saved") })
+    }
+
+    @Test
+    fun drawingProgressStaysAWarning() {
+        val xml = scene(
+            """<shape id="1" label="Ring" startTime="0" endTime="2000" fillType="none" s=".circle">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.drawing.progress" locallyApplied="false"><property name="start" type="float"><kf t="0" v="100" /><kf t="1" v="0" /></property><property name="end" type="float" value="100" /></effect>
+  <path-stroke direction="centered"><color value="#ffffffff" /><size value="20" /></path-stroke>
+  <property name="size" type="vec2" value="100,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertEquals(1, r.snapshot.tracks.flatMap { it.clips }.size)
+        assertTrue(r.warnings.any { it.contains("drawing.progress") })
+    }
+
+    @Test
+    fun scaleAssistComposesIntoTheScaleKeyframes() {
+        // The pop of the "ST Intro" file: 1 -> 1.175 -> 1 on top of a constant text scale.
+        val xml = scene(
+            """<text id="1" label="A" startTime="0" endTime="2000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <transform><location value="540,960,0" /><scale value="2,2" /></transform>
+  <effect id="com.alightcreative.effects.scaleassist" locallyApplied="true"><property name="axis" type="int" value="3" /><property name="scale" type="float"><kf t="0.25" v="1" /><kf t="0.5" v="1.175" /><kf t="0.75" v="1" /></property><property name="damp" type="float" value="1" /></effect>
+  <content>A</content></text>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        val base = 60f / (0.11f * 1080f) * 100f
+        val keys = c.keyframes[AnimProp.SCALE]!!
+        assertEquals(listOf(0L, 500L, 1000L, 1500L, 2000L), keys.map { it.timeMs })
+        assertEquals(base, keys[0].a, 0.01f)
+        assertEquals(base * 1.175f, keys[2].a, 0.01f)
+        assertEquals(base, keys[4].a, 0.01f)
+    }
+
+    @Test
+    fun scaleAssistConstantFactorScalesAShape() {
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="1000" fillType="color" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effects.scaleassist" locallyApplied="true"><property name="axis" type="int" value="3" /><property name="scale" type="float" value="2" /><property name="damp" type="float" value="1" /></effect>
+  <property name="size" type="vec2" value="100,50" /></shape>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        val box = 1080f * 130f / 360f
+        assertEquals(200f / box, c.shapeScaleX, 0.001f)
+        assertEquals(100f / box, c.shapeScaleY, 0.001f)
+        assertEquals(200f / box * 100f, c.scalePercent, 0.01f)
+    }
+
+    @Test
+    fun oscillateBakesPositionKeyframes() {
+        // Angle 90 = straight down in Alight's scene pixels; mag 100 px, 1 Hz, layer of 2 s.
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="2000" fillType="color" s=".rect">
+  <transform><location value="600,500,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effects.oscillate" locallyApplied="false"><property name="angle" type="float" value="90" /><property name="freq" type="float" value="1" /><property name="mag" type="float" value="100" /><property name="type" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>""", 1000, 1000
+        )
+        val c = AlightXmlImporter.parse(xml, 1000f).snapshot.tracks.flatMap { it.clips }[0]
+        val pos = c.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos.size > 20)
+        assertEquals(0L, pos.first().timeMs)
+        assertEquals(2000L, pos.last().timeMs)
+        assertEquals(0f, pos.first().b, 0.01f)               // sin(0) = 0
+        assertTrue(pos.all { abs(it.a - 100f) < 0.01f })     // the base X (600 - 500) never changes
+        assertTrue(pos.maxOf { it.b } > 95f)                 // +mag at the quarter period
+        assertTrue(pos.minOf { it.b } < -95f)                // -mag at three quarters
+    }
+
+    @Test
+    fun oscillateComposesWithAKeyframedLocation() {
+        // The layer itself moves 0 -> 200 px while the oscillation (angle 0, mag 50) rides on top.
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="2000" fillType="color" s=".rect">
+  <transform><location><kf t="0" v="500,500,0" /><kf t="1" v="700,500,0" /></location><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effects.oscillate" locallyApplied="false"><property name="angle" type="float" value="0" /><property name="freq" type="float" value="1" /><property name="mag" type="float" value="50" /><property name="type" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>""", 1000, 1000
+        )
+        val c = AlightXmlImporter.parse(xml, 1000f).snapshot.tracks.flatMap { it.clips }[0]
+        val pos = c.keyframes[AnimProp.POSITION]!!
+        assertEquals(0f, pos.first().a, 0.01f)               // base 0 + sin(0) * 50
+        assertEquals(200f, pos.last().a, 0.01f)              // base 200 + sin(4 PI) * 50
+        assertTrue(pos.any { it.a > 165f })                  // base + full swing near 1.25 s
+        assertTrue(pos.any { it.a < 60f })                   // base - full swing near 0.75 s
+    }
+
+    @Test
+    fun swingBakesRotationKeyframes() {
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="2000" fillType="color" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effects.swing" locallyApplied="false"><property name="freq" type="float" value="1" /><property name="a1" type="float" value="-10" /><property name="a2" type="float" value="10" /><property name="phase" type="float" value="0" /><property name="type" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        val rot = c.keyframes[AnimProp.ROTATION]!!
+        assertTrue(rot.size > 20)
+        assertEquals(0f, rot.first().a, 0.01f)
+        assertTrue(rot.maxOf { it.a } > 9.5f)
+        assertTrue(rot.minOf { it.a } < -9.5f)
+    }
+
+    @Test
+    fun swingOnAGroupBakesIntoTheGroupRotation() {
+        val xml = scene(
+            """<embedScene id="2" label="G" startTime="0" endTime="2000" fillType="intrinsic" outTime="2000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.effects.swing2" locallyApplied="false"><property name="a1" type="float" value="-10" /><property name="a2" type="float" value="10" /><property name="freq" type="float" value="1" /><property name="phase" type="float" value="0" /><property name="type" type="int" value="0" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="2000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val clips = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }
+        val g = clips.first { it.type == LayerType.GROUP }
+        val rot = g.keyframes[AnimProp.ROTATION]!!
+        assertTrue(rot.maxOf { it.a } > 9.5f)
+    }
+
+    @Test
+    fun solidColorOnAGroupStaysAWarning() {
+        val xml = scene(
+            """<embedScene id="2" label="G" startTime="0" endTime="1000" fillType="intrinsic" outTime="1000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.solidcolor" locallyApplied="true"><property name="color" type="color" value="#ff000000" /><property name="alpha" type="float" value="1" /><property name="blendMode" type="int" value="0" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="1000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="1000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertTrue(r.warnings.any { it.contains("solidcolor on a group") })
     }
 }

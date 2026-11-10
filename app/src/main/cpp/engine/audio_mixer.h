@@ -1,0 +1,68 @@
+// After Motion native engine - timeline audio mixer. Pure C++ (testable on a computer).
+//
+// Mixes any number of clips (audio layers + the sound of video layers) onto the project timeline:
+// start offset, trim, constant speed (pitch preserved), volume and fade in / out - the same rules
+// as the Media3 exporter (VideoExporter.buildAudioSequence + GainFadeAudioProcessor).
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <vector>
+
+#include "audio_dsp.h"
+
+namespace am {
+
+struct AudioClipSpec {
+    int source = 0;               // free id for the SourceFactory (e.g. index of an opened file)
+    int64_t startFrame = 0;       // timeline position (48 kHz frames)
+    int64_t durFrames = 0;        // frames actually played (already cut at the project end)
+    int64_t fullDurFrames = 0;    // length of the whole layer on the timeline (fade-out clock)
+    int64_t trimStartUs = 0;      // where in the source file the layer starts
+    double speed = 1.0;
+    float volume = 1.0f;
+    int64_t fadeInFrames = 0;
+    int64_t fadeOutFrames = 0;
+};
+
+using SourceFactory = std::function<std::unique_ptr<FrameSource>(const AudioClipSpec&)>;
+// Receives interleaved stereo int16 PCM and the timestamp of its first frame. Return false to abort.
+using PcmSink = std::function<bool(const int16_t* pcm, int frames, int64_t ptsUs)>;
+
+class AudioMixer {
+public:
+    AudioMixer(SourceFactory factory, int64_t totalFrames) : factory_(std::move(factory)), total_(totalFrames) {}
+
+    void addClip(const AudioClipSpec& spec) { clips_.push_back({spec, nullptr, false, false}); }
+    bool empty() const { return clips_.empty(); }
+    int64_t cursor() const { return cursor_; }
+    int64_t totalFrames() const { return total_; }
+    bool finished() const { return cursor_ >= total_; }
+
+    // Mixes the timeline up to `upToFrame` (clamped to the total) and hands it to `sink` in chunks.
+    bool render(int64_t upToFrame, const PcmSink& sink);
+
+    // Preview: jump to another timeline position (all sources are closed and opened again where they are needed).
+    // A clip that is already playing at that position is opened at the matching place of its file.
+    void seek(int64_t frame);
+    // Preview: open the clips that start before `upToFrame` now, so their decoders are ready when the cursor gets there.
+    void prefetch(int64_t upToFrame);
+
+private:
+    struct Clip {
+        AudioClipSpec spec;
+        std::unique_ptr<FrameSource> src;
+        bool opened;
+        bool failed;
+    };
+    static float fadeGain(const AudioClipSpec& s, int64_t rel);
+    void open(Clip& c, int64_t from);
+
+    SourceFactory factory_;
+    int64_t total_;
+    int64_t cursor_ = 0;
+    std::vector<Clip> clips_;
+};
+
+}  // namespace am

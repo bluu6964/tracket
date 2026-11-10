@@ -1,0 +1,1014 @@
+// GLSL ES 3.00 sources of the v140 effects. Four programs, each with a `uMode` branch (see fxShaderOf in fx_plan.cpp):
+//   kFxBlur2  : 0 directional blur, 1 radial blur (spin / zoom), 2 sharpen, 3 lens blur, 4 tilt-shift, 5 surface blur, 6 light rays
+//   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
+//               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize
+//   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake
+//   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare
+// All of them work on the premultiplied picture the layer shader uses (top of the picture at v = 1), take the raw slider
+// values in uP[0..6] (documented at FxType in fx_plan.h) and write a premultiplied picture. Texture reads inside loops
+// and branches use textureLod (the pictures have no mip levels), so there are no undefined derivatives.
+#pragma once
+
+// Same dither as the older effect shaders: removes banding of smooth gradients in the 8 bit pictures.
+#define AM_FX_DITHER                                                                  \
+    "float amHash(vec2 p) {\n"                                                        \
+    "    vec3 p3 = fract(vec3(p.xyx) * 0.1031);\n"                                    \
+    "    p3 += dot(p3, p3.yzx + 33.33);\n"                                            \
+    "    return fract((p3.x + p3.y) * p3.z);\n"                                       \
+    "}\n"                                                                             \
+    "float amDither() {\n"                                                            \
+    "    return (amHash(gl_FragCoord.xy) + amHash(gl_FragCoord.xy + 17.17) - 1.0) / 255.0;\n" \
+    "}\n"
+
+namespace am {
+namespace fxsrc {
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Blur 2: directional blur, radial / zoom blur, sharpen
+// ---------------------------------------------------------------------------------------------------------------------
+inline const char* kBlur2 = "#version 300 es\n"
+R"(precision highp float;
+precision highp int;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uAspect;
+uniform float uUnit;
+uniform int uFrame;
+uniform int uMode;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+
+float ign(vec2 p) {  // interleaved gradient noise: a stable, evenly spread per-pixel jitter
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+vec4 tap(vec2 uv) { return textureLod(uTex, uv, 0.0); }
+float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// hue 0..360, full saturation and value
+vec3 hueRgb(float h) {
+    vec3 k = vec3(1.0, 2.0 / 3.0, 1.0 / 3.0);
+    vec3 p = abs(fract(vec3(h / 360.0) + k) * 6.0 - 3.0);
+    return clamp(p - 1.0, 0.0, 1.0);
+}
+
+void main() {
+    vec4 c0 = tap(vUv);
+    if (uMode == 0) {
+        // Directional blur: a box along the angle (AE "Directional Blur"), optional one-sided comet trail.
+        float lenPx = uP[1] / 100.0 * 160.0 * uUnit;
+        if (lenPx < 0.5) { oColor = c0; return; }
+        float a = radians(uP[0]);
+        vec2 dir = vec2(cos(a), -sin(a));  // screen y points down, the angle is counter-clockwise like AE
+        float trail = clamp(uP[2] / 100.0, 0.0, 1.0);
+        const int N = 48;
+        float jit = ign(gl_FragCoord.xy) - 0.5;
+        vec4 acc = vec4(0.0);
+        float wsum = 0.0;
+        for (int i = 0; i < N; i++) {
+            float s = (float(i) + 0.5 + jit) / float(N) * 2.0 - 1.0;  // -1 .. 1
+            float pos = mix(s, (s + 1.0) * 0.5, trail);              // trail = 1: only ahead of the pixel
+            float w = mix(1.0, 1.0 - 0.92 * (s + 1.0) * 0.5, trail);  // comet: fades along the tail
+            w *= 1.0 - smoothstep(0.82, 1.0, abs(s));                 // soft ends, no hard box edge
+            acc += tap(vUv + dir * pos * lenPx * uTexel) * w;
+            wsum += w;
+        }
+        oColor = acc / max(wsum, 1e-4);
+    } else if (uMode == 1) {
+        // Radial blur: every tap turns (spin) and / or scales (zoom) the sample position around the centre.
+        float amt = clamp(uP[0] / 100.0, 0.0, 1.0);
+        if (amt < 0.005) { oColor = c0; return; }
+        float zoom = clamp(uP[1] / 100.0, 0.0, 1.0);
+        vec2 cen = vec2(uP[2] / 100.0, 1.0 - uP[3] / 100.0);
+        vec2 q = (vUv - cen) * vec2(uAspect, 1.0);
+        const int N = 48;
+        float jit = ign(gl_FragCoord.xy) - 0.5;
+        vec4 acc = vec4(0.0);
+        float wsum = 0.0;
+        for (int i = 0; i < N; i++) {
+            float s = (float(i) + 0.5 + jit) / float(N) * 2.0 - 1.0;
+            float ang = s * amt * 0.5 * (1.0 - zoom);
+            float sc = 1.0 + s * amt * 0.30 * zoom;
+            float cs = cos(ang), sn = sin(ang);
+            vec2 r = vec2(q.x * cs - q.y * sn, q.x * sn + q.y * cs) * sc;
+            float w = 1.0 - 0.6 * s * s;
+            acc += tap(cen + r / vec2(uAspect, 1.0)) * w;
+            wsum += w;
+        }
+        oColor = acc / max(wsum, 1e-4);
+    } else if (uMode == 2) {
+        // Sharpen: unsharp mask on the luminance only (no colour fringes), noise threshold, halo control.
+        float amt = clamp(uP[0], 0.0, 300.0) / 100.0;
+        if (amt < 0.005) { oColor = c0; return; }
+        float radius = (0.6 + clamp(uP[1], 0.0, 100.0) * 0.09) * uUnit;  // px
+        float thr = clamp(uP[2], 0.0, 100.0) / 100.0 * 0.12;
+        float halo = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float l0 = luma(c0.rgb);
+        float sum = 0.0, wsum = 0.0;
+        float mn = l0, mx = l0;
+        const int N = 32;
+        for (int i = 0; i < N; i++) {
+            float fi = float(i) + 0.5;
+            float r = sqrt(fi / float(N));
+            float a = fi * 2.39996323;
+            vec2 o = vec2(cos(a), sin(a)) * r * radius * uTexel;
+            float w = exp(-1.6 * r * r);  // gaussian-like falloff over the disc
+            float l = luma(tap(vUv + o).rgb);
+            sum += l * w;
+            wsum += w;
+            mn = min(mn, l);
+            mx = max(mx, l);
+        }
+        sum += l0 * 1.0;
+        wsum += 1.0;
+        float blur = sum / wsum;
+        float d = l0 - blur;
+        // below the threshold the difference fades out, so noise is not sharpened
+        float k = thr > 0.0001 ? smoothstep(thr * 0.5, thr * 1.5, abs(d)) : 1.0;
+        float target = l0 + d * amt * k;
+        float slack = (1.0 - halo) * 0.25;
+        target = clamp(target, mn - slack, mx + slack);
+        vec3 rgb = c0.rgb + (target - l0);
+        oColor = vec4(clamp(rgb, 0.0, c0.a), c0.a);
+    } else if (uMode == 3) {
+        // Lens blur: a disc of taps (bokeh), bright spots get more weight so highlights bloom into discs.
+        float R = clamp(uP[0], 0.0, 100.0) / 100.0 * 40.0 * uUnit;
+        if (R < 0.5) { oColor = c0; return; }
+        float boost = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float thr = clamp(uP[2], 0.0, 100.0) / 100.0;
+        const int N = 64;
+        float rot = ign(gl_FragCoord.xy) * 6.2831853;
+        vec4 acc = vec4(0.0);
+        float wsum = 0.0;
+        for (int i = 0; i < N; i++) {
+            float fi = float(i) + 0.5;
+            float r = sqrt(fi / float(N));
+            float a = fi * 2.39996323 + rot;
+            vec4 s = tap(vUv + vec2(cos(a), sin(a)) * r * R * uTexel);
+            vec3 sc = s.a > 0.001 ? s.rgb / s.a : vec3(0.0);
+            float l = max(sc.r, max(sc.g, sc.b));
+            float w = 1.0 + boost * 7.0 * smoothstep(thr, thr + 0.15, l);
+            acc += s * w;
+            wsum += w;
+        }
+        oColor = acc / max(wsum, 1e-4);
+    } else if (uMode == 4) {
+        // Tilt-shift: a sharp band across the picture, blur grows away from it.
+        float amt = clamp(uP[0], 0.0, 100.0) / 100.0;
+        if (amt < 0.005) { oColor = c0; return; }
+        float ang = radians(uP[3]);
+        vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
+        vec2 nrm = vec2(-sin(ang), cos(ang));
+        vec2 cen = vec2(0.0, 0.5 - uP[1] / 100.0);
+        float d = abs(dot(p - cen, nrm));
+        float wd = clamp(uP[2], 0.0, 100.0) / 100.0 * 0.45;
+        float tr = 0.03 + clamp(uP[4], 0.0, 100.0) / 100.0 * 0.5;
+        float k = smoothstep(wd, wd + tr, d);
+        float R = k * amt * 36.0 * uUnit;
+        if (R < 0.4) { oColor = c0; return; }
+        const int N = 40;
+        float rot = ign(gl_FragCoord.xy) * 6.2831853;
+        vec4 acc = c0;
+        float wsum = 1.0;
+        for (int i = 0; i < N; i++) {
+            float fi = float(i) + 0.5;
+            float r = sqrt(fi / float(N));
+            float a = fi * 2.39996323 + rot;
+            acc += tap(vUv + vec2(cos(a), sin(a)) * r * R * uTexel);
+            wsum += 1.0;
+        }
+        oColor = acc / wsum;
+    } else if (uMode == 5) {
+        // Surface blur: a blur that does not cross edges (taps that differ a lot in colour count for little) = smooth skin.
+        float R = clamp(uP[0], 0.0, 100.0) / 100.0 * 20.0 * uUnit;
+        if (R < 0.5) { oColor = c0; return; }
+        float thr = 0.02 + clamp(uP[1], 0.0, 100.0) / 100.0 * 0.35;
+        vec3 b0 = c0.a > 0.001 ? c0.rgb / c0.a : vec3(0.0);
+        const int N = 40;
+        float rot = ign(gl_FragCoord.xy) * 6.2831853;
+        vec4 acc = c0;
+        float wsum = 1.0;
+        for (int i = 0; i < N; i++) {
+            float fi = float(i) + 0.5;
+            float r = sqrt(fi / float(N));
+            float a = fi * 2.39996323 + rot;
+            vec4 s = tap(vUv + vec2(cos(a), sin(a)) * r * R * uTexel);
+            vec3 sc = s.a > 0.001 ? s.rgb / s.a : b0;
+            vec3 dd = sc - b0;
+            float w = exp(-dot(dd, dd) / (thr * thr)) * exp(-1.2 * r * r);
+            acc += s * w;
+            wsum += w;
+        }
+        oColor = acc / max(wsum, 1e-4);
+    } else {
+        // Light rays: bright parts of the picture are smeared towards a centre point and added on top.
+        float thr = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float len = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float inten = clamp(uP[2], 0.0, 300.0) / 100.0;
+        vec2 cen = vec2(uP[3] / 100.0, 1.0 - uP[4] / 100.0);
+        vec2 dv = cen - vUv;
+        const int N = 48;
+        float jit = ign(gl_FragCoord.xy);
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < N; i++) {
+            float t = (float(i) + jit) / float(N);
+            vec4 s = tap(vUv + dv * t * len);
+            vec3 sc = s.a > 0.001 ? s.rgb / s.a : vec3(0.0);
+            float l = max(sc.r, max(sc.g, sc.b));
+            float k = smoothstep(thr, thr + 0.2, l) * s.a;
+            acc += sc * k * (1.0 - t);
+        }
+        vec3 rays = acc / float(N) * inten;
+        rays = mix(rays, rays * hueRgb(uP[5]) * 1.8, clamp(uP[6], 0.0, 100.0) / 100.0);
+        float ra = max(rays.r, max(rays.g, rays.b));
+        float a = clamp(c0.a + ra * (1.0 - c0.a), 0.0, 1.0);
+        oColor = vec4(min(c0.rgb + rays, vec3(a)), a);
+    }
+}
+)";
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Colour: exposure, brightness / contrast, hue / saturation, levels, colour balance, tint, posterize
+// ---------------------------------------------------------------------------------------------------------------------
+inline const char* kColor = "#version 300 es\n"
+R"(precision highp float;
+precision highp int;
+uniform sampler2D uTex;
+uniform int uMode;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+)" AM_FX_DITHER R"(
+const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
+
+vec3 toLin(vec3 c) {
+    vec3 lo = c / 12.92;
+    vec3 hi = pow((max(c, vec3(0.0)) + 0.055) / 1.055, vec3(2.4));
+    return vec3(c.r <= 0.04045 ? lo.r : hi.r, c.g <= 0.04045 ? lo.g : hi.g, c.b <= 0.04045 ? lo.b : hi.b);
+}
+vec3 toSrgb(vec3 c) {
+    c = max(c, vec3(0.0));
+    vec3 lo = c * 12.92;
+    vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+    return vec3(c.r <= 0.0031308 ? lo.r : hi.r, c.g <= 0.0031308 ? lo.g : hi.g, c.b <= 0.0031308 ? lo.b : hi.b);
+}
+// hue 0..360, full saturation and value
+vec3 hueRgb(float h) {
+    vec3 k = vec3(1.0, 2.0 / 3.0, 1.0 / 3.0);
+    vec3 p = abs(fract(vec3(h / 360.0) + k) * 6.0 - 3.0);
+    return clamp(p - 1.0, 0.0, 1.0);
+}
+// rotation of the colour around the grey axis: keeps the brightness (better than turning the HSV hue)
+vec3 hueRot(vec3 c, float a) {
+    float cs = cos(a), sn = sin(a);
+    vec3 k = vec3(0.57735027);
+    return c * cs + cross(k, c) * sn + k * dot(k, c) * (1.0 - cs);
+}
+// hue of a colour in degrees 0..360 (0 for a grey)
+float hueOf(vec3 c) {
+    float mx = max(c.r, max(c.g, c.b));
+    float mn = min(c.r, min(c.g, c.b));
+    float d = mx - mn;
+    if (d < 1e-5) return 0.0;
+    float h;
+    if (mx == c.r) h = mod((c.g - c.b) / d, 6.0);
+    else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+    else h = (c.r - c.g) / d + 4.0;
+    return h * 60.0;
+}
+
+void main() {
+    vec4 c = texture(uTex, vUv);
+    if (c.a <= 0.0005) { oColor = vec4(0.0); return; }
+    vec3 rgb = clamp(c.rgb / c.a, 0.0, 1.0);
+    vec3 o = rgb;
+
+    if (uMode == 0) {
+        // Exposure (AE "Exposure"): in linear light, stops + offset + gamma, optional soft highlight rolloff.
+        vec3 lin = toLin(rgb);
+        lin = lin * exp2(uP[0]) + uP[1] / 100.0 * 0.5;
+        float g = clamp(uP[2], 20.0, 300.0) / 100.0;
+        lin = pow(max(lin, vec3(0.0)), vec3(1.0 / g));
+        float roll = clamp(uP[3], 0.0, 100.0) / 100.0;
+        if (roll > 0.001) {
+            vec3 soft = vec3(lin.r <= 0.8 ? lin.r : 0.8 + 0.2 * tanh((lin.r - 0.8) / 0.2),
+                             lin.g <= 0.8 ? lin.g : 0.8 + 0.2 * tanh((lin.g - 0.8) / 0.2),
+                             lin.b <= 0.8 ? lin.b : 0.8 + 0.2 * tanh((lin.b - 0.8) / 0.2));
+            lin = mix(lin, soft, roll);
+        }
+        o = toSrgb(clamp(lin, 0.0, 1.0));
+    } else if (uMode == 1) {
+        // Brightness & contrast around mid grey.
+        float ct = clamp(uP[1], -100.0, 100.0) / 100.0;
+        float slope = ct >= 0.0 ? 1.0 / (1.0 - 0.98 * ct) : 1.0 + ct;
+        o = (rgb - 0.5) * slope + 0.5 + clamp(uP[0], -100.0, 100.0) / 100.0 * 0.5;
+    } else if (uMode == 2) {
+        // Hue / saturation / lightness + vibrance.
+        o = hueRot(rgb, radians(uP[0]));
+        float y = dot(o, LW);
+        float sat = clamp(uP[1], -100.0, 100.0) / 100.0;
+        o = mix(vec3(y), o, 1.0 + sat);
+        float vib = clamp(uP[3], -100.0, 100.0) / 100.0;
+        float cmax = max(o.r, max(o.g, o.b)), cmin = min(o.r, min(o.g, o.b));
+        float cs = cmax - cmin;  // how colourful the pixel already is
+        float vw = vib >= 0.0 ? vib * (1.0 - cs) : vib * cs;
+        o = mix(vec3(dot(o, LW)), o, 1.0 + vw);
+        float li = clamp(uP[2], -100.0, 100.0) / 100.0;
+        o = li >= 0.0 ? mix(o, vec3(1.0), li) : o * (1.0 + li);
+    } else if (uMode == 3) {
+        // Levels (AE "Levels"): input black / white, gamma, output black / white.
+        float ib = clamp(uP[0], 0.0, 254.0) / 255.0;
+        float iw = max(clamp(uP[1], 0.0, 255.0) / 255.0, ib + 1.0 / 255.0);
+        float g = clamp(uP[2], 10.0, 500.0) / 100.0;
+        float ob = clamp(uP[3], 0.0, 255.0) / 255.0;
+        float ow = clamp(uP[4], 0.0, 255.0) / 255.0;
+        vec3 t = clamp((rgb - ib) / (iw - ib), 0.0, 1.0);
+        t = pow(t, vec3(1.0 / g));
+        o = ob + t * (ow - ob);
+    } else if (uMode == 4) {
+        // Colour balance: a hue / amount per range (shadows, midtones, highlights), the tint has no net brightness.
+        float l = dot(rgb, LW);
+        float wS = (1.0 - l) * (1.0 - l);
+        float wM = 4.0 * l * (1.0 - l);
+        float wH = l * l;
+        vec3 cs = hueRgb(uP[0]); cs -= dot(cs, LW);
+        vec3 cm = hueRgb(uP[2]); cm -= dot(cm, LW);
+        vec3 ch = hueRgb(uP[4]); ch -= dot(ch, LW);
+        vec3 add = cs * (clamp(uP[1], 0.0, 100.0) / 100.0) * wS
+                 + cm * (clamp(uP[3], 0.0, 100.0) / 100.0) * wM
+                 + ch * (clamp(uP[5], 0.0, 100.0) / 100.0) * wH;
+        o = rgb + add * 0.45;
+        float keep = clamp(uP[6], 0.0, 100.0) / 100.0;
+        float l2 = max(dot(o, LW), 0.0001);
+        o *= mix(1.0, max(l, 0.0001) / l2, keep);
+    } else if (uMode == 5) {
+        // Tint: the picture's brightness mapped onto a two colour ramp (shadow colour -> highlight colour).
+        float l = dot(rgb, LW);
+        vec3 cs = mix(vec3(0.0), hueRgb(uP[0]), clamp(uP[1], 0.0, 100.0) / 100.0 * 0.5);
+        vec3 ch = mix(vec3(1.0), hueRgb(uP[2]), clamp(uP[3], 0.0, 100.0) / 100.0);
+        vec3 ramp = mix(cs, ch, l);
+        o = mix(rgb, ramp, clamp(uP[4], 0.0, 100.0) / 100.0);
+    } else if (uMode == 6) {
+        // Posterize.
+        float n = clamp(floor(uP[0] + 0.5), 2.0, 32.0);
+        vec3 q = floor(rgb * (n - 1.0) + 0.5) / (n - 1.0);
+        o = mix(rgb, q, clamp(uP[1], 0.0, 100.0) / 100.0);
+    } else if (uMode == 7) {
+        // Invert: every channel, or only the brightness (the colours stay).
+        float amt = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float lo = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float y = dot(rgb, LW);
+        vec3 inv = 1.0 - rgb;
+        vec3 lum = rgb + (1.0 - 2.0 * y);
+        o = mix(rgb, mix(inv, lum, lo), amt);
+    } else if (uMode == 8) {
+        // Black & white with free channel weights and an optional toning (sepia, blue tone ...).
+        vec3 wt = vec3(uP[0], uP[1], uP[2]) / 100.0;
+        float g = clamp(dot(rgb, wt), 0.0, 1.0);
+        float ta = clamp(uP[5], 0.0, 100.0) / 100.0;
+        vec3 tn = mix(vec3(1.0), 0.35 + 0.85 * hueRgb(uP[4]), ta);
+        tn /= max(dot(tn, LW), 0.001);
+        o = mix(rgb, vec3(g) * tn, clamp(uP[3], 0.0, 100.0) / 100.0);
+    } else if (uMode == 9) {
+        // Threshold: pure black and white around a level.
+        float lvl = clamp(uP[0], 0.0, 255.0) / 255.0;
+        float soft = clamp(uP[1], 0.0, 100.0) / 100.0 * 0.25 + 0.002;
+        float t = smoothstep(lvl - soft, lvl + soft, dot(rgb, LW));
+        o = mix(rgb, vec3(t), clamp(uP[2], 0.0, 100.0) / 100.0);
+    } else if (uMode == 10) {
+        // Temperature and tint (white balance) in linear light, grey keeps its brightness.
+        float tmp = clamp(uP[0], -100.0, 100.0) / 100.0;
+        float tnt = clamp(uP[1], -100.0, 100.0) / 100.0;
+        vec3 gain = vec3(1.0 + 0.30 * tmp + 0.06 * tnt, 1.0 - 0.20 * tnt, 1.0 - 0.34 * tmp + 0.06 * tnt);
+        gain /= dot(gain, LW);
+        o = toSrgb(clamp(toLin(rgb) * gain, 0.0, 1.0));
+    } else if (uMode == 11) {
+        // Shadows / highlights: lifts dark parts, pulls bright parts back, optional midtone contrast.
+        float sh = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float hi = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float wd = 0.2 + clamp(uP[2], 0.0, 100.0) / 100.0 * 0.8;
+        float mc = clamp(uP[3], -100.0, 100.0) / 100.0;
+        float y = dot(rgb, LW);
+        float ws = 1.0 - smoothstep(0.0, wd, y);
+        float wh = smoothstep(1.0 - wd, 1.0, y);
+        float y2 = y + ws * sh * (1.0 - y) * 0.55 - wh * hi * y * 0.55;
+        o = rgb * clamp(y2 / max(y, 0.02), 0.0, 6.0);
+        vec3 cur = (o - 0.5) * (1.0 + mc * 0.6) + 0.5;
+        o = mix(o, cur, 4.0 * y * (1.0 - y));
+    } else if (uMode == 12) {
+        // Color pop (leave colour): only colours near a hue stay, the rest fades to grey.
+        float mx = max(rgb.r, max(rgb.g, rgb.b));
+        float mn = min(rgb.r, min(rgb.g, rgb.b));
+        float h = hueOf(rgb);
+        float dh = abs(h - uP[0]);
+        dh = min(dh, 360.0 - dh) / 180.0;
+        float rng = clamp(uP[1], 0.0, 100.0) / 100.0 * 0.5 + 0.01;
+        float sf = clamp(uP[2], 0.0, 100.0) / 100.0 * 0.5 + 0.005;
+        float keep = (1.0 - smoothstep(rng, rng + sf, dh)) * smoothstep(0.02, 0.12, mx - mn);
+        o = mix(rgb, mix(vec3(dot(rgb, LW)), rgb, keep), clamp(uP[3], 0.0, 100.0) / 100.0);
+    } else if (uMode == 13) {
+        // Cinematic grade: teal shadows, warm highlights, S-curve contrast, lifted blacks, saturation.
+        float amt = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float ct = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float fd = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float sat = clamp(uP[3], -100.0, 100.0) / 100.0;
+        float y = dot(rgb, LW);
+        vec3 c2 = rgb + vec3(-0.06, 0.02, 0.08) * (1.0 - y) * (1.0 - y) + vec3(0.07, 0.02, -0.07) * y * y;
+        c2 = clamp(c2, 0.0, 1.0);
+        c2 = mix(c2, c2 * c2 * (3.0 - 2.0 * c2), ct * 0.8);
+        c2 = c2 * (1.0 - 0.12 * fd) + 0.06 * fd;
+        c2 = mix(vec3(dot(c2, LW)), c2, 1.0 + sat);
+        o = mix(rgb, c2, amt);
+    } else {
+        // Solarize: values above the threshold flip (the Sabattier look).
+        float th = clamp(uP[0], 0.0, 100.0) / 100.0;
+        vec3 s = mix(rgb, 1.0 - rgb, smoothstep(vec3(th - 0.02), vec3(th + 0.02), rgb));
+        o = mix(rgb, s, clamp(uP[1], 0.0, 100.0) / 100.0);
+    }
+    o = clamp(o + amDither(), 0.0, 1.0);
+    oColor = vec4(o * c.a, c.a);
+}
+)";
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Warp: wave warp, twirl, bulge, mirror, kaleidoscope, turbulent displace (everything that moves pixels)
+// ---------------------------------------------------------------------------------------------------------------------
+inline const char* kWarp = "#version 300 es\n"
+R"(precision highp float;
+precision highp int;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uAspect;
+uniform int uFrame;
+uniform int uMode;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+
+const float PI = 3.14159265;
+
+// Reads the picture at uv. Outside the picture the picture is mirrored back in (no see-through holes at the edges of a
+// warped layer, no smeared edge pixels either).
+vec4 pic(vec2 uv) {
+    uv = 1.0 - abs(1.0 - mod(uv, 2.0));
+    return textureLod(uTex, uv, 0.0);
+}
+// uv <-> a space with height 1 and the centre at (0, 0) (so rounds stay round on a wide picture)
+vec2 toP(vec2 uv) { return (uv - 0.5) * vec2(uAspect, 1.0); }
+vec2 toUv(vec2 p) { return p / vec2(uAspect, 1.0) + 0.5; }
+vec2 centreP(float x, float y) { return toP(vec2(x / 100.0, 1.0 - y / 100.0)); }
+
+float h3(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+float n3(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+               mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p, int oct) {
+    float s = 0.0, a = 0.5, tot = 0.0;
+    mat2 R = mat2(0.8, 0.6, -0.6, 0.8);
+    for (int i = 0; i < 6; i++) {
+        if (i >= oct) break;
+        s += a * n3(p);
+        tot += a;
+        p.xy = R * p.xy * 2.0;
+        p.z += 1.7;
+        a *= 0.5;
+    }
+    return s / max(tot, 1e-4);
+}
+
+void main() {
+    vec2 p = toP(vUv);
+    vec2 q = p;
+    vec2 qr = q, qb = q;  // the red / blue sample positions of the lens distortion colour fringes
+    bool chroma = false;
+    if (uMode == 0) {
+        // Wave warp: a sine wave travelling along `direction`, pushing pixels sideways to it.
+        float amp = clamp(uP[0], 0.0, 100.0) / 100.0 * 0.07;
+        float wl = 0.02 + clamp(uP[1], 0.0, 100.0) / 100.0 * 0.78;
+        float a = radians(uP[2]);
+        vec2 dir = vec2(cos(a), -sin(a));
+        vec2 nrm = vec2(-dir.y, dir.x);
+        float ph = radians(uP[3]) + 6.2831853 * float(uFrame) / 24.0 * (uP[4] / 100.0);
+        q = p + nrm * amp * sin(6.2831853 * dot(p, dir) / wl + ph);
+    } else if (uMode == 1) {
+        // Twirl: inside the radius the picture is turned, most in the centre.
+        float R = max(clamp(uP[1], 0.0, 100.0) / 100.0 * 0.95, 0.001);
+        vec2 cen = centreP(uP[2], uP[3]);
+        vec2 d = p - cen;
+        float r = length(d);
+        float f = clamp(1.0 - r / R, 0.0, 1.0);
+        float ang = radians(uP[0]) * f * f;
+        float cs = cos(ang), sn = sin(ang);
+        q = cen + vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+    } else if (uMode == 2) {
+        // Bulge / pinch: a lens, smooth at the rim.
+        float R = max(clamp(uP[1], 0.0, 100.0) / 100.0 * 0.95, 0.01);
+        vec2 cen = centreP(uP[2], uP[3]);
+        float s = clamp(uP[0], -100.0, 100.0) / 100.0;
+        float k = s >= 0.0 ? 1.0 + 2.0 * s : 1.0 / (1.0 + 2.0 * (-s));
+        vec2 d = p - cen;
+        float r = length(d);
+        if (r < R && r > 1e-5) {
+            float nr = pow(r / R, k) * R;
+            q = cen + d / r * nr;
+        }
+    } else if (uMode == 3) {
+        // Mirror: one side of a line is reflected onto the other.
+        vec2 cen = centreP(uP[0], uP[1]);
+        float a = radians(uP[2]);
+        vec2 dir = vec2(cos(a), -sin(a));
+        vec2 nrm = vec2(-dir.y, dir.x);
+        float s = dot(p - cen, nrm);
+        if (s < 0.0) q = p - 2.0 * s * nrm;
+    } else if (uMode == 4) {
+        // Kaleidoscope: the plane is cut into segments, every second one is mirrored.
+        float n = clamp(floor(uP[0] + 0.5), 2.0, 24.0);
+        vec2 cen = centreP(uP[2], uP[3]);
+        float zoom = max(clamp(uP[4], 20.0, 300.0) / 100.0, 0.05);
+        vec2 d = (p - cen) / zoom;
+        float r = length(d);
+        float a = atan(d.y, d.x) - radians(uP[1]);
+        float seg = 2.0 * PI / n;
+        a = mod(a, seg);
+        a = abs(a - seg * 0.5);
+        a += radians(uP[5]);
+        q = cen + r * vec2(cos(a), sin(a));
+    } else if (uMode == 5) {
+        // Turbulent displace: fractal noise pushes the pixels around (the "heat haze" / liquid look).
+        float amt = clamp(uP[0], 0.0, 100.0) / 100.0 * 0.10;
+        float freq = mix(24.0, 1.5, clamp(uP[1], 1.0, 100.0) / 100.0);
+        int oct = int(clamp(floor(uP[2] + 0.5), 1.0, 6.0));
+        float z = radians(uP[3]) / 6.2831853 * 4.0 + float(uFrame) / 24.0 * (uP[4] / 100.0) * 2.0;
+        vec3 b = vec3(p * freq, z);
+        vec2 dsp = vec2(fbm(b, oct), fbm(b + vec3(17.3, 31.7, 9.1), oct)) * 2.0 - 1.0;
+        q = p + dsp * amt;
+    } else if (uMode == 6) {
+        // Ripple: rings travel out of a centre and push the pixels along the radius.
+        float amp = clamp(uP[0], 0.0, 100.0) / 100.0 * 0.06;
+        float wl = 0.01 + clamp(uP[1], 0.0, 100.0) / 100.0 * 0.4;
+        vec2 cen = centreP(uP[2], uP[3]);
+        float R = clamp(uP[4], 0.0, 100.0) / 100.0 * 1.6 + 0.001;
+        vec2 d = p - cen;
+        float r = length(d);
+        float ph = radians(uP[6]) + 6.2831853 * float(uFrame) / 24.0 * (uP[5] / 100.0);
+        float env = 1.0 - smoothstep(0.0, R, r);
+        float off = sin(6.2831853 * r / wl - ph) * amp * env;
+        q = p + (r > 1e-5 ? d / r : vec2(0.0)) * off;
+    } else if (uMode == 7) {
+        // Lens distortion: barrel (+) or pincushion (-) over the whole picture, optional colour fringes.
+        float k = clamp(uP[0], -100.0, 100.0) / 100.0 * 0.9;
+        float zm = max(clamp(uP[1], 50.0, 200.0) / 100.0, 0.05);
+        float ca = clamp(uP[2], 0.0, 100.0) / 100.0 * 0.03;
+        vec2 cen = centreP(uP[3], uP[4]);
+        vec2 d = (p - cen) / zm;
+        vec2 dd = d * (1.0 + k * dot(d, d));
+        q = cen + dd;
+        if (ca > 0.0001) {
+            chroma = true;
+            qr = cen + dd * (1.0 + ca);
+            qb = cen + dd * (1.0 - ca);
+        }
+    } else if (uMode == 8) {
+        // Polar coordinates: the picture bent into a circle (x -> angle, y -> radius), or a circle opened up again.
+        float t = clamp(uP[0], 0.0, 100.0) / 100.0;
+        vec2 m;
+        if (uP[1] < 0.5) {
+            m = toP(vec2(atan(p.x, -p.y) / 6.2831853 + 0.5, 1.0 - length(p) * 2.0));
+        } else {
+            float a = (vUv.x - 0.5) * 6.2831853;
+            float rn = (1.0 - vUv.y) * 0.5;
+            m = rn * vec2(sin(a), -cos(a));
+        }
+        q = mix(p, m, t);
+    } else if (uMode == 9) {
+        // Motion tile: the picture repeated nx * ny times, optionally mirrored, scrolling.
+        float nx = clamp(floor(uP[0] + 0.5), 1.0, 10.0);
+        float ny = clamp(floor(uP[1] + 0.5), 1.0, 10.0);
+        vec2 ph = vec2(uP[3], uP[4]) / 100.0 + vec2(uP[5], uP[6]) / 100.0 * float(uFrame) / 24.0 * 0.5;
+        vec2 g = vUv * vec2(nx, ny) - ph;
+        vec2 f = uP[2] > 0.5 ? 1.0 - abs(1.0 - mod(g, 2.0)) : fract(g);
+        q = toP(f);
+    } else if (uMode == 10) {
+        // Camera shake: a random push, turn and zoom per step (smooth or jumpy), a little zoom-in hides the edges.
+        float amt = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float rate = clamp(uP[1], 1.0, 24.0);
+        float rotA = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float fill = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float smo = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float seed = uP[5];
+        float t = float(uFrame) * rate / 24.0;
+        float i0 = floor(t);
+        float f = smoothstep(0.0, 1.0, t - i0);
+        vec3 n0 = vec3(h3(vec3(i0, 1.0, seed)), h3(vec3(i0, 2.0, seed)), h3(vec3(i0, 3.0, seed))) * 2.0 - 1.0;
+        vec3 n1 = vec3(h3(vec3(i0 + 1.0, 1.0, seed)), h3(vec3(i0 + 1.0, 2.0, seed)), h3(vec3(i0 + 1.0, 3.0, seed))) * 2.0 - 1.0;
+        vec3 nn = mix(n0, mix(n0, n1, f), smo);
+        float ang = nn.z * rotA * 0.06;
+        float cs = cos(ang), sn = sin(ang);
+        vec2 pr = vec2(p.x * cs - p.y * sn, p.x * sn + p.y * cs);
+        q = pr / (1.0 + fill * 0.12) + nn.xy * amt * 0.04;
+    }
+    if (chroma) {
+        vec4 ra = pic(toUv(qr)), ga = pic(toUv(q)), ba = pic(toUv(qb));
+        float al = max(ra.a, max(ga.a, ba.a));
+        oColor = vec4(clamp(vec3(ra.r, ga.g, ba.b), 0.0, al), al);
+    } else {
+        oColor = pic(toUv(q));
+    }
+}
+)";
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Style: mosaic, halftone, scanlines, glitch
+// ---------------------------------------------------------------------------------------------------------------------
+inline const char* kStyle = "#version 300 es\n"
+R"(precision highp float;
+precision highp int;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uAspect;
+uniform float uUnit;
+uniform int uFrame;
+uniform int uMode;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+
+const float PI = 3.14159265;
+vec4 tap(vec2 uv) { return textureLod(uTex, uv, 0.0); }
+float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+float hash11(float p) {
+    p = fract(p * 0.1031);
+    p *= p + 33.33;
+    p *= p + p;
+    return fract(p);
+}
+float hash21(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+// hue 0..360, full saturation and value
+vec3 hueRgb(float h) {
+    vec3 k = vec3(1.0, 2.0 / 3.0, 1.0 / 3.0);
+    vec3 p = abs(fract(vec3(h / 360.0) + k) * 6.0 - 3.0);
+    return clamp(p - 1.0, 0.0, 1.0);
+}
+vec3 unpm(vec4 c) { return c.a > 0.001 ? c.rgb / c.a : vec3(0.0); }
+float vnoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x), mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+// Sobel gradient of the brightness (x, y); px = distance of the taps in pixels
+vec2 sobel(vec2 uv, float px) {
+    vec2 o = uTexel * px;
+    float tl = luma(unpm(tap(uv + vec2(-o.x, o.y))));
+    float t = luma(unpm(tap(uv + vec2(0.0, o.y))));
+    float tr = luma(unpm(tap(uv + vec2(o.x, o.y))));
+    float l = luma(unpm(tap(uv + vec2(-o.x, 0.0))));
+    float r = luma(unpm(tap(uv + vec2(o.x, 0.0))));
+    float bl = luma(unpm(tap(uv + vec2(-o.x, -o.y))));
+    float b = luma(unpm(tap(uv + vec2(0.0, -o.y))));
+    float br = luma(unpm(tap(uv + vec2(o.x, -o.y))));
+    return vec2((tr + 2.0 * r + br) - (tl + 2.0 * l + bl), (tl + 2.0 * t + tr) - (bl + 2.0 * b + br));
+}
+// Kuwahara: mean colour and brightness variance of one 3 x 3 block that starts at this pixel and reaches R px towards `sgn`
+void kuwaharaQuad(vec2 sgn, float R, out vec3 mean, out float vr) {
+    vec3 sum = vec3(0.0);
+    float sl = 0.0, sl2 = 0.0;
+    for (int j = 0; j < 3; j++) {
+        for (int i = 0; i < 3; i++) {
+            vec3 s = unpm(tap(vUv + vec2(float(i), float(j)) * 0.5 * R * sgn * uTexel));
+            float l = luma(s);
+            sum += s;
+            sl += l;
+            sl2 += l * l;
+        }
+    }
+    mean = sum / 9.0;
+    float ml = sl / 9.0;
+    vr = sl2 / 9.0 - ml * ml;
+}
+// The picture under the centre of the halftone cell this pixel is in (5 taps, so a cell gets the average of its area).
+vec3 cellColour(vec2 px, float cell, float ang, vec2 res) {
+    vec2 cs = vec2(cos(ang), sin(ang));
+    vec2 g = vec2(px.x * cs.x + px.y * cs.y, -px.x * cs.y + px.y * cs.x) / cell;
+    vec2 gc = (floor(g) + 0.5) * cell;
+    vec2 pc = vec2(gc.x * cs.x - gc.y * cs.y, gc.x * cs.y + gc.y * cs.x);
+    vec2 lo = uTexel * 0.5, hi = 1.0 - uTexel * 0.5;
+    float o = cell * 0.3;
+    vec4 s0 = tap(clamp(pc / res, lo, hi));
+    vec4 s1 = tap(clamp((pc + vec2(o, 0.0)) / res, lo, hi));
+    vec4 s2 = tap(clamp((pc - vec2(o, 0.0)) / res, lo, hi));
+    vec4 s3 = tap(clamp((pc + vec2(0.0, o)) / res, lo, hi));
+    vec4 s4 = tap(clamp((pc - vec2(0.0, o)) / res, lo, hi));
+    vec4 sum = s0 * 0.36 + (s1 + s2 + s3 + s4) * 0.16;
+    return sum.a > 0.001 ? sum.rgb / sum.a : vec3(0.0);
+}
+// ink coverage (0..1) of one halftone screen at this pixel: value = how much ink (0..1) the cell wants
+float dotCover(vec2 px, float cell, float ang, float value, float soft) {
+    float cs = cos(ang), sn = sin(ang);
+    vec2 g = vec2(px.x * cs + px.y * sn, -px.x * sn + px.y * cs) / cell;
+    vec2 f = fract(g) - 0.5;
+    float d = length(f);
+    // dot radius so that the inked AREA equals the wanted ink (circle area up to 78 %, then the dots grow into the corners)
+    float v = clamp(value, 0.0, 1.0);
+    float r = v <= 0.7854 ? sqrt(v / PI) : 0.5 + (v - 0.7854) / 0.2146 * 0.2071;
+    float aa = 0.75 / cell + soft * 0.35;
+    return 1.0 - smoothstep(r - aa, r + aa, d);
+}
+
+void main() {
+    vec2 res = 1.0 / uTexel;
+    vec4 c0 = tap(vUv);
+    if (uMode == 0) {
+        // Mosaic: square blocks, optional gap between them.
+        float cell = max(1.0, clamp(uP[0], 1.0, 100.0) * uUnit * 0.5);
+        vec2 px = vUv * res;
+        vec2 cellId = floor(px / cell);
+        vec2 centre = (cellId + 0.5) * cell;
+        vec4 c = tap(clamp(centre / res, uTexel * 0.5, 1.0 - uTexel * 0.5));
+        float gap = clamp(uP[1], 0.0, 40.0) / 100.0;
+        vec2 f = abs(fract(px / cell) - 0.5) * 2.0;  // 0 centre .. 1 edge
+        float edge = max(f.x, f.y);
+        float aa = 1.0 / cell;
+        float keep = gap > 0.001 ? 1.0 - smoothstep(1.0 - gap - aa, 1.0 - gap + aa, edge) : 1.0;
+        oColor = c * keep;
+    } else if (uMode == 1) {
+        // Halftone: ink dots on paper. Mono = one angle on the luminance, colour = three screens (like cyan / magenta / yellow).
+        float cell = max(2.0, clamp(uP[0], 2.0, 60.0) * uUnit * 0.6);
+        float ang = radians(uP[1]);
+        float soft = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float colour = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float mixv = clamp(uP[4], 0.0, 100.0) / 100.0;
+        vec2 px = vUv * res;
+        vec3 base = cellColour(px, cell, ang, res);
+        float monoOut = 1.0 - dotCover(px, cell, ang, 1.0 - luma(base), soft);
+        float a1 = ang + radians(15.0), a2 = ang + radians(75.0);
+        vec3 col;
+        col.r = 1.0 - dotCover(px, cell, a1, 1.0 - cellColour(px, cell, a1, res).r, soft);
+        col.g = 1.0 - dotCover(px, cell, a2, 1.0 - cellColour(px, cell, a2, res).g, soft);
+        col.b = 1.0 - dotCover(px, cell, ang, 1.0 - base.b, soft);
+        vec3 ht = mix(vec3(monoOut), col, colour);
+        vec3 orig = c0.a > 0.001 ? c0.rgb / c0.a : vec3(0.0);
+        vec3 outc = mix(orig, ht, mixv);
+        oColor = vec4(outc * c0.a, c0.a);
+    } else if (uMode == 2) {
+        // Scanlines (CRT): dark lines, RGB phosphor mask, flicker, a slow bright roll bar.
+        float inten = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float size = max(1.0, clamp(uP[1], 1.0, 20.0) * uUnit);
+        float maskAmt = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float flick = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float roll = uP[4] / 100.0;
+        vec3 rgb = c0.a > 0.001 ? c0.rgb / c0.a : vec3(0.0);
+        float y = gl_FragCoord.y;
+        float line = 0.5 + 0.5 * cos(2.0 * PI * y / (size * 2.0));
+        line = pow(line, 0.75);
+        float lines = mix(1.0, line * 1.18, inten);
+        // phosphor stripes: one third of the colour per pixel column
+        float xi = mod(floor(gl_FragCoord.x / max(1.0, uUnit)), 3.0);
+        vec3 stripe = vec3(xi < 0.5 ? 1.0 : 0.55, (xi > 0.5 && xi < 1.5) ? 1.0 : 0.55, xi > 1.5 ? 1.0 : 0.55);
+        vec3 m = mix(vec3(1.0), stripe * 1.2, maskAmt);
+        float fl = 1.0 - flick * 0.12 * hash11(float(uFrame) * 1.37);
+        float bar = 0.0;
+        if (abs(roll) > 0.001) {
+            float t = fract(float(uFrame) / 24.0 * roll * 0.25);
+            float yy = 1.0 - vUv.y;
+            float dd = abs(fract(yy - t + 0.5) - 0.5);
+            bar = smoothstep(0.12, 0.0, dd) * 0.10 * inten;
+        }
+        vec3 o = rgb * lines * m * fl + bar;
+        oColor = vec4(clamp(o, 0.0, 1.0) * c0.a, c0.a);
+    } else if (uMode == 3) {
+        // Glitch: bands of the picture jump sideways, the colour channels split, lines wobble. The pattern changes `rate`
+        // times a second and depends only on the frame number, so the preview and the export are the same.
+        float amt = clamp(uP[0], 0.0, 100.0) / 100.0;
+        if (amt < 0.005) { oColor = c0; return; }
+        float rate = clamp(uP[3], 1.0, 24.0);
+        float stp = floor(float(uFrame) * rate / 24.0);
+        float bandH = mix(0.012, 0.22, clamp(uP[1], 1.0, 100.0) / 100.0);
+        float row = floor((1.0 - vUv.y) / bandH);
+        float h = hash21(vec2(row, stp));
+        float h2 = hash21(vec2(row + 41.0, stp + 7.0));
+        float isOn = h < amt * 0.55 ? 1.0 : 0.0;
+        float shift = (h2 - 0.5) * 2.0 * amt * 0.28 * isOn;
+        float line = floor(gl_FragCoord.y / max(1.0, uUnit));
+        float wob = (hash21(vec2(line, stp + 3.0)) - 0.5) * clamp(uP[4], 0.0, 100.0) / 100.0 * 0.012 * amt;
+        float split = clamp(uP[2], 0.0, 100.0) / 100.0 * 0.03 * (0.15 + isOn);
+        float sgn = h2 > 0.5 ? 1.0 : -1.0;
+        vec2 uvR = vec2(vUv.x + shift + wob + split * sgn, vUv.y);
+        vec2 uvG = vec2(vUv.x + shift + wob, vUv.y);
+        vec2 uvB = vec2(vUv.x + shift + wob - split * sgn, vUv.y);
+        vec4 a = tap(uvR), b = tap(uvG), c = tap(uvB);
+        float al = max(a.a, max(b.a, c.a));
+        vec3 rgb = vec3(a.r, b.g, c.b);
+        oColor = vec4(clamp(rgb, 0.0, al), al);
+    } else if (uMode == 4) {
+        // Emboss: the picture as a relief lit from one direction.
+        float amt = clamp(uP[0], 0.0, 300.0) / 100.0;
+        if (amt < 0.005) { oColor = c0; return; }
+        float ang = radians(uP[1]);
+        float px = max(1.0, clamp(uP[2], 1.0, 20.0) * uUnit * 0.5);
+        vec2 dir = vec2(cos(ang), -sin(ang)) * uTexel * px;
+        float e = (luma(unpm(tap(vUv + dir))) - luma(unpm(tap(vUv - dir)))) * amt * 2.0;
+        vec3 base = unpm(c0);
+        float keep = clamp(uP[3], 0.0, 100.0) / 100.0;
+        vec3 o = mix(vec3(0.5 + e), base + e, keep);
+        oColor = vec4(clamp(o, 0.0, 1.0) * c0.a, c0.a);
+    } else if (uMode == 5) {
+        // Find edges: dark lines on white (ink drawing) or bright lines on black (neon), mono or in the picture's colours.
+        float st = clamp(uP[0], 0.0, 300.0) / 100.0;
+        float th = max(1.0, clamp(uP[1], 1.0, 10.0) * uUnit * 0.5);
+        float glow = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float col = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float mixv = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float m = clamp(length(sobel(vUv, th)) * st * 1.5, 0.0, 1.0);
+        vec3 base = unpm(c0);
+        float mxc = max(base.r, max(base.g, base.b));
+        vec3 ec = mix(vec3(1.0), base / max(mxc, 0.2), col);
+        vec3 dk = vec3(1.0) - m * (vec3(1.0) - mix(vec3(0.0), base * 0.7, col));
+        vec3 res = mix(dk, ec * m, glow);
+        oColor = vec4(clamp(mix(base, res, mixv), 0.0, 1.0) * c0.a, c0.a);
+    } else if (uMode == 6) {
+        // Cartoon: smoothed, few colour steps, ink outlines.
+        float lv = clamp(floor(uP[0] + 0.5), 2.0, 16.0);
+        float es = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float th = max(1.0, clamp(uP[2], 1.0, 6.0) * uUnit * 0.7);
+        float sm = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float mixv = clamp(uP[4], 0.0, 100.0) / 100.0;
+        vec2 r = uTexel * sm * 4.0 * uUnit;
+        vec4 s = c0 * 0.4 + (tap(vUv + vec2(r.x, 0.0)) + tap(vUv - vec2(r.x, 0.0)) + tap(vUv + vec2(0.0, r.y)) + tap(vUv - vec2(0.0, r.y))) * 0.15;
+        vec3 q = floor(unpm(s) * lv + 0.5) / lv;
+        float edge = smoothstep(0.15, 0.6, clamp(length(sobel(vUv, th)) * es * 4.0, 0.0, 1.0));
+        vec3 res = q * (1.0 - edge);
+        oColor = vec4(clamp(mix(unpm(c0), res, mixv), 0.0, 1.0) * c0.a, c0.a);
+    } else if (uMode == 7) {
+        // Pencil sketch: hatching that gets denser in the dark parts, plus outlines, on white paper.
+        float dens = clamp(uP[0], 1.0, 100.0) / 100.0;
+        float dark = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float ang = radians(uP[2]);
+        float es = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float col = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float mixv = clamp(uP[5], 0.0, 100.0) / 100.0;
+        vec3 base = unpm(c0);
+        float need = pow(1.0 - luma(base), 1.6) * dark * 1.6;
+        vec2 px = gl_FragCoord.xy / max(1.0, uUnit);
+        float sp = mix(14.0, 3.0, dens);
+        float h = 0.0;
+        for (int i = 0; i < 3; i++) {
+            float a = ang + float(i) * 0.8;
+            float tri = abs(fract(dot(px, vec2(cos(a), sin(a))) / sp) - 0.5) * 2.0;
+            float lw = clamp((need - 0.15 - float(i) * 0.33) * 3.0, 0.0, 1.0) * 0.5;
+            h = max(h, smoothstep(1.0 - lw - 0.02, 1.0 - lw + 0.05, tri));
+        }
+        float m = clamp(length(sobel(vUv, max(1.0, uUnit))) * es * 4.0, 0.0, 1.0);
+        float pencil = (1.0 - h * 0.85) * (1.0 - m * 0.9);
+        vec3 res = mix(vec3(pencil), clamp(base * 1.15, 0.0, 1.0) * pencil, col);
+        oColor = vec4(clamp(mix(base, res, mixv), 0.0, 1.0) * c0.a, c0.a);
+    } else if (uMode == 8) {
+        // Oil paint (Kuwahara): every pixel takes the average of the calmest of four neighbouring blocks.
+        float R = clamp(uP[0], 0.0, 100.0) / 100.0 * 6.0 * uUnit;
+        if (R < 0.5) { oColor = c0; return; }
+        float boost = clamp(uP[1], 0.0, 100.0) / 100.0;
+        vec3 m0, m1, m2, m3;
+        float v0, v1, v2, v3;
+        kuwaharaQuad(vec2(1.0, 1.0), R, m0, v0);
+        kuwaharaQuad(vec2(-1.0, 1.0), R, m1, v1);
+        kuwaharaQuad(vec2(1.0, -1.0), R, m2, v2);
+        kuwaharaQuad(vec2(-1.0, -1.0), R, m3, v3);
+        vec3 res = m0;
+        float best = v0;
+        if (v1 < best) { best = v1; res = m1; }
+        if (v2 < best) { best = v2; res = m2; }
+        if (v3 < best) { best = v3; res = m3; }
+        res = mix(vec3(luma(res)), res, 1.0 + boost * 0.6);
+        oColor = vec4(clamp(res, 0.0, 1.0) * c0.a, c0.a);
+    } else if (uMode == 9) {
+        // Strobe light: a flash `rate` times a second (white, or the picture inverted).
+        float rate = clamp(uP[0], 1.0, 24.0);
+        float st = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float duty = clamp(uP[2], 1.0, 100.0) / 100.0;
+        float inv = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float on = fract(float(uFrame) * rate / 24.0) < duty ? 1.0 : 0.0;
+        vec3 base = unpm(c0);
+        vec3 o = mix(base, mix(vec3(1.0), 1.0 - base, inv), on * st);
+        oColor = vec4(o * c0.a, c0.a);
+    } else if (uMode == 10) {
+        // VHS tape: wobbling lines, a tracking band that rolls down, smeared colour, tape noise.
+        float amt = clamp(uP[0], 0.0, 100.0) / 100.0;
+        if (amt < 0.005) { oColor = c0; return; }
+        float wob = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float bleed = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float trk = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float noi = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float fad = clamp(uP[5], 0.0, 100.0) / 100.0;
+        float t = float(uFrame) / 24.0;
+        float y = 1.0 - vUv.y;
+        float line = floor(gl_FragCoord.y / max(1.0, uUnit));
+        float jit = (vnoise(vec2(y * 40.0, t * 8.0)) - 0.5) * wob * 0.012 * amt
+                  + (hash21(vec2(line, floor(t * 24.0))) - 0.5) * wob * 0.002 * amt;
+        float band = smoothstep(0.06, 0.0, abs(y - fract(t * 0.18 + 0.2))) * trk * amt;
+        float shiftX = jit + band * 0.05 * (hash11(floor(t * 24.0)) - 0.3);
+        vec2 uv = vec2(vUv.x + shiftX, vUv.y);
+        float bl = bleed * amt * 0.012;
+        vec4 cs = tap(uv);
+        vec3 cL = unpm(cs);
+        vec3 cb = (unpm(tap(uv - vec2(bl, 0.0))) + unpm(tap(uv - vec2(bl * 2.0, 0.0))) + unpm(tap(uv - vec2(bl * 3.0, 0.0))) + cL) * 0.25;
+        vec3 chroma = cb - vec3(luma(cb));
+        vec3 rgb = vec3(luma(cL)) + chroma * (1.0 - fad * amt * 0.6);
+        float nz = hash21(gl_FragCoord.xy / max(1.0, uUnit) + float(uFrame) * 7.0) - 0.5;
+        float bn = hash21(vec2(floor(gl_FragCoord.x / max(1.0, uUnit) / 2.0), line + float(uFrame))) - 0.3;
+        rgb += nz * noi * amt * 0.25 + band * bn * 0.6;
+        rgb *= 1.0 - 0.08 * amt * (0.5 + 0.5 * sin(line * PI));
+        oColor = vec4(clamp(rgb, 0.0, 1.0) * cs.a, cs.a);
+    } else if (uMode == 11) {
+        // Old film: gate weave, flicker, scratches and dust that change 12 times a second, sepia, faded blacks.
+        float sc = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float dust = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float fl = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float wv = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float sep = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float fade = clamp(uP[5], 0.0, 100.0) / 100.0;
+        float fs = floor(float(uFrame) * 12.0 / 24.0);
+        vec2 off = vec2(hash11(fs * 1.7) - 0.5, hash11(fs * 3.1 + 9.0) - 0.5) * wv * 0.012;
+        vec4 c = tap(vUv + off);
+        vec3 rgb = unpm(c);
+        float y = luma(rgb);
+        rgb = mix(rgb, vec3(y * 1.10, y * 0.95, y * 0.78), sep);
+        rgb = mix(rgb, rgb * 0.85 + 0.08, fade);
+        rgb *= 1.0 + (hash11(float(uFrame) * 2.31) - 0.5) * fl * 0.35;
+        for (int i = 0; i < 3; i++) {
+            float x = hash11(fs * 7.0 + float(i) * 13.1);
+            float on = step(0.55, hash11(fs * 3.3 + float(i) * 5.7)) * sc;
+            float ln = smoothstep(0.0012, 0.0, abs(vUv.x - x)) * on * (0.3 + 0.7 * vnoise(vec2(vUv.y * 6.0, fs + float(i))));
+            rgb += ln * 0.45;
+        }
+        for (int i = 0; i < 6; i++) {
+            vec2 pos = vec2(hash11(fs * 11.0 + float(i) * 3.7), hash11(fs * 17.0 + float(i) * 9.1));
+            float r = 0.002 + 0.004 * hash11(float(i) + fs);
+            float dd = length((vUv - pos) * vec2(uAspect, 1.0));
+            float on = step(0.5, hash11(fs * 5.0 + float(i) * 2.3)) * dust;
+            float colr = (i % 2 == 0) ? 0.05 : 0.9;
+            rgb = mix(rgb, vec3(colr), smoothstep(r, r * 0.4, dd) * on * 0.85);
+        }
+        oColor = vec4(clamp(rgb, 0.0, 1.0) * c.a, c.a);
+    } else if (uMode == 12) {
+        // Light leak: warm coloured light blobs drift over the picture (screen blend).
+        float inten = clamp(uP[0], 0.0, 100.0) / 100.0;
+        float hue = uP[1];
+        float size = 0.15 + clamp(uP[2], 0.0, 100.0) / 100.0 * 0.7;
+        float spd = uP[3] / 100.0;
+        float pos = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float t = float(uFrame) / 24.0 * spd * 0.35;
+        vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
+        vec3 leak = vec3(0.0);
+        for (int i = 0; i < 3; i++) {
+            float fi = float(i);
+            vec2 cc = vec2(sin(t * (0.7 + fi * 0.31) + fi * 2.1 + pos * 6.2831853) * 0.33 * uAspect, cos(t * (0.5 + fi * 0.23) + fi * 1.3) * 0.35);
+            float d = length(p - cc);
+            float g = exp(-d * d / (size * size * (0.5 + 0.3 * fi)));
+            leak += hueRgb(hue + fi * 28.0 - 28.0) * g * (1.0 - 0.2 * fi);
+        }
+        leak = clamp(leak * inten * 1.2, 0.0, 1.0);
+        vec3 o = 1.0 - (1.0 - unpm(c0)) * (1.0 - leak);
+        oColor = vec4(o * c0.a, c0.a);
+    } else {
+        // Lens flare: a bright core, halo, horizontal streak and ghost discs along the line through the picture's centre.
+        vec2 cen = vec2(uP[0] / 100.0, 1.0 - uP[1] / 100.0);
+        float br = clamp(uP[2], 0.0, 200.0) / 100.0;
+        float sz = 0.05 + clamp(uP[3], 0.0, 100.0) / 100.0 * 0.35;
+        float gh = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float stk = clamp(uP[5], 0.0, 100.0) / 100.0;
+        float hue = uP[6];
+        vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
+        vec2 L = (cen - 0.5) * vec2(uAspect, 1.0);
+        vec3 tint = mix(vec3(1.0), hueRgb(hue), 0.55);
+        float d = length(p - L);
+        vec3 f = tint * (exp(-d * d / (sz * sz * 0.05)) * 1.2 + exp(-d / (sz * 0.9)) * 0.35);
+        float dy = abs(p.y - L.y), dx = abs(p.x - L.x);
+        f += tint * stk * exp(-dy * dy / (0.00012 + sz * sz * 0.002)) * exp(-dx / (sz * 6.0)) * 0.8;
+        for (int i = 0; i < 5; i++) {
+            float fi = float(i);
+            vec2 gp = -L * (0.3 + 0.45 * fi);
+            float gs = sz * (0.35 + 0.25 * hash11(fi + 3.0));
+            float gd = length(p - gp);
+            float disc = smoothstep(gs, gs * 0.8, gd);
+            float ring = smoothstep(gs * 0.75, gs, gd) * smoothstep(gs * 1.1, gs * 0.95, gd);
+            f += (hueRgb(hue + 40.0 * fi) * 0.8 + 0.2) * (disc * 0.18 + ring * 0.35) * gh * 0.5;
+        }
+        f = clamp(f * br, 0.0, 1.0);
+        vec3 o = 1.0 - (1.0 - unpm(c0)) * (1.0 - f);
+        oColor = vec4(o * c0.a, c0.a);
+    }
+}
+)";
+
+}  // namespace fxsrc
+}  // namespace am

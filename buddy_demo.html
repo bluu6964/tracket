@@ -1,0 +1,244 @@
+<title>Buddy</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one stage with Buddy on top, controls grouped below (moods, app events, sounds). */
+:root{--bg:#F4F5F9;--panel:#FFFFFF;--line:#D9DCE8;--fg:#15161C;--dim:#5B5E6E;--accent:#4B5BD6;--stage-a:#FFFFFF;--stage-b:#E3E6F2}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#0F0F0F;--panel:#1C1C1C;--line:#333333;--fg:#F5F5F7;--dim:#A0A0AA;--accent:#B8F31A;--stage-a:#1E2132;--stage-b:#0B0B10;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0F0F0F;--panel:#1C1C1C;--line:#333333;--fg:#F5F5F7;--dim:#A0A0AA;--accent:#B8F31A;--stage-a:#1E2132;--stage-b:#0B0B10;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+main{max-width:720px;margin:0 auto}
+h1{font-size:24px;margin:0 0 2px}
+p.sub{color:var(--dim);margin:0 0 14px}
+.stage{background:radial-gradient(120% 100% at 50% 0%,var(--stage-a),var(--stage-b));border-radius:20px;border:1px solid var(--line);position:relative;aspect-ratio:1/1;max-width:100%;max-height:420px;margin:0 auto;overflow:hidden}
+canvas{width:100%;height:100%;display:block;touch-action:none;cursor:pointer}
+.bubble{position:absolute;top:14px;left:50%;transform:translateX(-50%);background:#fff;color:#111;border-radius:14px;padding:6px 12px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:90%;text-align:center}
+.bubble.on{opacity:1}
+.grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+button{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;margin:20px 0 0;color:var(--dim);font-weight:600}
+.note{color:var(--dim);font-size:13px;margin-top:18px}
+</style>
+<main>
+<h1>Buddy</h1>
+<p class="sub">অ্যাপের সঙ্গী। ট্যাপ করুন, মুড বদলান, সাউন্ড শুনুন (প্রথমে যেকোনো বোতামে চাপ দিন)।</p>
+<div class="stage"><canvas id="c"></canvas><div class="bubble" id="b"></div></div>
+<h2>মুড</h2><div class="grid" id="moods"></div>
+<h2>অ্যাপের ঘটনা</h2><div class="grid" id="events"></div>
+<h2>সাউন্ড</h2><div class="grid" id="sfx"></div>
+<p class="note">আঙুল বা মাউস নাড়ালে চোখ সেদিকে তাকায়। ৮ সেকেন্ড কিছু না করলে ঢুলে পড়ে, ১৪ সেকেন্ডে ঘুমায়; ট্যাপ করলে জেগে ওঠে। দ্রুত ৫ বার ট্যাপ করলে মাথা ঘোরে।</p>
+</main>
+<script>
+// Buddy prototype: SAME geometry / numbers as the Compose version (ui/buddy/BuddyFace.kt). Units: fractions of size s.
+const MOODS = ['idle','happy','excited','curious','thinking','working','surprised','sad','sleepy','asleep','dizzy','love','celebrate','groove'];
+
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function eyeBrush(ctx,x0,y0,x1,y1){const g=ctx.createLinearGradient(x0,y0,x1,y1);g.addColorStop(0,'#58E0FF');g.addColorStop(1,'#9B8CFF');return g;}
+
+function heartPath(ctx,r){ctx.beginPath();ctx.moveTo(0,r*0.9);ctx.bezierCurveTo(-r*1.5,-r*0.1,-r*0.7,-r*1.2,0,-r*0.4);ctx.bezierCurveTo(r*0.7,-r*1.2,r*1.5,-r*0.1,0,r*0.9);ctx.closePath();}
+function starPath(ctx,r){ctx.beginPath();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5;const rr=i%2?r*0.45:r;const x=Math.cos(a)*rr,y=Math.sin(a)*rr;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.closePath();}
+
+// one eye, drawn about (0,0) in visor space; u = unit length (px); k = pop (0..1+ overshoot) ; open = blink 0..1
+function drawEye(ctx,type,u,t,k,open,side,gx,gy){
+  ctx.save();
+  ctx.translate(gx*u*0.9,gy*u*0.9);
+  ctx.scale(k,k);
+  const lw=u*0.30;
+  const stroke=(fn)=>{ // glow underlay then core
+    ctx.lineCap='round';ctx.lineJoin='round';
+    ctx.strokeStyle='rgba(120,170,255,0.10)';ctx.lineWidth=lw*2.6;fn();ctx.stroke();
+    ctx.strokeStyle='rgba(120,200,255,0.22)';ctx.lineWidth=lw*1.7;fn();ctx.stroke();
+    ctx.strokeStyle=eyeBrush(ctx,-u,-u,u,u);ctx.lineWidth=lw;fn();ctx.stroke();
+  };
+  const fillGlow=(fn)=>{
+    ctx.fillStyle='rgba(120,170,255,0.12)';ctx.save();ctx.scale(1.5,1.5);fn();ctx.fill();ctx.restore();
+    ctx.fillStyle='rgba(120,200,255,0.25)';ctx.save();ctx.scale(1.22,1.22);fn();ctx.fill();ctx.restore();
+    ctx.fillStyle=eyeBrush(ctx,-u,-u,u,u);fn();ctx.fill();
+  };
+  const arc=(up,w)=>{ctx.beginPath();if(up)ctx.arc(0,u*0.55,w,Math.PI*1.12,Math.PI*1.88);else ctx.arc(0,-u*0.55,w,Math.PI*0.12,Math.PI*0.88);};
+  switch(type){
+    case 'capsule':{const h=u*1.7*Math.max(open,0.06),w=u*0.62;
+      fillGlow(()=>{ctx.beginPath();ctx.roundRect(-w/2,-h/2,w,h,w/2);});break;}
+    case 'capsuleBig':{const h=u*2.2*Math.max(open,0.06),w=u*0.8;
+      fillGlow(()=>{ctx.beginPath();ctx.roundRect(-w/2,-h/2,w,h,w/2);});break;}
+    case 'capsuleSmall':{const h=u*1.1*Math.max(open,0.06),w=u*0.5;
+      fillGlow(()=>{ctx.beginPath();ctx.roundRect(-w/2,-h/2,w,h,w/2);});break;}
+    case 'half':{const h=u*0.75,w=u*0.7;ctx.save();ctx.translate(0,u*0.25);
+      fillGlow(()=>{ctx.beginPath();ctx.roundRect(-w/2,-h/2,w,h,[w/3,w/3,w/2,w/2]);});ctx.restore();break;}
+    case 'arcUp':stroke(()=>arc(true,u*1.0));break;
+    case 'arcDown':stroke(()=>arc(false,u*1.0));break;
+    case 'line':ctx.save();stroke(()=>{ctx.beginPath();ctx.moveTo(-u*0.8,0);ctx.lineTo(u*0.8,0);});ctx.restore();break;
+    case 'ring':{ctx.lineWidth=lw*0.8;ctx.strokeStyle='rgba(120,170,255,0.18)';ctx.beginPath();ctx.arc(0,0,u*0.95,0,7);ctx.lineWidth=lw*2;ctx.stroke();
+      stroke(()=>{ctx.beginPath();ctx.arc(0,0,u*0.85,0,Math.PI*2);});break;}
+    case 'spin':{const a=t*5.5+(side>0?Math.PI:0);
+      ctx.strokeStyle='rgba(120,200,255,0.2)';ctx.lineWidth=lw*0.55;ctx.beginPath();ctx.arc(0,0,u*0.85,0,Math.PI*2);ctx.stroke();
+      stroke(()=>{ctx.beginPath();ctx.arc(0,0,u*0.85,a,a+Math.PI*0.8);});break;}
+    case 'cross':{stroke(()=>{ctx.beginPath();ctx.moveTo(-u*0.8,-u*0.8);ctx.lineTo(u*0.8,u*0.8);ctx.moveTo(u*0.8,-u*0.8);ctx.lineTo(-u*0.8,u*0.8);});break;}
+    case 'heart':{const p=1+Math.sin(t*9)*0.12;ctx.scale(p,p);fillGlow(()=>heartPath(ctx,u*1.0));break;}
+    case 'star':{ctx.rotate(Math.sin(t*4)*0.25);fillGlow(()=>starPath(ctx,u*1.15));break;}
+  }
+  ctx.restore();
+}
+
+function drawZ(ctx,x,y,sz,a){ctx.save();ctx.globalAlpha=a;ctx.strokeStyle='#BFD2FF';ctx.lineWidth=Math.max(1.5,sz*0.22);ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();ctx.moveTo(x-sz,y-sz);ctx.lineTo(x+sz,y-sz);ctx.lineTo(x-sz,y+sz);ctx.lineTo(x+sz,y+sz);ctx.stroke();ctx.restore();}
+
+// state: {mood, moodT (seconds since mood started), hopT (seconds since poke, big when none), gx, gy (-1..1), talking}
+function drawBuddy(ctx,S,t,st){
+  const s=S,mood=st.mood;
+  ctx.save();ctx.clearRect(0,0,s,s);
+  // per mood motion
+  const M={idle:[0.018,1.7],happy:[0.026,2.6],excited:[0.04,4.2],curious:[0.016,1.6],thinking:[0.012,1.2],working:[0.008,2.0],surprised:[0.01,1.5],sad:[0.008,1.0],sleepy:[0.01,0.9],asleep:[0.014,0.8],dizzy:[0.012,3],love:[0.022,2.2],celebrate:[0.05,5.0],groove:[0.035,5.2]}[mood];
+  const bob=Math.sin(t*M[1])*M[0]*s;
+  let hop=0,squash=1;
+  if(st.hopT<0.55){const p=st.hopT/0.55;hop=Math.sin(p*Math.PI)*0.12*s;squash=1+Math.sin(p*Math.PI*2+Math.PI)*0.06*(1-p);}
+  if(mood==='celebrate'||mood==='excited'){const p=(t*(mood==='excited'?2.2:2.6))%1;hop+=Math.abs(Math.sin(p*Math.PI))*0.07*s;}
+  let tilt=Math.sin(t*0.9)*0.035;
+  if(mood==='working')tilt+=Math.sin(t*22)*0.012;
+  if(mood==='dizzy')tilt+=Math.sin(t*6)*0.16;
+  if(mood==='groove')tilt+=Math.sin(t*5.2/2)*0.09;
+  if(mood==='sleepy'||mood==='asleep')tilt+=0.10+Math.sin(t*0.8)*0.01;
+  if(mood==='sad')tilt-=0.06;
+  if(mood==='curious')tilt+=0.07;
+  const cx=s*0.5,cy=s*0.47-bob-hop;
+  // shadow
+  const lift=clamp((bob+hop)/(s*0.12),-0.3,1);
+  ctx.save();ctx.translate(cx,s*0.90);ctx.scale(1-lift*0.25,1);
+  for(let i=0;i<4;i++){const rr=1-i*0.2;ctx.fillStyle=`rgba(110,120,255,${0.05+i*0.022})`;ctx.beginPath();ctx.ellipse(0,0,s*0.30*rr,s*0.032*rr,0,0,7);ctx.fill();}
+  ctx.restore();
+  // body
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(tilt);ctx.scale(1/squash,squash);
+  const rx=s*0.30,ry=s*0.285;
+  const body=()=>{ctx.beginPath();ctx.moveTo(0,-ry);ctx.bezierCurveTo(rx*0.62,-ry,rx,-ry*0.55,rx,-ry*0.05);ctx.bezierCurveTo(rx,ry*0.5,rx*0.55,ry,0,ry);ctx.bezierCurveTo(-rx*0.6,ry,-rx,ry*0.55,-rx,0);ctx.bezierCurveTo(-rx,-ry*0.55,-rx*0.6,-ry,0,-ry);ctx.closePath();};
+  // soft halo
+  ctx.save();ctx.shadowColor='rgba(150,170,255,0.55)';ctx.shadowBlur=s*0.07;ctx.fillStyle='#E9ECF7';body();ctx.fill();ctx.restore();
+  let g=ctx.createRadialGradient(-rx*0.35,-ry*0.55,s*0.02,-rx*0.1,-ry*0.1,rx*1.25);
+  g.addColorStop(0,'#FFFFFF');g.addColorStop(0.55,'#F1F3FA');g.addColorStop(1,'#C9D0E4');
+  ctx.fillStyle=g;body();ctx.fill();
+  // bottom blue bounce light
+  ctx.save();body();ctx.clip();
+  g=ctx.createLinearGradient(0,ry*0.2,0,ry);g.addColorStop(0,'rgba(120,150,255,0)');g.addColorStop(1,'rgba(120,150,255,0.30)');ctx.fillStyle=g;ctx.fillRect(-rx,-ry,rx*2,ry*2);
+  // left edge shade for 3/4 turn
+  g=ctx.createLinearGradient(-rx,0,-rx*0.55,0);g.addColorStop(0,'rgba(150,160,200,0.38)');g.addColorStop(1,'rgba(150,160,200,0)');ctx.fillStyle=g;ctx.fillRect(-rx,-ry,rx*2,ry*2);
+  ctx.restore();
+  // seam line (panel) near the side ring
+  ctx.strokeStyle='rgba(150,160,190,0.35)';ctx.lineWidth=s*0.004;ctx.beginPath();ctx.moveTo(-rx*0.74,-ry*0.62);ctx.quadraticCurveTo(-rx*0.9,0,-rx*0.72,ry*0.62);ctx.stroke();
+  // side ring
+  {const px=-rx*0.88,py=-ry*0.1,w=s*0.034,h=s*0.088;const glow=0.55+(st.talking?0.35*Math.abs(Math.sin(t*14)):0.18*Math.sin(t*2.2));
+    ctx.save();ctx.translate(px,py);
+    ctx.fillStyle='#3A3F52';ctx.beginPath();ctx.ellipse(0,0,w*1.45,h*1.18,0,0,7);ctx.fill();
+    ctx.shadowColor=`rgba(110,200,255,${glow})`;ctx.shadowBlur=s*0.05;
+    ctx.strokeStyle=eyeBrush(ctx,0,-h,0,h);ctx.lineWidth=s*0.017;ctx.beginPath();ctx.ellipse(0,0,w,h,0,0,7);ctx.stroke();ctx.restore();
+    ctx.fillStyle=`rgba(150,210,255,${0.25*glow})`;ctx.beginPath();ctx.ellipse(px,py,w*0.8,h*0.8,0,0,7);ctx.fill();}
+  // visor
+  ctx.save();ctx.translate(rx*0.27,-ry*0.2);ctx.rotate(0.22);
+  const vw=rx*1.34,vh=ry*1.18;
+  const visor=()=>{ctx.beginPath();ctx.roundRect(-vw/2,-vh/2,vw,vh,[vh*0.52,vh*0.5,vh*0.5,vh*0.52]);};
+  ctx.save();ctx.shadowColor='rgba(0,0,0,0.25)';ctx.shadowBlur=s*0.02;ctx.fillStyle='#D8DCEA';ctx.beginPath();ctx.roundRect(-vw/2-s*0.006,-vh/2-s*0.006,vw+s*0.012,vh+s*0.012,vh*0.53);ctx.fill();ctx.restore();
+  g=ctx.createLinearGradient(0,-vh/2,0,vh/2);g.addColorStop(0,'#1B1B26');g.addColorStop(0.5,'#08080C');g.addColorStop(1,'#000');ctx.fillStyle=g;visor();ctx.fill();
+  // eyes
+  ctx.save();visor();ctx.clip();
+  const u=s*0.052;
+  const blinkP=(t*0.8)%4.6;let blink=1;if(blinkP<0.16)blink=Math.abs(blinkP-0.08)/0.08;else if(blinkP>0.38&&blinkP<0.52)blink=Math.abs(blinkP-0.45)/0.07;
+  const pop=clamp(st.moodT/0.18,0,1);const k=pop<1?(1-Math.pow(1-pop,3))*1.0+Math.sin(pop*Math.PI)*0.25:1;
+  const type={idle:'capsule',happy:'arcUp',excited:'arcUp',curious:'capsuleBig',thinking:'capsuleSmall',working:'spin',surprised:'ring',sad:'arcDown',sleepy:'half',asleep:'line',dizzy:'cross',love:'heart',celebrate:'star',groove:(Math.floor(t*2.6)%2?'arcUp':'capsule')}[mood];
+  let gx=st.gx*0.22,gy=st.gy*0.18;
+  if(mood==='thinking'){gx=0.35;gy=-0.35;}
+  if(mood==='curious'){gx=0.25+Math.sin(t*1.3)*0.2;}
+  const open=(mood==='idle'||mood==='curious'||mood==='thinking'||mood==='groove')?blink:1;
+  const sep=vw*0.25,ey=vh*0.02;
+  ctx.save();ctx.translate(-sep,ey);drawEye(ctx,type,u,t,k,open,-1,gx,gy);ctx.restore();
+  ctx.save();ctx.translate(sep,ey);drawEye(ctx,type,u,t,mood==='thinking'?k*1.25:k,open,1,gx,gy);ctx.restore();
+  // thinking dots on the visor
+  if(mood==='thinking'){for(let i=0;i<3;i++){const a=0.3+0.7*Math.max(0,Math.sin(t*4-i*0.9));ctx.fillStyle=`rgba(140,200,255,${a})`;ctx.beginPath();ctx.arc(-u*1.2+i*u*1.2,vh*0.32,u*0.22,0,7);ctx.fill();}}
+  ctx.restore();
+  // gloss
+  ctx.save();visor();ctx.clip();
+  g=ctx.createLinearGradient(-vw/2,-vh/2,vw*0.1,vh*0.1);g.addColorStop(0,'rgba(255,255,255,0.20)');g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(-vw*0.08,-vh*0.42,vw*0.5,vh*0.26,-0.12,0,7);ctx.fill();ctx.restore();
+  ctx.fillStyle='rgba(255,255,255,0.55)';ctx.beginPath();ctx.arc(vw*0.40,-vh*0.18,s*0.0065,0,7);ctx.fill();
+  ctx.restore();
+  // mouth glow
+  {const mw=s*0.075*(st.talking?(0.8+0.5*Math.abs(Math.sin(t*16))):1),mh=s*0.022;const gl=0.55+0.25*Math.sin(t*2.4);
+    ctx.save();ctx.translate(-rx*0.14,ry*0.78);ctx.rotate(0.05);
+    ctx.shadowColor=`rgba(130,150,255,${gl})`;ctx.shadowBlur=s*0.05;
+    ctx.fillStyle=eyeBrush(ctx,-mw,0,mw,0);ctx.beginPath();ctx.roundRect(-mw,-mh,mw*2,mh*2,mh);ctx.fill();ctx.restore();}
+  ctx.restore();
+  // extras
+  if(mood==='asleep'){for(let i=0;i<3;i++){const p=((t*0.5)+i/3)%1;drawZ(ctx,cx+s*0.20+p*s*0.10,cy-s*0.22-p*s*0.20,s*(0.012+i*0.006)*(0.6+p),Math.sin(p*Math.PI)*0.9);}}
+  if(mood==='celebrate'){const cols=['#B8F31A','#58E0FF','#FF7AD9','#FFD166','#9B8CFF'];
+    for(let i=0;i<22;i++){const ph=(st.moodT*0.9+i*0.137)%1;const a=i*2.399;const R=s*(0.18+0.34*ph)*(0.7+0.3*((i*7)%5)/5);
+      const x=cx+Math.cos(a)*R,y=cy-s*0.05+Math.sin(a)*R*0.8+ph*ph*s*0.22;ctx.save();ctx.translate(x,y);ctx.rotate(ph*9+i);ctx.globalAlpha=1-ph;ctx.fillStyle=cols[i%5];ctx.fillRect(-s*0.011,-s*0.006,s*0.022,s*0.012);ctx.restore();}}
+  if(mood==='love'){for(let i=0;i<3;i++){const p=((t*0.45)+i/3)%1;ctx.save();ctx.translate(cx+(i-1)*s*0.14,cy-s*0.30-p*s*0.2);ctx.globalAlpha=Math.sin(p*Math.PI);ctx.fillStyle='#FF7AB6';heartPath(ctx,s*0.022);ctx.fill();ctx.restore();}}
+  if(mood==='surprised'){ctx.save();ctx.strokeStyle='#FFD166';ctx.lineCap='round';ctx.lineWidth=s*0.012;const sh=Math.sin(t*20)*0.01*s;ctx.beginPath();ctx.moveTo(cx+s*0.30+sh,cy-s*0.28);ctx.lineTo(cx+s*0.30+sh,cy-s*0.20);ctx.stroke();ctx.fillStyle='#FFD166';ctx.beginPath();ctx.arc(cx+s*0.30+sh,cy-s*0.16,s*0.007,0,7);ctx.fill();ctx.restore();}
+  if(mood==='sad'){ctx.fillStyle='rgba(120,190,255,0.8)';const p=(t*0.7)%1;ctx.beginPath();ctx.ellipse(cx+s*0.26,cy-s*0.12+p*s*0.16,s*0.008,s*0.013,0,0,7);ctx.globalAlpha=1-p;ctx.fill();}
+  ctx.restore();
+}
+
+// ---- sound prototype (same note tables as BuddySound.kt) ----
+const SFX={
+  HELLO:[[660,880,90,.9],[880,1320,150,.9]],
+  POKE:[[900,1500,70,.9]],
+  GIGGLE:[[1000,1100,45,.7,'v'],[1250,1350,45,.7,'v'],[1000,1100,45,.7,'v'],[1250,1500,70,.7,'v']],
+  HAPPY:[[523,523,80,.8],[659,659,80,.8],[784,784,130,.8]],
+  OOPS:[[520,240,220,.8]],
+  THINK:[[440,520,90,.6],[520,440,90,.6],[440,560,120,.6]],
+  WORK:[[300,620,140,.5]],
+  DONE:[[523,523,90,.8],[659,659,90,.8],[784,784,90,.8],[1046,1046,300,.9]],
+  SLEEP:[[520,300,420,.5]],
+  WAKE:[[400,820,110,.7]],
+  WHOOSH:[[1300,420,70,.6]],
+  DIZZY:[[600,640,320,.7,'w']],
+  LOOK:[[1200,1320,30,.4]],
+};
+let AC=null;
+function playSfx(name,variant=0){
+  AC=AC||new (window.AudioContext||window.webkitAudioContext)();
+  let tt=AC.currentTime+0.01;
+  for(const [f0,f1,ms,amp,mod] of SFX[name]){
+    const mul=name==='POKE'?(1+variant*0.12):1;
+    const o=AC.createOscillator(),g=AC.createGain(),h=AC.createOscillator(),hg=AC.createGain();
+    o.type='sine';h.type='sine';
+    o.frequency.setValueAtTime(f0*mul,tt);o.frequency.linearRampToValueAtTime(f1*mul,tt+ms/1000);
+    h.frequency.setValueAtTime(f0*mul*2,tt);h.frequency.linearRampToValueAtTime(f1*mul*2,tt+ms/1000);hg.gain.value=0.22;
+    g.gain.setValueAtTime(0,tt);g.gain.linearRampToValueAtTime(0.28*amp,tt+0.006);g.gain.exponentialRampToValueAtTime(0.0008,tt+ms/1000+0.04);
+    if(mod){const l=AC.createOscillator(),lg=AC.createGain();l.frequency.value=mod==='w'?18:9;lg.gain.value=mod==='w'?90:40;l.connect(lg);lg.connect(o.frequency);l.start(tt);l.stop(tt+ms/1000+0.1);}
+    o.connect(g);h.connect(hg);hg.connect(g);g.connect(AC.destination);o.start(tt);h.start(tt);o.stop(tt+ms/1000+0.1);h.stop(tt+ms/1000+0.1);
+    tt+=ms/1000;
+  }
+}
+
+
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let S=0;function fit(){const r=cv.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);S=Math.round(r.width*d);cv.width=S;cv.height=Math.round(r.height*d);}
+addEventListener('resize',fit);fit();
+const st={mood:'idle',gx:0,gy:0,talking:false};let moodStart=0,hopAt=-9,untilT=0,lastAct=0,tgx=0,tgy=0;
+const bub=document.getElementById('b');let bubT;
+function say(txt,ms=2200){bub.textContent=txt;bub.classList.add('on');clearTimeout(bubT);bubT=setTimeout(()=>bub.classList.remove('on'),ms);}
+function setMood(m,dur){const n=performance.now()/1000;if(st.mood!==m){st.mood=m;moodStart=n;}untilT=dur?n+dur:0;lastAct=n;mark();}
+const EV={
+ 'নতুন ক্লিপ':['happy',2.2,'HAPPY','Nice one!'],'ক্লিপ ডিলিট':['surprised',1.6,'OOPS','Oops, gone!'],'Undo':['curious',1.4,'WHOOSH','Back in time'],
+ 'Split':['excited',1.4,'POKE','Snip!'],'Play':['groove',6,'HAPPY','Let\'s go!'],'Export চলছে':['working',5,'WORK','Rendering…'],
+ 'Export শেষ':['celebrate',4,'DONE','Your video is ready!'],'Export ব্যর্থ':['sad',3,'OOPS','Something broke'],'ভাবছে':['thinking',3,'THINK','Hmm…'],'ভালোবাসা':['love',3,'HAPPY','Thanks!']};
+const MS={'idle':'শান্ত','happy':'খুশি','excited':'উত্তেজিত','curious':'কৌতূহলী','thinking':'ভাবছে','working':'কাজ করছে','surprised':'অবাক','sad':'মন খারাপ','sleepy':'ঢুলছে','asleep':'ঘুমে','dizzy':'মাথা ঘুরছে','love':'ভালোবাসা','celebrate':'উৎসব','groove':'তালে তালে'};
+const mo=document.getElementById('moods');MOODS.forEach(m=>{const b=document.createElement('button');b.textContent=MS[m];b.onclick=()=>{setMood(m,0);};mo.appendChild(b);});
+const ev=document.getElementById('events');Object.keys(EV).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{const [m,d,s,t]=EV[k];setMood(m,d);playSfx(s);say(t);};ev.appendChild(b);});
+const sf=document.getElementById('sfx');Object.keys(SFX).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{playSfx(k,Math.floor(Math.random()*4));};sf.appendChild(b);});
+let pokes=[];cv.addEventListener('pointerdown',e=>{const n=performance.now()/1000;pokes=pokes.filter(x=>n-x<1.6);pokes.push(n);lastAct=n;
+  if(st.mood==='asleep'||st.mood==='sleepy'){setMood('surprised',1.2);playSfx('WAKE');say('Oh! Hi!');}
+  else if(pokes.length>=5){setMood('dizzy',2.4);playSfx('DIZZY');say('Whoa… dizzy!');pokes=[];}
+  else{hopAt=n;if(Math.random()<.5){playSfx('GIGGLE');setMood('happy',1.6);say(['Hehe!','Tickles!','Again!'][Math.floor(Math.random()*3)]);}else{playSfx('POKE',Math.floor(Math.random()*4));setMood('excited',1.1);}}});
+cv.addEventListener('pointermove',e=>{const r=cv.getBoundingClientRect();tgx=clamp(((e.clientX-r.left)/r.width-0.5)*2,-1,1);tgy=clamp(((e.clientY-r.top)/r.height-0.5)*2,-1,1);lastAct=performance.now()/1000;});
+let first=true;function mark(){}
+function frame(ms){const t=ms/1000;if(first){first=false;setMood('happy',2.5);playSfx&&0;say('Hi! I\'m Buddy');}
+ if(untilT&&t>untilT){untilT=0;st.mood='idle';moodStart=t;}
+ if(!untilT&&(st.mood==='idle')&&t-lastAct>8){st.mood='sleepy';moodStart=t;}
+ if(st.mood==='sleepy'&&t-lastAct>14){st.mood='asleep';moodStart=t;}
+ st.gx+=(tgx-st.gx)*0.12;st.gy+=(tgy-st.gy)*0.12;
+ st.moodT=t-moodStart;st.hopT=t-hopAt;
+ drawBuddy(ctx,S,t,st);requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+window.__setMood=(m)=>{setMood(m,0)};
+</script>

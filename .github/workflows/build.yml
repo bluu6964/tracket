@@ -1,0 +1,77 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Auto Captions: the speech engine (whisper.cpp) is downloaded here instead of being kept in the
+      # repository. Gradle builds it only when this folder exists (app/build.gradle.kts).
+      - name: Get whisper.cpp source
+        run: |
+          git clone --depth 1 --branch v1.7.6 https://github.com/ggml-org/whisper.cpp app/src/main/cpp/whisper.cpp \
+            || git clone --depth 1 https://github.com/ggml-org/whisper.cpp app/src/main/cpp/whisper.cpp
+          rm -rf app/src/main/cpp/whisper.cpp/.git
+
+      # Native text layers: FreeType (glyph drawing) + HarfBuzz (shaping, Bengali conjuncts) are downloaded the
+      # same way. If a download fails the app still builds; text is then drawn with the Android Canvas.
+      - name: Get FreeType and HarfBuzz source
+        run: |
+          git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype app/src/main/cpp/freetype \
+            && rm -rf app/src/main/cpp/freetype/.git || rm -rf app/src/main/cpp/freetype
+          git clone --depth 1 --branch 10.1.0 https://github.com/harfbuzz/harfbuzz app/src/main/cpp/harfbuzz \
+            && rm -rf app/src/main/cpp/harfbuzz/.git || rm -rf app/src/main/cpp/harfbuzz
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+
+      # Debug APK — fast iteration, but Compose is slower at runtime.
+      - name: Assemble debug APK
+        run: gradle assembleDebug --no-daemon
+
+      # Release APK — signed for installation. If release secrets are absent,
+      # Gradle uses the debug key as a TEST fallback (not for Play Store distribution).
+      - name: Assemble release APK
+        run: gradle assembleRelease --no-daemon
+
+      # APKs go to a GitHub Release (not to Actions artifacts, whose storage quota can fill up).
+      # Download them from the repo's "Releases" page. Only the newest 5 releases are kept.
+      - name: Publish APKs to a Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          cp app/build/outputs/apk/debug/*.apk "tracket-debug-${TAG}.apk"
+          cp app/build/outputs/apk/release/*.apk "tracket-release-${TAG}.apk"
+          gh release create "$TAG" tracket-debug-*.apk tracket-release-*.apk \
+            --title "Build ${{ github.run_number }}" --notes "Commit ${{ github.sha }}" --prerelease
+          gh release list --limit 100 --json tagName --jq '.[5:][].tagName' \
+            | xargs -r -n1 gh release delete --cleanup-tag --yes || true
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-reports
+          path: app/build/reports/tests/
+          retention-days: 1

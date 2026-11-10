@@ -1,0 +1,86 @@
+package com.example
+
+import com.example.model.ClipFx
+import com.example.model.ClipFxLibrary
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+/** The effect list the Effects panel offers must match the C++ engine (am::FxType in cpp/engine/fx_plan.h). */
+class ClipFxLibraryTest {
+
+    @Test fun idsAndNativeTypesAreUnique() {
+        val all = ClipFxLibrary.all
+        assertEquals(all.size, all.map { it.id }.toSet().size)
+        assertEquals(all.size, all.map { it.nativeType }.toSet().size)
+    }
+
+    @Test fun nativeTypesCoverTheEngineRange() {
+        // FX_BLUR (1) .. FX_MAX (54): every type the engine knows has a tile, none outside that range
+        assertEquals((1..54).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+    }
+
+    @Test fun everyEffectHasValidParams() {
+        for (d in ClipFxLibrary.all) {
+            assertTrue("${d.id} has 1..7 params", d.params.size in 1..7)
+            assertTrue("${d.id} category exists", d.category in ClipFxLibrary.categories)
+            for (p in d.params) {
+                assertTrue("${d.id}/${p.name} min < max", p.min < p.max)
+                assertTrue("${d.id}/${p.name} default in range", p.default >= p.min && p.default <= p.max)
+                assertTrue("${d.id}/${p.name} step > 0", p.step > 0f)
+                // the ruler works in whole steps from min: the default must sit exactly on a tick
+                val ticks = (p.default - p.min) / p.step
+                assertTrue("${d.id}/${p.name} default is on a tick", abs(ticks - ticks.roundToInt()) < 1e-3f)
+                val maxTicks = (p.max - p.min) / p.step
+                assertTrue("${d.id}/${p.name} max is on a tick", abs(maxTicks - maxTicks.roundToInt()) < 1e-3f)
+            }
+        }
+    }
+
+    @Test fun everyCategoryHasEffects() {
+        for (c in ClipFxLibrary.categories) {
+            assertTrue("$c is empty", ClipFxLibrary.all.any { it.category == c })
+        }
+    }
+
+    @Test fun createUsesDefaults() {
+        val fx = ClipFxLibrary.create(ClipFxLibrary.LEVELS)
+        assertNotNull(fx)
+        assertEquals(listOf(0f, 255f, 100f, 0f, 255f), fx!!.values)
+        assertNull(ClipFxLibrary.create("nope"))
+    }
+
+    @Test fun toNativeWritesGroupsOfEight() {
+        val list = listOf(
+            ClipFxLibrary.create(ClipFxLibrary.GLITCH)!!,
+            ClipFxLibrary.create(ClipFxLibrary.EXPOSURE)!!.copy(values = listOf(1.5f, 10f, 120f, 25f)),
+            ClipFxLibrary.create(ClipFxLibrary.BLUR)!!.copy(enabled = false)
+        )
+        val flat = ClipFxLibrary.toNative(list)!!
+        assertEquals(16, flat.size)  // the disabled one is left out
+        assertEquals(26f, flat[0], 0f)
+        assertEquals(10f, flat[8], 0f)
+        assertEquals(1.5f, flat[9], 0f)
+        assertEquals(25f, flat[12], 0f)
+        assertEquals(0f, flat[13], 0f)  // params the effect does not have are 0
+        assertNull(ClipFxLibrary.toNative(emptyList()))
+    }
+
+    @Test fun toNativeStopsAtTheLimit() {
+        val one = ClipFxLibrary.create(ClipFxLibrary.MOSAIC)!!
+        val many = List(ClipFxLibrary.MAX_EFFECTS + 5) { one.copy(id = "e$it") }
+        assertEquals(ClipFxLibrary.MAX_EFFECTS * 8, ClipFxLibrary.toNative(many)!!.size)
+    }
+
+    @Test fun chromaKeyEyedropperStillWorks() {
+        val k = ClipFxLibrary.keyFromRgb(0xFF00FF00L)  // pure green
+        assertEquals(120f, k[0], 1e-3f)
+        assertEquals(100f, k[1], 1e-3f)
+        val fx: ClipFx = ClipFxLibrary.create(ClipFxLibrary.CHROMA_KEY)!!
+        assertEquals(7, fx.values.size)
+    }
+}

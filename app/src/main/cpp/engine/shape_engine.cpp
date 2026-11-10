@@ -1,0 +1,292 @@
+#include "shape_engine.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#include "text_blit.h"
+
+namespace am {
+namespace shape {
+
+namespace {
+
+const float kDeg2Rad = 0.017453292519943295f;
+
+struct Rgba { float a, r, g, b; };  // straight, 0..255
+
+Rgba fromArgb(uint32_t c) {
+    return {(float)((c >> 24) & 255), (float)((c >> 16) & 255), (float)((c >> 8) & 255), (float)(c & 255)};
+}
+
+Rgba lerpArgb(uint32_t c1, uint32_t c2, float t) {
+    t = std::min(1.f, std::max(0.f, t));
+    auto ch = [&](int sh) {
+        const float x1 = (float)((c1 >> sh) & 255), x2 = (float)((c2 >> sh) & 255);
+        return x1 + (x2 - x1) * t;
+    };
+    return {ch(24), ch(16), ch(8), ch(0)};
+}
+
+// Same maths as text_engine.cpp gradientAt / pictureAt (which build the Android shaders of buildGradientShader /
+// buildImageShader); here the block is the shape box: bw = bh = 2 * base, origin = (-base, -base).
+Rgba gradientAt(const Request& rq, float bw, float bh, float x, float y) {
+    const float x1 = rq.gx1 * bw, y1 = rq.gy1 * bh;
+    float x2 = rq.gx2 * bw;
+    const float y2 = rq.gy2 * bh;
+    if (rq.gradType == 1) {
+        const float r = std::max(1.f, std::hypot(x2 - x1, y2 - y1));
+        return lerpArgb(rq.grad1, rq.grad2, std::hypot(x - x1, y - y1) / r);
+    }
+    if (rq.gradType == 2) {
+        const float twoPi = 6.28318530718f;
+        const float start = std::atan2(y2 - y1, x2 - x1);
+        float a = std::atan2(y - y1, x - x1) - start;
+        a = std::fmod(a, twoPi);
+        if (a < 0.f) a += twoPi;
+        const float f = a / twoPi;
+        return lerpArgb(rq.grad1, rq.grad2, f < 0.5f ? f * 2.f : (1.f - f) * 2.f);
+    }
+    if (x1 == x2 && y1 == y2) x2 += 1.f;
+    const float dx = x2 - x1, dy = y2 - y1;
+    return lerpArgb(rq.grad1, rq.grad2, ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy));
+}
+
+Rgba sampleFill(const Request& rq, float sx, float sy) {
+    const int W = rq.fillW, H = rq.fillH;
+    if (sx < 0.f || sy < 0.f || sx > (float)W || sy > (float)H) return {0, 0, 0, 0};
+    const float fx = std::min((float)(W - 1), std::max(0.f, sx - 0.5f));
+    const float fy = std::min((float)(H - 1), std::max(0.f, sy - 0.5f));
+    const int x0 = (int)fx, y0 = (int)fy, x1 = std::min(W - 1, x0 + 1), y1 = std::min(H - 1, y0 + 1);
+    const float tx = fx - x0, ty = fy - y0;
+    float acc[4] = {0, 0, 0, 0};
+    const int xs[2] = {x0, x1}, ys[2] = {y0, y1};
+    const float wx[2] = {1.f - tx, tx}, wy[2] = {1.f - ty, ty};
+    for (int j = 0; j < 2; ++j)
+        for (int i = 0; i < 2; ++i) {
+            const uint8_t* q = rq.fillPix + (size_t)ys[j] * rq.fillStride + (size_t)xs[i] * 4;
+            const float w = wx[i] * wy[j];
+            for (int k = 0; k < 4; ++k) acc[k] += q[k] * w;
+        }
+    if (acc[3] <= 0.5f) return {0, 0, 0, 0};
+    const float inv = 255.f / acc[3];
+    return {acc[3], std::min(255.f, acc[0] * inv), std::min(255.f, acc[1] * inv), std::min(255.f, acc[2] * inv)};
+}
+
+Rgba pictureAt(const Request& rq, float bw, float bh, float x, float y) {
+    const float sw = (float)rq.fillW, sh = (float)rq.fillH;
+    if (rq.fillImgMode == 2) return sampleFill(rq, x / bw * sw, y / bh * sh);
+    if (rq.fillImgMode == 1) {
+        const float k = std::min(bw / sw, bh / sh);
+        return sampleFill(rq, (x - (bw - sw * k) * 0.5f) / k, (y - (bh - sh * k) * 0.5f) / k);
+    }
+    const float k = std::max(bw / sw, bh / sh);
+    return sampleFill(rq, x / k + (sw - bw / k) * 0.5f, y / k + (sh - bh / k) * 0.5f);
+}
+
+struct Poly { float x[10], y[10]; int n = 0; };
+
+Poly regularPolygon(int kind, float base) {
+    Poly p;
+    const bool star = kind == STAR;
+    p.n = star ? 10 : 5;
+    for (int i = 0; i < p.n; ++i) {
+        const float a = (float)((i * 360.0 / p.n - 90.0) * 0.017453292519943295);
+        const float r = (star && (i & 1)) ? base * 0.45f : base;
+        p.x[i] = r * std::cos(a);
+        p.y[i] = r * std::sin(a);
+    }
+    return p;
+}
+
+// Exact signed distance to a closed polygon (even-odd inside test), negative inside.
+float polygonDistance(const Poly& p, float x, float y) {
+    float d2 = 1e30f;
+    bool inside = false;
+    for (int i = 0, j = p.n - 1; i < p.n; j = i++) {
+        const float ax = p.x[j], ay = p.y[j], bx = p.x[i], by = p.y[i];
+        const float ex = bx - ax, ey = by - ay, wx = x - ax, wy = y - ay;
+        const float t = std::min(1.f, std::max(0.f, (wx * ex + wy * ey) / (ex * ex + ey * ey)));
+        const float dx = wx - ex * t, dy = wy - ey * t;
+        d2 = std::min(d2, dx * dx + dy * dy);
+        if (((ay > y) != (by > y)) && (x < (bx - ax) * (y - ay) / (by - ay) + ax)) inside = !inside;
+    }
+    const float d = std::sqrt(d2);
+    return inside ? -d : d;
+}
+
+/**
+ * Signed distance of the local point (x, y) to the outline, negative inside, in local units. Rectangle, triangle and
+ * pentagon use "largest edge plane distance": exact inside / along the edges and the outline of its offsets is mitered,
+ * which is what Paint.Join.MITER (Android's default, miter limit 4) draws for a stroke. Circle, rounded rectangle: exact.
+ * Star: exact distance to the polygon (a stroke has round outer tips; Canvas miters them). Ellipse: first-order estimate.
+ */
+float outlineDistance(int kind, float base, float corner, const Poly* poly, float x, float y) {
+    switch (kind) {
+        case RECT:
+            return std::max(std::fabs(x), std::fabs(y)) - base;
+        case ROUNDED: {
+            const float rad = std::min(base, corner > 0.f ? corner : base * 0.25f);
+            const float qx = std::fabs(x) - (base - rad), qy = std::fabs(y) - (base - rad);
+            return std::hypot(std::max(qx, 0.f), std::max(qy, 0.f)) + std::min(std::max(qx, qy), 0.f) - rad;
+        }
+        case OVAL: {
+            const float a = base * 1.2f, b = base * 0.75f;
+            const float k0 = std::hypot(x / a, y / b);
+            const float k1 = std::hypot(x / (a * a), y / (b * b));
+            if (k1 < 1e-9f) return -std::min(a, b);
+            return k0 * (k0 - 1.f) / k1;
+        }
+        case TRIANGLE: {
+            // apex (0,-base), base corners (+-base, base)
+            const float inv = 0.4472135955f;  // 1 / sqrt(5)
+            const float bottom = y - base;
+            const float right = (2.f * x - y - base) * inv;
+            const float left = (-2.f * x - y - base) * inv;
+            return std::max(bottom, std::max(right, left));
+        }
+        case PENTAGON: {
+            const float apothem = base * 0.80901699437f;  // cos 36 deg
+            float m = -1e30f;
+            for (int i = 0; i < 5; ++i) {
+                const float a = (float)((-54.0 + 72.0 * i) * 0.017453292519943295);
+                m = std::max(m, std::cos(a) * x + std::sin(a) * y - apothem);
+            }
+            return m;
+        }
+        case STAR:
+            return poly ? polygonDistance(*poly, x, y) : 0.f;
+        default:
+            return std::hypot(x, y) - base;
+    }
+}
+
+inline float cover(float distPx) { return std::min(1.f, std::max(0.f, 0.5f - distPx)); }
+
+inline void overPx(uint8_t* d, float r, float g, float b, float a) {  // premultiplied 0..255 source
+    const float inv = 1.f - a / 255.f;
+    d[0] = (uint8_t)std::min(255.f, r + d[0] * inv + 0.5f);
+    d[1] = (uint8_t)std::min(255.f, g + d[1] * inv + 0.5f);
+    d[2] = (uint8_t)std::min(255.f, b + d[2] * inv + 0.5f);
+    d[3] = (uint8_t)std::min(255.f, a + d[3] * inv + 0.5f);
+}
+
+}  // namespace
+
+bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq) {
+    if (!dst || dstW <= 0 || dstH <= 0 || !(rq.base > 0.f) || !(rq.scale > 0.f)) return false;
+    if (rq.alpha <= 0.f) return true;
+    const float alpha = std::min(1.f, rq.alpha);
+    const float sw = std::max(0.f, rq.strokeW);
+    const bool strokeOn = sw > 0.f && ((rq.strokeArgb >> 24) & 255) > 0;
+    const bool pic = rq.fillKind == 2;
+    const bool fillOn = rq.fillOn && !(pic && !rq.fillPix);
+    if (!fillOn && !strokeOn) return true;
+
+    const float base = rq.base;
+    const float boxW = 2.f * base, boxH = 2.f * base;
+    const float ang = rq.rotationDeg * kDeg2Rad;
+    const float cs = std::cos(ang), sn = std::sin(ang);
+
+    // Bounding box of the (stroke-grown) outline on the frame.
+    const float half = (rq.kind == OVAL ? base * 1.2f : base) + sw * 1.3f + 2.f / rq.scale;
+    float minX = 1e30f, minY = 1e30f, maxX = -1e30f, maxY = -1e30f;
+    for (int i = 0; i < 4; ++i) {
+        const float lx = (i & 1 ? half : -half) * rq.scale, ly = (i & 2 ? half : -half) * rq.scale;
+        const float X = rq.cx + cs * lx - sn * ly, Y = rq.cy + sn * lx + cs * ly;
+        minX = std::min(minX, X); maxX = std::max(maxX, X);
+        minY = std::min(minY, Y); maxY = std::max(maxY, Y);
+    }
+    const int x0 = std::max(0, (int)std::floor(minX)), x1 = std::min(dstW, (int)std::ceil(maxX));
+    const int y0 = std::max(0, (int)std::floor(minY)), y1 = std::min(dstH, (int)std::ceil(maxY));
+
+    float cl = -base, ct = -base, cr = base, cb = base;
+    if (rq.hasCrop) {
+        cl = -base + rq.crop[0] * boxW; ct = -base + rq.crop[1] * boxH;
+        cr = -base + rq.crop[2] * boxW; cb = -base + rq.crop[3] * boxH;
+    }
+    Poly polyStore;
+    const Poly* poly = nullptr;
+    if (rq.kind == STAR) { polyStore = regularPolygon(STAR, base); poly = &polyStore; }
+    const Rgba fillStraight = fromArgb(rq.fillArgb);
+    const Rgba strokeStraight = fromArgb(rq.strokeArgb);
+    const float sk = strokeStraight.a / 255.f;
+
+    for (int y = y0; y < y1; ++y) {
+        uint8_t* d = dst + (size_t)y * dstStride + (size_t)x0 * 4;
+        for (int x = x0; x < x1; ++x, d += 4) {
+            // pixel centre -> local coordinates: inverse of translate, rotate, scale, flip
+            const float px = x + 0.5f - rq.cx, py = y + 0.5f - rq.cy;
+            float lx = (cs * px + sn * py) / rq.scale;
+            float ly = (-sn * px + cs * py) / rq.scale;
+            lx *= rq.flipX < 0.f ? -1.f : 1.f;
+            ly *= rq.flipY < 0.f ? -1.f : 1.f;
+
+            float clipCov = 1.f;
+            if (rq.hasCrop) {
+                clipCov = cover((cl - lx) * rq.scale) * cover((lx - cr) * rq.scale) *
+                          cover((ct - ly) * rq.scale) * cover((ly - cb) * rq.scale);
+                if (clipCov <= 0.f) continue;
+            }
+            const float s = outlineDistance(rq.kind, base, rq.corner, poly, lx, ly);
+
+            float outR = 0.f, outG = 0.f, outB = 0.f, outA = 0.f;  // premultiplied 0..255
+            if (fillOn) {
+                const float cf = cover(s * rq.scale);
+                if (cf > 0.f) {
+                    Rgba col = fillStraight;
+                    if (rq.fillKind == 1) col = gradientAt(rq, boxW, boxH, lx + base, ly + base);
+                    else if (pic) col = pictureAt(rq, boxW, boxH, lx + base, ly + base);
+                    const float a = col.a * cf / 255.f;
+                    outR = col.r * a; outG = col.g * a; outB = col.b * a; outA = col.a * cf;
+                }
+            }
+            if (strokeOn) {
+                const float cstroke = cover((std::fabs(s) - sw * 0.5f) * rq.scale);
+                if (cstroke > 0.f) {
+                    const float a = sk * cstroke;  // 0..1
+                    const float inv = 1.f - a;
+                    outR = strokeStraight.r * a + outR * inv;
+                    outG = strokeStraight.g * a + outG * inv;
+                    outB = strokeStraight.b * a + outB * inv;
+                    outA = 255.f * a + outA * inv;
+                }
+            }
+            if (outA <= 0.f) continue;
+            const float k = clipCov * alpha;
+            overPx(d, outR * k, outG * k, outB * k, outA * k);
+        }
+    }
+    return true;
+}
+
+bool drawSticker(uint8_t* dst, int dstW, int dstH, int dstStride, const StickerRequest& rq) {
+    if (!dst || !rq.pix || rq.w <= 0 || rq.h <= 0 || !(rq.scale > 0.f) || !(rq.halfW > 0.f) || !(rq.halfH > 0.f))
+        return false;
+    if (rq.alpha <= 0.f) return true;
+    text::Image img;
+    img.alloc(rq.w, rq.h);
+    for (int y = 0; y < rq.h; ++y)
+        std::memcpy(&img.px[(size_t)y * rq.w * 4], rq.pix + (size_t)y * rq.stride, (size_t)rq.w * 4);
+
+    // source pixel -> local box [-halfW, halfW] x [-halfH, halfH] -> flip + scale -> rotate -> translate
+    const float ang = rq.rotationDeg * kDeg2Rad;
+    const float cs = std::cos(ang), sn = std::sin(ang);
+    const float sx = rq.scale * (rq.flipX < 0.f ? -1.f : 1.f), sy = rq.scale * (rq.flipY < 0.f ? -1.f : 1.f);
+    const float kx = 2.f * rq.halfW / rq.w, ky = 2.f * rq.halfH / rq.h;
+    text::BlitParams bp;
+    bp.srcToDst.a = cs * sx * kx;
+    bp.srcToDst.b = sn * sx * kx;
+    bp.srcToDst.c = -sn * sy * ky;
+    bp.srcToDst.d = cs * sy * ky;
+    const float ox = sx * -rq.halfW, oy = sy * -rq.halfH;
+    bp.srcToDst.e = rq.cx + cs * ox - sn * oy;
+    bp.srcToDst.f = rq.cy + sn * ox + cs * oy;
+    bp.alpha = std::min(1.f, rq.alpha);
+    bp.clampEdges = true;  // like an Android bitmap: the edge pixel is repeated, a sticker does not fade at its border
+    text::blit(dst, dstW, dstH, dstStride, img, bp);
+    return true;
+}
+
+}  // namespace shape
+}  // namespace am

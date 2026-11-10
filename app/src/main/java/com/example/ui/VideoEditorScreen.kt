@@ -3828,7 +3828,7 @@ fun VideoEditorScreen(
                 onTogglePlay = { viewModel.togglePlayPause() },
                 onSeekTo = { viewModel.seekTo(it) },
                 onDismiss = { showEditShapeMode = false },
-                onSaveShape = { shapeType, w, h, color, feather, offX, offY, strokeW, strokeCol ->
+                onSaveShape = { shapeType, w, h, color, feather, offX, offY, strokeW, strokeCol, cornerRadiusDp, trimStart, trimEnd ->
                     val clipDuration = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
                         minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
                     } else {
@@ -3859,7 +3859,14 @@ fun VideoEditorScreen(
                         shapeScaleX = w / 100f,
                         shapeScaleY = h / 100f,
                         strokeWidth = strokeW,
-                        strokeColor = strokeColorLong
+                        strokeColor = strokeColorLong,
+                        // Only the rounded rect shapes read a corner radius (see EditShapeView);
+                        // the other shapes keep the model's "not set" (-1) default.
+                        shapeCornerRadius = if (shapeType == com.example.ui.components.ShapeType.WIDE_ROUNDED_RECT ||
+                            shapeType == com.example.ui.components.ShapeType.ROUNDED_SQUARE
+                        ) cornerRadiusDp else -1f,
+                        strokeTrimStart = trimStart,
+                        strokeTrimEnd = trimEnd
                     )
                 },
                 modifier = Modifier.fillMaxSize().enterPop()

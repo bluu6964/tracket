@@ -57,6 +57,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.viewinterop.AndroidView
@@ -126,7 +127,12 @@ fun EditShapeView(
         offsetX: Float,
         offsetY: Float,
         strokeWidth: Float,
-        strokeColor: Color
+        strokeColor: Color,
+        /** Corner radius in dp inside the 130 dp shape box (only used by the rounded rect shapes). */
+        cornerRadiusDp: Float,
+        /** Stroke trim window as fractions of the outline length (Alight `drawing.progress`). */
+        trimStart: Float,
+        trimEnd: Float
     ) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -143,6 +149,13 @@ fun EditShapeView(
 
     var strokeWidth by remember { mutableFloatStateOf(0f) }
     var strokeColor by remember { mutableStateOf(Color.White) }
+
+    // New fields from the Alight import (builds 80–81): corner radius for the rounded rect shapes
+    // (the preview's built-in corners: 12 dp wide rect, 20 dp rounded square) and the stroke trim
+    // window (draw-on). The trim sliders only show while a stroke exists.
+    var cornerRadiusDp by remember { mutableFloatStateOf(12f) }
+    var trimStartPercent by remember { mutableFloatStateOf(0f) }
+    var trimEndPercent by remember { mutableFloatStateOf(100f) }
 
     var shadowBlur by remember { mutableFloatStateOf(0f) }
     var glowIntensity by remember { mutableFloatStateOf(0f) }
@@ -205,7 +218,10 @@ fun EditShapeView(
                             shapeOffsetX,
                             shapeOffsetY,
                             strokeWidth,
-                            strokeColor
+                            strokeColor,
+                            cornerRadiusDp,
+                            trimStartPercent / 100f,
+                            trimEndPercent / 100f
                         )
                         onDismiss()
                     })
@@ -306,51 +322,55 @@ fun EditShapeView(
                             .then(blurModifier)
                     ) {
                         val colorWithAlpha = fillColor.copy(alpha = fillOpacity / 100f)
+                        // The outline the stroke follows; the fill is drawn per shape below, the stroke
+                        // once afterwards so the trim window (PathMeasure segment) applies to every shape.
+                        var outlinePath: Path? = null
 
                         when (selectedShapeType) {
                             ShapeType.CIRCLE -> {
                                 drawCircle(color = colorWithAlpha)
-                                if (strokeWidth > 0f) {
-                                    drawCircle(
-                                        color = strokeColor,
-                                        style = Stroke(width = strokeWidth.dp.toPx())
-                                    )
+                                outlinePath = Path().apply {
+                                    addOval(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
                                 }
                             }
                             ShapeType.SQUARE, ShapeType.WIDE_ROUNDED_RECT -> {
-                                val cornerRadius = if (selectedShapeType == ShapeType.WIDE_ROUNDED_RECT) 12.dp.toPx() else 0f
+                                // Only the rounded rect shapes read the corner-radius slider (the renderers
+                                // ignore it for SQUARE); a plain square keeps square corners here too.
+                                val cornerRadius = if (selectedShapeType == ShapeType.WIDE_ROUNDED_RECT) {
+                                    cornerRadiusDp.dp.toPx()
+                                } else 0f
                                 drawRoundRect(
                                     color = colorWithAlpha,
                                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(cornerRadius, cornerRadius)
                                 )
-                                if (strokeWidth > 0f) {
-                                    drawRoundRect(
-                                        color = strokeColor,
-                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(cornerRadius, cornerRadius),
-                                        style = Stroke(width = strokeWidth.dp.toPx())
+                                outlinePath = Path().apply {
+                                    addRoundRect(
+                                        androidx.compose.ui.geometry.RoundRect(
+                                            androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height),
+                                            androidx.compose.ui.geometry.CornerRadius(cornerRadius, cornerRadius)
+                                        )
                                     )
                                 }
                             }
                             ShapeType.ROUNDED_SQUARE -> {
+                                val cornerRadius = cornerRadiusDp.dp.toPx()
                                 drawRoundRect(
                                     color = colorWithAlpha,
-                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx(), 20.dp.toPx())
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(cornerRadius, cornerRadius)
                                 )
-                                if (strokeWidth > 0f) {
-                                    drawRoundRect(
-                                        color = strokeColor,
-                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx(), 20.dp.toPx()),
-                                        style = Stroke(width = strokeWidth.dp.toPx())
+                                outlinePath = Path().apply {
+                                    addRoundRect(
+                                        androidx.compose.ui.geometry.RoundRect(
+                                            androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height),
+                                            androidx.compose.ui.geometry.CornerRadius(cornerRadius, cornerRadius)
+                                        )
                                     )
                                 }
                             }
                             ShapeType.OVAL -> {
                                 drawOval(color = colorWithAlpha)
-                                if (strokeWidth > 0f) {
-                                    drawOval(
-                                        color = strokeColor,
-                                        style = Stroke(width = strokeWidth.dp.toPx())
-                                    )
+                                outlinePath = Path().apply {
+                                    addOval(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
                                 }
                             }
                             ShapeType.PENTAGON, ShapeType.STAR -> {
@@ -368,8 +388,30 @@ fun EditShapeView(
                                     close()
                                 }
                                 drawPath(path, color = colorWithAlpha)
-                                if (strokeWidth > 0f) {
-                                    drawPath(path, color = strokeColor, style = Stroke(width = strokeWidth.dp.toPx()))
+                                outlinePath = path
+                            }
+                        }
+
+                        // Trimmed stroke: the visible window of the outline, same PathMeasure segment
+                        // the timeline renderers draw (LayerPainter.drawStrokePath). An empty window
+                        // (start == end) draws no stroke at all.
+                        val outline = outlinePath
+                        if (strokeWidth > 0f && outline != null) {
+                            val trimStart = (trimStartPercent / 100f).coerceIn(0f, 1f)
+                            val trimEnd = (trimEndPercent / 100f).coerceIn(0f, 1f)
+                            if (trimEnd > trimStart) {
+                                val strokeStyle = Stroke(width = strokeWidth.dp.toPx())
+                                if (trimStart <= 0f && trimEnd >= 1f) {
+                                    drawPath(outline, color = strokeColor, style = strokeStyle)
+                                } else {
+                                    val measure = PathMeasure().apply { setPath(outline, false) }
+                                    val len = measure.length
+                                    if (len > 0f) {
+                                        val segment = Path()
+                                        if (measure.getSegment(len * trimStart, len * trimEnd, segment, true)) {
+                                            drawPath(segment, color = strokeColor, style = strokeStyle)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -668,7 +710,15 @@ fun EditShapeView(
                                             color = if (isSelected) Color.White else Color(0xFF3B3B3B),
                                             shape = RoundedCornerShape(8.dp)
                                         )
-                                        .bouncyClickable(onClick = { selectedShapeType = shape }),
+                                        .bouncyClickable(onClick = {
+                                            selectedShapeType = shape
+                                            // Each rounded shape starts at its built-in corner, as drawn before.
+                                            cornerRadiusDp = when (shape) {
+                                                ShapeType.WIDE_ROUNDED_RECT -> 12f
+                                                ShapeType.ROUNDED_SQUARE -> 20f
+                                                else -> cornerRadiusDp
+                                            }
+                                        }),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     // Shape mini icon representation
@@ -725,6 +775,22 @@ fun EditShapeView(
                         max = 100f,
                         isPercentage = false
                     )
+
+                    // Corner radius (Alight import, build 80): only the rounded rect shapes read it —
+                    // the renderers ignore it for SQUARE, CIRCLE and the rest, so it stays hidden there.
+                    if (selectedShapeType == ShapeType.WIDE_ROUNDED_RECT || selectedShapeType == ShapeType.ROUNDED_SQUARE) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        RulerDialSlider(
+                            label = "Corner radius",
+                            value = cornerRadiusDp,
+                            onValueChange = { cornerRadiusDp = it },
+                            min = 0f,
+                            max = 65f,
+                            unit = "dp",
+                            isPercentage = false,
+                            step = 1f
+                        )
+                    }
                 }
 
                 ShapeEditTab.FILL -> {
@@ -776,6 +842,29 @@ fun EditShapeView(
                             )
                         }
                     }
+                    // Stroke trim (Alight `drawing.progress`, build 81): the visible window of the
+                    // outline — 0–100 % draws the whole stroke, a narrower window draws it on.
+                    // The sliders clamp against each other so start can never pass end.
+                    if (strokeWidth > 0f) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        RulerDialSlider(
+                            label = "Trim start",
+                            value = trimStartPercent,
+                            onValueChange = { trimStartPercent = it.coerceIn(0f, trimEndPercent) },
+                            min = 0f,
+                            max = 100f,
+                            isPercentage = true
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        RulerDialSlider(
+                            label = "Trim end",
+                            value = trimEndPercent,
+                            onValueChange = { trimEndPercent = it.coerceIn(trimStartPercent, 100f) },
+                            min = 0f,
+                            max = 100f,
+                            isPercentage = true
+                        )
+                    }
                 }
 
                 ShapeEditTab.SHADOW -> {
@@ -814,7 +903,10 @@ fun EditShapeView(
                         shapeOffsetX,
                         shapeOffsetY,
                         strokeWidth,
-                        strokeColor
+                        strokeColor,
+                        cornerRadiusDp,
+                        trimStartPercent / 100f,
+                        trimEndPercent / 100f
                     )
                     onDismiss()
                 },

@@ -20,6 +20,7 @@ import com.example.model.MultiSelectOps
 import com.example.model.PreviewResolution
 import com.example.model.AnimProp
 import com.example.model.Easing
+import com.example.model.ShapeEditValues
 import com.example.model.TimelineClip
 import com.example.model.at
 import com.example.model.trackOffsetAt
@@ -1327,10 +1328,21 @@ class VideoEditorViewModel : ViewModel() {
         shapeScaleX: Float = 1.0f,
         shapeScaleY: Float = 1.0f,
         strokeWidth: Float = 0f,
-        strokeColor: Long = 0xFFFFFFFF
+        strokeColor: Long = 0xFFFFFFFF,
+        /** Corner radius in dp (-1 = not set, the renderers use their built-in corner). */
+        shapeCornerRadius: Float = -1f,
+        /** Stroke trim window as 0..1 fractions of the outline length (Alight `drawing.progress`). */
+        strokeTrimStart: Float = 0f,
+        strokeTrimEnd: Float = 1f
     ) {
         pushHistory()
         val playhead = _currentPlayheadMs.value
+
+        // The shape editor's sliders clamp already; this is the safety net for direct callers.
+        val (trimStart, trimEnd) = ShapeEditValues.coerceTrim(strokeTrimStart, strokeTrimEnd)
+        val cornerRadius = if (shapeCornerRadius >= 0f) {
+            ShapeEditValues.coerceCornerRadiusDp(shapeCornerRadius)
+        } else -1f
 
         val color = when (type) {
             LayerType.VIDEO -> 0xFF2A4365
@@ -1361,6 +1373,9 @@ class VideoEditorViewModel : ViewModel() {
             shapeScaleY = shapeScaleY,
             strokeWidth = strokeWidth,
             strokeColor = strokeColor,
+            shapeCornerRadius = cornerRadius,
+            strokeTrimStart = trimStart,
+            strokeTrimEnd = trimEnd,
             uri = uri,
             transformX = shapeOffsetX,
             transformY = shapeOffsetY,

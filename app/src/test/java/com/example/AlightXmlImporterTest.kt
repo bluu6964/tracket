@@ -664,4 +664,404 @@ $layers
         val r = AlightXmlImporter.parse(xml, 1080f)
         assertTrue(r.warnings.any { it.contains("solidcolor on a group") })
     }
+
+    // ---- Pass 3: native fx mappings, wipe masks, bakes, audio --------------------------------------------------
+
+    private fun shapeWith(fx: String, extra: String = ""): String = scene(
+        """<shape id="1" label="Box" startTime="0" endTime="2000" fillType="color" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  $fx
+  <property name="size" type="vec2" value="100,100" /></shape>$extra"""
+    )
+
+    private fun onlyClip(xml: String) =
+        AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+
+    @Test
+    fun gaussianBlurBecomesNativeBlur() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.gaussianblur" locallyApplied="true"><property name="strength" type="float" value="0.5" /></effect>"""
+        ))
+        assertEquals(1, c.effects.size)
+        assertEquals(com.example.model.ClipFxLibrary.BLUR, c.effects[0].type)
+        assertEquals(25f, c.effects[0].values[0], 0.01f)   // 0.5 of Alight's 0..1 onto 0..50
+    }
+
+    @Test
+    fun exposureBecomesNativeExposure() {
+        // The values of the "Subscriber & follow animation" file.
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.exposure" locallyApplied="true"><property name="exposure" type="float" value="0.16" /><property name="gamma" type="float" value="1.285" /><property name="offset" type="float" value="-0.69" /></effect>"""
+        ))
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.EXPOSURE }
+        assertEquals(0.16f, fx.values[0], 0.001f)
+        assertEquals(-69f, fx.values[1], 0.01f)
+        assertEquals(128.5f, fx.values[2], 0.01f)
+    }
+
+    @Test
+    fun keyframedExposureUsesFirstValueWithNote() {
+        val xml = shapeWith(
+            """<effect id="com.alightcreative.effects.exposure" locallyApplied="true"><property name="exposure" type="float"><kf t="0" v="0.5" /><kf t="1" v="1.5" /></property><property name="gamma" type="float" value="1" /><property name="offset" type="float" value="0" /></effect>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.EXPOSURE }
+        assertEquals(0.5f, fx.values[0], 0.001f)
+        assertTrue(r.warnings.any { it.contains("Effect exposure: keyframed exposure") })
+    }
+
+    @Test
+    fun wipeBecomesAKeyframedRectMask() {
+        // A bar of the "Animated Graph" file: the wipe opens downward from start 1.006 to 0.373, end stays 1.
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.wipe2" locallyApplied="true"><property name="start" type="float"><kf t="0" v="1.006" /><kf t="0.25" v="0.373" e="cubicBezier 0.17 0.0 0.0 1.0" /></property><property name="end" type="float" value="1" /><property name="angle" type="float" value="90" /><property name="feather" type="float" value="0" /></effect>"""
+        ))
+        assertEquals(1, c.masks.size)
+        val m = c.masks[0]
+        assertEquals(com.example.model.MaskShape.RECT, m.shape)
+        assertEquals(listOf(0L, 500L, 2000L), m.keys.map { it.timeMs })   // + the end key holding the final band
+        val k0 = m.keys[0]
+        assertEquals(0f, k0.state.w, 0.001f)          // band [1.006, 1] is empty: nothing visible yet
+        assertEquals(1.003f, k0.state.cy, 0.001f)
+        assertEquals(0.17f, k0.easing.x1, 0.001f)     // the easing of the AM keyframe the segment ends at
+        val k1 = m.keys[1]
+        assertEquals(0.627f, k1.state.w, 0.001f)      // band [0.373, 1] along the wipe direction
+        assertEquals(2.5f, k1.state.h, 0.001f)        // long enough across the band, even rotated
+        assertEquals(0.6865f, k1.state.cy, 0.001f)    // band centre
+        assertEquals(90f, k1.state.rot, 0.001f)
+        assertEquals(0.627f, m.keys[2].state.w, 0.001f)
+    }
+
+    @Test
+    fun wipeFullyOpenAddsNoMask() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.wipe2" locallyApplied="true"><property name="start" type="float" value="0" /><property name="end" type="float" value="1" /><property name="angle" type="float" value="90" /><property name="feather" type="float" value="0" /></effect>"""
+        ))
+        assertTrue(c.masks.isEmpty())
+    }
+
+    @Test
+    fun edgeGlowBecomesNativeGlow() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.edgeglow" locallyApplied="true"><property name="threshold" type="float" value="0.23" /><property name="strength" type="float" value="0.3" /><property name="spread" type="float" value="1.5" /><property name="fillColor" type="color" value="#ffffffff" /></effect>"""
+        ))
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.GLOW }
+        assertEquals(23f, fx.values[0], 0.01f)
+        assertEquals(49.5f, fx.values[1], 0.01f)
+        assertEquals(30f, fx.values[2], 0.01f)
+    }
+
+    @Test
+    fun darkGlowOnAGroupBecomesGlowWithApproximationNote() {
+        val xml = scene(
+            """<embedScene id="2" label="Glow 1" startTime="0" endTime="2000" fillType="intrinsic" outTime="2000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.effects.darkglow" locallyApplied="true"><property name="color" type="color" value="#ffff5566" /><property name="threshold" type="float" value="0.473" /><property name="strength" type="float" value="0.25" /><property name="spread" type="float" value="1" /><property name="alpha" type="float" value="0.75" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="2000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val g = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val fx = g.effects.first { it.type == com.example.model.ClipFxLibrary.GLOW }
+        assertEquals(47.3f, fx.values[0], 0.01f)
+        assertEquals(25f, fx.values[2], 0.01f)
+        assertTrue(r.warnings.any { it.contains("darkglow is approximated") })
+    }
+
+    @Test
+    fun gaussianBlurOnAGroupAppliesToTheGroup() {
+        // The "Shadow" group of the "ST Intro" file carries a gaussianblur of strength 0.505.
+        val xml = scene(
+            """<embedScene id="2" label="Shadow" startTime="0" endTime="2000" fillType="intrinsic" outTime="2000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.effects.gaussianblur" locallyApplied="true"><property name="strength" type="float" value="0.505" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="2000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val g = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val fx = g.effects.first { it.type == com.example.model.ClipFxLibrary.BLUR }
+        assertEquals(25.25f, fx.values[0], 0.01f)
+    }
+
+    @Test
+    fun shakeBakesSeededPositionKeys() {
+        // The shake of the "Subscriber & follow animation" file: mag pulses 0 -> 20 -> 0 at 4.14 Hz.
+        val xml = shapeWith(
+            """<effect id="com.alightcreative.effects.shake2" locallyApplied="true"><property name="mag" type="float"><kf t="0.294947" v="0" /><kf t="0.414722" v="0" /><kf t="0.354706" v="20" /></property><property name="freq" type="float" value="4.14" /><property name="evolution" type="float" value="0" /><property name="seed" type="float" value="0" /><property name="angle" type="float" value="45" /><property name="slack" type="float" value="0.25" /><property name="zshake" type="float" value="0" /></effect>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val pos = c.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos.size >= 8)   // the flat stretches simplify away; the pulse's keys stay
+        assertTrue(pos.all { abs(it.a) <= 24f && abs(it.b) <= 24f })   // never beyond the shake's reach
+        assertTrue(pos.maxOf { Math.hypot(it.a.toDouble(), it.b.toDouble()) } > 8.0)
+        val again = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(pos, again.keyframes[AnimProp.POSITION])          // the seed makes it deterministic
+        assertTrue(r.warnings.any { it.contains("Effect shake: its slack") })
+    }
+
+    @Test
+    fun flipOnAGroupBecomes3DRotationKeys() {
+        // "Group 1" of the "Subscriber" file: axis 24 degrees, angle 28.7 -> 0 -> -28.1.
+        val xml = scene(
+            """<embedScene id="2" label="Group 1" startTime="0" endTime="2000" fillType="intrinsic" outTime="2000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.effects.flip3" locallyApplied="true"><property name="angle" type="float"><kf t="0" v="28.7" /><kf t="0.5" v="0" /><kf t="1" v="-28.1" /></property><property name="axis" type="float" value="24" /><property name="crop" type="float" value="1" /><property name="zdist" type="float" value="0" /><property name="solid" type="bool" value="false" /><property name="enableLight" type="bool" value="false" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="2000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val g = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val ky = g.keyframes[AnimProp.ROT_Y]!!
+        val kx = g.keyframes[AnimProp.ROT_X]!!
+        assertEquals(28.7f * 0.9135f, ky.first().a, 0.05f)    // angle * cos(axis)
+        assertEquals(28.7f * 0.4067f, kx.first().a, 0.05f)    // angle * sin(axis)
+        assertEquals(-28.1f * 0.9135f, ky.last().a, 0.05f)
+        assertEquals(ky.first().a, g.rotation3dY, 0.001f)
+    }
+
+    @Test
+    fun fadeBecomesClipFades() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.fade" locallyApplied="true"><property name="inTime" type="float" value="0.3" /><property name="outTime" type="float" value="0.5" /></effect>"""
+        ))
+        assertEquals(300L, c.fadeInMs)
+        assertEquals(500L, c.fadeOutMs)
+    }
+
+    @Test
+    fun blinkBakesOpacitySquareWave() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.blink" locallyApplied="true"><property name="freq" type="float" value="2" /></effect>"""
+        ))
+        val keys = c.keyframes[AnimProp.OPACITY]!!
+        assertEquals(100f, keys[0].a, 0.001f)   // starts ON
+        assertEquals(0f, keys[1].a, 0.001f)     // off after half a period (250 ms at 2 Hz)
+        assertEquals(250L, keys[1].timeMs)
+        assertEquals(100f, keys[2].a, 0.001f)
+        assertTrue(keys.all { it.a == 0f || it.a == 100f })
+    }
+
+    @Test
+    fun tileBecomesMotionTile() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.tile" locallyApplied="true"><property name="scale" type="float" value="2" /><property name="mirror" type="bool" value="true" /><property name="phase" type="float" value="0" /><property name="angle" type="float" value="0" /></effect>"""
+        ))
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.TILE }
+        assertEquals(listOf(2f, 2f, 1f, 0f, 0f, 0f, 0f), fx.values)
+    }
+
+    @Test
+    fun rgbSepBecomesRgbSplit() {
+        val xml = shapeWith(
+            """<effect id="com.alightcreative.effects.rgbsep" locallyApplied="true"><property name="strength" type="float" value="0.14" /><property name="angle" type="float" value="118.5" /></effect>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.RGB_SPLIT }
+        assertEquals(14f, fx.values[0], 0.01f)
+        assertEquals(118.5f, fx.values[1], 0.01f)
+        assertTrue(r.warnings.any { it.contains("rgbsep is mapped to RGB Split approximately") })
+    }
+
+    @Test
+    fun hueShiftConstantBecomesHueSaturation() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.hueshift" locallyApplied="true"><property name="hue" type="float" value="297.5" /></effect>"""
+        ))
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.HUE_SAT }
+        assertEquals(-62.5f, fx.values[0], 0.01f)   // 297.5 wrapped into -180..180
+    }
+
+    @Test
+    fun hueShiftKeyframedBakesIntoFillColour() {
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="2000" fillType="color" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffff0000" />
+  <effect id="com.alightcreative.effects.hueshift" locallyApplied="true"><property name="hue" type="float"><kf t="0" v="0" /><kf t="1" v="120" /></property></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val keys = c.keyframes[AnimProp.FILL_COLOR]!!
+        assertEquals(packColor(0xFFFF0000L), keys.first().a to keys.first().b)   // red, unshifted
+        assertEquals(packColor(0xFF00FF00L), keys.last().a to keys.last().b)     // red turned by 120 degrees = green
+        assertTrue(r.warnings.any { it.contains("hueshift is baked into the layer's colour keyframes") })
+    }
+
+    @Test
+    fun satVibBrightContAndInvertMap() {
+        fun clipNamed(xml: String, name: String) =
+            AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }.first { it.name == name }
+        val sat = clipNamed(shapeWith(
+            """<effect id="com.alightcreative.effects.satvib" locallyApplied="true"><property name="saturation" type="float" value="0.225" /><property name="vibrance" type="float" value="1.39" /></effect>"""
+        ), "Box")
+        val hs = sat.effects.first { it.type == com.example.model.ClipFxLibrary.HUE_SAT }
+        assertEquals(listOf(0f, 22.5f, 0f, 39f), hs.values)
+        val bc = clipNamed(shapeWith(
+            """<effect id="com.alightcreative.effects.brightcont2" locallyApplied="true"><property name="brightness" type="float" value="0.1" /><property name="contrast" type="float" value="-0.2" /></effect>"""
+        ), "Box")
+        val bcfx = bc.effects.first { it.type == com.example.model.ClipFxLibrary.BRIGHT_CONTRAST }
+        assertEquals(listOf(10f, -20f), bcfx.values)
+        val inv = clipNamed(shapeWith(
+            """<effect id="com.alightcreative.effects.invert" locallyApplied="true"><property name="red" type="bool" value="true" /><property name="green" type="bool" value="true" /><property name="blue" type="bool" value="true" /></effect>"""
+        ), "Box")
+        val invfx = inv.effects.first { it.type == com.example.model.ClipFxLibrary.INVERT }
+        assertEquals(listOf(100f, 0f), invfx.values)
+    }
+
+    @Test
+    fun vignetteBecomesNativeVignette() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.vignette" locallyApplied="true"><property name="strength" type="float" value="0.8" /><property name="scale" type="float" value="0.808" /><property name="feather" type="float" value="1" /></effect>"""
+        ))
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.VIGNETTE }
+        assertEquals(listOf(80f, 80.8f, 100f), fx.values)
+    }
+
+    @Test
+    fun zoomBlurAndDirectionalBlurMap() {
+        val z = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.zoomblur2" locallyApplied="true"><property name="strength" type="float" value="0.45" /></effect>"""
+        ))
+        val zfx = z.effects.first { it.type == com.example.model.ClipFxLibrary.RADIAL_BLUR }
+        assertEquals(listOf(45f, 100f, 50f, 50f), zfx.values)
+        val d = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.dblur" locallyApplied="true"><property name="angle" type="float" value="270" /><property name="strength" type="float" value="1" /></effect>"""
+        ))
+        val dfx = d.effects.first { it.type == com.example.model.ClipFxLibrary.DIR_BLUR }
+        assertEquals(listOf(270f, 100f, 0f), dfx.values)
+    }
+
+    @Test
+    fun sharpenAndLensBlurMap() {
+        val s = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.sharpen" locallyApplied="true"><property name="strength" type="float" value="1" /><property name="radius" type="float" value="2" /></effect>"""
+        ))
+        val sfx = s.effects.first { it.type == com.example.model.ClipFxLibrary.SHARPEN }
+        assertEquals(listOf(100f, 20f, 0f, 40f), sfx.values)
+        val l = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.lensblur2" locallyApplied="true"><property name="radius" type="float" value="0.5" /><property name="strength" type="float" value="1" /></effect>"""
+        ))
+        val lfx = l.effects.first { it.type == com.example.model.ClipFxLibrary.LENS_BLUR }
+        assertEquals(listOf(50f, 40f, 70f), lfx.values)
+    }
+
+    @Test
+    fun pinchBulgeBecomesBulge() {
+        val xml = shapeWith(
+            """<effect id="com.alightcreative.effects.pinchbulge" locallyApplied="true"><property name="strength" type="float" value="0.5" /><property name="radius" type="float" value="0.8" /></effect>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.BULGE }
+        assertEquals(listOf(50f, 80f, 50f, 50f), fx.values)
+        assertTrue(r.warnings.any { it.contains("pinchbulge is mapped approximately") })
+    }
+
+    @Test
+    fun pulsateBakesScaleKeys() {
+        val xml = scene(
+            """<text id="1" label="A" startTime="0" endTime="2000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.pulsate2" locallyApplied="true"><property name="minsize" type="float" value="1" /><property name="maxsize" type="float" value="1.2" /><property name="freq" type="float" value="1" /><property name="phase" type="float" value="0" /><property name="type" type="int" value="0" /></effect>
+  <content>A</content></text>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        val base = 30f / (0.11f * 1080f) * 100f
+        val keys = c.keyframes[AnimProp.SCALE]!!
+        assertEquals(base * 1.1f, keys.first().a, base * 0.01f)        // mid + amp * sin(0)
+        assertTrue(keys.maxOf { it.a } > base * 1.18f)                  // up to maxsize
+        assertTrue(keys.minOf { it.a } < base * 1.02f)                  // down to minsize
+    }
+
+    @Test
+    fun transformEffectComposesScaleAndAlpha() {
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.transform" locallyApplied="true"><property name="scale" type="float" value="2" /><property name="alpha" type="float" value="0.5" /><property name="angle" type="float" value="0" /></effect>"""
+        ))
+        val box = 1080f * 130f / 360f
+        assertEquals(200f / box * 100f, c.scalePercent, 0.01f)   // the shape's own scale x 2
+        assertEquals(50f, c.opacity, 0.001f)
+    }
+
+    @Test
+    fun counterIsStoredWithTheTextLayer() {
+        val xml = scene(
+            """<text id="1" label="N" startTime="0" endTime="2000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <effect id="com.alightcreative.effects.counter" locallyApplied="true"><property name="offset" type="float"><kf t="0" v="0" /><kf t="1" v="12" /></property><property name="scale" type="float" value="0.14" /></effect>
+  <content>0</content></text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.textAnimators.any { it.effectId == AlightXmlImporter.COUNTER })
+        assertTrue(r.warnings.any { it.contains("counter is saved with the layer") })
+    }
+
+    @Test
+    fun counterOnAShapeStaysAWarning() {
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.counter" locallyApplied="true"><property name="offset" type="float" value="0" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.any { it.contains("counter is not supported yet") })
+    }
+
+    @Test
+    fun repeatStaysAWarningWithReason() {
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.repeat.radial" locallyApplied="true"><property name="count" type="int" value="6" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.any { it.contains("cannot repeat a layer") })
+    }
+
+    @Test
+    fun liftWithOnlyZeroFillIsSilent() {
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.lift" locallyApplied="true"><property name="fill" type="float" value="0" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("lift") })
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }[0].effects.isEmpty())
+    }
+
+    @Test
+    fun audioLayerBecomesAnAudioClip() {
+        // The audio of the "ST Intro" file: 599 ms of a file section starting at 3500 ms, stretched to fit.
+        val xml = scene(
+            """<audio id="9" label="Minimal Intro SOUND.mp3" startTime="0" endTime="599" src="content://com.android.providers.media.documents/document/audio%3A53292" inTime="3500" outTime="4067" mediaFillMode="stretch" />"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(LayerType.AUDIO, c.type)
+        assertEquals("content://com.android.providers.media.documents/document/audio%3A53292", c.uri)
+        assertEquals("audio/mpeg", c.mimeType)
+        assertEquals(599L, c.durationMs)
+        assertEquals(3500L, c.trimStartMs)
+        assertEquals(4067L, c.sourceDurationMs)
+        assertEquals(567f / 599f, c.speed, 0.001f)
+        assertTrue(r.warnings.any { it.contains("imported silent") })
+    }
+
+    @Test
+    fun groupWipeMaskKeysAreRemapped() {
+        // A wiped shape inside a group whose window is stretched 2:1: the mask keys follow the remap.
+        val xml = scene(
+            """<embedScene id="2" label="G" startTime="0" endTime="1000" fillType="intrinsic" outTime="2000">
+  <transform><location value="540,960,0" /></transform>
+  <scene title="" width="1080" height="1920" totalTime="2000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><effect id="com.alightcreative.effects.wipe2" locallyApplied="true"><property name="start" type="float"><kf t="0" v="1.006" /><kf t="1" v="0.5" /></property><property name="end" type="float" value="1" /><property name="angle" type="float" value="90" /><property name="feather" type="float" value="0" /></effect><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val inner = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }.first { it.name == "Inner" }
+        assertEquals(1000L, inner.durationMs)
+        assertEquals(listOf(0L, 1000L), inner.masks[0].keys.map { it.timeMs })
+    }
 }

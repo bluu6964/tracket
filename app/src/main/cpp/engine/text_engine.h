@@ -76,6 +76,16 @@ struct Request {
     float animAlpha = 1.f;
     bool animRecolor = false;
     uint32_t animArgb = 0xFF00FF00u;
+
+    // Text progress (Alight Motion "textprogress", already evaluated for this frame by Kotlin:
+    // TextProgressEval.kt): only the clusters whose slice of the whole text (counted in shaped clusters,
+    // logical order) lies fully inside [progressStart, progressEnd] are drawn - a typewriter reveal.
+    // The layout is computed from the full text, so revealed characters appear in place. The cut is by
+    // shaped cluster, so a Bengali conjunct is never split. progressOn = false: everything is drawn.
+    // The effect's typing cursor is not part of this yet (only the corpus value cursor = 0, no cursor,
+    // is handed over as progressOn at all - see the importer).
+    bool progressOn = false;
+    float progressStart = 0.f, progressEnd = 1.f;
 };
 
 /** What a system font match returns (Android AFontMatcher). */

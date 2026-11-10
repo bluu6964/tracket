@@ -567,7 +567,26 @@ $layers
         val a = c.textAnimators.first { it.effectId == AlightXmlImporter.TEXTPROGRESS }
         assertEquals(2, a.props["end"]!!.keys.size)
         assertEquals(listOf(0f), a.props["cursor"]!!.value)
-        assertTrue(r.warnings.any { it.contains("textprogress is saved") })
+        // cursor = 0 (no cursor): the reveal is drawn now, so no textprogress warning stays.
+        assertFalse(r.warnings.any { it.contains("textprogress") })
+    }
+
+    @Test
+    fun textProgressCursorStaysAWarning() {
+        // The exact effect block of the ST Intro template (1c30cfdb…) but with a cursor switched on:
+        // storage stays complete, only the cursor keeps a (precise) warning.
+        val xml = scene(
+            """<text id="1" label="A" startTime="666" endTime="2899" size="18" font="imported?name=MontserratAlternates-Bold.otf" align="left">
+  <effect id="com.alightcreative.effects.textprogress" locallyApplied="true"><property name="start" type="float" value="0.000000" /><property name="end" type="float"><kf t="0.007613" v="0.000000" /><kf t="0.619794" v="1.000000" /></property><property name="cursor" type="int" value="1" /><property name="blink" type="bool" value="true" /></effect>
+  <content>Channel Name</content></text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val a = c.textAnimators.first { it.effectId == AlightXmlImporter.TEXTPROGRESS }
+        assertEquals(2, a.props["end"]!!.keys.size)
+        assertEquals(listOf(1f), a.props["cursor"]!!.value)
+        assertTrue(r.warnings.any { it.contains("textprogress cursor is not drawn yet") })
+        assertFalse(r.warnings.any { it.contains("textprogress is saved") })
     }
 
     @Test

@@ -50,8 +50,10 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeEmojiAvailab
 // c[6]: fill, stroke, shadow, background colour, gradient colour 1, gradient colour 2 (ARGB ints)
 // fillBitmap: the fill picture (premultiplied RGBA8888) or null
 // levelsA / paraRtlA: bidi embedding level per code point, 1 flag per paragraph (see Request::bidiLevels) or null
-// animA (null = no text animator): 0 component (0 letter, 1 word, 2 line), 1 start, 2 end, 3 dx, 4 dy, 5 alpha,
-//        6 recolour (0 / 1); the recolour ARGB is the 7th entry of cA (when cA has 7). See Request::animOn.
+// animA (null = no text animator, 11 floats; each group has its own on flag so the two can travel together):
+//        0 texttransform on (0 / 1), 1 component (0 letter, 1 word, 2 line), 2 start, 3 end, 4 dx, 5 dy, 6 alpha,
+//        7 recolour (0 / 1) - the recolour ARGB is the 7th entry of cA (when cA has 7), see Request::animOn;
+//        8 textprogress on (0 / 1), 9 progress start, 10 progress end, see Request::progressOn.
 JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeDraw(
     JNIEnv* env, jclass, jobject bitmap, jstring text, jstring fontPath, jstring family, jfloatArray pA, jintArray cA,
     jobject fillBitmap, jbyteArray levelsA, jbyteArray paraRtlA, jfloatArray animA) {
@@ -88,14 +90,20 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeDraw(
         r.paraRtl.resize((size_t)n);
         if (n > 0) env->GetByteArrayRegion(paraRtlA, 0, n, reinterpret_cast<jbyte*>(r.paraRtl.data()));
     }
-    if (animA && env->GetArrayLength(animA) >= 7) {
-        float a[7];
-        env->GetFloatArrayRegion(animA, 0, 7, a);
-        r.animOn = true;
-        r.animComponent = a[0] < 0.5f ? 0 : a[0] < 1.5f ? 1 : 2;
-        r.animStart = a[1]; r.animEnd = a[2]; r.animDx = a[3]; r.animDy = a[4]; r.animAlpha = a[5];
-        r.animRecolor = a[6] > 0.5f;
-        r.animArgb = (uint32_t)c[6];
+    if (animA && env->GetArrayLength(animA) >= 11) {
+        float a[11];
+        env->GetFloatArrayRegion(animA, 0, 11, a);
+        if (a[0] > 0.5f) {
+            r.animOn = true;
+            r.animComponent = a[1] < 0.5f ? 0 : a[1] < 1.5f ? 1 : 2;
+            r.animStart = a[2]; r.animEnd = a[3]; r.animDx = a[4]; r.animDy = a[5]; r.animAlpha = a[6];
+            r.animRecolor = a[7] > 0.5f;
+            r.animArgb = (uint32_t)c[6];
+        }
+        if (a[8] > 0.5f) {
+            r.progressOn = true;
+            r.progressStart = a[9]; r.progressEnd = a[10];
+        }
     }
     r.fillArgb = (uint32_t)c[0]; r.strokeArgb = (uint32_t)c[1]; r.shadowArgb = (uint32_t)c[2]; r.bgArgb = (uint32_t)c[3];
 

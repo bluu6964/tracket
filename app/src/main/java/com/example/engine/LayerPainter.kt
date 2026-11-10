@@ -98,7 +98,7 @@ internal class LayerPainter(
         } else if (clip.type == LayerType.STICKER) {
             drawSticker(canvas, clip, if (timeMs >= 0L) timeMs - clip.startMs else 0L)
         } else if (clip.type == LayerType.TEXT || clip.text != null) {
-            drawText(canvas, clip)
+            drawText(canvas, clip, timeMs)
         }
         if (saved >= 0) canvas.restoreToCount(saved)
     }
@@ -259,9 +259,15 @@ internal class LayerPainter(
         canvas.restore()
     }
 
-    private fun drawText(canvas: Canvas, clip: TimelineClip) {
+    private fun drawText(canvas: Canvas, clip: TimelineClip, timeMs: Long = -1L) {
         if (clip.isBehindCamera) return
-        val content = clip.text?.ifBlank { null } ?: "Text"
+        val full = clip.text?.ifBlank { null } ?: "Text"
+        // Imported textprogress (typewriter reveal): the C++ engine hides the clusters outside the window
+        // and keeps the layout; this Canvas fallback cuts the string to the shown part instead (same window
+        // and cluster counting, see TextProgressEval). -1 = unknown time = the whole text, as before.
+        val content = if (timeMs >= 0L) {
+            TextProgressEval.evaluate(clip, timeMs)?.let { TextProgressEval.visibleText(full, it.start, it.end) } ?: full
+        } else full
         val textColor = argb(clip.textColor, fallback = 0xFFFFFFFF)
         val scale = (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f)
         // Same rules as the preview (TextLayerContent): every size is a fraction of the frame width.

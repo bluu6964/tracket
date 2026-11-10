@@ -25,7 +25,8 @@ data class AnimValue(
  * [effectId] is the Alight id, e.g. `com.alightcreative.effects.texttransform` (per character / word / line move, turn,
  * scale, fade) or `com.alightcreative.effects.randomdisplace` (glitch). [props] keeps every property by its Alight name.
  * [com.example.engine.TextAnimEval] turns the `texttransform` one into per letter / word / line moves for the C++ text
- * engine (preview + export); `randomdisplace` is still only stored.
+ * engine (preview + export); [com.example.engine.TextProgressEval] turns the `textprogress` one into the shown
+ * window of a typewriter reveal for the same engine; `randomdisplace` and `counter` are still only stored.
  * [refSize] = the Alight text `size` (scene px) of the layer it was read from: a move (`offset`) is in the layer's own
  * units, so it is kept relative to the font height (offset / refSize). 0 = unknown.
  */

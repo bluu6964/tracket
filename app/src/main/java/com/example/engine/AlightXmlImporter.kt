@@ -70,7 +70,10 @@ import kotlin.math.sin
  *    angle / offset / scale); `textspacing` -> letter spacing / line height of a text layer; `scaleassist`
  *    (axis 3) composed into the SCALE track; `oscillate` / `oscillate3` / `swing` / `swing2` are procedural, so
  *    they are BAKED into the POSITION / ROTATION keyframes at the scene fps, composed over the layer's own
- *    keyframes. `textprogress` is stored as a [TextAnimator] like the other text effects (not drawn yet).
+ *    keyframes. `textprogress` is stored as a [TextAnimator] like the other text effects and DRAWN as a
+ *    typewriter reveal ([TextProgressEval]: `start` / `end` are the shown window of the text, counted in
+ *    grapheme clusters; the C++ text engine hides the clusters outside it, the Canvas fallback cuts the
+ *    string). Only its typing `cursor` is not drawn — a value other than 0 (the corpus only has 0) warns.
  *    `drawing.progress` -> the clip's stroke trim: `start` / `end` (percent of the path) become fractions,
  *    keyframed on the STROKE_TRIM track; on a line the trim gates the fill (the line's paint is its path),
  *    on text / group layers and on shapes without a stroke it stays a warning.
@@ -85,8 +88,9 @@ import kotlin.math.sin
  *    shake works in unrelated units); `flip3` -> the layer's 3D rotation tracks; `fade` -> the clip's fade
  *    in / out; `blink` / `blink2` and `pulsate2` are baked into the OPACITY / SCALE keyframes; the
  *    `transform` effect composes onto the layer's own tracks like `scaleassist`; a keyframed `hueshift` on
- *    a solid-filled layer is baked into its colour keyframes; `counter` is stored as a [TextAnimator] like
- *    `textprogress`. Effects with no counterpart in the app (repeat, motion blur, path following, …) stay
+ *    a solid-filled layer is baked into its colour keyframes; `counter` is stored as a [TextAnimator]
+ *    like the other text effects (not drawn yet). Effects with no counterpart in the app (repeat, motion
+ *    blur, path following, …) stay
  *    named warnings — nothing is silently dropped.
  *  - everything else (other layer types, other effects) is skipped and listed in [ImportResult.warnings]
  *
@@ -356,9 +360,17 @@ object AlightXmlImporter {
         for (fx in elementChildren(el).filter { it.tagName == "effect" }) {
             val id = fx.getAttribute("id")
             if (id in TEXT_STORED) {
-                animators += readAnimator(fx, id, size)
-                if (id == TEXTPROGRESS || id == COUNTER) {
-                    w += "Effect " + id.substringAfterLast('.') + " is saved with the layer but not drawn yet"
+                val animator = readAnimator(fx, id, size)
+                animators += animator
+                if (id == COUNTER) {
+                    w += "Effect counter is saved with the layer but not drawn yet"
+                } else if (id == TEXTPROGRESS) {
+                    // The reveal itself is drawn (TextProgressEval); only a typing cursor is not. The corpus
+                    // only has cursor = 0 (no cursor) — any other value keeps a warning instead of a guess.
+                    val cur = animator.props["cursor"]
+                    val cursor = (if (cur != null && cur.keys.isNotEmpty()) cur.keys.first().v.firstOrNull()
+                        else cur?.value?.firstOrNull()) ?: 0f
+                    if (cursor > 0.5f) w += "Effect textprogress cursor is not drawn yet (the reveal itself is drawn)"
                 }
             }
         }

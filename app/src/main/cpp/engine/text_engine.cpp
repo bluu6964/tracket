@@ -1150,6 +1150,24 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
         const float a = std::max(lo, std::min(rq.animStart, rq.animEnd)), b = std::min(hi, std::max(rq.animStart, rq.animEnd));
         return std::min(1.f, std::max(0.f, (b - a) * (float)unitCount));
     };
+    // ---- text progress: the global index (paragraphs in order, clusters in logical order inside one) of
+    // every cluster, and whether the reveal window shows it. Same rule as TextProgressEval.isVisible.
+    std::vector<std::vector<int>> clusterOrd;
+    if (rq.progressOn) {
+        clusterOrd.resize(pcl.size());
+        int ord = 0;
+        for (size_t pi = 0; pi < pcl.size(); ++pi) {
+            clusterOrd[pi].assign(pcl[pi].size(), -1);
+            for (size_t k = 0; k < pcl[pi].size(); ++k) clusterOrd[pi][k] = ord++;
+        }
+    }
+    const bool progressing = rq.progressOn && clusterCount > 0;
+    auto clusterShown = [&](int ord) {
+        if (!progressing) return true;
+        const float lo = (float)ord / (float)clusterCount, hi = (float)(ord + 1) / (float)clusterCount;
+        const float a = std::max(lo, std::min(rq.progressStart, rq.progressEnd)), b = std::min(hi, std::max(rq.progressStart, rq.progressEnd));
+        return (b - a) * (float)clusterCount > 0.999f;
+    };
     std::vector<uint8_t> tintMask;  // glyphs that are drawn (partly) in the animator colour
     if (animating && rq.animRecolor && wantFill) tintMask.assign((size_t)imgW * imgH, 0);
 
@@ -1167,8 +1185,15 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
         float pen = rq.padH + off;
         const float baseY = rq.padV + l.base;
         visualOrder(cl, l.first, l.last, order);
+        float visL = 0.f, visR = 0.f;  // pen span (from the line's start) of the clusters the reveal shows
+        bool anyShown = false;
         for (int k : order) {
             const Cluster& c = cl[k];
+            const bool shown = clusterShown(progressing ? clusterOrd[(size_t)l.para][(size_t)k] : -1);
+            if (shown) {
+                if (!anyShown) { visL = pen - (rq.padH + off); anyShown = true; }
+                visR = pen - (rq.padH + off) + c.adv;
+            }
             float unitMove = 0.f, unitAlpha = 1.f;  // (1 - arrived) and the unit's opacity
             if (animating) {
                 const int u = unitOf[(size_t)l.para][(size_t)k];
@@ -1179,7 +1204,7 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
                 }
             }
             const float mvx = rq.animDx * unitMove, mvy = rq.animDy * unitMove;
-            for (int g = c.g0; g < c.g0 + c.gn; ++g) {
+            if (shown) for (int g = c.g0; g < c.g0 + c.gn; ++g) {
                 const GlyphRec& gr = glyphs[g];
                 Face& f = *fonts[gr.font];
                 const bool bold = rq.weight >= 600 && f.weight < 600;
@@ -1203,9 +1228,10 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
             }
             pen += c.adv;
         }
-        // underline / strike-through over the visible part of the line
-        if ((rq.underline || rq.strike) && wantFill && l.width > 0.f) {
-            const float x0 = ox + (rq.padH + off) * rs, x1 = x0 + l.width * rs;
+        // underline / strike-through over the visible part of the line (with a reveal: only the shown span)
+        if ((rq.underline || rq.strike) && wantFill && l.width > 0.f && (!progressing || anyShown)) {
+            const float spanL = progressing ? visL : 0.f, spanR = progressing ? visR : l.width;
+            const float x0 = ox + (rq.padH + off + spanL) * rs, x1 = ox + (rq.padH + off + spanR) * rs;
             const float thick = std::max(1.f, px * rs / 16.f);
             if (rq.underline) {
                 const float yy = oy + (baseY + px * 0.1f) * rs;

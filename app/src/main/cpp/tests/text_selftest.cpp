@@ -622,6 +622,75 @@ static void testAnimator() {
     CHECK(white && !green);
 }
 
+static void testProgress() {
+    const char* latin = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    const char* bangla = "/usr/share/fonts/truetype/freefont/FreeSans.ttf";
+    if (!fileExists(latin)) { std::printf("skip progress tests (no %s)\n", latin); return; }
+    setMatcherForTest([&](const std::string&, int, bool, const uint16_t*, uint32_t, MatchResult& out) {
+        out.path = latin; out.runLen = 1; out.weight = 400; return true;
+    });
+    const int W = 700, H = 400;
+    auto render = [&](const Request& r, int* x0, int* x1, int* y0, int* y1, long* alpha, Stats* st) {
+        std::vector<uint8_t> b((size_t)W * H * 4, 0);
+        bool ok = draw(b.data(), W, H, W * 4, r, st);
+        firstOpaqueCols(b, W, H, x0, x1, y0, y1);
+        *alpha = alphaSum(b);
+        return ok;
+    };
+    auto base = [&]() {
+        Request r; r.text = "HELLO"; r.fontPath = latin; r.fontPx = 60; r.maxTextW = 600; r.padH = 15; r.padV = 7;
+        r.cx = 350; r.cy = 200;
+        return r;
+    };
+    int x0, x1, y0, y1; long a0; Stats st;
+    CHECK(render(base(), &x0, &x1, &y0, &y1, &a0, &st));
+    CHECK(st.clusters == 5);
+    const int bx0 = x0, bx1 = x1, by0 = y0, by1 = y1;
+
+    // the full window draws exactly the unrevealed picture
+    Request r = base(); r.progressOn = true; r.progressStart = 0.f; r.progressEnd = 1.f;
+    long a;
+    CHECK(render(r, &x0, &x1, &y0, &y1, &a, nullptr));
+    CHECK(x0 == bx0 && x1 == bx1 && y0 == by0 && y1 == by1 && a == a0);
+    // flags off: the window values alone change nothing
+    r = base(); r.progressStart = 0.f; r.progressEnd = 0.f;
+    CHECK(render(r, &x0, &x1, &y0, &y1, &a, nullptr) && a == a0);
+    // an empty window draws nothing
+    r = base(); r.progressOn = true; r.progressEnd = 0.f;
+    CHECK(render(r, &x0, &x1, &y0, &y1, &a, nullptr) && a == 0);
+    // [0, 0.6] of 5 clusters = "HEL": same left edge, right edge pulled in, about 3/5 of the ink
+    r = base(); r.progressOn = true; r.progressEnd = 0.6f;
+    CHECK(render(r, &x0, &x1, &y0, &y1, &a, nullptr));
+    CHECK(x0 == bx0 && x1 < bx1 && y0 == by0 && a > a0 * 45 / 100 && a < a0 * 75 / 100);
+    // [0.6, 1] = "LO": same right edge, left edge pushed in
+    r = base(); r.progressOn = true; r.progressStart = 0.6f; r.progressEnd = 1.f;
+    CHECK(render(r, &x0, &x1, &y0, &y1, &a, nullptr));
+    CHECK(x1 == bx1 && x0 > bx0 && a > a0 * 25 / 100 && a < a0 * 55 / 100);
+
+    // two paragraphs: [0, 0.5] shows only the first line (clusters are counted across paragraphs)
+    Request m; m.text = "ab\ncd"; m.fontPath = latin; m.fontPx = 60; m.maxTextW = 600; m.padH = 15; m.padV = 7;
+    m.cx = 350; m.cy = 200;
+    long am;
+    CHECK(render(m, &x0, &x1, &y0, &y1, &am, nullptr));
+    const int my0 = y0, my1 = y1;
+    m.progressOn = true; m.progressEnd = 0.5f;
+    CHECK(render(m, &x0, &x1, &y0, &y1, &a, nullptr));
+    CHECK(y0 == my0 && y1 < my1 && a > 0);
+
+    // a Bengali conjunct is one shaped cluster: never half shown (needs a Bengali-capable font)
+    const char* bnFont = fileExists(bangla) ? bangla : "/usr/share/fonts/truetype/noto/NotoSansBengali-Regular.ttf";
+    if (fileExists(bnFont)) {
+        Request b; b.text = "\xE0\xA6\x95\xE0\xA7\x8D\xE0\xA6\xA4\xE0\xA6\xBF";  // ক্তি
+        b.fontPath = bnFont; b.fontPx = 60; b.maxTextW = 600; b.padH = 15; b.padV = 7; b.cx = 350; b.cy = 200;
+        Stats sb;
+        CHECK(render(b, &x0, &x1, &y0, &y1, &a, &sb) && sb.clusters == 1 && a > 0);
+        b.progressOn = true; b.progressEnd = 0.5f;
+        CHECK(render(b, &x0, &x1, &y0, &y1, &a, nullptr) && a == 0);
+        b.progressEnd = 1.f;
+        CHECK(render(b, &x0, &x1, &y0, &y1, &a, nullptr) && a > 0);
+    }
+}
+
 int main() {
     testLayout();
     testBlit();
@@ -631,6 +700,7 @@ int main() {
     testEmoji();
     testColrEmoji();
     testAnimator();
+    testProgress();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -24,7 +24,7 @@ internal object TextNative {
     @JvmStatic external fun nativeEmojiAvailable(): Boolean
 
     /**
-     * p = 37 floats (+ 2 that the engine fills: the layout box, see [NativeTextPainter.lastBoxW]), c = 6 ARGB ints (+ the text animator colour as the 7th); see text_jni.cpp. [anim] = 7 floats of the text animator (null = none). Draws onto an ARGB_8888 bitmap, false = not drawn.
+     * p = 37 floats (+ 2 that the engine fills: the layout box, see [NativeTextPainter.lastBoxW]), c = 6 ARGB ints (+ the text animator colour as the 7th); see text_jni.cpp. [anim] = 11 floats of the text animators (null = none): a texttransform group and a textprogress group, each with its own on flag. Draws onto an ARGB_8888 bitmap, false = not drawn.
      * [fillBitmap]: the picture of a picture fill (ARGB_8888), or null.
      */
     @JvmStatic external fun nativeDraw(
@@ -61,7 +61,7 @@ internal class NativeTextPainter(
 
     private val p = FloatArray(39)
     private val c = IntArray(7)
-    private val anim = FloatArray(7)
+    private val anim = FloatArray(11)
 
     /** Layout box (frame pixels, scale 1) of the last layer this painter drew; the pivot of the layer is a fraction of it. */
     @Volatile var lastBoxW = 0f
@@ -157,13 +157,22 @@ internal class NativeTextPainter(
             else -> "sans-serif"
         }
         val path = fontFile(clip.fontFamily)
-        // Imported text animator (Alight texttransform): needs the time of this frame, -1 = unknown = not animated.
+        // Imported text animators (Alight texttransform + textprogress): need the time of this frame,
+        // -1 = unknown = not animated. Each group carries its own on flag (anim[0] / anim[8]).
         var animArr: FloatArray? = null
         if (timeMs >= 0L && clip.textAnimators.isNotEmpty()) {
-            TextAnimEval.evaluate(clip, timeMs, fontPx)?.let { a ->
-                anim[0] = a.component.toFloat(); anim[1] = a.start; anim[2] = a.end
-                anim[3] = a.dx; anim[4] = a.dy; anim[5] = a.alpha; anim[6] = if (a.recolor) 1f else 0f
-                c[6] = a.argb
+            val tr = TextAnimEval.evaluate(clip, timeMs, fontPx)
+            val pr = TextProgressEval.evaluate(clip, timeMs)
+            if (tr != null || pr != null) {
+                anim.fill(0f)
+                if (tr != null) {
+                    anim[0] = 1f; anim[1] = tr.component.toFloat(); anim[2] = tr.start; anim[3] = tr.end
+                    anim[4] = tr.dx; anim[5] = tr.dy; anim[6] = tr.alpha; anim[7] = if (tr.recolor) 1f else 0f
+                    c[6] = tr.argb
+                }
+                if (pr != null) {
+                    anim[8] = 1f; anim[9] = pr.start; anim[10] = pr.end
+                }
                 animArr = anim
             }
         }

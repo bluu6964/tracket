@@ -155,6 +155,9 @@ object AlightXmlImporter {
     const val REPEAT_RADIAL = "com.alightcreative.effects.repeat.radial"
     const val REPEAT_SCATTER = "com.alightcreative.effects.repeat.scatter"
     const val MOVEALONGPATH = "com.alightcreative.effect.movealongpath3"
+    const val MOTIONBLUR = "com.alightcreative.effects.motionblur"
+    const val MOTIONBLUR2 = "com.alightcreative.effects.motionblur2"
+    const val MOTIONBLUR4 = "com.alightcreative.effects.motionblur4"
 
     /** Effect ids the text reader stores as [TextAnimator] itself (the effect pass must not warn about them). */
     private val TEXT_STORED = setOf(TEXTTRANSFORM, RANDOMDISPLACE, TEXTPROGRESS, COUNTER)
@@ -859,6 +862,7 @@ object AlightXmlImporter {
                 VIGNETTE -> applyVignette(fx, clip, ctx)
                 ZOOMBLUR2, ZOOMBLUR3 -> applyZoomBlur(fx, clip, ctx)
                 DBLUR -> applyDirectionalBlur(fx, clip, ctx)
+                MOTIONBLUR, MOTIONBLUR2, MOTIONBLUR4 -> applyMotionBlur(fx, clip, ctx)
                 LENSBLUR2 -> applyLensBlur(fx, clip, ctx)
                 SHARPENFX -> applySharpenFx(fx, clip, ctx)
                 PINCHBULGE, PINCHBULGE2 -> applyPinchBulge(fx, clip, ctx)
@@ -1881,6 +1885,32 @@ object AlightXmlImporter {
             listOf(angle, (strength * 100f).coerceIn(0f, 100f), 0f),
             "dblur"
         )
+    }
+
+    /**
+     * `motionblur` / `motionblur2` / `motionblur4` -> the app's Motion Blur (see MotionBlurEval for
+     * the per-frame maths: a directional blur along the layer's position velocity, `tune` as its
+     * strength). Only `usePos` is reproduced this cycle — scale / rotation blur need a radial blur
+     * and are reported, not guessed. A missing flag is read as off, except `usePos` (an effect with
+     * no flags listed is just "motion blur"); an effect that blurs scale / rotation only is skipped.
+     */
+    private fun applyMotionBlur(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = fx.getAttribute("id").substringAfterLast('.')
+        val props = fxProps(fx)
+        val tune = props["tune"]?.firstValue(w, short, "tune") ?: 1f
+        val usePos = (props["usePos"]?.scalarAt(0f) ?: 1f) >= 0.5f
+        val useScale = (props["useScale"]?.scalarAt(0f) ?: 0f) >= 0.5f
+        val useAngle = (props["useAngle"]?.scalarAt(0f) ?: 0f) >= 0.5f
+        if (!usePos) {
+            w += "Effect " + short + " is not supported yet: it blurs scale / rotation only, and the app blurs position motion only so far: skipped"
+            return clip0
+        }
+        val missing = listOfNotNull(if (useScale) "scale" else null, if (useAngle) "rotation" else null)
+        val approx = if (missing.isEmpty()) "a directional blur along the layer's motion"
+        else "only its position blur is reproduced (" + missing.joinToString(" and ") + " blur is not yet)"
+        w += "Effect " + short + " is mapped approximately as " + approx
+        return addFx(clip0, ctx, ClipFxLibrary.MOTION_BLUR, listOf((tune * 100f).coerceIn(0f, 100f)), short)
     }
 
     /**

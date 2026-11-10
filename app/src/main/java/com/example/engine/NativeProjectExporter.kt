@@ -196,6 +196,18 @@ class NativeProjectExporter(private val context: Context) {
                 // 3D camera: layers in the lanes below a Camera layer are seen through it (CameraRig.kt).
                 val cam = CameraRig(tracks, rig)
                 val camK = if (previewW > 0f) w / previewW else 1f
+                // Effects as the renderer runs them this frame: Motion Blur is resolved from the
+                // layer's own motion over one export frame. [sample] is the clip the motion is
+                // sampled from — the original, not the rendered copy, so a rig adjustment can never
+                // hide the keyframes.
+                val frameMs = 1000L / fps
+                val canvasH = MotionBlurEval.canvasHeightPx(previewW, w, h)
+                fun fxOpsOf(c: TimelineClip, timeMs: Long, sample: TimelineClip = c): FloatArray? =
+                    ClipFxLibrary.toNative(
+                        MotionBlurEval.resolve(c.effects, { ms ->
+                            NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg) }
+                        }, timeMs, frameMs, canvasH)
+                    )
                 // Puts a picture layer on the corners its camera sees it at (corner pin path); false = behind the camera.
                 fun placeByCamera(clip: TimelineClip, t: Long, anim: NativeLayerAnim, fp: FloatArray, p: LayerParams, cw: Int, ch: Int): Boolean {
                     if (!cam.hasCamera || p.pin != null) return true
@@ -238,7 +250,7 @@ class NativeProjectExporter(private val context: Context) {
                     for (c in overlays) {
                         if (cur.isNotEmpty() && mediaBetween(cur.last(), c)) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                         val spec = BlendModes.find(c.blendMode)
-                        val hasFx = ClipFxLibrary.toNative(c.effects) != null
+                        val hasFx = ClipFxLibrary.hasEffects(c.effects)
                         if (overlayNeedsPose(c) || cam.affects(c)) {
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                             level += OverlayGroup(listOf(c), spec.shaderId, pose = true, fx = hasFx)
@@ -344,7 +356,7 @@ class NativeProjectExporter(private val context: Context) {
                             val img = images[clip.id]
                             if (img != null) {
                                 if (!placeByCamera(clip, timeMs, anim, fp, p, img.width, img.height)) return
-                                val imgOps = ClipFxLibrary.toNative(clip.effects)
+                                val imgOps = fxOpsOf(clip, timeMs)
                                 val imgMasks = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                                 if (imgOps != null || imgMasks != null) {
                                     val fxTex = renderer.applyFx(
@@ -410,7 +422,7 @@ class NativeProjectExporter(private val context: Context) {
                             // same order as the preview (face blur, then cutout).
                             val faceMask = NativeFxMasks.face(renderer, clip, layerIdx, sourceMs, strict = true)
                             val cutMask = NativeFxMasks.cutout(renderer, clip, layerIdx, sourceMs, strict = true)
-                            val fxOps = ClipFxLibrary.toNative(clip.effects)
+                            val fxOps = fxOpsOf(clip, timeMs)
                             val maskOps = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                             if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
                                 val fxTex = renderer.applyFx(
@@ -466,7 +478,7 @@ class NativeProjectExporter(private val context: Context) {
                         val tex = renderer.endGroup()
                         if (tex == 0) return
                         val blendId = BlendModes.find(clip.blendMode).shaderId
-                        val fxOps = ClipFxLibrary.toNative(clip.effects)
+                        val fxOps = fxOpsOf(clip, timeMs)
                         val maskOps = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                         var drawTex = tex
                         if (fxOps != null || maskOps != null) {
@@ -557,7 +569,7 @@ class NativeProjectExporter(private val context: Context) {
                                 var contH = h
                                 var boxLp: LayerParams? = null
                                 if (g.fx) {
-                                    val ops = ClipFxLibrary.toNative(rendered[0].effects)
+                                    val ops = fxOpsOf(rendered[0], timeMs, g.clips.firstOrNull { it.id == rendered[0].id } ?: rendered[0])
                                     if (ops != null) {
                                         val reg = g.region
                                         val fxTex = renderer.applyFx(

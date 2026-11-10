@@ -68,6 +68,9 @@ enum FxType : int {
     FX_LAST = FX_LENS_FLARE,  // last effect that runs through the shared shaded programs
     // v157: Copy Background. Not a shaded effect: it needs the frame drawn so far (see Renderer::fxCopyBg).
     FX_COPY_BG = 54,         // p0 amount 0..100 % (how much of the picture behind the layer replaces the layer, cut to the layer's shape)
+    // v158: Motion Blur. Not a shaded effect either: Kotlin resolves it per frame to FX_DIR_BLUR (see MotionBlurEval),
+    // so it must never reach the shaders. It sits above FX_MAX on purpose: fxParseOps skips it, runEffects no-ops it.
+    FX_MOTION_BLUR = 55,    // p0 strength 0..100 % (the tune); the angle / length are computed per frame, never stored
     FX_MAX = FX_COPY_BG
 };
 

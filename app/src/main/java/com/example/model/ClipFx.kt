@@ -94,6 +94,9 @@ object ClipFxLibrary {
     const val LENS_FLARE = "lens_flare"
     // v157
     const val COPY_BG = "copy_background"
+    // Motion Blur: resolved per frame by MotionBlurEval into a directional blur (see engine/MotionBlurEval.kt);
+    // its native type (55) never reaches the shaders (fxParseOps skips it: it is above FX_MAX).
+    const val MOTION_BLUR = "motion_blur"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -158,6 +161,10 @@ object ClipFxLibrary {
                 FxParamDef("Length", 0f, 100f, 30f),
                 FxParamDef("Trail", 0f, 100f, 0f, "%")
             )
+        ),
+        FxDef(
+            MOTION_BLUR, 55, "Motion Blur", "Blur", "Smears the layer along its own motion, like a camera shutter (position movement only)",
+            listOf(FxParamDef("Strength", 0f, 100f, 100f, "%"))
         ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
@@ -612,10 +619,12 @@ object ClipFxLibrary {
 
     /**
      * The enabled effects as the flat array the C++ engine reads (groups of 8 floats: type, p0..p6), or null when there
-     * is nothing to run. Max [MAX_EFFECTS] effects.
+     * is nothing to run. Max [MAX_EFFECTS] effects. Motion Blur is NOT emitted here: it needs the layer's motion at
+     * the frame time, so [com.example.engine.MotionBlurEval.resolve] rewrites it to a directional blur first
+     * (use that at every per-frame call site); a layer with only Motion Blur still counts in [hasEffects].
      */
     fun toNative(effects: List<ClipFx>): FloatArray? {
-        val on = effects.filter { it.enabled && def(it.type) != null }.take(MAX_EFFECTS)
+        val on = effects.filter { it.enabled && def(it.type) != null && it.type != MOTION_BLUR }.take(MAX_EFFECTS)
         if (on.isEmpty()) return null
         val out = FloatArray(on.size * 8)
         on.forEachIndexed { i, fx ->
@@ -625,6 +634,9 @@ object ClipFxLibrary {
         }
         return out
     }
+
+    /** True when the layer has any enabled effect, Motion Blur included (it needs a time to resolve, so [toNative] skips it). */
+    fun hasEffects(effects: List<ClipFx>): Boolean = effects.any { it.enabled && def(it.type) != null }
 
     /**
      * Eyedropper for Chroma Key: [key hue 0..360, key strength 0..100, key brightness 0..100, brightness match 0..100] that make the key colour equal the picked colour (ANY colour)

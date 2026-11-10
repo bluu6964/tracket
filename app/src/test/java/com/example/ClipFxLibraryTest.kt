@@ -3,6 +3,7 @@ package com.example
 import com.example.model.ClipFx
 import com.example.model.ClipFxLibrary
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -20,8 +21,19 @@ class ClipFxLibraryTest {
     }
 
     @Test fun nativeTypesCoverTheEngineRange() {
-        // FX_BLUR (1) .. FX_MAX (54): every type the engine knows has a tile, none outside that range
-        assertEquals((1..54).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+        // FX_BLUR (1) .. FX_COPY_BG (54), plus FX_MOTION_BLUR (55): every type the engine knows has
+        // a tile, none outside that range. 55 is the odd one: Kotlin resolves it to a directional blur
+        // before it reaches the engine, and fxParseOps skips it (it sits above FX_MAX).
+        assertEquals((1..55).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+    }
+
+    @Test fun motionBlurIsSkippedByToNativeButCountsAsAnEffect() {
+        val mb = ClipFxLibrary.create(ClipFxLibrary.MOTION_BLUR)!!
+        assertEquals(listOf(100f), mb.values)
+        assertNull(ClipFxLibrary.toNative(listOf(mb)))   // needs a frame time: MotionBlurEval.resolve first
+        assertTrue(ClipFxLibrary.hasEffects(listOf(mb)))
+        assertFalse(ClipFxLibrary.hasEffects(listOf(mb.copy(enabled = false))))
+        assertFalse(ClipFxLibrary.hasEffects(emptyList()))
     }
 
     @Test fun everyEffectHasValidParams() {

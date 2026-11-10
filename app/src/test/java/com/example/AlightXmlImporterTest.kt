@@ -3,6 +3,7 @@ package com.example
 import com.example.engine.AlightXmlImporter
 import com.example.engine.CounterEval
 import com.example.model.AnimProp
+import com.example.model.ClipFxLibrary
 import com.example.model.LayerType
 import com.example.model.packColor
 import org.junit.Assert.assertEquals
@@ -443,6 +444,68 @@ $layers
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
         assertEquals(-1f, c.shapeCornerRadius, 0f)
+    }
+
+    @Test
+    fun motionblur4BecomesMotionBlurWithTuneAsStrength() {
+        val xml = scene(
+            """<shape id="9" label="Box" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location><kf t="0.000000" v="340,960,0" /><kf t="1.000000" v="740,960,0" /></location><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.motionblur4" locallyApplied="true">
+    <property name="tune" type="float" value="0.200000" />
+    <property name="usePos" type="bool" value="true" />
+    <property name="useScale" type="bool" value="true" />
+    <property name="useAngle" type="bool" value="true" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(1, c.effects.size)
+        assertEquals(ClipFxLibrary.MOTION_BLUR, c.effects[0].type)
+        assertEquals(20f, c.effects[0].values[0], 0.01f)   // tune 0.2 -> Strength 20
+        // Position blur is reproduced; scale / rotation blur is reported, not guessed.
+        assertTrue(r.warnings.any { it.contains("motionblur4") && it.contains("approximately") })
+        assertTrue(r.warnings.any { it.contains("scale") && it.contains("rotation") })
+        assertFalse(r.warnings.any { it.contains("motionblur4") && it.contains("skipped") })
+    }
+
+    @Test
+    fun motionblurWithoutPositionIsSkipped() {
+        val xml = scene(
+            """<shape id="9" label="Box" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.motionblur" locallyApplied="true">
+    <property name="tune" type="float" value="1.000000" />
+    <property name="usePos" type="bool" value="false" />
+    <property name="useScale" type="bool" value="true" />
+    <property name="useAngle" type="bool" value="false" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.effects.isEmpty())
+        assertTrue(r.warnings.any { it.contains("motionblur") && it.contains("skipped") })
+    }
+
+    @Test
+    fun motionblur2WithOnlyTuneHasNoScaleWarning() {
+        val xml = scene(
+            """<shape id="9" label="Box" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.motionblur2" locallyApplied="true">
+    <property name="tune" type="float" value="1.000000" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(1, c.effects.size)
+        assertEquals(ClipFxLibrary.MOTION_BLUR, c.effects[0].type)
+        assertEquals(100f, c.effects[0].values[0], 0.01f)
+        assertTrue(r.warnings.any { it.contains("motionblur2") && it.contains("approximately") })
+        assertFalse(r.warnings.any { it.contains("scale") && it.contains("rotation") })
     }
 
     @Test

@@ -89,7 +89,8 @@ import kotlin.math.sin
  *    in / out; `blink` / `blink2` and `pulsate2` are baked into the OPACITY / SCALE keyframes; the
  *    `transform` effect composes onto the layer's own tracks like `scaleassist`; a keyframed `hueshift` on
  *    a solid-filled layer is baked into its colour keyframes; `counter` is stored as a [TextAnimator]
- *    like the other text effects (not drawn yet). Effects with no counterpart in the app (repeat, motion
+ *    like the other text effects and drawn by [CounterEval] (Alight's "Count Up/Down": every number
+ *    in the text × its `scale` + its `offset`, both evaluated at the frame's time). Effects with no counterpart in the app (repeat, motion
  *    blur, path following, …) stay
  *    named warnings — nothing is silently dropped.
  *  - everything else (other layer types, other effects) is skipped and listed in [ImportResult.warnings]
@@ -362,9 +363,7 @@ object AlightXmlImporter {
             if (id in TEXT_STORED) {
                 val animator = readAnimator(fx, id, size)
                 animators += animator
-                if (id == COUNTER) {
-                    w += "Effect counter is saved with the layer but not drawn yet"
-                } else if (id == TEXTPROGRESS) {
+                if (id == TEXTPROGRESS) {
                     // The reveal itself is drawn (TextProgressEval); only a typing cursor is not. The corpus
                     // only has cursor = 0 (no cursor) — any other value keeps a warning instead of a guess.
                     val cur = animator.props["cursor"]

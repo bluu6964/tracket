@@ -267,12 +267,16 @@ internal class LayerPainter(
     private fun drawText(canvas: Canvas, clip: TimelineClip, timeMs: Long = -1L) {
         if (clip.isBehindCamera) return
         val full = clip.text?.ifBlank { null } ?: "Text"
-        // Imported textprogress (typewriter reveal): the C++ engine hides the clusters outside the window
-        // and keeps the layout; this Canvas fallback cuts the string to the shown part instead (same window
-        // and cluster counting, see TextProgressEval). -1 = unknown time = the whole text, as before.
+        // Imported counter (Alight "Count Up/Down") substitutes the text's number(s) first (see
+        // CounterEval — the native path hands the counted string to the engine instead); imported
+        // textprogress (typewriter reveal) then applies to the counted string: the C++ engine hides the
+        // clusters outside the window and keeps the layout, this Canvas fallback cuts the string to the
+        // shown part instead (same window and cluster counting, see TextProgressEval).
+        // -1 = unknown time = the whole authored text, as before.
+        val counted = if (timeMs >= 0L) CounterEval.displayText(full, clip, timeMs) ?: full else full
         val content = if (timeMs >= 0L) {
-            TextProgressEval.evaluate(clip, timeMs)?.let { TextProgressEval.visibleText(full, it.start, it.end) } ?: full
-        } else full
+            TextProgressEval.evaluate(clip, timeMs)?.let { TextProgressEval.visibleText(counted, it.start, it.end) } ?: counted
+        } else counted
         val textColor = argb(clip.textColor, fallback = 0xFFFFFFFF)
         val scale = (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f)
         // Same rules as the preview (TextLayerContent): every size is a fraction of the frame width.

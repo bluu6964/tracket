@@ -75,7 +75,13 @@ internal class NativeTextPainter(
     ): Boolean {
         if (bmp.config != Bitmap.Config.ARGB_8888) return false
 
-        val content = clip.text?.ifBlank { null } ?: "Text"
+        val authored = clip.text?.ifBlank { null } ?: "Text"
+        // Imported counter (Alight "Count Up/Down"): the number(s) in the text are replaced by
+        // number × scale + offset at this frame BEFORE the string reaches the engine (see CounterEval),
+        // so the engine lays out and draws the counted value — and the textprogress window /
+        // texttransform units below operate on the counted string, the only order in which they see
+        // the text that is actually shown. -1 = unknown time = the authored text, like the animators.
+        val content = if (timeMs >= 0L) CounterEval.displayText(authored, clip, timeMs) ?: authored else authored
         val fontPx = frameW * 0.11f
         val bgOn = clip.bgOpacity > 0f
         val padH = maxOf(fontPx * 0.25f, if (bgOn) fontPx * clip.bgPadding / 100f * 0.9f else 0f)

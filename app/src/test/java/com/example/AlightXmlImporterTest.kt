@@ -1,6 +1,7 @@
 package com.example
 
 import com.example.engine.AlightXmlImporter
+import com.example.engine.CounterEval
 import com.example.model.AnimProp
 import com.example.model.LayerType
 import com.example.model.packColor
@@ -1160,7 +1161,26 @@ $layers
         val r = AlightXmlImporter.parse(xml, 1080f)
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
         assertTrue(c.textAnimators.any { it.effectId == AlightXmlImporter.COUNTER })
-        assertTrue(r.warnings.any { it.contains("counter is saved with the layer") })
+        // The counter is drawn now (CounterEval) — no "not drawn yet" warning remains for it.
+        assertFalse(r.warnings.any { it.contains("counter") })
+    }
+
+    @Test
+    fun counterFromTheGraphFileCountsZeroToTwelve() {
+        // The exact effect block of 7e363d75…xml ("Animated Graph"), on a text layer 0..7032 ms
+        // whose content is "0": the display is the keyframed offset itself, 0 -> 12.
+        val xml = scene(
+            """<text id="1494" label="N" startTime="0" endTime="7032" size="48" font="googlefonts?name=Montserrat&amp;weight=700" align="center">
+  <effect id="com.alightcreative.effects.counter" locallyApplied="true"><property name="offset" type="float"><kf t="0.002276" v="0.000000" /><kf t="0.286689" v="12.000000" e="cubicBezier 0.0 0.60428476 0.252069 1.0" /></property><property name="scale" type="float" value="0.140000" /></effect>
+  <content>0</content></text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1920f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.textAnimators.any { it.effectId == AlightXmlImporter.COUNTER })
+        assertFalse(r.warnings.any { it.contains("counter") })
+        assertEquals("0", CounterEval.displayText("0", c, 0L))
+        assertEquals("12", CounterEval.displayText("0", c, 2016L))
+        assertEquals("12", CounterEval.displayText("0", c, 7032L))
     }
 
     @Test

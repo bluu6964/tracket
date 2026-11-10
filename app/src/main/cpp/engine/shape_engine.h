@@ -18,7 +18,8 @@ struct Request {
     float base = 100.f;              // half size of the 2*base box (export px at scale 1)
     float corner = 0.f;              // ROUNDED: corner radius in local units (0 = base / 4)
     float cx = 0.f, cy = 0.f;        // centre on the frame
-    float scale = 1.f;               // > 0
+    float scale = 1.f;               // > 0, the X axis
+    float scaleY = 0.f;              // Y axis; <= 0 = same as scale (callers that predate the split)
     float rotationDeg = 0.f;         // clockwise (Canvas.rotate)
     float flipX = 1.f, flipY = 1.f;  // +1 / -1
     float alpha = 1.f;               // whole layer (Canvas.saveLayerAlpha)

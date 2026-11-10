@@ -338,6 +338,21 @@ val TimelineClip.isBehindCamera: Boolean get() = transformZ >= DEPTH_HIDE_Z
 val TimelineClip.effectiveScalePercent: Float
     get() = scalePercent * depthFactor
 
+/**
+ * Per-axis scale the shape painters draw a SHAPE layer with (1 = the 130 dp shape box). X is the layer's
+ * effective scale (after depth) — the value both painters used for both axes before the shape's own aspect
+ * was honoured. Y carries that aspect on top: [shapeScaleY] relative to [shapeScaleX]. The drawn size is
+ * therefore the box times ([shapeDrawScaleX], [shapeDrawScaleY]) whenever the writers' invariant
+ * scalePercent = shapeScaleX x 100 holds (the importer, the shape tools, tracking), a parent group's scale
+ * still flows in through [scalePercent] (ParentRig composes it), and a shape without an aspect of its own
+ * (shapeScaleY == shapeScaleX — every uniform scale, keyframed or not) draws exactly as it did before.
+ */
+val TimelineClip.shapeDrawScaleX: Float
+    get() = (effectiveScalePercent / 100f).coerceAtLeast(0.01f)
+
+val TimelineClip.shapeDrawScaleY: Float
+    get() = (shapeDrawScaleX * (if (shapeScaleX > 1e-4f) shapeScaleY / shapeScaleX else 1f)).coerceAtLeast(0.01f)
+
 /** Position (canvas px) after perspective: the stored position times [depthFactor]. */
 val TimelineClip.depthX: Float get() = transformX * depthFactor
 val TimelineClip.depthY: Float get() = transformY * depthFactor

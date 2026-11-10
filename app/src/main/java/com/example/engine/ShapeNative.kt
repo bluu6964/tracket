@@ -9,12 +9,14 @@ import com.example.model.depthX
 import com.example.model.depthY
 import com.example.model.effectiveScalePercent
 import com.example.model.opacityFraction
+import com.example.model.shapeDrawScaleX
+import com.example.model.shapeDrawScaleY
 
 /** Raw JNI functions of libam_engine.so (shape + sticker part, cpp/engine/shape_jni.cpp). Use [NativeShapePainter]. */
 internal object ShapeNative {
     @JvmStatic external fun nativeAvailable(): Boolean
 
-    /** p = 27 floats, c = 4 ARGB ints; see shape_jni.cpp. Draws onto an ARGB_8888 bitmap, false = not drawn. */
+    /** p = 28 floats, c = 4 ARGB ints; see shape_jni.cpp. Draws onto an ARGB_8888 bitmap, false = not drawn. */
     @JvmStatic external fun nativeDrawShape(bitmap: Bitmap, p: FloatArray, c: IntArray, fillBitmap: Bitmap?): Boolean
 
     /** p = 9 floats; see shape_jni.cpp. */
@@ -34,7 +36,7 @@ internal class NativeShapePainter(
     /** Picture of a picture fill: the export waits for it ([FillImages.loadSync]). */
     private val fillImage: (String) -> Bitmap? = { FillImages.loadSync(it) }
 ) {
-    private val p = FloatArray(27)
+    private val p = FloatArray(28)
     private val c = IntArray(4)
     private val sp = FloatArray(9)
 
@@ -66,7 +68,10 @@ internal class NativeShapePainter(
         p[1] = base
         p[2] = frameW / 2f + clip.depthX * k
         p[3] = frameH / 2f + clip.depthY * k
-        p[4] = (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f)
+        // Per-axis scale: X is the layer's effective scale, Y also carries the shape's own aspect
+        // (shapeScaleY / shapeScaleX) — the two are equal for every uniform shape, as before.
+        p[4] = clip.shapeDrawScaleX
+        p[27] = clip.shapeDrawScaleY
         p[5] = clip.rotationDeg
         p[6] = if (clip.isFlippedH) -1f else 1f
         p[7] = if (clip.isFlippedV) -1f else 1f

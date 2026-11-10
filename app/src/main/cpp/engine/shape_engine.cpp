@@ -300,12 +300,19 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
     const float boxW = 2.f * base, boxH = 2.f * base;
     const float ang = rq.rotationDeg * kDeg2Rad;
     const float cs = std::cos(ang), sn = std::sin(ang);
+    // Per-axis layer scale (the shape's own aspect): scaleY <= 0 means the uniform scale on both axes.
+    const float sx = rq.scale;
+    const float sy = rq.scaleY > 0.f ? rq.scaleY : rq.scale;
+    const float minK = std::min(sx, sy);
 
-    // Bounding box of the (stroke-grown) outline on the frame.
-    const float half = (rq.kind == OVAL ? base * 1.2f : base) + sw * 1.3f + 2.f / rq.scale;
+    // Bounding box of the (stroke-grown) outline on the frame: the local half extents per axis (the
+    // oval is wider than tall), grown by the stroke and the anti-aliasing margin, scaled per axis.
+    const float grow = sw * 1.3f + 2.f / minK;
+    const float halfX = (rq.kind == OVAL ? base * 1.2f : base) + grow;
+    const float halfY = (rq.kind == OVAL ? base * 0.75f : base) + grow;
     float minX = 1e30f, minY = 1e30f, maxX = -1e30f, maxY = -1e30f;
     for (int i = 0; i < 4; ++i) {
-        const float lx = (i & 1 ? half : -half) * rq.scale, ly = (i & 2 ? half : -half) * rq.scale;
+        const float lx = (i & 1 ? halfX : -halfX) * sx, ly = (i & 2 ? halfY : -halfY) * sy;
         const float X = rq.cx + cs * lx - sn * ly, Y = rq.cy + sn * lx + cs * ly;
         minX = std::min(minX, X); maxX = std::max(maxX, X);
         minY = std::min(minY, Y); maxY = std::max(maxY, Y);
@@ -330,23 +337,41 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
         for (int x = x0; x < x1; ++x, d += 4) {
             // pixel centre -> local coordinates: inverse of translate, rotate, scale, flip
             const float px = x + 0.5f - rq.cx, py = y + 0.5f - rq.cy;
-            float lx = (cs * px + sn * py) / rq.scale;
-            float ly = (-sn * px + cs * py) / rq.scale;
+            float lx = (cs * px + sn * py) / sx;
+            float ly = (-sn * px + cs * py) / sy;
             lx *= rq.flipX < 0.f ? -1.f : 1.f;
             ly *= rq.flipY < 0.f ? -1.f : 1.f;
 
             float clipCov = 1.f;
             if (rq.hasCrop) {
-                clipCov = cover((cl - lx) * rq.scale) * cover((lx - cr) * rq.scale) *
-                          cover((ct - ly) * rq.scale) * cover((ly - cb) * rq.scale);
+                // The crop planes are local axis planes: across them one local unit is exactly sx
+                // frame px in x and sy in y (the rotation preserves the gradient's length).
+                clipCov = cover((cl - lx) * sx) * cover((lx - cr) * sx) *
+                          cover((ct - ly) * sy) * cover((ly - cb) * sy);
                 if (clipCov <= 0.f) continue;
             }
             const float s = outlineDistance(rq.kind, base, rq.corner, poly, lx, ly);
+            // Frame px per local unit along the outline normal: with a non-uniform scale the same
+            // local distance covers sx px in x and sy in y, so the factor follows the SDF gradient
+            // (1 / |(gx/sx, gy/sy)|). Outside the anti-aliasing band every cover is saturated and a
+            // plain mean does; inside it the gradient costs two extra SDF samples. Uniform scale
+            // keeps the historical factor exactly.
+            float pxK = sx;
+            if (sy != sx) {
+                pxK = std::sqrt(sx * sy);
+                if (std::fabs(s) < sw * 0.5f + 2.5f / minK) {
+                    const float e = 0.75f;
+                    const float gx = (outlineDistance(rq.kind, base, rq.corner, poly, lx + e, ly) - s) / e;
+                    const float gy = (outlineDistance(rq.kind, base, rq.corner, poly, lx, ly + e) - s) / e;
+                    const float n = std::sqrt((gx / sx) * (gx / sx) + (gy / sy) * (gy / sy));
+                    if (n > 1e-9f) pxK = 1.f / n;
+                }
+            }
             const bool trimActive = rq.trimStart > 0.f || rq.trimEnd < 1.f;
 
             float outR = 0.f, outG = 0.f, outB = 0.f, outA = 0.f;  // premultiplied 0..255
             if (fillOn) {
-                float cf = cover(s * rq.scale);
+                float cf = cover(s * pxK);
                 // An imported line (trimFill): its fill is the path, drawn along local x.
                 if (cf > 0.f && trimActive && rq.trimFill && rq.kind == RECT) {
                     const float u = (lx + base) / (2.f * base);
@@ -361,7 +386,7 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
                 }
             }
             if (strokeOn) {
-                float cstroke = cover((std::fabs(s) - sw * 0.5f) * rq.scale);
+                float cstroke = cover((std::fabs(s) - sw * 0.5f) * pxK);
                 if (cstroke > 0.f && trimActive && !rq.trimFill) {
                     const float u = outlineParam(rq.kind, base, rq.corner, poly, lx, ly);
                     if (u < rq.trimStart || u > rq.trimEnd) cstroke = 0.f;

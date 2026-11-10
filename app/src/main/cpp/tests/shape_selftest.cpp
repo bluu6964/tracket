@@ -195,6 +195,44 @@ int main() {
         near(b.coverage(), 100.0 * 200.0, 100.0 * 200 * 0.01, "line trim = the middle half");
         ok(b.at(200, 200)[3] == 255 && b.at(120, 200)[3] == 0 && b.at(280, 200)[3] == 0, "line trim position");
     }
+    {   // non-uniform scale (scaleY): the shape's own aspect, composed with the layer scale
+        Bmp b(500, 500); Request r = base(RECT); r.cx = 250.f; r.cy = 250.f; r.scale = 2.f; r.scaleY = 1.f;
+        drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
+        near(b.coverage(), 400.0 * 200.0, 400.0 * 200.0 * 0.01, "non-uniform rect area (sx * sy)");
+        ok(b.at(440, 250)[3] == 255 && b.at(460, 250)[3] == 0, "rect reaches 2x in x");
+        ok(b.at(250, 340)[3] == 255 && b.at(250, 360)[3] == 0, "rect stays 1x in y");
+
+        Bmp c(500, 500); Request q = base(CIRCLE); q.cx = 250.f; q.cy = 250.f; q.scaleY = 0.5f;
+        drawShape(c.px.data(), c.w, c.h, c.w * 4, q);
+        near(c.coverage(), pi * 100 * 50, pi * 100 * 50 * 0.015, "circle squashed to an ellipse: area");
+        ok(c.at(340, 250)[3] == 255 && c.at(250, 295)[3] == 255 && c.at(250, 310)[3] == 0, "ellipse extents");
+
+        // Rotated 90 deg the long axis stands upright (Canvas order: rotate, then the local scale).
+        Bmp d(500, 500); Request t = base(RECT); t.cx = 250.f; t.cy = 250.f; t.scale = 2.f; t.scaleY = 1.f; t.rotationDeg = 90.f;
+        drawShape(d.px.data(), d.w, d.h, d.w * 4, t);
+        ok(d.at(250, 440)[3] == 255 && d.at(250, 460)[3] == 0 && d.at(340, 250)[3] == 255 && d.at(360, 250)[3] == 0, "rotated non-uniform rect swaps axes");
+
+        // scaleY unset draws exactly like scaleY == scale (pixel-identical).
+        Bmp e(500, 500); Request u = base(ROUNDED); u.cx = 250.f; u.cy = 250.f; u.scale = 1.5f; u.strokeW = 8.f; u.strokeArgb = 0xFF00FF00u;
+        Bmp f(500, 500); Request v = u; v.scaleY = v.scale;
+        drawShape(e.px.data(), e.w, e.h, e.w * 4, u);
+        drawShape(f.px.data(), f.w, f.h, f.w * 4, v);
+        ok(e.px == f.px, "scaleY unset == scaleY == scale");
+
+        // The stroke band is sw local units wide: sw*sx frame px on the x-facing edges, sw*sy on the
+        // y-facing ones — what Canvas draws when it scales a stroked path non-uniformly.
+        Bmp g(500, 500); Request w = base(RECT); w.cx = 250.f; w.cy = 250.f; w.fillOn = false;
+        w.strokeW = 10.f; w.strokeArgb = 0xFFFFFFFFu; w.scaleY = 2.f;
+        drawShape(g.px.data(), g.w, g.h, g.w * 4, w);
+        ok(g.at(353, 250)[3] == 255 && g.at(357, 250)[3] == 0, "stroke band on the right edge: 10 frame px");
+        ok(g.at(250, 43)[3] == 255 && g.at(250, 36)[3] == 0, "stroke band on the top edge: 20 frame px");
+
+        // Crop fractions are of the local box, so they follow the per-axis scale.
+        Bmp h(500, 500); Request z = base(RECT); z.cx = 250.f; z.cy = 250.f; z.scale = 2.f; z.scaleY = 1.f;
+        z.hasCrop = true; z.crop[0] = 0.25f; z.crop[1] = 0.f; z.crop[2] = 0.75f; z.crop[3] = 1.f;
+        drawShape(h.px.data(), h.w, h.h, h.w * 4, z);
+        near(h.coverage(), 200.0 * 200.0, 200.0 * 200.0 * 0.01, "crop of a non-uniform rect = half its width");
+    }
     ok(!drawShape(nullptr, 1, 1, 4, base(CIRCLE)), "null target refused");
     Request z = base(CIRCLE); z.base = 0.f;
     Bmp t(8, 8);

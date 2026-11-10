@@ -38,6 +38,8 @@ import com.example.model.depthX
 import com.example.model.depthY
 import com.example.model.effectiveScalePercent
 import com.example.model.isBehindCamera
+import com.example.model.shapeDrawScaleX
+import com.example.model.shapeDrawScaleY
 import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.roundToInt
@@ -152,7 +154,10 @@ internal class LayerPainter(
         if (clip.isBehindCamera) return
         val cx = frameW / 2f + clip.depthX * k
         val cy = frameH / 2f + clip.depthY * k
-        val scale = (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f)
+        // Per-axis layer scale: X is the effective scale, Y also carries the shape's own aspect
+        // (shapeScaleY / shapeScaleX); both are the plain layer scale for a uniform shape.
+        val scaleX = clip.shapeDrawScaleX
+        val scaleY = clip.shapeDrawScaleY
         // The preview draws a 130 dp box; base is half of it. The layer scale is applied by canvas.scale below.
         val base = 65f * density * k
         val color = argb(clip.textColor.takeIf { it != 0L } ?: clip.color, fallback = 0xFFFF3377)
@@ -186,7 +191,7 @@ internal class LayerPainter(
         canvas.save()
         canvas.translate(cx, cy)
         canvas.rotate(clip.rotationDeg)
-        canvas.scale(scale, scale)
+        canvas.scale(scaleX, scaleY)
         canvas.scale(if (clip.isFlippedH) -1f else 1f, if (clip.isFlippedV) -1f else 1f)
         cropFractionsOf(clip)?.let { f ->
             canvas.clipRect(

@@ -225,6 +225,8 @@ object AlightXmlImporter {
 
     private const val SHAPE_COLOR = 0xFFFF3377L
     private const val GROUP_COLOR = 0xFF5BB85DL
+    /** The app's own Null colour (VideoEditorViewModel's lane colour for LayerType.NULL). */
+    private const val NULL_COLOR = 0xFFE8A33DL
 
     class ImportResult(val name: String, val snapshot: ProjectSnapshot, val warnings: List<String>)
 
@@ -308,7 +310,8 @@ object AlightXmlImporter {
         // One slot per child element (null = the element produced no layer of this scene): a mask layer
         // cuts the layer of the element directly before it, so the pairing must see the gaps too.
         val directSlots = ArrayList<TimelineClip?>()
-        for (el in elementChildren(sceneEl)) {
+        val elements = elementChildren(sceneEl)
+        for (el in elements) {
             when (el.tagName) {
                 "text" -> readText(el, ctx).let { flat += it; directSlots += it }
                 "shape" -> {
@@ -324,6 +327,7 @@ object AlightXmlImporter {
                     val c = readCamera(el, ctx)
                     if (c != null) { flat += c; directSlots += c } else directSlots += null
                 }
+                "nullobj" -> readNull(el, ctx).let { flat += it; directSlots += it }
                 "embedScene" -> {
                     val g = readGroup(el, ctx)
                     if (g != null) { flat += g.first; directSlots += g.second } else directSlots += null
@@ -336,7 +340,8 @@ object AlightXmlImporter {
         }
         resolveMaskLinks(directSlots, flat, ctx)
         resolveMoveAlongPaths(directSlots, flat, ctx)
-        return SceneBlock(flat, directSlots.filterNotNull())
+        val anchors = resolveParentLinks(elements, directSlots, flat, ctx)
+        return SceneBlock(flat, directSlots.filterNotNull() + anchors)
     }
 
     /**
@@ -1465,7 +1470,12 @@ object AlightXmlImporter {
         val link = ParentLink(groupId, pivotX, pivotY, 100f, 0f)
         val directIds = content.direct.mapTo(HashSet()) { it.id }
         val remapped = content.flat.mapNotNull { c ->
-            val linked = if (c.id in directIds) c.copy(groupId = groupId, parent = link) else c
+            // A direct layer may already carry an Alight parent link (to a null inside the group):
+            // its chain tops out at a direct layer the group link lands on, so only unlinked direct
+            // layers take the group link itself; the groupId is set either way.
+            val linked = if (c.id in directIds) {
+                if (c.parent == null) c.copy(groupId = groupId, parent = link) else c.copy(groupId = groupId)
+            } else c
             remapClip(linked, startMs, endMs, inT, factor)
         }
 
@@ -1699,6 +1709,167 @@ object AlightXmlImporter {
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             keyframes = keyframes
         )
+    }
+
+    // ---- null objects + layer parenting ---------------------------------------------------------------------------
+
+    /**
+     * A `<nullobj>` -> a Null layer: Alight's invisible anchor. It renders nothing; other layers name it in
+     * their `parent` attribute and follow its motion (see [resolveParentLinks]). Its own transform is
+     * imported like any layer's — location / scale / rotation, constant or keyframed — and its effects run
+     * through the GROUP path of [applyLayerEffects], because the transform animators Alight rigs onto nulls
+     * (oscillate / swing / pulsate — the classic shake rig: 33 of the corpus's 38 effects on nulls) bake
+     * into those tracks there, and the baked motion is exactly what the children must follow. Picture
+     * effects on a null land on a clip that is never drawn, like on a group.
+     */
+    private fun readNull(el: Element, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
+        val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
+        val durMs = (endMs - startMs).coerceAtLeast(1L)
+        val tr = readTransform(el, w, pivotUsed = false)
+        fun scalePct(v: List<Float>): Float {
+            if (v.size >= 2 && abs(v[0] - v[1]) > 1e-3f) w += "Non-uniform scale: only the horizontal scale is used"
+            return (v.firstOrNull() ?: 1f) * 100f
+        }
+        val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
+        fun keys(prop: AnimProp, t: Track?, map: (List<Float>) -> Pair<Float, Float>) {
+            val l = trackKeys(t, durMs, map)
+            if (l.isNotEmpty()) keyframes[prop] = l
+        }
+        keys(AnimProp.POSITION, tr.loc) { ctx.posX(it) to ctx.posY(it) }
+        keys(AnimProp.SCALE, tr.scl) { scalePct(it) to 0f }
+        keys(AnimProp.ROTATION, tr.rot) { (it.firstOrNull() ?: 0f) to 0f }
+        keys(AnimProp.OPACITY, tr.opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
+        val built = TimelineClip(
+            id = UUID.randomUUID().toString(),
+            name = el.getAttribute("label").ifBlank { "Null" },
+            type = LayerType.NULL,
+            startMs = startMs.coerceAtLeast(0L),
+            durationMs = durMs,
+            color = NULL_COLOR,
+            transformX = ctx.posX(tr.loc?.first() ?: emptyList()),
+            transformY = ctx.posY(tr.loc?.first() ?: emptyList()),
+            scalePercent = scalePct(tr.scl?.first() ?: listOf(1f, 1f)),
+            rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
+            opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+            keyframes = keyframes
+        )
+        return applyLayerEffects(el, built, ctx, durMs, FxTarget.GROUP)
+    }
+
+    /**
+     * Alight layer parenting: a layer's `parent` attribute names another layer of the SAME scene whose
+     * motion it follows. Corpus census (58 files): 135 parented layers in 14 files — children are shapes
+     * (103), groups (27), texts (2) and nulls themselves (3; chains up to 3 links above the child);
+     * parents are `<nullobj>` anchors (130) and visible shapes (5). Every parent id resolves inside its
+     * own scene.
+     *
+     * Alight's stored child values are LOCAL to the parent: the child's `location` is the offset from the
+     * parent's anchor point, in the parent's own units — pinned numerically by dys-prst-126, whose null
+     * sits at the scene centre (540.17, 960.37) while its 37 children all store location (−0.17, −0.37):
+     * parent + child = the scene centre the children render at. The world pose is the similarity
+     * composition W = P ∘ L at every instant: pos = P.pos + R(P.rot)·S(P.scale)·L.pos, scale =
+     * P.scale · L.scale, rot = P.rot + L.rot (every corpus parent scale is uniform, so no shear arises).
+     *
+     * [ParentRig] composes a parent's DELTA from a saved reference pose; a link whose reference is the
+     * scene frame's origin — ref = (−sceneW/2, −sceneH/2) in stored units, refScale 100, refRot 0 — makes
+     * that delta composition equal Alight's absolute one at every instant: the children's stored tracks
+     * stay exactly what the readers made of the XML (their local values read as if scene-absolute, which
+     * the ref subtraction undoes), and only the link is added. Chains compose recursively, because a
+     * parented null carries the same style of link to its own parent and ParentRig evaluates the parent's
+     * fully-adjusted pose. Inside an `<embedScene>`, the chain tops out at a direct layer of the nested
+     * scene, which takes the group link as before (see [readGroup]).
+     *
+     * A parent that is itself a VISIBLE layer (the 5 corpus shapes) cannot be a ParentRig parent, so an
+     * invisible Null anchor mirroring its evaluated transform (plain pose + position / scale / rotation
+     * keyframes, after its effects baked) is created and the children link to that; the visible layer
+     * renders as before, and the anchor inherits the layer's own parent link / group membership. A parent
+     * naming a GROUP is not reproduced (no corpus instance does it) and a parent that was not imported
+     * leaves the child unlinked — both are reported, not guessed.
+     *
+     * Returns the anchor clips created (they join the scene's direct clips so an enclosing group treats
+     * them like the layers they mirror).
+     */
+    private fun resolveParentLinks(
+        elements: List<Element>, directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx
+    ): List<TimelineClip> {
+        val w = ctx.warnings
+        val refX = -ctx.sceneW / 2f * ctx.k
+        val refY = -ctx.sceneH / 2f * ctx.k
+        val byAmId = HashMap<String, TimelineClip>()
+        for (i in elements.indices) {
+            val c = directSlots.getOrNull(i) ?: continue
+            val amId = elements[i].getAttribute("id")
+            if (amId.isNotEmpty()) byAmId[amId] = c
+        }
+        fun replace(old: TimelineClip, new: TimelineClip) {
+            for (i in directSlots.indices) if (directSlots[i]?.id == old.id) directSlots[i] = new
+            val fi = flat.indexOfFirst { it.id == old.id }
+            if (fi >= 0) flat[fi] = new
+            val hit = byAmId.filterValues { it.id == old.id }.keys
+            for (k in hit) byAmId[k] = new
+        }
+        fun link(child: TimelineClip, parentClip: TimelineClip) {
+            replace(child, child.copy(parent = ParentLink(parentClip.id, refX, refY, 100f, 0f)))
+        }
+        val wanted = elements.indices.filter { elements[it].getAttribute("parent").isNotEmpty() }
+        if (wanted.isEmpty()) return emptyList()
+        // Pass 1: parents ParentRig can follow directly (Null layers). Groups are parked with a warning.
+        for (i in wanted) {
+            val child = directSlots.getOrNull(i) ?: continue   // a skipped layer needs no link
+            val parentAmId = elements[i].getAttribute("parent")
+            val parentClip = byAmId[parentAmId]
+            when {
+                parentClip == null ->
+                    w += "Layer \"" + child.name + "\": its Alight parent (id " + parentAmId +
+                        ") was not imported: the layer keeps its own motion"
+                parentClip.id == child.id ->
+                    w += "Layer \"" + child.name + "\" is its own parent in Alight: ignored"
+                parentClip.type == LayerType.NULL -> link(child, parentClip)
+                parentClip.type == LayerType.GROUP ->
+                    w += "Layer \"" + child.name + "\" is parented to a group in Alight: parenting to a " +
+                        "group is not reproduced yet: the layer keeps its own motion"
+                else -> Unit   // a visible layer as parent: pass 2
+            }
+        }
+        // Pass 2: a visible layer as parent — mirror its evaluated transform onto an invisible anchor.
+        val anchors = ArrayList<TimelineClip>()
+        val anchorByParentId = HashMap<String, TimelineClip>()
+        for (i in wanted) {
+            val child = directSlots.getOrNull(i) ?: continue
+            if (child.parent != null) continue
+            val parentClip = byAmId[elements[i].getAttribute("parent")] ?: continue
+            if (parentClip.type == LayerType.NULL || parentClip.type == LayerType.GROUP) continue
+            if (parentClip.id == child.id) continue
+            val anchor = anchorByParentId.getOrPut(parentClip.id) {
+                val a = TimelineClip(
+                    id = UUID.randomUUID().toString(),
+                    name = parentClip.name + " (parent)",
+                    type = LayerType.NULL,
+                    startMs = parentClip.startMs,
+                    durationMs = parentClip.durationMs,
+                    color = NULL_COLOR,
+                    transformX = parentClip.transformX,
+                    transformY = parentClip.transformY,
+                    scalePercent = parentClip.scalePercent,
+                    rotationDeg = parentClip.rotationDeg,
+                    opacity = 100f,
+                    keyframes = parentClip.keyframes.filterKeys {
+                        it == AnimProp.POSITION || it == AnimProp.SCALE || it == AnimProp.ROTATION
+                    },
+                    parent = parentClip.parent,
+                    groupId = parentClip.groupId
+                )
+                anchors += a
+                flat += a
+                w += "Layer \"" + parentClip.name + "\" parents other layers in Alight: an invisible " +
+                    "anchor (\"" + a.name + "\") carries its motion for them"
+                a
+            }
+            link(child, anchor)
+        }
+        return anchors
     }
 
     /** A clip of a nested scene, in the parent timeline: [inT] .. [outT] of the nested time is stretched onto [startMs] .. [endMs], and the clip is cut at the group's ends. */
@@ -3976,10 +4147,10 @@ object AlightXmlImporter {
      * Pairs every recorded `movealongpath3` with the layer directly below its follower in the same
      * scene (per-element slots, like [resolveMaskLinks]: a skipped element in between is a gap, not
      * a path). The covered form is baked by [bakeMoveAlongPath]; the rest is reported, not guessed:
-     * a parented follower (Alight would follow the parent's outline, and layer parenting is not
-     * imported), a group follower (its stored pose is an anchor, not a plain position), a follower
-     * with no imported layer below it, and a layer below without a vector outline (text, group,
-     * audio — only shape layers register one).
+     * a parented follower (Alight would follow the parent's outline instead of the layer below —
+     * the parenting itself IS imported, only the ride is not), a group follower (its stored pose is
+     * an anchor, not a plain position), a follower with no imported layer below it, and a layer
+     * below without a vector outline (text, group, audio — only shape layers register one).
      */
     private fun resolveMoveAlongPaths(directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx) {
         if (ctx.pendingPaths.isEmpty()) return
@@ -3992,7 +4163,8 @@ object AlightXmlImporter {
             val spec = below?.let { ctx.outlineSpecs[it.id] }
             when {
                 p.parented -> w += "Effect movealongpath3 on \"" + follower.name +
-                    "\": the layer is parented in Alight, so it would follow its parent's outline: not supported yet, skipped"
+                    "\": the layer is parented in Alight, so it would follow its parent's outline instead " +
+                    "of the layer below: the ride is skipped (the parenting itself is imported)"
                 follower.type == LayerType.GROUP -> w += "Effect movealongpath3 on a group layer (\"" +
                     follower.name + "\") is not supported yet: skipped"
                 below == null -> w += "Effect movealongpath3 on \"" + follower.name +

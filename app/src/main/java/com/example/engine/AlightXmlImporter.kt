@@ -189,6 +189,16 @@ object AlightXmlImporter {
     const val COLORTUNE2 = "com.alightcreative.effects.colortune2"
     const val MIRROR = "com.alightcreative.effects.mirror"
     const val GLOWSCAN = "com.alightcreative.effects.glowscan"
+    const val LUMAKEY3 = "com.alightcreative.effects.lumakey3"
+    const val FOURCOLORGRADIENT = "com.alightcreative.fourcolorgradient"
+    const val TURBULENTDISPLACE = "com.alightcreative.effects.turbulentdisplace"
+    const val STRETCHSEGMENT = "com.alightcreative.effects.stretchsegment"
+    const val SPIN = "com.alightcreative.effects.spin"
+    const val REPLACECOLOR = "com.alightcreative.replacecolor"
+    const val SWIRL4 = "com.alightcreative.effects.swirl4"
+    const val SWIRL3 = "com.alightcreative.effects.swirl3"
+    const val HALFTONEDOTS = "com.alightcreative.effects.halftonedots"
+    const val PIXELATE2 = "com.alightcreative.effects.pixelate2"
     const val MOTIONBLUR = "com.alightcreative.effects.motionblur"
     const val MOTIONBLUR2 = "com.alightcreative.effects.motionblur2"
     const val MOTIONBLUR4 = "com.alightcreative.effects.motionblur4"
@@ -1478,6 +1488,15 @@ object AlightXmlImporter {
                 COLORTUNE2 -> applyColorTune(fx, clip, ctx)
                 MIRROR -> applyMirror(fx, clip, ctx)
                 GLOWSCAN -> applyGlowScan(fx, clip, ctx)
+                LUMAKEY3 -> applyLumaKey(fx, clip, ctx)
+                FOURCOLORGRADIENT -> applyFourColorGradient(fx, clip, ctx)
+                TURBULENTDISPLACE -> applyTurbulentDisplace(fx, clip, ctx)
+                STRETCHSEGMENT -> applyStretchSegment(fx, clip, ctx)
+                SPIN -> applySpin(fx, clip, ctx, durMs)
+                REPLACECOLOR -> applyReplaceColor(fx, clip, ctx)
+                SWIRL4, SWIRL3 -> applySwirl(fx, clip, ctx, id)
+                HALFTONEDOTS -> applyHalftoneDots(fx, clip, ctx)
+                PIXELATE2 -> applyPixelate(fx, clip, ctx)
                 else -> {
                     ctx.warnings += "Effect " + id.substringAfterLast('.') + " is not supported yet: skipped"
                     clip
@@ -2223,6 +2242,34 @@ object AlightXmlImporter {
     }
 
     /**
+     * The tails of a multi-track fx (Turbulent Displace's intensity + scale), in [AmFxEval]'s
+     * declared order: a constant track contributes a count-0 placeholder when a sibling IS
+     * animated, so the sequence the resolver walks stays aligned; when nothing is animated
+     * there is no tail at all.
+     */
+    private fun trackTails(vararg tracks: Track?): List<Float> {
+        if (tracks.all { it == null || it.keys.size < 2 }) return emptyList()
+        return tracks.flatMap { t -> if (t == null || t.keys.size < 2) listOf(0f) else trackTail(t) }
+    }
+
+    /** The first value of a point track the native fx model cannot animate, with the pass-2 style note. */
+    private fun Track.firstPoint(w: MutableList<String>, short: String, prop: String, dx: Float, dy: Float): Pair<Float, Float> {
+        if (keys.size >= 2) w += "Effect " + short + ": keyframed " + prop + " is not supported yet: the first value is used"
+        val v = first()
+        return (v.getOrNull(0) ?: dx) to (v.getOrNull(1) ?: dy)
+    }
+
+    /** A colour track's first value as a packed 0xRRGGBB float, with the pass-2 style note when keyframed. */
+    private fun Track.packedColor(w: MutableList<String>, short: String, prop: String): Float {
+        if (keys.size >= 2) w += "Effect " + short + ": keyframed " + prop + " is not supported yet: the first value is used"
+        return (unpacked(first()) and 0xFFFFFFL).toFloat()
+    }
+
+    /** A bool property as a 0 / 1 fx value (its constant; bools are not keyframed in the corpus). */
+    private fun boolOf(t: Track?, fallback: Boolean): Float =
+        if (t == null) (if (fallback) 1f else 0f) else if (t.scalarAt(0f) > 0.5f) 1f else 0f
+
+    /**
      * `mirror` -> the app's Mirror (Alight) — NOT the app's own centre/angle Mirror: Alight flips
      * the WHOLE layer's sampling (type 0 = Horizontal, 1 = Vertical, from AM's own effect
      * definition), blends the flipped picture over the original per blendMode (0 Normal,
@@ -2285,6 +2332,241 @@ object AlightXmlImporter {
             packed
         ) + trackTail(thrT)
         return addFx(clip0, ctx, ClipFxLibrary.GLOW_SCAN, values, "glowscan")
+    }
+
+    /**
+     * `lumakey3` -> Luma Key (a dedicated engine pass; AM's recovered formula): the layer's alpha
+     * is scaled by where its luma falls against the feathered [low, high] band. Corpus: 19
+     * instances (3 of them hidden, skipped by the hidden rule); `lowThreshold` is KEYFRAMED in
+     * all of them (a 1 -> 0 sweep — the reveal IS the effect), so it rides the values tail and
+     * [AmFxEval] resolves values[0] per frame. One corpus instance has no properties at all:
+     * AM's defaults (band [0, 1]) make it a no-op there, and the engine's identity check skips
+     * the pass here.
+     */
+    private fun applyLumaKey(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val lowT = props["lowThreshold"]
+        val low = (lowT?.valueAtEased(0f)?.firstOrNull() ?: 0f) * 100f
+        val high = (props["highThreshold"]?.firstValue(w, "lumakey3", "highThreshold") ?: 1f) * 100f
+        val feather = (props["feather"]?.firstValue(w, "lumakey3", "feather") ?: 0.05f) * 100f
+        val values = listOf(
+            low.coerceIn(0f, 100f), high.coerceIn(0f, 100f), feather.coerceIn(0f, 100f),
+            boolOf(props["invert"], false), boolOf(props["weighted"], true), 0f, 0f
+        ) + trackTail(lowT)
+        return addFx(clip0, ctx, ClipFxLibrary.LUMA_KEY, values, "lumakey3")
+    }
+
+    /**
+     * `fourcolorgradient` -> Four Color Gradient (a dedicated engine pass; AM's recovered
+     * shader): four colours anchored at four points, blended by a smoothstep falloff. Corpus:
+     * 15 instances, all constant; `offset4` is never serialized (AM's default (0, 0) applies).
+     * The anchor points ride the EXT values, each packed by [ClipFxLibrary.packPoint].
+     */
+    private fun applyFourColorGradient(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        fun col(name: String, def: Long): Float =
+            props[name]?.packedColor(w, "fourcolorgradient", name) ?: (def and 0xFFFFFFL).toFloat()
+        fun off(name: String, dx: Float, dy: Float): Float {
+            val t = props[name]
+            val p = if (t == null) dx to dy else t.firstPoint(w, "fourcolorgradient", name, dx, dy)
+            return ClipFxLibrary.packPoint(p.first, p.second)
+        }
+        val blend = (props["blend"]?.firstValue(w, "fourcolorgradient", "blend") ?: 1f) * 100f
+        val alpha = (props["alpha"]?.firstValue(w, "fourcolorgradient", "alpha") ?: 0.75f) * 100f
+        val mode = (props["blendMode"]?.firstValue(w, "fourcolorgradient", "blendMode") ?: 0f).toInt().coerceIn(0, 2)
+        val values = listOf(
+            col("color1", 0xFFFF0000L), col("color2", 0xFF00FF00L),
+            col("color3", 0xFF0000FFL), col("color4", 0xFFFF00FFL),
+            blend.coerceIn(25f, 200f), alpha.coerceIn(0f, 100f), mode.toFloat(),
+            off("offset1", 0f, -500f), off("offset2", 500f, -500f),
+            off("offset3", 500f, 0f), off("offset4", 0f, 0f),
+            0f, 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.FOUR_COLOR_GRADIENT, values, "fourcolorgradient")
+    }
+
+    /**
+     * `turbulentdisplace` -> Turbulent Displace (Alight) (a dedicated engine pass; AM's
+     * recovered shader, Ashima simplex noise and all). Corpus: 39 instances, only ~2 distinct
+     * profiles — direction XY, octaves 1, position (55, 0) / (64, 0), evolution 4.5 / 4.62;
+     * `intensity` (0.153 -> 0) and `scale` (3.32 -> 0.01, keys outside the span) are KEYFRAMED
+     * in all of them, so both ride values tails from index 14 (see [trackTails]).
+     */
+    private fun applyTurbulentDisplace(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val intT = props["intensity"]
+        val scaleT = props["scale"]
+        val intensity = (intT?.valueAtEased(0f)?.firstOrNull() ?: 0.25f) * 100f
+        val scale = (scaleT?.valueAtEased(0f)?.firstOrNull() ?: 1f) * 100f
+        val direction = (props["direction"]?.firstValue(w, "turbulentdisplace", "direction") ?: 3f).toInt().coerceIn(0, 3)
+        val evolution = (props["evolution"]?.firstValue(w, "turbulentdisplace", "evolution") ?: 0f) * 100f
+        val octaves = (props["octaves"]?.firstValue(w, "turbulentdisplace", "octaves") ?: 6f).toInt().coerceIn(1, 9)
+        val offs = (props["offs"]?.firstValue(w, "turbulentdisplace", "offs") ?: 0f) * 100f
+        val stretch = (props["stretch"]?.firstValue(w, "turbulentdisplace", "stretch") ?: 0f) * 100f
+        val seed = (props["seed"]?.firstValue(w, "turbulentdisplace", "seed") ?: 0f) * 100f
+        val pos = props["position"]?.firstPoint(w, "turbulentdisplace", "position", 0f, 0f) ?: (0f to 0f)
+        val parr = props["parr"]?.firstPoint(w, "turbulentdisplace", "parr", 0f, 0f) ?: (0f to 0f)
+        val values = listOf(
+            intensity.coerceIn(0f, 250f), scale.coerceIn(1f, 5000f), direction.toFloat(),
+            evolution.coerceIn(-5000f, 5000f), octaves.toFloat(), boolOf(props["screenSpace"], false),
+            offs.coerceIn(-100f, 100f),
+            stretch.coerceIn(-5000f, 5000f), seed.coerceIn(0f, 500f),
+            pos.first, pos.second, parr.first, parr.second, 0f
+        ) + trackTails(intT, scaleT)
+        return addFx(clip0, ctx, ClipFxLibrary.TURBULENT_DISPLACE_AM, values, "turbulentdisplace")
+    }
+
+    /**
+     * `stretchsegment` -> Stretch Segment (kFxWarp mode 12; AM's recovered shader). Corpus: 13
+     * instances, all constant — angle / offset / smooth 0, stretch 568 / 900 / 749.
+     */
+    private fun applyStretchSegment(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val angle = props["angle"]?.firstValue(w, "stretchsegment", "angle") ?: 0f
+        val stretch = props["stretch"]?.firstValue(w, "stretchsegment", "stretch") ?: 10f
+        val offset = props["offset"]?.firstValue(w, "stretchsegment", "offset") ?: 0f
+        val smooth = (props["smooth"]?.firstValue(w, "stretchsegment", "smooth") ?: 0f) * 100f
+        val values = listOf(
+            angle, stretch.coerceIn(0f, 900f), offset.coerceIn(-2000f, 2000f),
+            smooth.coerceIn(0f, 100f), 0f, 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.STRETCH_SEGMENT, values, "stretchsegment")
+    }
+
+    /**
+     * `spin` -> a ROTATION bake: Alight's spin is an auto-transform script
+     * (`el.transform.angle += p.rpm` per frame, the engine scaling rpm by the elapsed minutes),
+     * so the layer's angle grows at rpm revolutions per minute — 6 * rpm degrees per second —
+     * accumulated over the EASED rpm track and ADDED over the layer's own rotation keys, the
+     * [applySwing] composition. Corpus: 8 instances, rpm keyframed in all (signed, decelerating
+     * profiles whose keys sit outside the span; the track clamps / interpolates across it like
+     * Alight's own tracks do). Nothing is added when rpm is 0 throughout.
+     */
+    private fun applySpin(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        val props = fxProps(fx)
+        val rpmT = props["rpm"] ?: return clip0
+        if (durMs <= 0L) return clip0
+        val still = rpmT.keys.all { abs(it.v.firstOrNull() ?: 0f) < 1e-4f } &&
+            abs(rpmT.constant.firstOrNull() ?: 0f) < 1e-4f
+        if (still) return clip0
+        val baseKeys = clip0.keyframes[AnimProp.ROTATION]
+        val extras = (baseKeys?.map { it.timeMs } ?: emptyList()) +
+            rpmT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }
+        val times = sampleTimes(durMs, ctx.fps, 0f, extras)
+        val basePlain = clip0.propValues(AnimProp.ROTATION)
+        var angle = 0.0
+        var prevMs = 0L
+        val raw = ArrayList<Keyframe>(times.size)
+        for (t in times) {
+            if (t > prevMs) {
+                val midNorm = ((prevMs + t) / 2f) / durMs
+                angle += 6.0 * rpmT.scalarAtEased(midNorm) * (t - prevMs) / 1000.0
+            }
+            prevMs = t
+            val base = baseKeys?.valueAt(t) ?: basePlain
+            raw += Keyframe(t, base.first + angle.toFloat(), base.second, Easing.LINEAR)
+        }
+        val keys = simplifyKeys(raw, 0.02f, 0.02f)
+        var clip = clip0.copy(keyframes = clip0.keyframes + (AnimProp.ROTATION to keys))
+        keys.firstOrNull()?.let { clip = clip.withProp(AnimProp.ROTATION, it.a, it.b) }
+        return clip
+    }
+
+    /**
+     * `replacecolor` -> Replace Color (kFxColor mode 17; AM's recovered shader): a YUV-distance
+     * colour swap (chroma x4, luma x0.5). Corpus: 6 instances, all constant; lockLuminance on
+     * in 5. The colours are declared alpha="false" in Alight, so packed RGB is the whole story.
+     */
+    private fun applyReplaceColor(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val old = props["oldcolor"]?.packedColor(w, "replacecolor", "oldcolor") ?: 0xFF0000.toFloat()
+        val new = props["newcolor"]?.packedColor(w, "replacecolor", "newcolor") ?: 0x0000FF.toFloat()
+        val thr = (props["threshold"]?.firstValue(w, "replacecolor", "threshold") ?: 0.25f) * 100f
+        val fea = (props["feather"]?.firstValue(w, "replacecolor", "feather") ?: 0.25f) * 100f
+        val alpha = (props["alpha"]?.firstValue(w, "replacecolor", "alpha") ?: 1f) * 100f
+        val values = listOf(
+            old, new, thr.coerceIn(0f, 400f), fea.coerceIn(0f, 200f), alpha.coerceIn(0f, 100f),
+            boolOf(props["lockLuminance"], false), 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.REPLACE_COLOR, values, "replacecolor")
+    }
+
+    /**
+     * `swirl4` / `swirl3` -> Swirl (Alight) (kFxWarp mode 13): the two versions share their
+     * params and core maths and differ in centre units + aspect rule, so they land as one fx
+     * with a version value. Corpus: 9 + 1 instances; radius is constant (0.8 / 0.51), the
+     * centre is never serialized (the default: the picture centre); `strength` is constant in
+     * the visible swirl4 instances, KEYFRAMED in the swirl3 one (0 -> -0.111 -> 0) — it rides
+     * the tail either way. (The one keyframed swirl4 instance is hidden="true" and stays
+     * skipped by the hidden rule.)
+     */
+    private fun applySwirl(fx: Element, clip0: TimelineClip, ctx: Ctx, id: String): TimelineClip {
+        val w = ctx.warnings
+        val short = id.substringAfterLast('.')
+        val props = fxProps(fx)
+        val strT = props["strength"]
+        val strength = (strT?.valueAtEased(0f)?.firstOrNull() ?: 0.1f) * 100f
+        val radius = (props["radius"]?.firstValue(w, short, "radius") ?: 0.3f) * 100f
+        val centre = props["centerPoint"]?.firstPoint(w, short, "centerPoint", 0f, 0f) ?: (0f to 0f)
+        val values = listOf(
+            strength.coerceIn(-50f, 50f), radius.coerceIn(0f, 80f), centre.first, centre.second,
+            if (id == SWIRL4) 4f else 3f, 0f, 0f
+        ) + trackTail(strT)
+        return addFx(clip0, ctx, ClipFxLibrary.SWIRL_AM, values, short)
+    }
+
+    /**
+     * `halftonedots` -> Halftone Dots (Alight) (kFxWarp mode 14; AM's recovered shader).
+     * Corpus: 10 instances, all constant (amount 209.5 / 64.5, angle 45). NOTE: none of the 10
+     * is hidden — 9 carry locallyApplied="false", which Alight still renders (and the importer
+     * has always imported as active); the hidden rule does not come into it.
+     */
+    private fun applyHalftoneDots(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val amount = props["amount"]?.firstValue(w, "halftonedots", "amount") ?: 100f
+        val strength = (props["strength"]?.firstValue(w, "halftonedots", "strength") ?: 0.5f) * 100f
+        val angle = props["angle"]?.firstValue(w, "halftonedots", "angle") ?: 45f
+        val phase = (props["phase"]?.firstValue(w, "halftonedots", "phase") ?: 0.5f) * 100f
+        val c1 = props["color1"]?.packedColor(w, "halftonedots", "color1") ?: 0x113355.toFloat()
+        val c2 = props["color2"]?.packedColor(w, "halftonedots", "color2") ?: 0xFFEEDD.toFloat()
+        val values = listOf(
+            amount.coerceIn(0f, 500f), strength.coerceIn(0f, 100f), angle,
+            phase.coerceIn(-100000f, 100000f), c1, c2, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.HALFTONE_DOTS, values, "halftonedots")
+    }
+
+    /**
+     * `pixelate2` -> Pixelate (Alight) (a dedicated engine pass; AM's recovered shader, cubic
+     * vignette included — it is active in all 4 corpus instances at vignette 1). `size` is
+     * constant in 3 and KEYFRAMED in 1 (24 -> 1), so it rides the tail from index 14 at scale
+     * 1 (the slot already holds AM units). `offset` is never serialized (AM's default (0, 0)).
+     */
+    private fun applyPixelate(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val sizeT = props["size"]
+        val size = sizeT?.valueAtEased(0f)?.firstOrNull() ?: 20f
+        val stretch = props["stretch"]?.firstPoint(w, "pixelate2", "stretch", 1f, 1f) ?: (1f to 1f)
+        val angle = props["angle"]?.firstValue(w, "pixelate2", "angle") ?: 0f
+        val vignette = (props["vignette"]?.firstValue(w, "pixelate2", "vignette") ?: 0f) * 100f
+        val threshold = (props["threshold"]?.firstValue(w, "pixelate2", "threshold") ?: 0f) * 100f
+        val saturation = (props["saturation"]?.firstValue(w, "pixelate2", "saturation") ?: 0f) * 100f
+        val offset = props["offset"]?.firstPoint(w, "pixelate2", "offset", 0f, 0f) ?: (0f to 0f)
+        val values = listOf(
+            size.coerceIn(1f, 500f),
+            (stretch.first * 100f).coerceIn(1f, 10000f), (stretch.second * 100f).coerceIn(1f, 10000f),
+            angle, vignette.coerceIn(0f, 100f), boolOf(props["screenSpace"], false),
+            threshold.coerceIn(0f, 100f),
+            saturation.coerceIn(0f, 100f), offset.first, offset.second, 0f, 0f, 0f, 0f
+        ) + trackTail(sizeT)
+        return addFx(clip0, ctx, ClipFxLibrary.PIXELATE_AM, values, "pixelate2")
     }
 
     /** `exposure` -> the app's Exposure: stops as-is, offset 0..1 -> -100..100, gamma as a percent. */

@@ -2,6 +2,7 @@ package com.example.model
 
 import kotlinx.serialization.Serializable
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /** One adjustable value of an effect (a slider in the Effects panel). */
 data class FxParamDef(
@@ -138,6 +139,43 @@ object ClipFxLibrary {
     // importer reports it when it is not 0 (it is 0 in all 8 corpus instances). A keyframed
     // threshold (ALL 8 corpus instances — the sweep IS the effect) rides the tail like Mirror's.
     const val GLOW_SCAN = "glow_scan"
+    // v163: Alight Motion's next tier, from the same recovered definitions (hunt-staging/
+    // defs-batch2). LUMA_KEY is a dedicated pass (it scales alpha; native type 64). Values
+    // [0] low threshold %, [1] high threshold %, [2] feather %, [3] invert, [4] weighted luma.
+    // A keyframed low threshold (ALL 19 corpus instances — the sweep is the effect) rides the
+    // values tail from index 7, resolved per frame by AmFxEval.
+    const val LUMA_KEY = "luma_key"
+    // FOUR_COLOR_GRADIENT (native 65 + EXT 66): values [0..3] the four colours packed 0xRRGGBB,
+    // [4] blend %, [5] alpha %, [6] blend mode; values [7..10] (the EXT group) are the four
+    // anchor points, each packed into one float by [packPoint]; [11..13] unused.
+    const val FOUR_COLOR_GRADIENT = "four_color_gradient"
+    // TURBULENT_DISPLACE_AM (native 67 + EXT 68): NOT the app's own TURBULENT (value-noise fbm);
+    // this is Alight's simplex-noise displacement. Values [0] intensity %, [1] scale %,
+    // [2] direction (0 X, 1 Y, 2 XY, 3 R), [3] evolution %, [4] octaves, [5] screen space,
+    // [6] offset %; EXT [7] stretch %, [8] seed %, [9..10] position, [11..12] parallax (AM
+    // units). Intensity AND scale are keyframed in all 39 corpus instances: two AmFxEval tails
+    // ride from index 14.
+    const val TURBULENT_DISPLACE_AM = "turbulent_displace_am"
+    // SWIRL_AM (native 69, kFxWarp mode 13): Alight's swirl4 / swirl3 as one fx — values
+    // [0] strength %, [1] radius %, [2..3] the centre point (AM units), [4] the version
+    // (4 or 3). A keyframed strength rides the tail from index 7.
+    const val SWIRL_AM = "swirl_am"
+    // STRETCH_SEGMENT (native 70, kFxWarp mode 12): values [0] angle deg, [1] stretch
+    // (AM units), [2] offset (AM units), [3] smooth %.
+    const val STRETCH_SEGMENT = "stretch_segment"
+    // HALFTONE_DOTS (native 71, kFxWarp mode 14): NOT the app's own HALFTONE style effect.
+    // Values [0] amount (AM units), [1] strength %, [2] angle deg, [3] phase %,
+    // [4..5] the two colours packed 0xRRGGBB.
+    const val HALFTONE_DOTS = "halftone_dots"
+    // PIXELATE_AM (native 72 + EXT 73): NOT the app's MOSAIC. Values [0] size (AM units),
+    // [1..2] stretch x/y %, [3] angle deg, [4] vignette %, [5] screen space, [6] threshold %;
+    // EXT [7] saturation %, [8..9] offset (AM units). A keyframed size rides the tail from
+    // index 14 (AmFxEval scale 1: the slot already holds AM units).
+    const val PIXELATE_AM = "pixelate_am"
+    // REPLACE_COLOR (native 74, kFxColor mode 17): values [0] the old colour packed 0xRRGGBB,
+    // [1] the new colour packed, [2] threshold %, [3] feather %, [4] alpha %,
+    // [5] lock luminance.
+    const val REPLACE_COLOR = "replace_color"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -326,6 +364,113 @@ object ClipFxLibrary {
                 FxParamDef("Smoothing", 0f, 200f, 5f, "%"),
                 FxParamDef("Fill", 0f, 100f, 100f, "%"),
                 FxParamDef("Alpha", 0f, 100f, 100f, "%")
+            )
+        ),
+        // Luma Key: values [0] low threshold %, [1] high threshold %, [2] feather %,
+        // [3] invert, [4] weighted luma. A keyframed low threshold may ride from index 7.
+        FxDef(
+            LUMA_KEY, 64, "Luma Key", "Keying", "Makes the layer transparent by brightness (Alight Motion's Luma Key)",
+            listOf(
+                FxParamDef("Low threshold", 0f, 100f, 0f, "%"),
+                FxParamDef("High threshold", 0f, 100f, 100f, "%"),
+                FxParamDef("Feather", 0f, 100f, 5f, "%"),
+                FxParamDef("Invert", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Weighted luma", 0f, 1f, 1f, "", step = 1f)
+            )
+        ),
+        // Four Colour Gradient: values [0..3] the colours packed 0xRRGGBB (shown as numbers,
+        // the Solid Color R/G/B pattern), [4] blend %, [5] alpha %, [6] blend mode. The four
+        // anchor points ride the EXT values [7..10] (see [create]).
+        FxDef(
+            FOUR_COLOR_GRADIENT, 65, "Four Color Gradient", "Color", "Four colours blended from four anchor points (Alight Motion)",
+            listOf(
+                FxParamDef("Colour 1", 0f, 16777215f, 0xFF0000.toFloat(), "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0x00FF00.toFloat(), "", step = 1f),
+                FxParamDef("Colour 3", 0f, 16777215f, 0x0000FF.toFloat(), "", step = 1f),
+                FxParamDef("Colour 4", 0f, 16777215f, 0xFF00FF.toFloat(), "", step = 1f),
+                FxParamDef("Blend", 25f, 200f, 100f, "%"),
+                FxParamDef("Alpha", 0f, 100f, 75f, "%"),
+                FxParamDef("Blend mode", 0f, 2f, 0f, "", step = 1f)
+            )
+        ),
+        // Turbulent Displace (Alight): values [0] intensity %, [1] scale %, [2] direction,
+        // [3] evolution %, [4] octaves, [5] screen space, [6] offset %. The EXT values
+        // [7..13] (stretch / seed / position / parallax) are the importer's (and AM's
+        // defaults via [create]); keyframed intensity / scale tails may ride from index 14.
+        FxDef(
+            TURBULENT_DISPLACE_AM, 67, "Turbulent Displace (Alight)", "Distort", "Simplex-noise displacement (Alight Motion's, deprecated there)",
+            listOf(
+                FxParamDef("Intensity", 0f, 250f, 25f, "%"),
+                FxParamDef("Scale", 1f, 5000f, 100f, "%"),
+                FxParamDef("Direction", 0f, 3f, 3f, "", step = 1f),
+                FxParamDef("Evolution", -5000f, 5000f, 0f, "%"),
+                FxParamDef("Octaves", 1f, 9f, 6f, "", step = 1f),
+                FxParamDef("Screen space", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Offset", -100f, 100f, 0f, "%")
+            )
+        ),
+        // Swirl (Alight): values [0] strength %, [1] radius %, [2..3] centre (AM units),
+        // [4] version (4 / 3). A keyframed strength may ride from index 7.
+        FxDef(
+            SWIRL_AM, 69, "Swirl (Alight)", "Distort", "Twists the picture around a centre (Alight Motion's Swirl)",
+            listOf(
+                FxParamDef("Strength", -50f, 50f, 10f, "%"),
+                FxParamDef("Radius", 0f, 80f, 30f, "%"),
+                FxParamDef("Centre X", -1000f, 1000f, 0f),
+                FxParamDef("Centre Y", -1000f, 1000f, 0f),
+                FxParamDef("Version", 3f, 4f, 4f, "", step = 1f)
+            )
+        ),
+        // Stretch Segment: values [0] angle, [1] stretch (AM units), [2] offset (AM units),
+        // [3] smooth %.
+        FxDef(
+            STRETCH_SEGMENT, 70, "Stretch Segment", "Distort", "A band of the picture stretched flat along an angle (Alight Motion)",
+            listOf(
+                FxParamDef("Angle", 0f, 360f, 0f, "°", step = 3f),
+                FxParamDef("Stretch", 0f, 900f, 10f),
+                FxParamDef("Offset", -2000f, 2000f, 0f),
+                FxParamDef("Smooth", 0f, 100f, 0f, "%")
+            )
+        ),
+        // Halftone Dots (Alight): values [0] amount, [1] strength %, [2] angle, [3] phase %,
+        // [4..5] the two colours packed 0xRRGGBB.
+        FxDef(
+            HALFTONE_DOTS, 71, "Halftone Dots (Alight)", "Stylize", "Two-colour dot halftone (Alight Motion's Halftone Dots)",
+            listOf(
+                FxParamDef("Amount", 0f, 500f, 100f, "", step = 0.5f),
+                FxParamDef("Strength", 0f, 100f, 50f, "%"),
+                FxParamDef("Angle", 0f, 360f, 45f, "°", step = 3f),
+                FxParamDef("Phase", -100f, 100f, 50f, "%"),
+                FxParamDef("Colour 1", 0f, 16777215f, 0x113355.toFloat(), "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0xFFEEDD.toFloat(), "", step = 1f)
+            )
+        ),
+        // Pixelate (Alight): values [0] size, [1..2] stretch x/y %, [3] angle, [4] vignette %,
+        // [5] screen space, [6] threshold %. The EXT values [7..13] hold the saturation % and
+        // the offset; a keyframed size tail may ride from index 14.
+        FxDef(
+            PIXELATE_AM, 72, "Pixelate (Alight)", "Stylize", "Blocks with AM's vignette darkening (Alight Motion's Pixelate)",
+            listOf(
+                FxParamDef("Size", 1f, 500f, 20f),
+                FxParamDef("Stretch X", 10f, 1000f, 100f, "%"),
+                FxParamDef("Stretch Y", 10f, 1000f, 100f, "%"),
+                FxParamDef("Angle", 0f, 360f, 0f, "°", step = 3f),
+                FxParamDef("Vignette", 0f, 100f, 0f, "%"),
+                FxParamDef("Screen space", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Threshold", 0f, 100f, 0f, "%")
+            )
+        ),
+        // Replace Colour: values [0..1] the old / new colours packed 0xRRGGBB, [2] threshold %,
+        // [3] feather %, [4] alpha %, [5] lock luminance.
+        FxDef(
+            REPLACE_COLOR, 74, "Replace Color", "Color", "Swaps one colour for another, by YUV distance (Alight Motion)",
+            listOf(
+                FxParamDef("Old colour", 0f, 16777215f, 0xFF0000.toFloat(), "", step = 1f),
+                FxParamDef("New colour", 0f, 16777215f, 0x0000FF.toFloat(), "", step = 1f),
+                FxParamDef("Threshold", 0f, 400f, 25f, "%"),
+                FxParamDef("Feather", 0f, 200f, 25f, "%"),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%"),
+                FxParamDef("Lock luminance", 0f, 1f, 0f, "", step = 1f)
             )
         ),
         FxDef(
@@ -776,10 +921,43 @@ object ClipFxLibrary {
 
     fun create(type: String): ClipFx? {
         val d = def(type) ?: return null
-        // Glow Scan's glow colour rides past the declared params (see its def): a panel-made
-        // one starts from Alight's own default, #0088FF.
-        val extra = if (type == GLOW_SCAN) listOf(0x0088FF.toFloat()) else emptyList()
-        return ClipFx(type = type, values = d.params.map { it.default } + extra)
+        return ClipFx(type = type, values = d.params.map { it.default } + extraValues(type))
+    }
+
+    /**
+     * Values past the declared params ([ClipFx.values] from index 7 on): Glow Scan's glow colour,
+     * and the EXT groups of the v163 tier (Four Color Gradient's anchor points, Turbulent
+     * Displace's and Pixelate's secondary params — Alight's own defaults). Panel edits keep them
+     * (the Long Shadow colour precedent); [toNative] falls back to them when a value is missing.
+     */
+    fun extraValues(type: String): List<Float> = when (type) {
+        GLOW_SCAN -> listOf(0x0088FF.toFloat())
+        FOUR_COLOR_GRADIENT -> listOf(
+            packPoint(0f, -500f), packPoint(500f, -500f), packPoint(500f, 0f), packPoint(0f, 0f),
+            0f, 0f, 0f
+        )
+        TURBULENT_DISPLACE_AM, PIXELATE_AM -> List(7) { 0f }
+        else -> emptyList()
+    }
+
+    /** The native type of an effect's EXT group (its values [7..13]), or null when it has none. */
+    fun extNativeType(type: String): Int? = when (type) {
+        FOUR_COLOR_GRADIENT -> 66
+        TURBULENT_DISPLACE_AM -> 68
+        PIXELATE_AM -> 73
+        else -> null
+    }
+
+    /**
+     * An Alight point (x, y) packed into one float: two 12-bit signed fields,
+     * (x + 2048) * 4096 + (y + 2048) — exact in a float for |x|, |y| <= 2047 (the components are
+     * rounded to whole units). fxParseOps' owner folds the group into q[], and the renderer
+     * unpacks it (fxFourColorGradient in renderer_effects.cpp).
+     */
+    fun packPoint(x: Float, y: Float): Float {
+        val ix = x.roundToInt().coerceIn(-2048, 2047) + 2048
+        val iy = y.roundToInt().coerceIn(-2048, 2047) + 2048
+        return (ix * 4096 + iy).toFloat()
     }
 
     /**
@@ -797,13 +975,21 @@ object ClipFxLibrary {
                 it.type != REPEAT_RADIAL && it.type != REPEAT_SCATTER
         }.take(MAX_EFFECTS)
         if (on.isEmpty()) return null
-        val out = FloatArray(on.size * 8)
-        on.forEachIndexed { i, fx ->
+        val out = ArrayList<Float>(on.size * 8)
+        for (fx in on) {
             val d = def(fx.type)!!
-            out[i * 8] = d.nativeType.toFloat()
-            for (k in 0 until 7) out[i * 8 + 1 + k] = fx.values.getOrNull(k) ?: d.params.getOrNull(k)?.default ?: 0f
+            out += d.nativeType.toFloat()
+            for (k in 0 until 7) out += fx.values.getOrNull(k) ?: d.params.getOrNull(k)?.default ?: 0f
+            // An extended effect's second group rides right behind its main one; the engine's
+            // fxParseOps folds it into the same op (it never counts as an effect of its own).
+            val ext = extNativeType(fx.type)
+            if (ext != null) {
+                val extra = extraValues(fx.type)
+                out += ext.toFloat()
+                for (k in 0 until 7) out += fx.values.getOrNull(7 + k) ?: extra.getOrNull(k) ?: 0f
+            }
         }
-        return out
+        return out.toFloatArray()
     }
 
     /** True when the layer has any enabled effect, Motion Blur and Repeat included (they are resolved elsewhere, so [toNative] skips them). */

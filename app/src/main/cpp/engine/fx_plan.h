@@ -94,6 +94,40 @@ enum FxType : int {
     FX_GLOW_SCAN = 63,      // p0 threshold 0..100, p1 radius 0..100, p2 power 0..4, p3 smoothing 0..200 (%:
                             // AM's strength, the pre-blur), p4 fill 0..100, p5 alpha 0..100,
                             // p6 fill colour packed 0xRRGGBB
+    // v163: the next tier of Alight's own effects, from the same recovered definitions (hunt-staging/
+    // defs-batch2). Four of them need more than the 7 native slots, so they own a second group (an
+    // EXT type) that ClipFxLibrary.toNative emits right after the main group; fxParseOps folds it
+    // into the owner's q[7] and never surfaces it as an op of its own.
+    FX_LUMA_KEY = 64,       // p0 low threshold 0..100 (KEYFRAMED in all 19 corpus instances: rides the
+                            // AmFxEval tail, slot 0), p1 high threshold 0..100, p2 feather 0..100,
+                            // p3 invert 0/1, p4 weighted luma 0/1. Dedicated pass (it scales alpha).
+    FX_FOUR_COLOR_GRADIENT = 65,  // p0..p3 colours 1..4 packed 0xRRGGBB, p4 blend 25..200 (%),
+                                  // p5 alpha 0..100, p6 blend mode (0 Normal, 1 Multiply, 2 Screen);
+                                  // q0..q3 offsets 1..4, each an AM point packed into one float
+                                  // (12-bit signed fields, see fxPackPoint in ClipFx.kt). Dedicated pass.
+    FX_FOUR_COLOR_GRADIENT_EXT = 66,
+    FX_TURBULENT_DISPLACE_AM = 67,  // p0 intensity 0..250 (%), p1 scale 1..5000 (%), p2 direction
+                                    // (0 X, 1 Y, 2 XY, 3 R), p3 evolution -5000..5000 (%), p4 octaves 1..9,
+                                    // p5 screen space 0/1, p6 offs -100..100 (%); q0 stretch (%),
+                                    // q1 seed (%), q2/q3 position (AM units), q4/q5 parallax (AM units).
+                                    // Intensity AND scale are keyframed in all 39 corpus instances:
+                                    // two AmFxEval tails. Dedicated pass (AM's simplex noise).
+    FX_TURBULENT_DISPLACE_AM_EXT = 68,
+    FX_SWIRL_AM = 69,       // p0 strength -50..50 (%) (keyframed instances ride the tail, slot 0),
+                            // p1 radius 0..80 (%), p2/p3 centre point (AM units), p4 version (4 or 3:
+                            // swirl4 / swirl3 differ in centre units + aspect rule). kFxWarp mode 13.
+    FX_STRETCH_SEGMENT = 70,  // p0 angle (deg), p1 stretch 0..900 (AM units), p2 offset (AM units),
+                              // p3 smooth 0..100 (%). kFxWarp mode 12.
+    FX_HALFTONE_DOTS = 71,  // p0 amount 0..500 (AM units), p1 strength 0..100 (%), p2 angle (deg),
+                            // p3 phase -100..100 (%), p4/p5 colours 1/2 packed 0xRRGGBB. kFxWarp mode 14.
+    FX_PIXELATE_AM = 72,    // p0 size 1..500 (KEYFRAMED in 1 of 4 corpus instances: rides the tail at
+                            // scale 1, slot 0), p1/p2 stretch x/y (%), p3 angle (deg), p4 vignette (%),
+                            // p5 screen space 0/1, p6 threshold (%); q0 saturation (%), q1/q2 offset
+                            // (AM units). Dedicated pass (the block-centre sampling + cubic vignette).
+    FX_PIXELATE_AM_EXT = 73,
+    FX_REPLACE_COLOR = 74,  // p0 old colour packed 0xRRGGBB, p1 new colour packed, p2 threshold
+                            // 0..400 (%), p3 feather 0..200 (%), p4 alpha 0..100, p5 lock luminance 0/1.
+                            // kFxColor mode 17 (the program's straight-space maths is AM's own).
     FX_MAX = FX_COPY_BG
 };
 
@@ -103,6 +137,7 @@ constexpr int kFxStride = 8;  // floats per effect in the JNI array: type, p0..p
 struct FxOp {
     int type = FX_NONE;
     float p[7] = {0, 0, 0, 0, 0, 0, 0};
+    float q[7] = {0, 0, 0, 0, 0, 0, 0};  // extended params, folded in by fxParseOps from an EXT group
 };
 
 // Reads `n` floats (groups of kFxStride) into `out` (room for kFxMaxOps). Unknown types are skipped.
@@ -212,6 +247,53 @@ void fxGlowScanMap(float inR, float inG, float inB, float inA, float baseR, floa
 // importer's applyGaussianBlur calibration (AM strength x 50), so the scan's pre-blur matches the
 // blur the same strength gives as a standalone effect.
 float fxGlowScanBlurriness(float smoothingPct);
+
+// ---- v163: Alight's next tier (the maths of the recovered definitions; the GLSL twins live in
+// fx_shaders.h modes 12..14 / 17 and in renderer_effects.cpp's dedicated passes) ----
+// CPU reference of Luma Key: the alpha multiplier of a pixel whose PREMULTIPLIED r / g / b are given
+// (AM reads texColor.rgb as it is). Thresholds / feather are 0..1.
+float fxLumaKeyAlpha(float r, float g, float b, float low, float high, float feather, bool invert, bool weighted);
+// CPU reference of Replace Color: straight r / g / b in and out (0..1); the old / new colours are
+// straight too (their alpha is 1: AM declares them alpha="false"); threshold / feather / alpha are
+// AM units (0..4 / 0..2 / 0..1). The YUV distance weights chroma x4 and luma x0.5, like AM.
+void fxReplaceColorMap(float r, float g, float b, float oldR, float oldG, float oldB,
+                       float newR, float newG, float newB, float threshold, float feather,
+                       float alpha, bool lockLuminance, float* outR, float* outG, float* outB);
+// CPU reference of Four Color Gradient at layer-norm point (stX, stY): cols are the four straight
+// colours (r, g, b triples), offs the four AM points (x, y pairs); tex is the layer pixel
+// (premultiplied). The weighted average divides by the sum of the UNpowered smooth weights, like AM.
+void fxFourColorMap(float stX, float stY, const float cols[12], const float offs[8], float blend,
+                    float alpha, int blendMode, float tr, float tg, float tb, float ta,
+                    float* outR, float* outG, float* outB, float* outA);
+// Ashima simplex noise (the snoise of AM's turbulentdisplace shader, ported line by line) and AM's
+// turbulence sum over it: sum of amp * |snoise(st, evolution)|, amp halving, st doubling + parallax.
+float fxSnoise3(float x, float y, float z);
+float fxTurbulence(float stX, float stY, int octaves, float parX, float parY, float evolution);
+// CPU reference of Stretch Segment: the sample position for a fragment at (uvX, uvY) (norm, centre
+// (0.5, 0.5) like every warp here). angleDeg / stretch / offset / smooth are AM units (smooth 0..1).
+void fxStretchSegmentUv(float uvX, float uvY, float angleDeg, float stretch, float offset, float smooth,
+                        float* outX, float* outY);
+// CPU reference of Swirl (swirl4 / swirl3): the sample position for a fragment at (uvX, uvY);
+// (cX, cY) is the centre in norm units, aspect = picture width / height, strength -0.5..0.5,
+// radius 0..0.8 (both in the aspect-corrected space, like AM).
+void fxSwirlUv(float uvX, float uvY, float cX, float cY, float strength, float radius, int version,
+               float aspect, float* outX, float* outY);
+// CPU reference of Halftone Dots' sample position and cell distances: the fragment at (uvX, uvY)
+// samples at (*outX, *outY); *absDistX / *absDistY are the folded in-cell distances (0..0.5) the
+// colour decision measures. amount / angleDeg / phase are AM units, aspect = width / height.
+void fxHalftoneDotsUv(float uvX, float uvY, float amount, float angleDeg, float phase, float aspect,
+                      float* outX, float* outY, float* absDistX, float* absDistY);
+// CPU reference of Halftone Dots' colour decision: samp is the displaced sample (premultiplied),
+// c1 / c2 the two straight colours, texA the fragment's own alpha (AM scales the result by it).
+void fxHalftoneDotsMap(float sampR, float sampG, float sampB, float sampA, float absDistX, float absDistY,
+                       float strength, const float c1[3], const float c2[3], float texA,
+                       float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Pixelate's block centre: the fragment at (uvX, uvY) samples at (*outX, *outY);
+// *distCenter is the vignette's radial factor. size / angle are AM units, stretch / offset AM
+// values, picW / picH the picture size in pixels (AM's acScreenSize).
+void fxPixelateCentre(float uvX, float uvY, float size, float stretchX, float stretchY, float angleDeg,
+                      bool screenSpace, float offX, float offY, float picW, float picH,
+                      float* outX, float* outY, float* distCenter);
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);
 // Units of the animated effects: phase of the Wave Warp / Turbulent Displace at a pattern frame (24 / s), in turns.

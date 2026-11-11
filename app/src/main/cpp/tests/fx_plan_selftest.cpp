@@ -398,6 +398,179 @@ int main() {
         CHECK(std::fabs(fxGlowScanBlurriness(10.f) - 5.f) < 1e-6f, "glow scan blurriness 0.10");
         CHECK(std::fabs(fxGlowScanBlurriness(400.f) - 100.f) < 1e-6f, "glow scan blurriness capped");
     }
+    // v163: Alight's next tier (64..74). The shaded ones map to kFxWarp modes 12..14 / kFxColor
+    // mode 17; Luma Key, Four Color Gradient, Turbulent Displace and Pixelate are dedicated
+    // passes (FXG_NONE). The EXT types (66 / 68 / 73) fold into their owner's q[] at parse time.
+    {
+        for (int t : {FX_LUMA_KEY, FX_FOUR_COLOR_GRADIENT, FX_TURBULENT_DISPLACE_AM, FX_SWIRL_AM,
+                      FX_STRETCH_SEGMENT, FX_HALFTONE_DOTS, FX_PIXELATE_AM, FX_REPLACE_COLOR}) {
+            float one[8] = {(float)t, 0, 0, 0, 0, 0, 0, 0};
+            CHECK(fxParseOps(one, 8, ops) == 1 && ops[0].type == t, "v163 type %d parsed", t);
+        }
+        CHECK(fxShaderOf(FX_STRETCH_SEGMENT).group == FXG_WARP && fxShaderOf(FX_STRETCH_SEGMENT).mode == 12, "stretch segment shader");
+        CHECK(fxShaderOf(FX_SWIRL_AM).group == FXG_WARP && fxShaderOf(FX_SWIRL_AM).mode == 13, "swirl shader");
+        CHECK(fxShaderOf(FX_HALFTONE_DOTS).group == FXG_WARP && fxShaderOf(FX_HALFTONE_DOTS).mode == 14, "halftone dots shader");
+        CHECK(fxShaderOf(FX_REPLACE_COLOR).group == FXG_COLOR && fxShaderOf(FX_REPLACE_COLOR).mode == 17, "replace colour shader");
+        for (int t : {FX_LUMA_KEY, FX_FOUR_COLOR_GRADIENT, FX_TURBULENT_DISPLACE_AM, FX_PIXELATE_AM}) {
+            CHECK(fxShaderOf(t).group == FXG_NONE, "v163 type %d is a dedicated pass", t);
+        }
+        for (int t = FX_DIR_BLUR; t <= FX_LAST; ++t) {
+            CHECK(!(fxShaderOf(t).group == FXG_WARP && fxShaderOf(t).mode >= 12 && fxShaderOf(t).mode <= 14), "type %d collides with a v163 warp mode", t);
+            CHECK(!(fxShaderOf(t).group == FXG_COLOR && fxShaderOf(t).mode == 17), "type %d collides with replace colour", t);
+        }
+        // EXT folding: owner + EXT = one op with q set; EXT alone / after another owner is dropped.
+        {
+            float grad[16] = {(float)FX_FOUR_COLOR_GRADIENT, 255, 65280, 16711680, 100, 75, 0, 0,
+                              (float)FX_FOUR_COLOR_GRADIENT_EXT, 8390156, 10438156, 10438656, 8390656, 0, 0, 0};
+            CHECK(fxParseOps(grad, 16, ops) == 1 && ops[0].type == FX_FOUR_COLOR_GRADIENT, "gradient + ext = one op");
+            CHECK(ops[0].q[0] == 8390156.f && ops[0].q[3] == 8390656.f, "gradient ext folded into q");
+            float extOnly[8] = {(float)FX_TURBULENT_DISPLACE_AM_EXT, 1, 2, 3, 4, 5, 6, 7};
+            CHECK(fxParseOps(extOnly, 8, ops) == 0, "ext alone dropped");
+            float wrong[16] = {(float)FX_BLUR, 20, 0, 0, 0, 0, 0, 0,
+                               (float)FX_PIXELATE_AM_EXT, 1, 2, 3, 4, 5, 6, 7};
+            CHECK(fxParseOps(wrong, 16, ops) == 1 && ops[0].type == FX_BLUR && ops[0].q[0] == 0.f, "ext after wrong owner dropped");
+            // EXT groups do not consume op slots: 11 plain + gradient(+ext) + 1 plain = 12 ops.
+            float many[14 * 8];
+            for (int i = 0; i < 11; ++i) { many[i * 8] = (float)FX_BLUR; many[i * 8 + 1] = 10; for (int k = 2; k < 8; ++k) many[i * 8 + k] = 0; }
+            many[11 * 8] = (float)FX_FOUR_COLOR_GRADIENT; for (int k = 1; k < 8; ++k) many[11 * 8 + k] = 0;
+            many[12 * 8] = (float)FX_FOUR_COLOR_GRADIENT_EXT; for (int k = 1; k < 8; ++k) many[12 * 8 + k] = 0;
+            many[13 * 8] = (float)FX_GRAIN; for (int k = 1; k < 8; ++k) many[13 * 8 + k] = 0;
+            CHECK(fxParseOps(many, 14 * 8, ops) == kFxMaxOps, "ext does not consume an op slot");
+        }
+        // Identity rules.
+        FxOp lk{FX_LUMA_KEY, {0, 100, 5, 0, 1, 0, 0}};
+        CHECK(fxIsIdentity(lk), "luma key full band is neutral");
+        lk.p[0] = 50;
+        CHECK(!fxIsIdentity(lk), "luma key low 50 runs");
+        lk.p[0] = 0; lk.p[3] = 1;
+        CHECK(!fxIsIdentity(lk), "luma key invert runs");
+        FxOp fg{FX_FOUR_COLOR_GRADIENT, {0, 0, 0, 0, 100, 0, 0}};
+        CHECK(fxIsIdentity(fg), "gradient alpha 0 is neutral");
+        fg.p[5] = 75;
+        CHECK(!fxIsIdentity(fg), "gradient runs");
+        FxOp td{FX_TURBULENT_DISPLACE_AM, {0, 332, 2, 450, 1, 0, 0}};
+        CHECK(fxIsIdentity(td), "turbulent intensity 0 is neutral");
+        td.p[0] = 15;
+        CHECK(!fxIsIdentity(td), "turbulent runs");
+        FxOp sw{FX_SWIRL_AM, {0, 80, 0, 0, 4, 0, 0}};
+        CHECK(fxIsIdentity(sw), "swirl strength 0 is neutral");
+        sw.p[0] = -11;
+        CHECK(!fxIsIdentity(sw), "swirl runs");
+        FxOp ss{FX_STRETCH_SEGMENT, {0, 0, 0, 0, 0, 0, 0}};
+        CHECK(fxIsIdentity(ss), "stretch 0 is neutral");
+        ss.p[1] = 568;
+        CHECK(!fxIsIdentity(ss), "stretch runs");
+        FxOp hd{FX_HALFTONE_DOTS, {209.5f, 0, 45, 50, 0, 0, 0}};
+        CHECK(!fxIsIdentity(hd), "halftone dots always run (strength 0 still posterizes)");
+        FxOp px{FX_PIXELATE_AM, {1, 100, 100, 0, 0, 0, 0}};
+        CHECK(fxIsIdentity(px), "pixelate size 1 is neutral");
+        px.p[0] = 25;
+        CHECK(!fxIsIdentity(px), "pixelate runs");
+        px.p[0] = 1; px.p[4] = 100;
+        CHECK(!fxIsIdentity(px), "pixelate vignette alone runs");
+        FxOp rc{FX_REPLACE_COLOR, {0, 255, 25, 25, 0, 0, 0}};
+        CHECK(fxIsIdentity(rc), "replace colour alpha 0 is neutral");
+        rc.p[4] = 100;
+        CHECK(!fxIsIdentity(rc), "replace colour runs");
+
+        float r, g, b, a;
+        // Luma Key band maths (AM's edges: lowB = low (1 + f) - 0.001, lowA = lowB - f, ...).
+        CHECK(std::fabs(fxLumaKeyAlpha(0.5f, 0.5f, 0.5f, 0.f, 1.f, 0.05f, false, true) - 1.f) < 1e-6f, "luma full band keeps");
+        CHECK(std::fabs(fxLumaKeyAlpha(0.5f, 0.5f, 0.5f, 0.25f, 0.75f, 0.1f, false, true) - 1.f) < 1e-6f, "luma mid band keeps");
+        CHECK(std::fabs(fxLumaKeyAlpha(0.2f, 0.2f, 0.2f, 0.25f, 0.75f, 0.1f, false, true) - 0.167648f) < 1e-4f, "luma feathered low edge");
+        CHECK(std::fabs(fxLumaKeyAlpha(0.2f, 0.2f, 0.2f, 0.25f, 0.75f, 0.1f, true, true) - 0.832352f) < 1e-4f, "luma invert flips");
+        CHECK(std::fabs(fxLumaKeyAlpha(1.f, 0.f, 0.f, 0.25f, 1.f, 0.05f, false, true) - 0.0014f) < 1e-3f, "luma weighted red is dark");
+        CHECK(std::fabs(fxLumaKeyAlpha(1.f, 0.f, 0.f, 0.25f, 1.f, 0.05f, false, false) - 1.f) < 1e-6f, "luma uniform red passes");
+        // Replace Color: the old colour itself is fully replaced; alpha 0 keeps the pixel.
+        fxReplaceColorMap(0.f, 0.f, 0.f, 0, 0, 0, 1, 1, 1, 0.28f, 0.61f, 1.f, false, &r, &g, &b);
+        CHECK(std::fabs(r - 1.f) < 1e-6f && std::fabs(g - 1.f) < 1e-6f && std::fabs(b - 1.f) < 1e-6f, "replace colour exact match");
+        fxReplaceColorMap(0.37f, 0.72f, 0.85f, 0, 0, 0, 1, 1, 1, 0.28f, 0.61f, 0.f, false, &r, &g, &b);
+        CHECK(std::fabs(r - 0.37f) < 1e-6f && std::fabs(b - 0.85f) < 1e-6f, "replace colour alpha 0 keeps");
+        // The jj corpus profile (old black -> new black, threshold 1.5, feather 2, luminance
+        // locked): a mid pixel keeps its luma and loses chroma in proportion to p = 0.781.
+        fxReplaceColorMap(0.37f, 0.72f, 0.85f, 0, 0, 0, 0, 0, 0, 1.5f, 2.f, 1.f, true, &r, &g, &b);
+        CHECK(std::fabs(r - 0.573189f) < 1e-4f && std::fabs(g - 0.649841f) < 1e-4f && std::fabs(b - 0.678332f) < 1e-4f, "replace colour luminance lock");
+        // Four Color Gradient: at colour 1's anchor the colour is colour 1; at the centre of the
+        // default anchors all four distances are equal, so the colour is the plain average.
+        {
+            float cols[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1};
+            float offs[8] = {0, -500, 500, -500, 500, 0, 0, 0};
+            fxFourColorMap(0.f, 1.f, cols, offs, 1.f, 1.f, 0, 0.2f, 0.2f, 0.2f, 1.f, &r, &g, &b, &a);
+            CHECK(std::fabs(r - 1.f) < 1e-6f && std::fabs(g) < 1e-6f && std::fabs(a - 1.f) < 1e-6f, "gradient at anchor 1");
+            fxFourColorMap(0.5f, 0.5f, cols, offs, 1.f, 1.f, 0, 0.2f, 0.2f, 0.2f, 1.f, &r, &g, &b, &a);
+            CHECK(std::fabs(r - 0.5f) < 1e-6f && std::fabs(g - 0.25f) < 1e-6f && std::fabs(b - 0.5f) < 1e-6f, "gradient centre is the average");
+            fxFourColorMap(0.5f, 0.5f, cols, offs, 1.f, 0.f, 0, 0.2f, 0.4f, 0.6f, 0.8f, &r, &g, &b, &a);
+            CHECK(std::fabs(r - 0.2f) < 1e-6f && std::fabs(a - 0.8f) < 1e-6f, "gradient alpha 0 keeps the layer");
+        }
+        // Simplex noise: deterministic, bounded, and the turbulence sum is built on it.
+        CHECK(std::fabs(fxSnoise3(0.f, 0.f, 0.f) - -0.412199f) < 1e-4f, "snoise origin pin");
+        CHECK(std::fabs(fxSnoise3(0.5f, 0.5f, 4.5f) - -0.280650f) < 1e-4f, "snoise pin (the corpus evolution)");
+        CHECK(std::fabs(fxSnoise3(1.25f, -0.75f, 0.33f) - -0.786940f) < 1e-4f, "snoise pin 2");
+        CHECK(std::fabs(fxSnoise3(-3.2f, 2.8f, -1.5f) - 0.656085f) < 1e-4f, "snoise pin 3");
+        CHECK(fxSnoise3(0.5f, 0.5f, 4.5f) == fxSnoise3(0.5f, 0.5f, 4.5f), "snoise deterministic");
+        {
+            float mx = 0.f;
+            for (int i = 0; i < 4000; ++i) {
+                const float v = fxSnoise3(i * 0.37f - 100.f, i * 0.11f - 40.f, i * 0.53f);
+                if (std::fabs(v) > mx) mx = std::fabs(v);
+            }
+            CHECK(mx <= 1.0f, "snoise bounded by 1 (max %g)", mx);
+        }
+        CHECK(std::fabs(fxTurbulence(0.5f, 0.5f, 1, 0.f, 0.f, 4.5f) - 0.5f * std::fabs(fxSnoise3(0.5f, 0.5f, 4.5f))) < 1e-6f,
+              "turbulence octave 1 = 0.5 |snoise|");
+        CHECK(std::fabs(fxTurbulence(0.3f, 0.7f, 3, 0.1f, -0.2f, 1.5f) - 0.237614f) < 1e-4f, "turbulence 3-octave pin");
+        // Stretch Segment: the centre line is fixed; inside the stretch band the sample collapses
+        // onto it; outside, it shifts by the full stretch amount.
+        {
+            float ux, uy;
+            fxStretchSegmentUv(0.5f, 0.5f, 0, 900, 0, 0, &ux, &uy);
+            CHECK(std::fabs(ux - 0.5f) < 1e-6f && std::fabs(uy - 0.5f) < 1e-6f, "stretch centre fixed");
+            fxStretchSegmentUv(0.9f, 0.5f, 0, 900, 0, 0, &ux, &uy);
+            CHECK(std::fabs(ux - 0.5f) < 1e-4f, "stretch 900 collapses to the centre line");
+            fxStretchSegmentUv(0.9f, 0.5f, 0, 100, 0, 0, &ux, &uy);
+            CHECK(std::fabs(ux - 0.7f) < 1e-4f, "stretch 100 shifts by the stretch (0.2)");
+            fxStretchSegmentUv(0.5f, 0.9f, 90, 900, 0, 0, &ux, &uy);
+            CHECK(std::fabs(ux - 0.5f) < 1e-4f && std::fabs(uy - 0.5f) < 1e-4f, "stretch at angle 90 collapses vertically");
+        }
+        // Swirl: the centre is fixed; a quarter out at strength 0.155 / radius 0.8 turns by
+        // percent^2 * 2T * 8 pi; outside the radius nothing moves.
+        {
+            float ux, uy;
+            fxSwirlUv(0.5f, 0.5f, 0.5f, 0.5f, 0.155f, 0.8f, 4, 1.f, &ux, &uy);
+            CHECK(std::fabs(ux - 0.5f) < 1e-6f && std::fabs(uy - 0.5f) < 1e-6f, "swirl centre fixed");
+            fxSwirlUv(0.75f, 0.5f, 0.5f, 0.5f, 0.155f, 0.8f, 4, 1.f, &ux, &uy);
+            CHECK(std::fabs(ux - 0.285694f) < 1e-4f && std::fabs(uy - 0.371264f) < 1e-4f, "swirl quarter pin");
+            fxSwirlUv(0.5f, 1.1f, 0.5f, 0.5f, -0.111f, 0.51f, 3, 1.f, &ux, &uy);
+            CHECK(std::fabs(ux - 0.5f) < 1e-6f && std::fabs(uy - 1.1f) < 1e-6f, "swirl outside the radius is identity");
+            fxSwirlUv(0.75f, 0.5f, 0.5f, 0.5f, 0.f, 0.8f, 4, 1.f, &ux, &uy);
+            CHECK(std::fabs(ux - 0.75f) < 1e-6f && std::fabs(uy - 0.5f) < 1e-6f, "swirl strength 0 is identity");
+        }
+        // Halftone Dots: at the picture centre (a cell centre at amount 209.5 / angle 45) the
+        // sample is the pixel itself; the colour decision runs from sample luma + cell distance.
+        {
+            float ux, uy, ax, ay;
+            fxHalftoneDotsUv(0.5f, 0.5f, 209.5f, 45, 0.5f, 16.f / 9.f, &ux, &uy, &ax, &ay);
+            CHECK(std::fabs(ux - 0.5f) < 1e-4f && std::fabs(uy - 0.5f) < 1e-4f && std::fabs(ax) < 1e-4f && std::fabs(ay) < 1e-4f,
+                  "halftone centre samples itself");
+            float c1[3] = {1, 0, 0}, c2[3] = {1, 1, 1};
+            fxHalftoneDotsMap(0.05f, 0.05f, 0.05f, 1.f, 0.f, 0.f, 0.416f, c1, c2, 1.f, &r, &g, &b, &a);
+            CHECK(std::fabs(r - 1.f) < 1e-6f && std::fabs(g) < 1e-6f, "halftone dark at cell centre = colour 1");
+            fxHalftoneDotsMap(0.9f, 0.9f, 0.9f, 1.f, 0.f, 0.f, 0.416f, c1, c2, 1.f, &r, &g, &b, &a);
+            CHECK(std::fabs(r - 1.f) < 1e-6f && std::fabs(g - 1.f) < 1e-6f, "halftone bright = colour 2");
+            fxHalftoneDotsMap(0.9f, 0.9f, 0.9f, 1.f, 0.f, 0.f, 0.416f, c1, c2, 0.5f, &r, &g, &b, &a);
+            CHECK(std::fabs(a - 0.5f) < 1e-6f && std::fabs(r - 0.5f) < 1e-6f, "halftone scales by the pixel alpha");
+        }
+        // Pixelate: the sample is the block centre (blocks of 25 px on a 1000 px picture,
+        // anchored at the layer centre in layer mode).
+        {
+            float ux, uy, dc;
+            fxPixelateCentre(0.53f, 0.47f, 25, 1, 1, 0, false, 0, 0, 1000, 1000, &ux, &uy, &dc);
+            CHECK(std::fabs(ux - 0.5375f) < 1e-5f && std::fabs(uy - 0.4625f) < 1e-5f, "pixelate block centre");
+            CHECK(std::fabs(dc - 0.387266f) < 1e-4f, "pixelate vignette factor");
+            fxPixelateCentre(0.51f, 0.51f, 25, 1, 1, 0, false, 0, 0, 1000, 1000, &ux, &uy, &dc);
+            CHECK(std::fabs(ux - 0.5125f) < 1e-5f && std::fabs(uy - 0.5125f) < 1e-5f, "pixelate block centre near middle");
+        }
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

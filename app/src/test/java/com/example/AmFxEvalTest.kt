@@ -95,4 +95,84 @@ class AmFxEvalTest {
         assertSame(off, AmFxEval.resolve(off, clip(), 1500L))
         assertTrue(ClipFxLibrary.create(ClipFxLibrary.GLOW_SCAN)!!.values[6] == 0x0088FF.toFloat())
     }
+
+    @Test
+    fun lumaKeyLowThresholdTailResolves() {
+        // am-renderer-preset2's lumakey3: lowThreshold sweeps 1 -> 0 by t = 0.201057 (the end
+        // key eased (0, 0, 0.58, 1)); after that the band stays open at the bottom.
+        val tail = AmFxEval.encodeTrack(
+            listOf(
+                Triple(0f, 1f, null),
+                Triple(0.201057f, 0f, Easing(0f, 0f, 0.58f, 1f))
+            )
+        )
+        val fx = ClipFx(type = ClipFxLibrary.LUMA_KEY, values = listOf(100f, 100f, 5f, 0f, 1f, 0f, 0f) + tail)
+        val clip = clip()
+        assertEquals(100f, AmFxEval.resolve(listOf(fx), clip, 500L).single().values[0], 0.001f)
+        val after = AmFxEval.resolve(listOf(fx), clip, 1000L).single()   // rel 0.25, past the last key
+        assertEquals(0f, after.values[0], 0.001f)
+        assertEquals(100f, after.values[1], 0.001f)   // the high threshold is not the tracked slot
+    }
+
+    @Test
+    fun turbulentTwoTailsResolveInOrder() {
+        // The corpus profile (am-renderer-preset2): intensity 0.153 -> 0 over the span, scale
+        // 3.32 -> 0.01 over keys OUTSIDE the span. The tails sit back to back from index 14.
+        val intTail = AmFxEval.encodeTrack(listOf(Triple(0f, 0.153f, null), Triple(1f, 0f, null)))
+        val scaleTail = AmFxEval.encodeTrack(listOf(Triple(-0.036364f, 3.32f, null), Triple(1.872727f, 0.01f, null)))
+        val base = MutableList(14) { 0f }
+        base[0] = 15.3f
+        base[1] = 332f
+        val fx = ClipFx(type = ClipFxLibrary.TURBULENT_DISPLACE_AM, values = base + intTail + scaleTail)
+        val mid = AmFxEval.resolve(listOf(fx), clip(), 1500L).single()   // rel 0.5
+        assertEquals(7.65f, mid.values[0], 0.01f)      // intensity half-way down its linear track
+        // scale: f = 0.536364 / 1.909091 = 0.28094 -> 3.32 - 3.31 * 0.28094 = 2.3901 (x100)
+        assertEquals(239.01f, mid.values[1], 0.5f)
+        assertEquals(2f, mid.values[14], 0.001f)        // the tails survive resolution
+        assertEquals(2f, mid.values[27], 0.001f)
+    }
+
+    @Test
+    fun turbulentPlaceholderKeepsTheSecondTailAligned() {
+        // Intensity constant, scale keyframed: the importer writes a count-0 placeholder for
+        // intensity, and the resolver must step over it to reach the scale track.
+        val scaleTail = AmFxEval.encodeTrack(listOf(Triple(0f, 3.32f, null), Triple(1f, 0.01f, null)))
+        val base = MutableList(14) { 0f }
+        base[0] = 15.3f
+        base[1] = 332f
+        val fx = ClipFx(type = ClipFxLibrary.TURBULENT_DISPLACE_AM, values = base + listOf(0f) + scaleTail)
+        val mid = AmFxEval.resolve(listOf(fx), clip(), 1500L).single()
+        assertEquals(15.3f, mid.values[0], 0.001f)   // untouched
+        assertEquals(166.5f, mid.values[1], 0.5f)    // (3.32 + 0.01) / 2 x 100
+    }
+
+    @Test
+    fun pixelateSizeTailUsesScaleOne() {
+        // likk-preset-33's pixelate2: size 24 -> 1 over the span; the slot holds AM units, so
+        // the tail resolves at scale 1 (no x100).
+        val tail = AmFxEval.encodeTrack(listOf(Triple(0.009798f, 24f, null), Triple(1f, 1f, null)))
+        val base = MutableList(14) { 0f }
+        base[0] = 24f
+        val fx = ClipFx(type = ClipFxLibrary.PIXELATE_AM, values = base + tail)
+        val mid = AmFxEval.resolve(listOf(fx), clip(), 1500L).single()   // rel 0.5
+        assertEquals(12.61f, mid.values[0], 0.05f)
+    }
+
+    @Test
+    fun swirlStrengthTailResolves() {
+        // celz-preset-9x16's swirl3: strength 0 -> -0.111 -> 0, the middle key at t = 0.441379.
+        val tail = AmFxEval.encodeTrack(
+            listOf(
+                Triple(0f, 0f, Easing(0.48f, 0f, 1f, 0f)),
+                Triple(0.441379f, -0.111f, Easing(0.48f, 0f, 1f, 0f)),
+                Triple(1f, 0f, Easing(0f, 1f, 0.52f, 1f))
+            )
+        )
+        val fx = ClipFx(type = ClipFxLibrary.SWIRL_AM, values = listOf(0f, 51f, 0f, 0f, 3f, 0f, 0f) + tail)
+        // 883 ms into the 2000 ms clip = rel 0.4415, just past the -0.111 key (0.441379): the
+        // segment's easing (0, 1, 0.52, 1) rises steeply, so the value is already back at -0.1071.
+        val mid = AmFxEval.resolve(listOf(fx), clip(), 500L + 883L).single()
+        assertEquals(-10.71f, mid.values[0], 0.05f)
+        assertEquals(51f, mid.values[1], 0.001f)   // radius untouched
+    }
 }

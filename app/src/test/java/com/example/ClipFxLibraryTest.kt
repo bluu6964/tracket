@@ -26,8 +26,41 @@ class ClipFxLibraryTest {
         // range. 55..58 are the odd ones: Kotlin resolves them before they reach the engine, and
         // fxParseOps skips them (they sit above FX_MAX). FX_LONG_SHADOW (59), FX_COLOR_TUNE (60),
         // FX_SOLID_COLOR (61), FX_AM_MIRROR (62) and FX_GLOW_SCAN (63) sit above FX_MAX too, but
-        // they DO run in the engine: fxParseOps accepts them explicitly.
-        assertEquals((1..63).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+        // they DO run in the engine: fxParseOps accepts them explicitly. The v163 tier adds
+        // FX_LUMA_KEY (64), FX_FOUR_COLOR_GRADIENT (65), FX_TURBULENT_DISPLACE_AM (67),
+        // FX_SWIRL_AM (69), FX_STRETCH_SEGMENT (70), FX_HALFTONE_DOTS (71), FX_PIXELATE_AM (72)
+        // and FX_REPLACE_COLOR (74); 66 / 68 / 73 are their EXT groups, which have no tile —
+        // fxParseOps folds them into their owner's q[] instead.
+        assertEquals(((1..65) + 67 + (69..72) + 74).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+    }
+
+    @Test fun extendedEffectsEmitTwoGroups() {
+        val g = ClipFxLibrary.create(ClipFxLibrary.FOUR_COLOR_GRADIENT)!!
+        assertEquals(14, g.values.size)   // 7 params + the 7 EXT values (AM's anchor points)
+        val flat = ClipFxLibrary.toNative(listOf(g))!!
+        assertEquals(16, flat.size)
+        assertEquals(65f, flat[0], 0f)
+        assertEquals(66f, flat[8], 0f)   // the EXT group rides right behind its owner
+        assertEquals(ClipFxLibrary.packPoint(0f, -500f), flat[9], 0f)
+        assertEquals(ClipFxLibrary.packPoint(0f, 0f), flat[12], 0f)
+        // An EXT group does not consume one of the MAX_EFFECTS slots.
+        val one = ClipFxLibrary.create(ClipFxLibrary.MOSAIC)!!
+        val many = List(ClipFxLibrary.MAX_EFFECTS - 1) { one.copy(id = "e$it") } + g
+        assertEquals(ClipFxLibrary.MAX_EFFECTS * 8 + 8, ClipFxLibrary.toNative(many)!!.size)
+        // Turbulent Displace and Pixelate carry zeroed EXT defaults from create().
+        val t = ClipFxLibrary.create(ClipFxLibrary.TURBULENT_DISPLACE_AM)!!
+        assertEquals(14, t.values.size)
+        assertEquals(68f, ClipFxLibrary.toNative(listOf(t))!![8], 0f)
+        val p = ClipFxLibrary.create(ClipFxLibrary.PIXELATE_AM)!!
+        assertEquals(73f, ClipFxLibrary.toNative(listOf(p))!![8], 0f)
+    }
+
+    @Test fun packPointPacksWholeUnitsExactly() {
+        // (x + 2048) * 4096 + (y + 2048), exact in a float inside +-2047.
+        assertEquals(8390156f, ClipFxLibrary.packPoint(0f, -500f), 0f)
+        assertEquals(10438656f, ClipFxLibrary.packPoint(500f, 0f), 0f)
+        assertEquals(0f, ClipFxLibrary.packPoint(-2048f, -2048f), 0f)
+        assertEquals(16777215f, ClipFxLibrary.packPoint(2047f, 2047f), 0f)
     }
 
     @Test fun longShadowAndColorTuneReachTheEngine() {

@@ -29,7 +29,8 @@ namespace am {
 namespace {
 
 enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, EF_GRAIN, EF_VIG, EF_MASK, EF_MASK_APPLY, EF_CHROMA,
-             EF_BLUR2, EF_COLOR, EF_WARP, EF_STYLE, EF_COPYBG, EF_GLOW_SCAN, EF_COUNT };  // eff_[] in renderer.h has room for 20
+             EF_BLUR2, EF_COLOR, EF_WARP, EF_STYLE, EF_COPYBG, EF_GLOW_SCAN,
+             EF_LUMA_KEY, EF_FOUR_GRADIENT, EF_TURBULENT_AM, EF_PIXELATE_AM, EF_COUNT };  // eff_[] in renderer.h has room for 24
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -215,6 +216,237 @@ void main() {
     outC.a = clamp(outC.a, 0.0, 1.0);
     outC.rgb = clamp(outC.rgb, 0.0, outC.a);
     oColor = outC;
+}
+)";
+
+// Luma Key (Alight Motion's `lumakey3`, its recovered shader; fx_plan.cpp fxLumaKeyAlpha is the CPU
+// twin): the layer's alpha is scaled by where its (premultiplied) luma falls against the feathered
+// [low, high] band. uBand = (low, high, feather, invert) in 0..1, uWeighted picks the luma weights.
+const char* kLumaKey = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec4 uBand;
+uniform float uWeighted;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 c = texture(uTex, vUv);
+    vec3 w = uWeighted > 0.5 ? vec3(0.2126, 0.7152, 0.0722) : vec3(0.3333, 0.3334, 0.3333);
+    float luma = dot(c.rgb, w);
+    float feather = uBand.z;
+    float fw = max(feather, 0.00001);
+    float lowB = uBand.x * (1.0 + feather) - 0.001;
+    float lowA = lowB - fw;
+    float highA = uBand.y * (1.0 + feather) - feather + 0.001;
+    float highB = highA + fw;
+    float alpha = min(smoothstep(lowA, lowB, luma), 1.0 - smoothstep(highA, highB, luma));
+    if (uBand.w > 0.5) alpha = 1.0 - alpha;
+    oColor = c * alpha;
+}
+)";
+
+// Four Color Gradient (Alight Motion's `fourcolorgradient`, its recovered shader; fx_plan.cpp
+// fxFourColorMap is the CPU twin): four colours anchored at four points blend by a smoothstep
+// falloff of the distance, powered by 1 / blend and divided by the sum of the UNpowered weights,
+// then composited over the layer per blend mode and mixed by alpha. uCol / uOff are unpacked on
+// the CPU side; uMisc = (blend, alpha, blend mode). The gradient noise AM adds against banding is
+// the engine's own dither here.
+const char* kFourGradient = "#version 300 es\n"
+R"(precision highp float;
+uniform sampler2D uTex;
+uniform vec3 uCol[4];
+uniform vec2 uOff[4];
+uniform vec3 uMisc;
+in vec2 vUv;
+out vec4 oColor;
+)" AM_DITHER R"(
+void main() {
+    vec4 tex = texture(uTex, vUv);
+    vec3 col = vec3(0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < 4; i++) {
+        vec2 pos = uOff[i] * vec2(1.0, -1.0) / 500.0;
+        float t = length(vUv - pos);
+        float sw = smoothstep(0.0, 1.0, clamp(1.0 - t, 0.0, 1.0));
+        col += uCol[i] * pow(sw, 1.0 / max(uMisc.x, 0.001));
+        wsum += sw;
+    }
+    col /= max(wsum, 0.000001);
+    col += amDither();
+    vec4 result;
+    int bm = int(uMisc.z + 0.5);
+    if (bm == 1) {
+        result = vec4((tex.rgb / max(tex.a, 0.00001)) * col, 1.0) * tex.a;
+    } else if (bm == 2) {
+        result = vec4(1.0 - (1.0 - tex.rgb / max(tex.a, 0.00001)) * (1.0 - col), 1.0) * tex.a;
+    } else {
+        result = vec4(col, 1.0) * tex.a;
+    }
+    oColor = mix(tex, result, clamp(uMisc.y, 0.0, 1.0));
+}
+)";
+
+// Turbulent Displace (Alight Motion's `turbulentdisplace`, its recovered shader; fx_plan.cpp
+// fxSnoise3 / fxTurbulence are the CPU twins): the sampling is pushed by a simplex-noise
+// turbulence field. uP / uQ carry the fx params (see FX_TURBULENT_DISPLACE_AM in fx_plan.h);
+// uAspect is the picture's width / height. The frame convention is the warp programs' (vUv stands
+// in for AM's layer / screen norm, the layer centre at 0.5). Outside the picture: transparent,
+// as in Alight.
+const char* kTurbulentAm = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uAspect;
+uniform float uP[7];
+uniform float uQ[7];
+in vec2 vUv;
+out vec4 oColor;
+vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+float snoise(vec3 v) {
+    const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+    vec3 i = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+    vec3 g = step(x0.yzx, x0.xyz);
+    vec3 l = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+    i = mod289(i);
+    vec4 p = permute(permute(permute(
+        i.z + vec4(0.0, i1.z, i2.z, 1.0))
+        + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+        + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+    float n_ = 0.142857142857;
+    vec3 ns = n_ * D.wyz - D.xzx;
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+    vec4 s0 = floor(b0) * 2.0 + 1.0;
+    vec4 s1 = floor(b1) * 2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+    vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+    p0 *= norm.x;
+    p1 *= norm.y;
+    p2 *= norm.z;
+    p3 *= norm.w;
+    vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+}
+float turbulence(vec2 st, int octaves, vec2 parallax, float evolution) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 9; i++) {
+        if (i >= octaves) break;
+        value += amplitude * abs(snoise(vec3(st, evolution)));
+        st = st * 2.0 + parallax;
+        amplitude *= 0.5;
+    }
+    return value;
+}
+void main() {
+    float intensity = clamp(uP[0], 0.0, 250.0) / 100.0;
+    float scale = clamp(uP[1], 1.0, 5000.0) / 100.0;
+    int direction = int(uP[2] + 0.5);
+    float evolution = uP[3] / 100.0;
+    int octaves = int(clamp(uP[4], 1.0, 9.0) + 0.5);
+    float offs = uP[6] / 100.0;
+    float stretch = uQ[0] / 100.0;
+    float seed = uQ[1] / 100.0;
+    vec2 st = vUv;
+    st.x *= uAspect;
+    st += vec2(uQ[2], uQ[3]) * vec2(-1.0, 1.0) / 500.0;
+    vec2 parallax = vec2(uQ[4], uQ[5]) * vec2(-1.0, 1.0) / 100.0;
+    vec2 scaleVec = stretch < 0.0 ? vec2(scale - stretch, scale) : vec2(scale, scale + stretch);
+    vec2 cell = (st - 0.5) * scaleVec + 0.5;
+    float p = turbulence(cell, octaves, parallax, evolution + 7391.935 * seed);
+    p += (offs - 0.25);
+    p *= intensity * 2.0;
+    vec2 uv = vUv;
+    if (direction == 0) {
+        uv.x += p;
+    } else if (direction == 1) {
+        uv.y += p;
+    } else if (direction == 2) {
+        float q = turbulence(cell, octaves, parallax, evolution + 3937.7249 * (seed + 6.3379));
+        q += (offs - 0.25);
+        q *= intensity * 2.0;
+        uv.x += p;
+        uv.y += q;
+    } else {
+        vec2 d = uv - 0.5;
+        float len = length(d);
+        if (len > 0.000001) uv += d / len * p;
+    }
+    oColor = (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0))))
+        ? texture(uTex, uv) : vec4(0.0);
+}
+)";
+
+// Pixelate (Alight Motion's `pixelate2`, its recovered shader; fx_plan.cpp fxPixelateCentre is
+// the CPU twin of the block-centre maths): the picture is re-read at each block's centre, with
+// AM's alpha threshold / saturation handling and the cubic vignette darkening away from the
+// block centres. uP / uQ carry the fx params (see FX_PIXELATE_AM in fx_plan.h), uSize the
+// picture size in pixels. Outside the picture: transparent, as in Alight.
+const char* kPixelateAm = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec2 uSize;
+uniform float uP[7];
+uniform float uQ[7];
+in vec2 vUv;
+out vec4 oColor;
+mat2 rotm(float a) {
+    float c = cos(a);
+    float s = sin(a);
+    return mat2(c, -s, s, c);
+}
+void main() {
+    float size = clamp(uP[0], 1.0, 500.0);
+    vec2 stretch = vec2(clamp(uP[1], 1.0, 10000.0), clamp(uP[2], 1.0, 10000.0)) / 100.0;
+    float angle = uP[3];
+    float vignette = clamp(uP[4], 0.0, 100.0) / 100.0;
+    bool screenSpace = uP[5] > 0.5;
+    float threshold = clamp(uP[6], 0.0, 100.0) / 100.0;
+    float saturation = clamp(uQ[0], 0.0, 100.0) / 100.0;
+    vec2 offset = vec2(uQ[1], uQ[2]);
+    vec2 pixelSize = vec2(size) * stretch / uSize;
+    vec2 st = vUv;
+    if (!screenSpace) st -= 0.5;
+    st = st * rotm(angle * 0.0174533);
+    st -= offset / 1000.0;
+    vec2 posInPixel = mod(st, pixelSize);
+    posInPixel -= pixelSize / 2.0;
+    posInPixel = posInPixel * rotm(-angle * 0.0174533);
+    posInPixel += pixelSize / 2.0;
+    vec2 pixelCenter = vUv - posInPixel + pixelSize / 2.0;
+    float distCenter = smoothstep(0.0, 1.0, length((posInPixel / pixelSize) - vec2(0.5, 0.5)));
+    vec4 color = (all(greaterThanEqual(pixelCenter, vec2(0.0))) && all(lessThanEqual(pixelCenter, vec2(1.0))))
+        ? texture(uTex, pixelCenter) : vec4(0.0);
+    float tclamp = step(threshold, color.a);
+    if (color.a > 0.0 && saturation > 0.0) {
+        color /= color.a / max(color.a, saturation);
+    }
+    color = color * tclamp;
+    color = mix(color, vec4(min(color.rgb * color.rgb * color.rgb, vec3(0.9, 0.9, 0.9)), color.a * color.a * color.a),
+                step(1.5, size) * vignette * distCenter);
+    oColor = color;
 }
 )";
 
@@ -471,8 +703,9 @@ void main() {
 )";
 
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
-                                  fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan};
-static_assert(EF_COUNT <= 20, "eff_[] in renderer.h is too small");
+                                  fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
+                                  kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm};
+static_assert(EF_COUNT <= 24, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -638,6 +871,10 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_CHROMA: ok = fxChroma(op, W, H, cur); break;
             case FX_COPY_BG: ok = fxCopyBg(op, W, H, cur); break;
             case FX_GLOW_SCAN: ok = fxGlowScan(op, W, H, cur); break;
+            case FX_LUMA_KEY: ok = fxLumaKey(op, W, H, cur); break;
+            case FX_FOUR_COLOR_GRADIENT: ok = fxFourColorGradient(op, W, H, cur); break;
+            case FX_TURBULENT_DISPLACE_AM: ok = fxTurbulentAm(op, W, H, cur); break;
+            case FX_PIXELATE_AM: ok = fxPixelateAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -853,6 +1090,86 @@ bool Renderer::fxGlowScan(const FxOp& op, int W, int H, int* cur) {
     glUniform3f(loc(prog, "uFillColor"), ((packed >> 16) & 0xFF) / 255.f, ((packed >> 8) & 0xFF) / 255.f,
                 (packed & 0xFF) / 255.f);
     glUniform2f(loc(prog, "uMix"), cl01(op.p[4]), cl01(op.p[5]));
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Luma Key (Alight): a single pass scaling the layer's alpha by the luma band.
+bool Renderer::fxLumaKey(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_LUMA_KEY);
+    if (!prog) return false;
+    auto cl01 = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform4f(loc(prog, "uBand"), cl01(op.p[0]), cl01(op.p[1]), cl01(op.p[2]), op.p[3] > 0.5f ? 1.f : 0.f);
+    glUniform1f(loc(prog, "uWeighted"), op.p[4] > 0.5f ? 1.f : 0.f);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Four Color Gradient (Alight): the packed colours / offsets of the op are unpacked into the
+// shader's arrays here (the Glow Scan packed-colour precedent).
+bool Renderer::fxFourColorGradient(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_FOUR_GRADIENT);
+    if (!prog) return false;
+    float cols[12], offs[8];
+    for (int i = 0; i < 4; ++i) {
+        const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[i])));
+        cols[3 * i] = ((pk >> 16) & 0xFF) / 255.f;
+        cols[3 * i + 1] = ((pk >> 8) & 0xFF) / 255.f;
+        cols[3 * i + 2] = (pk & 0xFF) / 255.f;
+        const int pq = (int)std::lround(std::min(16777215.f, std::max(0.f, op.q[i])));
+        offs[2 * i] = (float)(pq / 4096 - 2048);
+        offs[2 * i + 1] = (float)(pq % 4096 - 2048);
+    }
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform3fv(loc(prog, "uCol"), 4, cols);
+    glUniform2fv(loc(prog, "uOff"), 4, offs);
+    glUniform3f(loc(prog, "uMisc"), std::min(200.f, std::max(25.f, op.p[4])) / 100.f,
+                std::min(100.f, std::max(0.f, op.p[5])) / 100.f, std::min(2.f, std::max(0.f, op.p[6])));
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Turbulent Displace (Alight): a single pass; the whole op (p + q) rides as uniform arrays.
+bool Renderer::fxTurbulentAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_TURBULENT_AM);
+    if (!prog) return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1f(loc(prog, "uAspect"), (float)W / (float)H);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Pixelate (Alight): a single pass like Turbulent's, plus the picture size in pixels.
+bool Renderer::fxPixelateAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_PIXELATE_AM);
+    if (!prog) return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uSize"), (float)W, (float)H);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
     draw();
     *cur = dst;
     return true;

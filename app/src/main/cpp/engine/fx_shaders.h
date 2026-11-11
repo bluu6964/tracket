@@ -3,9 +3,9 @@
 //               7 long shadow
 //   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
 //               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize,
-//               15 colour tune, 16 solid colour
+//               15 colour tune, 16 solid colour, 17 replace colour (Alight)
 //   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake,
-//               11 Alight mirror (whole-layer flip + blend)
+//               11 Alight mirror (whole-layer flip + blend), 12 stretch segment (Alight), 13 swirl (Alight), 14 halftone dots (Alight)
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare
 // All of them work on the premultiplied picture the layer shader uses (top of the picture at v = 1), take the raw slider
 // values in uP[0..6] (documented at FxType in fx_plan.h) and write a premultiplied picture. Texture reads inside loops
@@ -476,6 +476,40 @@ void main() {
         // The same maths lives in fx_plan.cpp (fxSolidColorMap) — keep the two in step.
         vec3 sc = vec3(clamp(uP[0], 0.0, 255.0), clamp(uP[1], 0.0, 255.0), clamp(uP[2], 0.0, 255.0)) / 255.0;
         o = mix(rgb, sc, clamp(uP[3], 0.0, 100.0) / 100.0);
+    } else if (uMode == 17) {
+        // Replace colour (Alight Motion's replacecolor, its recovered shader): the distance to the
+        // old colour is measured in YUV (chroma x4, luma x0.5); inside the feathered band the pixel
+        // shifts by (new - old), or is recoloured at its own luminance when locked. uP[0] / uP[1]
+        // are the two colours packed 0xRRGGBB, uP[2] the threshold %, uP[3] the feather %,
+        // uP[4] the alpha %, uP[5] the luminance lock. AM's smoothstep here has REVERSED edges
+        // (it ramps down with distance); ES gives the formula result on the target drivers, and
+        // the same maths lives in fx_plan.cpp (fxReplaceColorMap) — keep the two in step.
+        float pk1 = floor(clamp(uP[0], 0.0, 16777215.0) + 0.5);
+        float pk2 = floor(clamp(uP[1], 0.0, 16777215.0) + 0.5);
+        vec3 oc = vec3(mod(floor(pk1 / 65536.0), 256.0), mod(floor(pk1 / 256.0), 256.0), mod(pk1, 256.0)) / 255.0;
+        vec3 nc = vec3(mod(floor(pk2 / 65536.0), 256.0), mod(floor(pk2 / 256.0), 256.0), mod(pk2, 256.0)) / 255.0;
+        mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+        mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+        vec3 oldYuv = oc * rgb2yuv;
+        vec3 srcYuv = rgb * rgb2yuv;
+        vec3 dYuv = abs(oldYuv - srcYuv);
+        dYuv.yz *= 4.0;
+        dYuv.x *= 0.5;
+        float diff = length(dYuv);
+        float thr = clamp(uP[2], 0.0, 400.0) / 100.0;
+        float fea = max(clamp(uP[3], 0.0, 200.0) / 100.0, 0.0005);
+        float bb = max(thr - fea, 0.0);
+        float aa = min(thr + fea, 4.0);
+        float p = smoothstep(aa, min(bb, aa - 0.0005), diff);
+        vec3 adj = nc;
+        if (uP[5] > 0.5) {
+            vec3 newYuv = nc * rgb2yuv;
+            newYuv.x = srcYuv.x;
+            adj = newYuv * yuv2rgb;
+        } else {
+            adj = rgb - oc + nc;
+        }
+        o = mix(rgb, mix(rgb, adj, p), clamp(uP[4], 0.0, 100.0) / 100.0);
     }
     o = clamp(o + amDither(), 0.0, 1.0);
     oColor = vec4(o * c.a, c.a);
@@ -563,6 +597,101 @@ void main() {
             R = F;
         }
         oColor = mix(S, R, clamp(uP[2], 0.0, 100.0) / 100.0);
+        return;
+    }
+    if (uMode == 12) {
+        // Stretch Segment (Alight Motion's stretchsegment, its recovered shader): along the angle
+        // direction the picture is pulled toward the centre line — the sample sits sminCubic(
+        // stretch, |dist|) back against the sign of dist, so a band around the line is stretched
+        // flat. uP: angle (deg), stretch (AM units, /500 in the shader), offset (AM units),
+        // smooth %. The same maths lives in fx_plan.cpp (fxStretchSegmentUv). Like mode 11 the
+        // sample is read directly: outside the picture is transparent, as in Alight.
+        float a = uP[0] * 0.0174533;
+        vec2 v = vec2(cos(a), -sin(a));
+        vec2 st = vUv - 0.5;
+        float dist = dot(st, v) + uP[2] / 1000.0;
+        float adj = clamp(uP[1], 0.0, 900.0) / 500.0;
+        float kk = max(0.00001, clamp(uP[3], 0.0, 100.0) / 100.0 * adj);
+        float hh = max(kk - abs(adj - abs(dist)), 0.0) / kk;
+        float d = min(adj, abs(dist)) - hh * hh * hh * kk * (1.0 / 6.0);
+        vec2 suv = vUv + v * d * -sign(dist);
+        oColor = (all(greaterThanEqual(suv, vec2(0.0))) && all(lessThanEqual(suv, vec2(1.0))))
+            ? textureLod(uTex, suv, 0.0) : vec4(0.0);
+        return;
+    }
+    if (uMode == 13) {
+        // Swirl (Alight Motion's swirl4 / swirl3, their recovered shaders): inside the radius the
+        // sampling turns by Percent^2 * A * 8 * pi around the centre, most at the centre. uP:
+        // strength % (-50..50), radius %, centre x / y (AM units), version (4 / 3). The versions
+        // differ in centre units (4: AM pixels from the picture centre; 3: per-mille of the
+        // picture) and in the aspect rule (4 scales the longer axis, 3 always scales y). Corpus:
+        // the centre is the default (the picture centre) in all 10 instances. The same maths
+        // lives in fx_plan.cpp (fxSwirlUv).
+        float strength = clamp(uP[0], -50.0, 50.0) / 100.0;
+        float radius = clamp(uP[1], 0.0, 80.0) / 100.0;
+        bool v4 = uP[4] > 3.5;
+        vec2 cen = v4 ? vec2(0.5) + vec2(uP[2], uP[3]) * uTexel
+                      : vec2(0.5) - (vec2(uP[2], uP[3]) / 1000.0) * vec2(-1.0, 1.0);
+        vec2 conv = vec2(1.0);
+        if (v4) {
+            if (uAspect > 1.0) conv.x = uAspect; else conv.y = 1.0 / uAspect;
+        } else {
+            conv.y = 1.0 / uAspect;
+        }
+        vec2 q2 = (vUv - cen) * conv;
+        float dist = length(q2);
+        if (dist < radius && radius > 0.000001) {
+            float percent = (radius - dist) / radius;
+            float A = strength <= 0.5 ? mix(0.0, 1.0, strength / 0.5) : mix(1.0, 0.0, (strength - 0.5) / 0.5);
+            float theta = percent * percent * A * 8.0 * 3.14159;
+            float S = sin(theta), C = cos(theta);
+            q2 = vec2(dot(q2, vec2(C, -S)), dot(q2, vec2(S, C)));
+        }
+        vec2 suv = q2 / conv + cen;
+        oColor = (all(greaterThanEqual(suv, vec2(0.0))) && all(lessThanEqual(suv, vec2(1.0))))
+            ? textureLod(uTex, suv, 0.0) : vec4(0.0);
+        return;
+    }
+    if (uMode == 14) {
+        // Halftone Dots (Alight Motion's halftonedots, its recovered shader): the picture is
+        // re-read at each dot cell's centre-most point; the cell's brightness + the fragment's
+        // distance inside the cell choose between the two colours. uP: amount (AM units),
+        // strength %, angle (deg), phase %, colour 1 / colour 2 packed 0xRRGGBB. The same maths
+        // lives in fx_plan.cpp (fxHalftoneDotsUv / fxHalftoneDotsMap).
+        float amount = clamp(uP[0], 0.0, 500.0);
+        vec4 tex = textureLod(uTex, vUv, 0.0);
+        if (amount < 0.01) { oColor = tex; return; }   // AM would divide by ~0; a no-op instead
+        float strength = clamp(uP[1], 0.0, 100.0) / 100.0;
+        float rad = uP[2] * 0.0174533;
+        float phase = clamp(uP[3], -100000.0, 100000.0) / 100.0;
+        mat2 rot = mat2(cos(rad), -sin(rad), sin(rad), cos(rad));
+        mat2 invrot = mat2(cos(-rad), -sin(-rad), sin(-rad), cos(-rad));
+        vec2 st = vUv - 0.5;
+        st.y *= (1.0 / uAspect);
+        st = st * rot;
+        float distY = mod(st.y * amount, 1.0);
+        if (distY < 0.5) distY = -distY; else distY = 1.0 - distY;
+        float absDistY = abs(distY);
+        distY /= amount;
+        float xoffs = step(1.0, mod(st.y * amount + 0.5, 2.0)) * phase;
+        float distX = mod(st.x * amount + xoffs, 1.0);
+        if (distX < 0.5) distX = -distX; else distX = 1.0 - distX;
+        float absDistX = abs(distX);
+        distX /= amount;
+        st.y += distY;
+        st.x += distX;
+        st = st * invrot;
+        st.y /= (1.0 / uAspect);
+        st += 0.5;
+        vec4 samp = (all(greaterThanEqual(st, vec2(0.0))) && all(lessThanEqual(st, vec2(1.0))))
+            ? textureLod(uTex, st, 0.0) : vec4(0.0);
+        float lum = dot(samp.rgb, vec3(0.2126, 0.7152, 0.0722));
+        float p = smoothstep(0.4, 0.6, lum + (1.0 - samp.a) + length(vec2(absDistX, absDistY)) + strength - 0.5);
+        float pk1 = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
+        float pk2 = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
+        vec3 c1 = vec3(mod(floor(pk1 / 65536.0), 256.0), mod(floor(pk1 / 256.0), 256.0), mod(pk1, 256.0)) / 255.0;
+        vec3 c2 = vec3(mod(floor(pk2 / 65536.0), 256.0), mod(floor(pk2 / 256.0), 256.0), mod(pk2, 256.0)) / 255.0;
+        oColor = vec4(mix(c1, c2, p), 1.0) * tex.a;
         return;
     }
     vec2 p = toP(vUv);

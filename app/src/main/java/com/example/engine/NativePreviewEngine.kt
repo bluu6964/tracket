@@ -449,6 +449,16 @@ class NativePreviewEngine(context: Context) {
             // Blend mode (same rule as the export): a matte on the lowest layer has nothing to cut, it behaves like Normal.
             val found = BlendModes.find(c.blendMode)
             val blendId = if (c === firstMedia && found.kind == BlendKind.MATTE) 0 else found.shaderId
+            // A Repeat-family effect on the picture (an imported Alight repeat, or one added in the
+            // Effects panel): the same texture drawn once per copy, each copy with its own pose
+            // (RepeatDraw) — one decoder, many draws. repeatDrawParams reads the placement as it
+            // stands when this runs, so the camera / corner-pin placement below is already in it.
+            fun drawTex(tex: Int, oes: Boolean, mat: FloatArray, cw: Int, ch: Int, rot: Int) {
+                for (pp in repeatDrawParams(p, c, t, if (previewW > 0f) outW / previewW else 1f)) {
+                    if (blendId == 0) r.drawLayer(tex, oes, mat, cw, ch, rot, pp)
+                    else r.drawLayerBlended(tex, oes, mat, cw, ch, rot, pp, blendId, canvasRgb)
+                }
+            }
             val src = sources[c.id] ?: return
             val img = src.image
             if (img != null) {
@@ -462,14 +472,12 @@ class NativePreviewEngine(context: Context) {
                         0, 0f, 0, false, canvasRgb, imgOps, ClipFxLibrary.grainFrame(t), imgMasks
                     )
                     if (fxTex != 0) {
-                        if (blendId == 0) r.drawLayer(fxTex, false, IDENTITY_TEX_MATRIX, img.w, img.h, 0, p)
-                        else r.drawLayerBlended(fxTex, false, IDENTITY_TEX_MATRIX, img.w, img.h, 0, p, blendId, canvasRgb)
+                        drawTex(fxTex, false, IDENTITY_TEX_MATRIX, img.w, img.h, 0)
                         return
                     }
                     Log.w(TAG, "native effects / masks failed on photo '${c.name}', drawn without them")
                 }
-                if (blendId == 0) r.drawLayer(img.tex, false, FLIP_V, img.w, img.h, 0, p)
-                else r.drawLayerBlended(img.tex, false, FLIP_V, img.w, img.h, 0, p, blendId, canvasRgb)
+                drawTex(img.tex, false, FLIP_V, img.w, img.h, 0)
                 return
             }
             val v = src.video ?: return
@@ -492,21 +500,13 @@ class NativePreviewEngine(context: Context) {
                     fxOps = fxOps, grainFrame = ClipFxLibrary.grainFrame(t), maskOps = maskOps
                 )
                 if (fxTex != 0) {
-                    if (blendId == 0) {
-                        r.drawLayer(fxTex, false, IDENTITY_TEX_MATRIX, cur.contentWidth, cur.contentHeight, 0, p)
-                    } else {
-                        r.drawLayerBlended(fxTex, false, IDENTITY_TEX_MATRIX, cur.contentWidth, cur.contentHeight, 0, p, blendId, canvasRgb)
-                    }
+                    drawTex(fxTex, false, IDENTITY_TEX_MATRIX, cur.contentWidth, cur.contentHeight, 0)
                     RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, blendId, canvasRgb)
                     return
                 }
                 Log.w(TAG, "native face blur / cutout / effects / masks failed on '${c.name}', drawn without the effect")
             }
-            if (blendId == 0) {
-                r.drawLayer(cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation, p)
-            } else {
-                r.drawLayerBlended(cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation, p, blendId, canvasRgb)
-            }
+            drawTex(cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation)
             // Remove: the clean patch on the moving surface, right after the layer's own picture.
             RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, blendId, canvasRgb)
         }
@@ -560,9 +560,22 @@ class NativePreviewEngine(context: Context) {
                 if (fxTex != 0) drawTex = fxTex
                 else Log.w(TAG, "native effects / masks failed on group '${c.name}', drawn without them")
             }
-            val lp = LayerParams().apply { this.opacity = opacity }
-            if (blendId == 0) r.drawLayer(drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp)
-            else r.drawLayerBlended(drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp, blendId, canvasRgb)
+            // A Repeat-family effect on the group itself: the composed picture (mask and effects
+            // already applied above, in the single draw's order) is drawn once per copy, each copy
+            // posed about the group's own anchor (RepeatDraw); without one, the single draw. (In
+            // the beginGroup fallback above there is no group picture to pose, so a repeat on such
+            // a group leaves its layers drawn once — the same limit as a mask on such a group.)
+            val copies = groupRepeatDrawParams(g, t, if (previewW > 0f) outW / previewW else 1f, opacity)
+            if (copies == null) {
+                val lp = LayerParams().apply { this.opacity = opacity }
+                if (blendId == 0) r.drawLayer(drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp)
+                else r.drawLayerBlended(drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp, blendId, canvasRgb)
+            } else {
+                for (lp in copies) {
+                    if (blendId == 0) r.drawLayer(drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp)
+                    else r.drawLayerBlended(drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp, blendId, canvasRgb)
+                }
+            }
         }
         // One level: the top level, or the layers inside a group. One stacking order for pictures, groups and shapes / text /
         // stickers: bigger Z in front; equal Z = lane order (a layer added later, in a higher lane, is in front). A picture

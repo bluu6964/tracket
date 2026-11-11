@@ -887,6 +887,43 @@ $layers
         assertFalse(r.warnings.any { it.contains("repeat.radial") || it.contains("repeat.scatter") })
     }
 
+    @Test
+    fun repeatOnAGroupIsStoredAndExpands() {
+        // A repeat on an <embedScene> (a Group layer) is stored on the group layer like on any
+        // other — it used to import with a "stored but not drawn repeated yet" warning; the draw
+        // paths now pose the group's composed picture once per copy (RepeatDraw).
+        val xml = scene(
+            """<embedScene id="7" label="Grp" startTime="0" endTime="2000" fillType="intrinsic" mediaFillMode="stretch">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.repeat" locallyApplied="true">
+    <property name="count" type="float" value="3.000000" />
+    <property name="time" type="float" value="0.000000" />
+    <property name="offset" type="vec2" value="0.000000,50.000000" />
+    <property name="angle" type="float" value="0.000000" />
+    <property name="scale" type="float" value="1.000000" />
+    <property name="alpha" type="float" value="1.000000" />
+  </effect>
+  <scene title="" width="1080" height="1920" totalTime="2000" fps="30">
+    <shape id="8" label="Box" startTime="0" endTime="2000" fillType="color" s=".rect">
+      <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+      <fillColor value="#ffffffff" />
+      <property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val g = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        assertEquals(1, g.effects.size)
+        assertEquals(ClipFxLibrary.REPEAT, g.effects[0].type)
+        assertEquals(listOf(3f, 0f, 50f, 0f, 100f, 100f), g.effects[0].values)
+        assertFalse(r.warnings.any { it.contains("not drawn") })
+        // And the stored effect expands into the copy poses the group draw uses.
+        val deltas = RepeatEval.copyDeltas(g)!!
+        assertEquals(3, deltas.size)
+        assertEquals(50f, deltas[1].dy, 0.01f)
+        assertEquals(100f, deltas[2].dy, 0.01f)
+    }
+
     /** The three particle layers of the real ST Intro, verbatim (ids 633223 / 633206 / 633208). */
     private val stIntroParticles = """
 <shape id="633223" label="Circle 1" startTime="0" endTime="5365" fillType="color" mediaFillMode="stretch" s=".circle"><transform><location value="960.000000,540.000000,0.000000" /><scale value="0.255000,0.255000" /></transform><effect id="com.alightcreative.effects.repeat.scatter" locallyApplied="true"><property name="count" type="float" value="10.000000" /><property name="radius" type="float" value="1242.000000" /><property name="evolution" type="float"><kf t="0.002982" v="1.790000" /><kf t="0.997204" v="2.450000" /></property><property name="scatterSeed" type="float" value="0.230000" /><property name="offset" type="vec2" value="-778.000000,210.000000" /><property name="angle" type="float" value="0.000000" /><property name="scale" type="float" value="0.130000" /><property name="alpha" type="float" value="1.000000" /><property name="fillColor" type="color" value="#ffb891ff" /><property name="blend" type="float" value="1.160000" /><property name="colorAltCopies" type="bool" value="true" /><property name="start" type="float" value="0.000000" /><property name="end" type="float" value="1.000000" /><property name="phase" type="float" value="0.000000" /><property name="easeIn" type="float" value="0.000000" /><property name="easeOut" type="float" value="0.000000" /><property name="overlap" type="float" value="0.000000" /><property name="shape" type="int" value="0" /><property name="invert" type="bool" value="false" /><property name="randomOrder" type="bool" value="false" /><property name="seed" type="float" value="0.000000" /></effect><property name="size" type="vec2" value="100.000000,100.000000" /></shape>

@@ -74,11 +74,25 @@ import kotlin.math.sqrt
  * otherwise. It is exact for a centred pivot (the usual case); an off-centre pivot leaves the
  * copies shifted by the pivot error, which the phone comparison can measure.
  *
+ * The overlay loops above draw copy CLIPS with the painters. The picture paths (a video / photo
+ * texture, a Group layer's composed picture) cannot do that — they place ONE finished picture with
+ * renderer pose parameters — so they expand the same arrangements into per-copy pose deltas
+ * ([copyDeltas], see RepeatDraw.kt): the same texture drawn once per copy, posed by the delta.
+ * The arrangements are additive in position / rotation and multiplicative in scale / opacity, so a
+ * copy's delta against the layer's own pose does not depend on that pose; [copyDeltas] reads the
+ * deltas off [copiesOf] run on a neutral-pose probe of the layer, which keeps the two expansions
+ * in lockstep by construction. A Group layer's copies pose its frame-sized picture about the
+ * group's own anchor ([groupCopyOffset]).
+ *
  * Known limits (same family as Motion Blur): parent motion is already in the rendered clip the
  * copies are made from, so a repeated group member moves with its group; the copies are drawn
  * into the layer's own picture, so a layer with a repeat-family effect always gets one (see
  * `hasEffects`). The scatter evolution only knows its first and last keyframes (the importer
- * stores just those two).
+ * stores just those two). On the picture paths: a corner-pinned or camera-placed video / photo
+ * keeps its single quad (the pin IS its pose, copies would stack on it); a Null parent's turn
+ * does not turn a picture layer's copy offsets (they stay scene-space, as in the overlay
+ * expansion); and the alternating-copy colour has no picture-path counterpart — a copy of a
+ * photo or a group cannot be re-tinted per copy, so those copies keep the picture's colours.
  */
 internal object RepeatEval {
 
@@ -112,6 +126,56 @@ internal object RepeatEval {
             ClipFxLibrary.REPEAT_SCATTER -> scatterCopiesOf(clip, fx, undoRotationDeg, timeMs)
             else -> plainCopiesOf(clip, fx, undoRotationDeg)
         }
+    }
+
+    /**
+     * One copy's pose against the layer's own pose, for the draw paths that place a finished
+     * picture (a video / photo texture, a Group layer's composed picture): the copy sits
+     * ([dx], [dy]) preview px away from the layer, turned [rotDeg] more, scaled by [scaleMul]
+     * about its own anchor and faded by [opacityMul]. For the plain repeat the first delta is
+     * the identity (the layer itself); radial / scatter have no centre copy.
+     */
+    data class CopyDelta(val dx: Float, val dy: Float, val rotDeg: Float, val scaleMul: Float, val opacityMul: Float)
+
+    /**
+     * The copies of [clip]'s repeat-family effect as pose deltas ([CopyDelta]), or null when the
+     * layer has no enabled repeat-family effect. The deltas are read off [copiesOf] run on a
+     * neutral-pose probe of the layer (position 0, no turn, scale / opacity 100): every
+     * arrangement is additive in position / rotation and multiplicative in scale / opacity, so a
+     * copy's delta is the same whatever pose the layer itself is in — including a keyframed one
+     * the probe cannot see — and the picture paths stay in lockstep with the overlay path by
+     * construction. [timeMs] is the frame time (only the scatter field reads it).
+     */
+    fun copyDeltas(clip: TimelineClip, timeMs: Long = Long.MIN_VALUE): List<CopyDelta>? {
+        anyRepeatOf(clip) ?: return null
+        val probe = clip.copy(
+            transformX = 0f, transformY = 0f, rotationDeg = 0f, scalePercent = 100f, opacity = 100f
+        )
+        return copiesOf(probe, 0f, timeMs).map { c ->
+            CopyDelta(
+                dx = c.transformX, dy = c.transformY, rotDeg = c.rotationDeg,
+                scaleMul = c.scalePercent / 100f, opacityMul = (c.opacity / 100f).coerceIn(0f, 1f)
+            )
+        }
+    }
+
+    /**
+     * Canvas-space offset for drawing a frame-sized group picture as one repeat copy: the group
+     * picture is drawn with the renderer's plain 2D placement (offset = the picture centre's
+     * canvas px from the canvas centre, turn / scale about that centre), and a copy must come out
+     * as the picture transformed about the group's own anchor — the anchor point ([anchorX],
+     * [anchorY], canvas px from the canvas centre) lands on anchor + the copy's offset, and every
+     * other point follows by the copy's turn / scale about it:
+     * offset = anchor + delta * [k] - R(rot) * S(scale) * anchor (the same folding the layer
+     * anim uses for a layer's pivot). [k] = canvas px per preview px.
+     */
+    fun groupCopyOffset(anchorX: Float, anchorY: Float, d: CopyDelta, k: Float): Pair<Float, Float> {
+        val rad = d.rotDeg * PI.toFloat() / 180f
+        val cosr = cos(rad)
+        val sinr = sin(rad)
+        val rx = d.scaleMul * (cosr * anchorX - sinr * anchorY)
+        val ry = d.scaleMul * (sinr * anchorX + cosr * anchorY)
+        return Pair(anchorX + d.dx * k - rx, anchorY + d.dy * k - ry)
     }
 
     /** Plain `repeat`: a row of copies, each shifted / turned / scaled / faded one more step. */

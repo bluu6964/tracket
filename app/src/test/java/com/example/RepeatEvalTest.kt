@@ -9,7 +9,10 @@ import com.example.model.packColor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.sin
 
 class RepeatEvalTest {
 
@@ -221,5 +224,121 @@ class RepeatEvalTest {
     fun scatterCountIsCappedAtTheDrawCap() {
         val copies = RepeatEval.copiesOf(shape(fx = scatter(count = 150f)), timeMs = 0L)
         assertEquals(RepeatEval.MAX_COUNT, copies.size)
+    }
+
+    // ---- copy deltas: the picture / group draw paths (RepeatDraw) -------------------------
+
+    private fun video(
+        x: Float = 30f, y: Float = -40f, rotation: Float = 15f, scale: Float = 160f, opacity: Float = 64f,
+        fx: ClipFx? = null
+    ) = TimelineClip(
+        id = "v1", name = "Clip", type = LayerType.VIDEO, startMs = 0L, durationMs = 2000L,
+        color = 0xFF000000L, uri = "content://media/external/video/1",
+        transformX = x, transformY = y, rotationDeg = rotation, scalePercent = scale, opacity = opacity,
+        effects = if (fx == null) emptyList() else listOf(fx)
+    )
+
+    private fun group(fx: ClipFx? = null) =
+        video(fx = fx).copy(id = "g1", name = "Group", type = LayerType.GROUP, uri = null)
+
+    @Test
+    fun copyDeltasAreNullWithoutARepeat() {
+        assertTrue(RepeatEval.copyDeltas(shape()) == null)
+        assertTrue(RepeatEval.copyDeltas(video()) == null)
+        val off = video(fx = repeat(3f, 10f, 0f, 0f, 100f, 100f).copy(enabled = false))
+        assertTrue(RepeatEval.copyDeltas(off) == null)
+    }
+
+    @Test
+    fun copyDeltasComposeTheSamePosesAsCopiesOf() {
+        // The picture paths pose a video / photo layer's copies by deltas; the deltas must
+        // reproduce copiesOf's poses on the layer's own pose exactly (the two expansions of the
+        // repeat family stay in lockstep), whatever that pose is.
+        val c = video(fx = repeat(4f, 12f, -7f, 20f, 80f, 75f))
+        val copies = RepeatEval.copiesOf(c)
+        val deltas = RepeatEval.copyDeltas(c)!!
+        assertEquals(copies.size, deltas.size)
+        copies.forEachIndexed { i, copy ->
+            val d = deltas[i]
+            assertEquals(copy.transformX, c.transformX + d.dx, 0.01f)
+            assertEquals(copy.transformY, c.transformY + d.dy, 0.01f)
+            assertEquals(copy.rotationDeg, c.rotationDeg + d.rotDeg, 0.01f)
+            assertEquals(copy.scalePercent, c.scalePercent * d.scaleMul, 0.05f)
+            assertEquals(copy.opacity, c.opacity * d.opacityMul, 0.05f)
+        }
+        // The plain repeat's first copy is the layer itself: an identity delta.
+        assertEquals(RepeatEval.CopyDelta(0f, 0f, 0f, 1f, 1f), deltas[0])
+    }
+
+    @Test
+    fun radialDeltasOnAGroupLayer() {
+        val g = group(fx = radial(orientation = -45f, baseScale = 35f))
+        val deltas = RepeatEval.copyDeltas(g)!!
+        assertEquals(4, deltas.size)
+        // Ring anchors around the group's own position (stored radius 100, drawn at twice that),
+        // clockwise from straight up; no centre copy, so no identity delta.
+        val anchors = listOf(0f to -200f, 200f to 0f, 0f to 200f, -200f to 0f)
+        deltas.forEachIndexed { i, d ->
+            assertEquals(anchors[i].first, d.dx, 0.01f)
+            assertEquals(anchors[i].second, d.dy, 0.01f)
+            assertEquals(0.35f, d.scaleMul, 0.001f)
+            assertEquals(1f, d.opacityMul, 0.001f)
+        }
+        // Each copy is turned by its ring angle + the orientation.
+        assertEquals(listOf(-45f, 45f, 135f, 225f), deltas.map { it.rotDeg })
+        assertTrue(deltas.none { it == RepeatEval.CopyDelta(0f, 0f, 0f, 1f, 1f) })
+    }
+
+    @Test
+    fun scatterDeltasOnAVideoLayerStayInTheDisc() {
+        val c = video(fx = scatter())
+        val deltas = RepeatEval.copyDeltas(c, timeMs = 1000L)!!
+        assertEquals(10, deltas.size)
+        deltas.forEach { d ->
+            assertTrue(hypot(d.dx, d.dy) <= 500.5f)
+            assertTrue(d.scaleMul in 0.129f..1.001f)   // the 13% floor .. full size
+            assertEquals(1f, d.opacityMul, 0.001f)
+            assertEquals(0f, d.rotDeg, 0f)
+        }
+        // The same poses copiesOf gives the overlay path (the layer's pose + the delta).
+        val copies = RepeatEval.copiesOf(c, timeMs = 1000L)
+        copies.forEachIndexed { i, copy ->
+            assertEquals(copy.transformX, c.transformX + deltas[i].dx, 0.01f)
+            assertEquals(copy.transformY, c.transformY + deltas[i].dy, 0.01f)
+        }
+        assertEquals(deltas, RepeatEval.copyDeltas(c, timeMs = 1000L))
+    }
+
+    // ---- groupCopyOffset: posing a frame-sized group picture about its anchor --------------
+
+    @Test
+    fun groupCopyOffsetPosesThePictureAboutTheGroupAnchor() {
+        // Identity copy: the picture is drawn as-is, whatever the anchor.
+        assertEquals(
+            0f to 0f,
+            RepeatEval.groupCopyOffset(120f, -80f, RepeatEval.CopyDelta(0f, 0f, 0f, 1f, 1f), 2f)
+        )
+        // A pure step (no turn / scale) is just the step, in canvas px (k = 2 here).
+        assertEquals(
+            60f to -20f,
+            RepeatEval.groupCopyOffset(120f, -80f, RepeatEval.CopyDelta(30f, -10f, 0f, 1f, 1f), 2f)
+        )
+        // A quarter turn about an anchor on the x axis: offset = anchor - R90 * anchor.
+        val (qx, qy) = RepeatEval.groupCopyOffset(100f, 0f, RepeatEval.CopyDelta(0f, 0f, 90f, 1f, 1f), 1f)
+        assertEquals(100f, qx, 0.01f)
+        assertEquals(-100f, qy, 0.01f)
+        // Doubling about the anchor (100, 50): offset = anchor - 2 * anchor.
+        val (sx, sy) = RepeatEval.groupCopyOffset(100f, 50f, RepeatEval.CopyDelta(0f, 0f, 0f, 2f, 1f), 1f)
+        assertEquals(-100f, sx, 0.01f)
+        assertEquals(-50f, sy, 0.01f)
+        // The fixed point: the anchor itself, run through the renderer's placement with the
+        // computed offset (screen = offset + R * S * point), lands on anchor + the copy's step.
+        val d = RepeatEval.CopyDelta(30f, -10f, 40f, 1.5f, 1f)
+        val (ox, oy) = RepeatEval.groupCopyOffset(120f, -80f, d, 2f)
+        val rad = d.rotDeg.toDouble() * PI / 180.0
+        val px = ox + d.scaleMul * (cos(rad) * 120.0 - sin(rad) * -80.0)
+        val py = oy + d.scaleMul * (sin(rad) * 120.0 + cos(rad) * -80.0)
+        assertEquals(120.0 + 60.0, px, 0.05)
+        assertEquals(-80.0 - 20.0, py, 0.05)
     }
 }

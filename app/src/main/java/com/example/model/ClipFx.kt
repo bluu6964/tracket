@@ -97,9 +97,11 @@ object ClipFxLibrary {
     // Motion Blur: resolved per frame by MotionBlurEval into a directional blur (see engine/MotionBlurEval.kt);
     // its native type (55) never reaches the shaders (fxParseOps skips it: it is above FX_MAX).
     const val MOTION_BLUR = "motion_blur"
-    // Repeat: resolved in the overlay draw loops by RepeatEval (see engine/RepeatEval.kt) — the layer is
-    // drawn once per copy with a shifted / turned / scaled pose. Its native type (56) never reaches the
-    // shaders either (fxParseOps skips it: it is above FX_MAX), and toNative skips it like Motion Blur.
+    // Repeat: resolved in the draw loops by RepeatEval (see engine/RepeatEval.kt) — the layer is
+    // drawn once per copy with a shifted / turned / scaled pose: overlay layers as copy clips,
+    // video / photo and group layers as per-copy placements of their one picture (RepeatDraw).
+    // Its native type (56) never reaches the shaders either (fxParseOps skips it: it is above
+    // FX_MAX), and toNative skips it like Motion Blur.
     const val REPEAT = "repeat"
     // Repeat Radial / Repeat Scatter: the other two arrangements of Alight's repeat family (copies on a
     // ring / scattered over a disc), resolved by RepeatEval in the same draw loops; native types 57 / 58
@@ -682,8 +684,9 @@ object ClipFxLibrary {
      * The enabled effects as the flat array the C++ engine reads (groups of 8 floats: type, p0..p6), or null when there
      * is nothing to run. Max [MAX_EFFECTS] effects. Motion Blur is NOT emitted here: it needs the layer's motion at
      * the frame time, so [com.example.engine.MotionBlurEval.resolve] rewrites it to directional / radial blurs first
-     * (use that at every per-frame call site); the Repeat family is NOT emitted either: [com.example.engine.RepeatEval.copiesOf]
-     * draws the layer once per copy in the overlay loops. A layer with only Motion Blur or only a Repeat still counts
+     * (use that at every per-frame call site); the Repeat family is NOT emitted either: the draw
+     * loops draw the layer once per copy ([com.example.engine.RepeatEval.copiesOf] for overlay
+     * layers, per-copy placements for picture / group layers). A layer with only Motion Blur or only a Repeat still counts
      * in [hasEffects].
      */
     fun toNative(effects: List<ClipFx>): FloatArray? {

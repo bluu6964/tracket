@@ -375,6 +375,17 @@ class NativeProjectExporter(private val context: Context) {
                             // A matte has nothing beneath the base layer to cut: it behaves like Normal.
                             val found = BlendModes.find(clip.blendMode)
                             val blendId = if (clip === visuals.first() && found.kind == BlendKind.MATTE) 0 else found.shaderId
+                            // A Repeat-family effect on the picture (an imported Alight repeat, or one
+                            // added in the Effects panel): the same texture drawn once per copy, each
+                            // copy with its own pose (RepeatDraw) — one decoder, many draws, exactly
+                            // like the preview. repeatDrawParams reads the placement as it stands
+                            // when this runs, so the camera / corner-pin placement below is in it.
+                            fun drawTex(tex: Int, oes: Boolean, mat: FloatArray, cw: Int, ch: Int, rot: Int) {
+                                for (pp in repeatDrawParams(p, clip, timeMs, if (previewW > 0f) w / previewW else 1f)) {
+                                    if (blendId == 0) renderer.drawLayer(tex, oes, mat, cw, ch, rot, pp)
+                                    else renderer.drawLayerBlended(tex, oes, mat, cw, ch, rot, pp, blendId, canvasRgb)
+                                }
+                            }
                             val img = images[clip.id]
                             if (img != null) {
                                 if (!placeByCamera(clip, timeMs, anim, fp, p, img.width, img.height)) return
@@ -386,18 +397,10 @@ class NativeProjectExporter(private val context: Context) {
                                         0, 0f, 0, false, canvasRgb, imgOps, ClipFxLibrary.grainFrame(timeMs), imgMasks
                                     )
                                     if (fxTex == 0) error("Native effects / masks failed on '${clip.name}'.")
-                                    if (blendId == 0) {
-                                        renderer.drawLayer(fxTex, false, IDENTITY_TEX_MATRIX, img.width, img.height, 0, p)
-                                    } else {
-                                        renderer.drawLayerBlended(fxTex, false, IDENTITY_TEX_MATRIX, img.width, img.height, 0, p, blendId, canvasRgb)
-                                    }
+                                    drawTex(fxTex, false, IDENTITY_TEX_MATRIX, img.width, img.height, 0)
                                     return
                                 }
-                                if (blendId == 0) {
-                                    renderer.drawLayer(img.textureId, false, FLIP_V, img.width, img.height, 0, p)
-                                } else {
-                                    renderer.drawLayerBlended(img.textureId, false, FLIP_V, img.width, img.height, 0, p, blendId, canvasRgb)
-                                }
+                                drawTex(img.textureId, false, FLIP_V, img.width, img.height, 0)
                                 return
                             }
                             var src = videos[clip.id] ?: return
@@ -455,31 +458,11 @@ class NativeProjectExporter(private val context: Context) {
                                     fxOps = fxOps, grainFrame = ClipFxLibrary.grainFrame(timeMs), maskOps = maskOps
                                 )
                                 if (fxTex == 0) error("Native face blur / cutout / effects / masks failed on '${clip.name}'.")
-                                if (blendId == 0) {
-                                    renderer.drawLayer(
-                                        fxTex, false, IDENTITY_TEX_MATRIX,
-                                        src.contentWidth, src.contentHeight, 0, p
-                                    )
-                                } else {
-                                    renderer.drawLayerBlended(
-                                        fxTex, false, IDENTITY_TEX_MATRIX,
-                                        src.contentWidth, src.contentHeight, 0, p, blendId, canvasRgb
-                                    )
-                                }
+                                drawTex(fxTex, false, IDENTITY_TEX_MATRIX, src.contentWidth, src.contentHeight, 0)
                                 RemoveRuntime.draw(renderer, removePatches, clip, p, timeMs, w, h, blendId, canvasRgb)
                                 return
                             }
-                            if (blendId == 0) {
-                                renderer.drawLayer(
-                                    src.textureId, true, src.texMatrix,
-                                    src.contentWidth, src.contentHeight, src.drawRotation, p
-                                )
-                            } else {
-                                renderer.drawLayerBlended(
-                                    src.textureId, true, src.texMatrix,
-                                    src.contentWidth, src.contentHeight, src.drawRotation, p, blendId, canvasRgb
-                                )
-                            }
+                            drawTex(src.textureId, true, src.texMatrix, src.contentWidth, src.contentHeight, src.drawRotation)
                             // Remove: the clean patch on the moving surface, right after the layer's own picture.
                             RemoveRuntime.draw(renderer, removePatches, clip, p, timeMs, w, h, blendId, canvasRgb)
                     }
@@ -552,9 +535,23 @@ class NativeProjectExporter(private val context: Context) {
                             if (fxTex == 0) error("Native effects / masks failed on group '${clip.name}'.")
                             drawTex = fxTex
                         }
-                        val lp = LayerParams().apply { this.opacity = opacity }
-                        if (blendId == 0) renderer.drawLayer(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp)
-                        else renderer.drawLayerBlended(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp, blendId, canvasRgb)
+                        // A Repeat-family effect on the group itself: the composed picture (mask and
+                        // effects already applied above, in the single draw's order) is drawn once per
+                        // copy, each copy posed about the group's own anchor (RepeatDraw); without
+                        // one, the single draw — exactly like the preview. (In the beginGroup
+                        // fallback above there is no group picture to pose, so a repeat on such a
+                        // group leaves its layers drawn once — the same limit as a mask there.)
+                        val copies = groupRepeatDrawParams(g, timeMs, if (previewW > 0f) w / previewW else 1f, opacity)
+                        if (copies == null) {
+                            val lp = LayerParams().apply { this.opacity = opacity }
+                            if (blendId == 0) renderer.drawLayer(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp)
+                            else renderer.drawLayerBlended(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp, blendId, canvasRgb)
+                        } else {
+                            for (lp in copies) {
+                                if (blendId == 0) renderer.drawLayer(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp)
+                                else renderer.drawLayerBlended(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp, blendId, canvasRgb)
+                            }
+                        }
                     }
                     // One level of the frame: the top level, or the layers inside a Group.
                     fun drawScope(scopeId: String?, depth: Int, timeMs: Long) {

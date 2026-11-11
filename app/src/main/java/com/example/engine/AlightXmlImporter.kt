@@ -2044,8 +2044,9 @@ object AlightXmlImporter {
      * `alpha`. The corpus only pins count + offset (every instance has angle 0, scale 1, alpha 1,
      * time 0); a non-zero `time` (a per-copy time shift) has no counterpart in the draw loops and
      * is reported, not guessed. Keyframed parameters take their first value (the pass-2 rule).
-     * A repeat on a video / photo / group layer is stored but not drawn repeated yet: the overlay
-     * loops expand shape / text / sticker layers only, so that case is named too.
+     * Every layer kind draws its copies: shape / text / sticker layers expand copy clips in the
+     * overlay loops, video / photo and group layers draw their picture once per copy pose
+     * (RepeatDraw).
      */
     private fun applyRepeat(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
@@ -2061,9 +2062,6 @@ object AlightXmlImporter {
         val alpha = props["alpha"]?.firstValue(w, "repeat", "alpha") ?: 1f
         if ((props["time"]?.scalarAt(0f) ?: 0f) != 0f) {
             w += "Effect repeat is mapped approximately: its time offset is not reproduced"
-        }
-        if (clip0.type == LayerType.VIDEO || clip0.type == LayerType.GROUP) {
-            w += "Effect repeat on a video / group layer is stored but not drawn repeated yet"
         }
         return addFx(
             clip0, ctx, ClipFxLibrary.REPEAT,
@@ -2118,8 +2116,8 @@ object AlightXmlImporter {
      * `repeat.radial` -> the app's Repeat Radial effect (see [RepeatEval]): [count] copies on a ring
      * of `radius` around the layer (scene px -> preview px, like every position), the first at
      * `startAngle`, sharing `sweep`, each turned by `orientation` and scaled by `baseScale`
-     * (x `scale` per step). Keyframed parameters take their first value (the pass-2 rule). A repeat
-     * on a video / group layer is stored but not drawn repeated yet, like the plain repeat.
+     * (x `scale` per step). Keyframed parameters take their first value (the pass-2 rule). Like
+     * the plain repeat, it draws on every layer kind (RepeatDraw for picture / group layers).
      */
     private fun applyRepeatRadial(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
@@ -2138,9 +2136,6 @@ object AlightXmlImporter {
         val alpha = props["alpha"]?.firstValue(w, "repeat.radial", "alpha") ?: 1f
         val angle = props["angle"]?.firstValue(w, "repeat.radial", "angle") ?: 0f
         warnRepeatExtras(props, w, "repeat.radial")
-        if (clip0.type == LayerType.VIDEO || clip0.type == LayerType.GROUP) {
-            w += "Effect repeat.radial on a video / group layer is stored but not drawn repeated yet"
-        }
         return addFx(
             clip0, ctx, ClipFxLibrary.REPEAT_RADIAL,
             listOf(
@@ -2163,8 +2158,8 @@ object AlightXmlImporter {
      * disc of `radius` around the layer, shifted by `offset` (scene px -> preview px), placed by the
      * `scatterSeed` field. The `evolution` track is stored as its first and last keyframes (a longer
      * track's middle is approximated) and drifts the field at draw time. `blend` has no counterpart
-     * and is reported when non-zero. A repeat on a video / group layer is stored but not drawn
-     * repeated yet, like the plain repeat.
+     * and is reported when non-zero. Like the plain repeat, it draws on every layer kind
+     * (RepeatDraw for picture / group layers).
      */
     private fun applyRepeatScatter(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
@@ -2203,9 +2198,6 @@ object AlightXmlImporter {
                 val l = evo.keys.last()
                 listOf(f.t, f.v.firstOrNull() ?: 0f, l.t, l.v.firstOrNull() ?: 0f)
             }
-        }
-        if (clip0.type == LayerType.VIDEO || clip0.type == LayerType.GROUP) {
-            w += "Effect repeat.scatter on a video / group layer is stored but not drawn repeated yet"
         }
         return addFx(
             clip0, ctx, ClipFxLibrary.REPEAT_SCATTER,

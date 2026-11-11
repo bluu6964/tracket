@@ -9,6 +9,7 @@ import com.example.model.depthX
 import com.example.model.depthY
 import com.example.model.effectiveScalePercent
 import com.example.model.opacityFraction
+import com.example.model.shapeCornerRadii
 import com.example.model.shapeDrawScaleX
 import com.example.model.shapeDrawScaleY
 
@@ -16,7 +17,7 @@ import com.example.model.shapeDrawScaleY
 internal object ShapeNative {
     @JvmStatic external fun nativeAvailable(): Boolean
 
-    /** p = 28 floats, c = 4 ARGB ints; see shape_jni.cpp. Draws onto an ARGB_8888 bitmap, false = not drawn. */
+    /** p = 29 floats, c = 4 ARGB ints; see shape_jni.cpp. Draws onto an ARGB_8888 bitmap, false = not drawn. */
     @JvmStatic external fun nativeDrawShape(bitmap: Bitmap, p: FloatArray, c: IntArray, fillBitmap: Bitmap?): Boolean
 
     /** p = 9 floats; see shape_jni.cpp. */
@@ -36,7 +37,7 @@ internal class NativeShapePainter(
     /** Picture of a picture fill: the export waits for it ([FillImages.loadSync]). */
     private val fillImage: (String) -> Bitmap? = { FillImages.loadSync(it) }
 ) {
-    private val p = FloatArray(28)
+    private val p = FloatArray(29)
     private val c = IntArray(4)
     private val sp = FloatArray(9)
 
@@ -56,14 +57,22 @@ internal class NativeShapePainter(
             "STAR" -> 6f
             else -> 0f
         }
-        // Corner radius slot (px; the C++ side clamps it to the box and reads <= 0 as its own default): the clip's
-        // own radius when one is set (dp of the 130 dp box, like the built-in corners below), else the built-in
-        // corners. The 0.01 px floor keeps a stored 0 a square corner instead of the C++ "default" reading.
-        p[23] = if (p[0] == 2f && clip.shapeCornerRadius >= 0f) {
-            (base * clip.shapeCornerRadius / 65f).coerceIn(0.01f, base)
-        } else when ((clip.shapePattern ?: "").uppercase()) {
-            "WIDE_ROUNDED_RECT" -> base * 10f / 65f
-            else -> base * 16f / 65f
+        // Corner radius slots (px in local units, one per axis; the C++ side clamps them to the box and
+        // reads <= 0 as its own default): the clip's own radii when a radius is stored — per axis, so the
+        // frame-space arc stays circular under the shape's aspect (see TimelineClip.shapeCornerRadii;
+        // a uniform shape gets both axes equal to the stored dp in local units, as before) — else the
+        // built-in corners on both axes. The 0.01 px floor keeps a stored 0 a square corner instead
+        // of the C++ "default" reading.
+        val radii = if (p[0] == 2f) clip.shapeCornerRadii(base) else null
+        if (radii != null) {
+            p[23] = radii.first.coerceIn(0.01f, base)
+            p[28] = radii.second.coerceIn(0.01f, base)
+        } else {
+            p[23] = when ((clip.shapePattern ?: "").uppercase()) {
+                "WIDE_ROUNDED_RECT" -> base * 10f / 65f
+                else -> base * 16f / 65f
+            }
+            p[28] = p[23]
         }
         p[1] = base
         p[2] = frameW / 2f + clip.depthX * k

@@ -38,6 +38,7 @@ import com.example.model.depthX
 import com.example.model.depthY
 import com.example.model.effectiveScalePercent
 import com.example.model.isBehindCamera
+import com.example.model.shapeCornerRadii
 import com.example.model.shapeDrawScaleX
 import com.example.model.shapeDrawScaleY
 import java.io.File
@@ -249,12 +250,14 @@ internal class LayerPainter(
             }
             "ROUNDED", "ROUNDED_RECT" -> {
                 val r = RectF(-base, -base, base, base)
-                // The clip's own corner radius (dp of the shape box) when set, else the built-in corner.
-                val rad = if (clip.shapeCornerRadius >= 0f) {
-                    (clip.shapeCornerRadius * density * k).coerceIn(0f, base)
-                } else base * 0.25f
-                canvas.drawRoundRect(r, rad, rad, paint)
-                drawStrokePath(Path().apply { addRoundRect(r, rad, rad, Path.Direction.CW) })
+                // The clip's own corner radii (per axis, so the frame-space arc stays circular under
+                // the shape's aspect — see TimelineClip.shapeCornerRadii) when set, else the built-in
+                // corner. Canvas takes the two radii directly (drawRoundRect / addRoundRect rx, ry).
+                val radii = clip.shapeCornerRadii(base)
+                val radX = radii?.first ?: base * 0.25f
+                val radY = radii?.second ?: base * 0.25f
+                canvas.drawRoundRect(r, radX, radY, paint)
+                drawStrokePath(Path().apply { addRoundRect(r, radX, radY, Path.Direction.CW) })
             }
             "OVAL", "ELLIPSE" -> {
                 val r = RectF(-base * 1.2f, -base * 0.75f, base * 1.2f, base * 0.75f)

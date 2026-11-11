@@ -137,8 +137,10 @@ data class TimelineClip(
     val shapeScaleX: Float = 1.0f,
     val shapeScaleY: Float = 1.0f,
     /**
-     * Corner radius of a rounded shape, in dp inside the 130 dp shape box (the same dp as [strokeWidth]);
-     * -1 = not set, the renderers then use their built-in corner (about 16 dp). Only read for rounded patterns.
+     * Corner radius of a rounded shape: 65 x rho in the 130 dp shape box's dp, where rho is the radius
+     * as a fraction of the shape's SMALLER half extent (rho = 1 is a stadium — see
+     * [shapeCornerRadii]); -1 = not set, the renderers then use their built-in corner (about 16 dp).
+     * Only read for rounded patterns. The shape editor's slider writes this same unit (0..65 dp).
      */
     val shapeCornerRadius: Float = -1f,
     val strokeWidth: Float = 0f,
@@ -365,6 +367,26 @@ val TimelineClip.shapeDrawScaleX: Float
 
 val TimelineClip.shapeDrawScaleY: Float
     get() = (shapeDrawScaleX * (if (shapeScaleX > 1e-4f) shapeScaleY / shapeScaleX else 1f)).coerceAtLeast(0.01f)
+
+/**
+ * Corner radii of a rounded shape in the painters' local units (one per axis; [base] is the shape
+ * box's half in the same units), or null when no radius is stored ([shapeCornerRadius] < 0).
+ *
+ * The stored dp is 65 x rho, rho = the corner radius as a fraction of the shape's SMALLER half
+ * extent, so the frame-space radius is rho x min(halfW, halfH) at any (keyframed) size — a true
+ * circular arc, and rho = 1 a stadium however wide the shape is animated. Each local axis gets
+ * that frame radius divided by its own draw scale, which is what makes the arc circular on the
+ * frame instead of an ellipse stretched by the shape's aspect. For a uniform shape both axes
+ * return the stored dp in local units, exactly the reading the painters used before per-axis radii.
+ */
+fun TimelineClip.shapeCornerRadii(base: Float): Pair<Float, Float>? {
+    if (shapeCornerRadius < 0f) return null
+    val rho = (shapeCornerRadius / 65f).coerceIn(0f, 1f)
+    val sx = shapeDrawScaleX
+    val sy = shapeDrawScaleY
+    val m = minOf(sx, sy)
+    return (base * rho * m / sx).coerceIn(0f, base) to (base * rho * m / sy).coerceIn(0f, base)
+}
 
 /** Position (canvas px) after perspective: the stored position times [depthFactor]. */
 val TimelineClip.depthX: Float get() = transformX * depthFactor

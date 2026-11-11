@@ -10,13 +10,15 @@ namespace am {
 namespace shape {
 
 // OVAL = 2.4 : 1.5 ellipse (what the old export drew); the editor's "OVAL" is drawn as a circle by Compose, so Kotlin maps it to CIRCLE.
-// ROUNDED: rectangle with corner radius [Request::corner]. PENTAGON / STAR: regular polygon, outer radius = base, first tip up.
+// ROUNDED: rectangle with corner radii [Request::corner] / [Request::cornerY] (one per axis: a frame-space
+// circular arc is an ellipse in the anisotropically scaled local space). PENTAGON / STAR: regular polygon, outer radius = base, first tip up.
 enum Kind { CIRCLE = 0, RECT = 1, ROUNDED = 2, OVAL = 3, TRIANGLE = 4, PENTAGON = 5, STAR = 6 };
 
 struct Request {
     int kind = CIRCLE;
     float base = 100.f;              // half size of the 2*base box (export px at scale 1)
-    float corner = 0.f;              // ROUNDED: corner radius in local units (0 = base / 4)
+    float corner = 0.f;              // ROUNDED: corner radius along X in local units (0 = base / 4)
+    float cornerY = 0.f;             // ROUNDED: corner radius along Y in local units (<= 0 = same as corner)
     float cx = 0.f, cy = 0.f;        // centre on the frame
     float scale = 1.f;               // > 0, the X axis
     float scaleY = 0.f;              // Y axis; <= 0 = same as scale (callers that predate the split)

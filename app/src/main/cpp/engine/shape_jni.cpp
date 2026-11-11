@@ -29,23 +29,25 @@ extern "C" {
 
 JNIEXPORT jboolean JNICALL Java_com_example_engine_ShapeNative_nativeAvailable(JNIEnv*, jclass) { return JNI_TRUE; }
 
-// p[28]: 0 kind, 1 base, 2 cx, 3 cy, 4 scaleX, 5 rotationDeg, 6 flipX, 7 flipY, 8 alpha, 9..12 crop l t r b, 13 hasCrop,
+// p[29]: 0 kind, 1 base, 2 cx, 3 cy, 4 scaleX, 5 rotationDeg, 6 flipX, 7 flipY, 8 alpha, 9..12 crop l t r b, 13 hasCrop,
 //        14 fillOn, 15 strokeW, 16 fillKind (0 solid, 1 gradient, 2 picture), 17 gradType, 18..21 gradient x1 y1 x2 y2,
-//        22 picture mode, 23 corner radius (ROUNDED), 24..25 stroke trim start / end (outline fractions),
-//        26 trim targets the fill (an imported line), 27 scaleY. 24..27 are read only when the array carries them.
+//        22 picture mode, 23 corner radius along X (ROUNDED), 24..25 stroke trim start / end (outline fractions),
+//        26 trim targets the fill (an imported line), 27 scaleY, 28 corner radius along Y (0 = same as 23).
+//        24..28 are read only when the array carries them.
 // c[4]: fill, stroke, gradient colour 1, gradient colour 2 (ARGB ints)
 JNIEXPORT jboolean JNICALL Java_com_example_engine_ShapeNative_nativeDrawShape(
     JNIEnv* env, jclass, jobject bitmap, jfloatArray pA, jintArray cA, jobject fillBitmap) {
     if (!bitmap || !pA || !cA || env->GetArrayLength(pA) < 24 || env->GetArrayLength(cA) < 4) return JNI_FALSE;
-    float p[28] = {};
+    float p[29] = {};
     jint c[4];
-    const int pn = env->GetArrayLength(pA) < 28 ? env->GetArrayLength(pA) : 28;
+    const int pn = env->GetArrayLength(pA) < 29 ? env->GetArrayLength(pA) : 29;
     env->GetFloatArrayRegion(pA, 0, pn, p);
     env->GetIntArrayRegion(cA, 0, 4, c);
 
     am::shape::Request r;
     r.kind = (int)p[0]; r.base = p[1]; r.cx = p[2]; r.cy = p[3]; r.scale = p[4]; r.rotationDeg = p[5];
     if (pn >= 28) r.scaleY = p[27];
+    if (pn >= 29) r.cornerY = p[28];
     r.flipX = p[6] < 0 ? -1.f : 1.f; r.flipY = p[7] < 0 ? -1.f : 1.f; r.alpha = p[8];
     for (int i = 0; i < 4; ++i) r.crop[i] = p[9 + i];
     r.hasCrop = p[13] > 0.5f;

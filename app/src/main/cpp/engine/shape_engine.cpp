@@ -115,20 +115,48 @@ float polygonDistance(const Poly& p, float x, float y) {
     return inside ? -d : d;
 }
 
+// ROUNDED corner radii (local units): the X radius, and the Y radius (cornerY <= 0 = the X one).
+// Both are clamped to the box, like the historical single radius.
+inline void cornerRadii(float base, float corner, float cornerY, float& rx, float& ry) {
+    rx = std::min(base, corner > 0.f ? corner : base * 0.25f);
+    ry = std::min(base, cornerY > 0.f ? cornerY : rx);
+}
+
+// Arc length of one quarter of an ellipse with semi-axes (a, b): Ramanujan's approximation of the
+// full perimeter, quartered. Exact for a circle (a == b).
+inline float quarterEllipseArc(float a, float b) {
+    const float s = a + b;
+    if (s <= 0.f) return 0.f;
+    const float h = ((a - b) / s) * ((a - b) / s);
+    return 3.14159265358979f * s * (1.f + 3.f * h / (10.f + std::sqrt(4.f - 3.f * h))) * 0.25f;
+}
+
 /**
  * Signed distance of the local point (x, y) to the outline, negative inside, in local units. Rectangle, triangle and
  * pentagon use "largest edge plane distance": exact inside / along the edges and the outline of its offsets is mitered,
  * which is what Paint.Join.MITER (Android's default, miter limit 4) draws for a stroke. Circle, rounded rectangle: exact.
  * Star: exact distance to the polygon (a stroke has round outer tips; Canvas miters them). Ellipse: first-order estimate.
+ * A rounded rectangle with PER-AXIS radii uses that same first-order estimate in the corner quadrants (its arc is an
+ * ellipse in local space); everywhere else it stays exact, and a single radius (cornerY <= 0) is exact throughout.
  */
-float outlineDistance(int kind, float base, float corner, const Poly* poly, float x, float y) {
+float outlineDistance(int kind, float base, float corner, float cornerY, const Poly* poly, float x, float y) {
     switch (kind) {
         case RECT:
             return std::max(std::fabs(x), std::fabs(y)) - base;
         case ROUNDED: {
-            const float rad = std::min(base, corner > 0.f ? corner : base * 0.25f);
-            const float qx = std::fabs(x) - (base - rad), qy = std::fabs(y) - (base - rad);
-            return std::hypot(std::max(qx, 0.f), std::max(qy, 0.f)) + std::min(std::max(qx, qy), 0.f) - rad;
+            float rx, ry;
+            cornerRadii(base, corner, cornerY, rx, ry);
+            const float qx = std::fabs(x) - (base - rx), qy = std::fabs(y) - (base - ry);
+            if (qx > 0.f && qy > 0.f) {
+                // Corner quadrant: the arc is an ellipse of semi-axes (rx, ry) around the corner
+                // centre; first-order distance (the OVAL kind's trick). Exact when rx == ry.
+                const float l = std::hypot(qx / rx, qy / ry);
+                const float g = std::hypot(qx / (rx * rx), qy / (ry * ry));
+                return (l - 1.f) * l / g;
+            }
+            if (qx > 0.f) return qx - rx;
+            if (qy > 0.f) return qy - ry;
+            return std::max(qx - rx, qy - ry);
         }
         case OVAL: {
             const float a = base * 1.2f, b = base * 0.75f;
@@ -170,7 +198,7 @@ float outlineDistance(int kind, float base, float corner, const Poly* poly, floa
  * (top) vertex. Alight's own path starts are not documented; for a line (trimmed as a RECT fill) the fraction is
  * exact, for closed shapes the start point is this convention.
  */
-float outlineParam(int kind, float base, float corner, const Poly* poly, float x, float y) {
+float outlineParam(int kind, float base, float corner, float cornerY, const Poly* poly, float x, float y) {
     const float twoPi = 6.28318530718f;
     switch (kind) {
         case RECT: {
@@ -185,28 +213,35 @@ float outlineParam(int kind, float base, float corner, const Poly* poly, float x
             return s / (8.f * base);
         }
         case ROUNDED: {
-            const float rad = std::min(base, corner > 0.f ? corner : base * 0.25f);
-            const float e = base - rad;               // straight edges run -e..e, length 2e
-            const float arc = 1.57079632679f * rad;   // one quarter arc
-            const float total = 8.f * e + 4.f * arc;
+            float rx, ry;
+            cornerRadii(base, corner, cornerY, rx, ry);
+            const float ex = base - rx, ey = base - ry;  // straight edges run -e..e on their own axis
+            const float arc = quarterEllipseArc(rx, ry); // one corner arc (a quarter ellipse)
+            const float total = 4.f * ex + 4.f * ey + 4.f * arc;
             const float ax = std::fabs(x), ay = std::fabs(y);
             float s;
-            if (ax > e && ay > e) {  // corner arc of this quadrant; centres at (+-e, +-e)
-                float phi = std::atan2(y - (y > 0.f ? e : -e), x - (x > 0.f ? e : -e));  // -pi..pi
+            if (ax > ex && ay > ey) {  // corner arc of this quadrant; centres at (+-ex, +-ey)
+                // Elliptic angle around the corner centre; the arc is walked angle-proportionally
+                // (exact for a circle, i.e. whenever rx == ry).
+                float phi = std::atan2((y - (y > 0.f ? ey : -ey)) / ry, (x - (x > 0.f ? ex : -ex)) / rx);  // -pi..pi
                 if (x > 0.f && y < 0.f) {         // top-right: phi -pi/2..0, after the top edge
-                    s = 2.f * e + (phi + 1.57079632679f) * rad;
+                    s = 2.f * ex + (phi + 1.57079632679f) / 1.57079632679f * arc;
                 } else if (x > 0.f) {             // bottom-right: phi 0..pi/2, after top edge + arc + right edge
-                    s = 4.f * e + arc + phi * rad;
+                    s = 2.f * ex + arc + 2.f * ey + phi / 1.57079632679f * arc;
                 } else if (y > 0.f) {             // bottom-left: phi pi/2..pi
-                    s = 6.f * e + 2.f * arc + (phi - 1.57079632679f) * rad;
+                    s = 4.f * ex + 2.f * ey + 2.f * arc + (phi - 1.57079632679f) / 1.57079632679f * arc;
                 } else {                          // top-left: phi -pi..-pi/2 -> pi..3pi/2, the last piece
                     if (phi < 0.f) phi += twoPi;
-                    s = 8.f * e + 3.f * arc + (phi - 3.14159265359f) * rad;
+                    s = 4.f * ex + 4.f * ey + 3.f * arc + (phi - 3.14159265359f) / 1.57079632679f * arc;
                 }
-            } else if (ax >= ay) {   // left / right edge
-                s = (x > 0.f) ? (2.f * e + arc + (y + e)) : (6.f * e + 3.f * arc + (e - y));
-            } else {                 // top / bottom edge
-                s = (y < 0.f) ? (x + e) : (4.f * e + 2.f * arc + (e - x));
+            } else if (ax > ex) {   // left / right edge
+                s = (x > 0.f) ? (2.f * ex + arc + (y + ey)) : (4.f * ex + 2.f * ey + 3.f * arc + (ey - y));
+            } else if (ay > ey) {   // top / bottom edge
+                s = (y < 0.f) ? (x + ex) : (2.f * ex + 2.f * ey + 2.f * arc + (ex - x));
+            } else if (ax >= ay) {   // inside the inner rect (off the trim band): the old heuristic
+                s = (x > 0.f) ? (2.f * ex + arc + (y + ey)) : (4.f * ex + 2.f * ey + 3.f * arc + (ey - y));
+            } else {
+                s = (y < 0.f) ? (x + ex) : (2.f * ex + 2.f * ey + 2.f * arc + (ex - x));
             }
             return total > 0.f ? s / total : 0.f;
         }
@@ -350,7 +385,7 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
                           cover((ct - ly) * sy) * cover((ly - cb) * sy);
                 if (clipCov <= 0.f) continue;
             }
-            const float s = outlineDistance(rq.kind, base, rq.corner, poly, lx, ly);
+            const float s = outlineDistance(rq.kind, base, rq.corner, rq.cornerY, poly, lx, ly);
             // Frame px per local unit along the outline normal: with a non-uniform scale the same
             // local distance covers sx px in x and sy in y, so the factor follows the SDF gradient
             // (1 / |(gx/sx, gy/sy)|). Outside the anti-aliasing band every cover is saturated and a
@@ -361,8 +396,8 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
                 pxK = std::sqrt(sx * sy);
                 if (std::fabs(s) < sw * 0.5f + 2.5f / minK) {
                     const float e = 0.75f;
-                    const float gx = (outlineDistance(rq.kind, base, rq.corner, poly, lx + e, ly) - s) / e;
-                    const float gy = (outlineDistance(rq.kind, base, rq.corner, poly, lx, ly + e) - s) / e;
+                    const float gx = (outlineDistance(rq.kind, base, rq.corner, rq.cornerY, poly, lx + e, ly) - s) / e;
+                    const float gy = (outlineDistance(rq.kind, base, rq.corner, rq.cornerY, poly, lx, ly + e) - s) / e;
                     const float n = std::sqrt((gx / sx) * (gx / sx) + (gy / sy) * (gy / sy));
                     if (n > 1e-9f) pxK = 1.f / n;
                 }
@@ -388,7 +423,7 @@ bool drawShape(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& r
             if (strokeOn) {
                 float cstroke = cover((std::fabs(s) - sw * 0.5f) * pxK);
                 if (cstroke > 0.f && trimActive && !rq.trimFill) {
-                    const float u = outlineParam(rq.kind, base, rq.corner, poly, lx, ly);
+                    const float u = outlineParam(rq.kind, base, rq.corner, rq.cornerY, poly, lx, ly);
                     if (u < rq.trimStart || u > rq.trimEnd) cstroke = 0.f;
                 }
                 if (cstroke > 0.f) {

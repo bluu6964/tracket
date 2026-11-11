@@ -233,6 +233,32 @@ int main() {
         drawShape(h.px.data(), h.w, h.h, h.w * 4, z);
         near(h.coverage(), 200.0 * 200.0, 200.0 * 200.0 * 0.01, "crop of a non-uniform rect = half its width");
     }
+    {   // per-axis corner radii: a stadium (the ST Intro pill). base 100 drawn at scale (3, 1) ->
+        // half extents 300 x 100; rho = 1 (frame radius = the smaller half extent, 100) gives the
+        // local radii (100/3, 100) the Kotlin painters compute for it.
+        Bmp b(700, 300); Request r = base(ROUNDED); r.cx = 350.f; r.cy = 150.f;
+        r.scale = 3.f; r.scaleY = 1.f; r.corner = 100.f / 3.f; r.cornerY = 100.f;
+        drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
+        const double area = 600.0 * 200.0 - (4 - pi) * 100.0 * 100.0;  // rect minus the corner squares
+        near(b.coverage(), area, area * 0.01, "stadium area");
+        ok(b.at(350, 52)[3] == 255 && b.at(550, 52)[3] == 255 && b.at(150, 52)[3] == 255, "stadium top edge is straight");
+        ok(b.at(620, 100)[3] == 255, "stadium cap bulges where an ellipse is already outside");
+        ok(b.at(647, 55)[3] == 0, "stadium corner cuts the box corner");
+        ok(b.at(649, 150)[3] == 255 && b.at(350, 248)[3] == 255, "stadium reaches its half extents");
+
+        // The same request with one isotropic local radius (the pre-build-97 reading) is the
+        // ellipse the pill used to render as: the cap point above is outside it.
+        Bmp c(700, 300); Request q = r; q.corner = 100.f; q.cornerY = 0.f;
+        drawShape(c.px.data(), c.w, c.h, c.w * 4, q);
+        ok(c.at(620, 100)[3] == 0, "single radius under non-uniform scale = ellipse (the old bug)");
+
+        // cornerY unset keeps the single-radius outline pixel-identical.
+        Bmp d(400, 400); Request u = base(ROUNDED); u.corner = 25.f;
+        Bmp e(400, 400); Request v = u; v.cornerY = v.corner;
+        drawShape(d.px.data(), d.w, d.h, d.w * 4, u);
+        drawShape(e.px.data(), e.w, e.h, e.w * 4, v);
+        ok(d.px == e.px, "cornerY unset == cornerY == corner");
+    }
     {   // Canvas clip: the shape engine draws into the frame-sized picture both composites use
         // (preview + export), so an off-canvas shape must contribute nothing and a shape crossing
         // an edge must be cut exactly at the edge — the painter half of the final-frame clip

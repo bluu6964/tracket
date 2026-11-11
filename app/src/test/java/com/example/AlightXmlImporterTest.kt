@@ -10,7 +10,9 @@ import com.example.model.ClipFxLibrary
 import com.example.model.LayerType
 import com.example.model.effectiveScalePercent
 import com.example.model.packColor
+import com.example.model.TimelineClip
 import com.example.model.renderAt
+import com.example.model.shapeCornerRadii
 import com.example.model.shapeDrawScaleX
 import com.example.model.shapeDrawScaleY
 import org.junit.Assert.assertEquals
@@ -473,6 +475,45 @@ $layers
     }
 
     @Test
+    fun stIntroPillCornerRadiiMakeAStadium() {
+        val clips = AlightXmlImporter.parse(stIntroGroups, 1920f).snapshot.tracks.flatMap { it.clips }
+        val rig = ParentRig(clips) { c, t -> c.renderAt(t) }
+        val pill = rig.adjusted(clips.first { it.name == "Circle Copy" }, 2000L)!!
+        // cornerRadius 100 on a shape whose smaller half extent is 100: Alight clamps the radius to
+        // that half extent, so rho = 1 and the stored value is the full 65 dp.
+        assertEquals(65f, pill.shapeCornerRadius, 0.01f)
+        // At 2.0 s the pill is drawn 783x159 (see the group test above): the frame-space corner
+        // radius must come out as half the height (79.5 px) along BOTH axes — a stadium. Before
+        // build 97 the painters used one local radius (the full box half) and the non-uniform draw
+        // scale stretched the local circle into an ellipse with pointed ends.
+        val boxW = 1920f * 130f / 360f
+        val radii = pill.shapeCornerRadii(boxW / 2f)!!
+        assertEquals(79.5f, radii.first * pill.shapeDrawScaleX, 15f)
+        assertEquals(79.5f, radii.second * pill.shapeDrawScaleY, 15f)
+        // Along the smaller axis the local radius saturates the box half (the local arc is a
+        // half-ellipse cap there); along the wide axis it shrinks by the aspect.
+        assertEquals(boxW / 2f, radii.second, 1f)
+        assertTrue(radii.first < radii.second / 4f)
+    }
+
+    @Test
+    fun cornerRadiiOfAUniformShapeAreTheStoredDp() {
+        // rho = 0.5 on a square shape: both local radii are the stored dp (32.5) — the reading the
+        // painters used before per-axis radii, so uniform shapes (and small radii generally) render
+        // exactly as they did.
+        val c = TimelineClip(
+            id = "x", name = "Sq", type = LayerType.SHAPE, startMs = 0L, durationMs = 1000L,
+            color = 0xFFFFFFFFL, shapePattern = "ROUNDED_RECT", shapeCornerRadius = 32.5f,
+            shapeScaleX = 1f, shapeScaleY = 1f, scalePercent = 100f
+        )
+        val radii = c.shapeCornerRadii(65f)!!
+        assertEquals(32.5f, radii.first, 0.01f)
+        assertEquals(32.5f, radii.second, 0.01f)
+        // No stored radius -> null (the painters fall back to their built-in corners).
+        assertTrue(c.copy(shapeCornerRadius = -1f).shapeCornerRadii(65f) == null)
+    }
+
+    @Test
     fun stIntroEndCardTextBoxFitsItsLine() {
         val clips = AlightXmlImporter.parse(stIntroGroups, 1920f).snapshot.tracks.flatMap { it.clips }
         // The end-card "Channel Name" is a ROOT-level layer (not a group child): wrapWidth 512 of 1920.
@@ -606,10 +647,15 @@ $layers
         val radii = clips.filter { it.shapePattern == "ROUNDED_RECT" }.map { it.shapeCornerRadius }
         assertTrue(radii.isNotEmpty())
         assertTrue(radii.all { it >= 0f })
-        // Real file "3": size 100 x 100 with cornerRadius 32 -> 130 * 32 / 100 dp of the shape box.
-        assertTrue(radii.any { abs(it - 130f * 32f / 100f) < 0.01f })
-        // Size 522 x 136 with cornerRadius 373: Alight clamps to half the smaller side (68) -> 130 * 68 / 522.
-        assertTrue(radii.any { abs(it - 130f * 68f / 522f) < 0.01f })
+        // Real file "3": size 100 x 100 with cornerRadius 32 -> rho = 32 / 100 of the smaller half
+        // extent -> 65 * 32 / 100 dp of the shape box (build 97: the radius is stored against the
+        // shape's smaller side, not its width).
+        assertTrue(radii.any { abs(it - 65f * 32f / 100f) < 0.01f })
+        // Size 522 x 136 with cornerRadius 373: Alight clamps to half the smaller side — the smaller
+        // half extent itself (136) in size units — so rho = 1 and the shape is a stadium: 65 dp.
+        // (Before build 97 the clamp halved a second time and tied the radius to the width: 16.9 dp,
+        // nearly square corners on a shape Alight draws fully rounded.)
+        assertTrue(radii.any { abs(it - 65f) < 0.01f })
         // No shape keeps the old "not supported" warning, and shapes without the property stay unset (-1).
         assertFalse(r.warnings.any { it.contains("corner radius") })
         assertTrue(clips.filter { it.shapePattern != "ROUNDED_RECT" }.all { it.shapeCornerRadius == -1f })
@@ -625,8 +671,8 @@ $layers
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
-        // First value 20 (smaller side 100, so no clamp) -> 130 * 20 / 200.
-        assertEquals(130f * 20f / 200f, c.shapeCornerRadius, 0.01f)
+        // First value 20 (smaller half extent 100, so no clamp) -> 65 * 20 / 100.
+        assertEquals(65f * 20f / 100f, c.shapeCornerRadius, 0.01f)
         assertTrue(r.warnings.any { it.contains("corner radius") && it.contains("first value") })
     }
 

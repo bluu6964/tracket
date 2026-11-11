@@ -557,9 +557,13 @@ object AlightXmlImporter {
 
         val sizeT = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "size" }
             ?.let { readTrack(it) }
-        // Corner radius (only `.roundrect` carries one): Alight measures it in the shape's own units and clamps
-        // it to half the smaller side. The app stores dp of its 130 dp shape box, so the stored value keeps the
-        // same share of the shape's width: dp = 130 * r / sizeW, after Alight's own clamp.
+        // Corner radius (only `.roundrect` carries one): Alight measures it in the shape's own units —
+        // the same half-extent units as `size` — and clamps it to half the smaller side, which in half
+        // extents is the smaller half extent itself (build 97: the old clamp halved it a second time,
+        // and the old basis tied the radius to the shape's WIDTH, so a wide pill's radius collapsed).
+        // The app stores 65 x rho in the shape box's dp, rho = the clamped radius as a fraction of
+        // that smaller half extent, so the renderers can rebuild the frame-space radius
+        // (rho x the smaller rendered half extent) at any keyframed size: rho = 1 is a stadium.
         var shapeCornerRadius = -1f
         val cornerT = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "cornerRadius" }
             ?.let { readTrack(it) }
@@ -571,9 +575,10 @@ object AlightXmlImporter {
             val sizeFirst = sizeT?.first() ?: listOf(100f, 100f)
             val sizeW = sizeFirst.getOrNull(0) ?: 100f
             val sizeH = sizeFirst.getOrNull(1) ?: sizeW
-            if (rLocal != null && sizeW > 0f) {
-                val rEff = minOf(rLocal, minOf(sizeW, sizeH) / 2f).coerceAtLeast(0f)
-                shapeCornerRadius = (APP_SHAPE_BOX_DP * rEff / sizeW).coerceIn(0f, APP_SHAPE_BOX_DP / 2f)
+            val smaller = minOf(sizeW, sizeH)
+            if (rLocal != null && smaller > 0f) {
+                val rEff = minOf(rLocal, smaller).coerceAtLeast(0f)
+                shapeCornerRadius = (APP_SHAPE_BOX_DP / 2f * rEff / smaller).coerceIn(0f, APP_SHAPE_BOX_DP / 2f)
             }
         }
 

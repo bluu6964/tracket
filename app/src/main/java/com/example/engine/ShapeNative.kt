@@ -46,6 +46,9 @@ internal class NativeShapePainter(
         applyOpacity: Boolean, crop: FloatArray?
     ): Boolean {
         if (!ShapeNative.isAvailable || bmp.config != Bitmap.Config.ARGB_8888 || bmp.isRecycled) return false
+        // A freehand path has no SDF kind (it would read as a circle below): LayerPainter's Canvas
+        // version draws it from its stored segments instead.
+        if ((clip.shapePattern ?: "").uppercase() == "PATH") return false
         val base = 65f * density * k
         // Same shapes as the editor canvas (Compose, CanvasArea.kt) draws them: the editor's "OVAL" and any unknown
         // pattern are circles, "Wide Rect" is the full box with 10 dp corners, rounded = 16 dp corners.

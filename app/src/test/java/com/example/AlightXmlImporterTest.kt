@@ -1041,14 +1041,161 @@ $layers
     }
 
     @Test
-    fun pathShapeIsSkippedWithAWarning() {
+    fun pathShapeImportsWithItsSegments() {
+        // A freehand <path> shape (no `s` kind): the segments are stored centred on the path's box
+        // and divided by its larger half extent; the box centre's offset folds into the position.
         val xml = scene(
             """<shape id="9" label="Scribble" startTime="0" endTime="1000" fillType="none">
   <transform><location value="540,960,0" /></transform><path d="M 0 0L 10 10" /></shape>"""
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
-        assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
-        assertTrue(r.warnings.any { it.contains("freehand path") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(com.example.model.FILL_NONE, c.fillMode)
+        assertEquals(2, c.pathSegments.size)
+        assertEquals(com.example.model.PATH_OP_MOVE, c.pathSegments[0].op)
+        assertEquals(-1f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(-1f, c.pathSegments[0].pts[1], 0.001f)
+        assertEquals(com.example.model.PATH_OP_LINE, c.pathSegments[1].op)
+        assertEquals(1f, c.pathSegments[1].pts[0], 0.001f)
+        // Box 10x10 (half extent 5) at scale 1 against the 390 px shape box; anchor = location + (5, 5).
+        assertEquals(10f / 390f, c.shapeScaleX, 0.001f)
+        assertEquals(5f, c.transformX, 0.001f)
+        assertEquals(5f, c.transformY, 0.001f)
+        assertTrue(r.warnings.none { it.contains("freehand path") })
+    }
+
+    @Test
+    fun freehandRectPathImportsWithSegmentsAndScale() {
+        // Modelled on shake-997's colour plate (id 10102560): a 200x200 path rect under a strongly
+        // non-uniform scale. The uniform segment divisor keeps the outline exact on both axes while
+        // shapeScaleX / shapeScaleY carry the two scales separately.
+        val xml = scene(
+            """<shape id="10102560" label="Vetri EDITZ Official" startTime="0" endTime="2000" fillType="color">
+  <transform><location value="540.000000,1170.000000,0.000000" /><scale value="5.956158,12.905000" /></transform>
+  <fillColor value="#ff3a5f8a" />
+  <path d="M -100.0 -100.0L 100.0 -100.0L 100.0 100.0L -100.0 100.0L -100.0 -100.0Z" />
+</shape>"""
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(com.example.model.FILL_SOLID, c.fillMode)
+        assertEquals(0xFF3A5F8AL, c.textColor)
+        assertEquals(
+            listOf(
+                com.example.model.PATH_OP_MOVE, com.example.model.PATH_OP_LINE, com.example.model.PATH_OP_LINE,
+                com.example.model.PATH_OP_LINE, com.example.model.PATH_OP_LINE, com.example.model.PATH_OP_CLOSE
+            ),
+            c.pathSegments.map { it.op }
+        )
+        assertEquals(-1f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(1f, c.pathSegments[2].pts[1], 0.001f)
+        val box = 1080f * 130f / 360f
+        assertEquals(2f * 100f * 5.956158f / box, c.shapeScaleX, 0.001f)
+        assertEquals(2f * 100f * 12.905f / box, c.shapeScaleY, 0.001f)
+        assertEquals(0f, c.transformX, 0.001f)
+        assertEquals(210f, c.transformY, 0.001f)
+        // Rendered bounds in scene pixels: anchor (540, 1170) + scale x (half extent x the segments).
+        val pts = com.example.model.flattenPathSegments(c.pathSegments)
+        val xs = pts.map { 540f + it.first * 100f * 5.956158f }
+        val ys = pts.map { 1170f + it.second * 100f * 12.905f }
+        assertEquals(-55.6f, xs.minOrNull()!!, 1f)
+        assertEquals(1135.6f, xs.maxOrNull()!!, 1f)
+        assertEquals(-120.5f, ys.minOrNull()!!, 1f)
+        assertEquals(2460.5f, ys.maxOrNull()!!, 1f)
+    }
+
+    @Test
+    fun freehandLinePathImportsStrokeOnlyAroundItsBoxCentre() {
+        // Verbatim geometry of the Subscriber file's "Shape 1" (id 635433): a stroke-only horizontal
+        // line whose points sit at y = +124.57 in the layer's frame — the box centre is NOT the
+        // anchor, so the offset folds into the position and the (flat) box still carries the stroke.
+        val xml = scene(
+            """<shape id="635433" label="Shape 1" startTime="0" endTime="2000" fillType="none">
+  <transform><location value="976.500000,540.000000,0.000000" /><scale value="1.126037,1.000000" /><opacity value="0.283203" /></transform>
+  <fillColor value="#ffa48656" />
+  <path-stroke direction="centered" join="round" end-size="1.500000"><color value="#ffffffff" /><size value="6.500000" /></path-stroke>
+  <path d="M -318.0 124.572205L 285.0 124.572205L -318.0 124.572205" />
+</shape>""", 1920, 1080
+        )
+        val c = AlightXmlImporter.parse(xml, 1920f).snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(com.example.model.FILL_NONE, c.fillMode)
+        assertEquals(28.3203f, c.opacity, 0.01f)
+        assertEquals(0xFFFFFFFFL, c.strokeColor)
+        // Box centre (-16.5, 124.572205), larger half extent 301.5; stroke dp = 130 x 6.5 / (2 x 301.5).
+        assertEquals(1.4017f, c.strokeWidth, 0.001f)
+        val box = 1920f * 130f / 360f
+        assertEquals(2f * 301.5f * 1.126037f / box, c.shapeScaleX, 0.001f)
+        assertEquals(2f * 301.5f / box, c.shapeScaleY, 0.001f)
+        // Anchor = location + scale x box centre = (957.92, 664.57) in scene pixels.
+        assertEquals(-2.08f, c.transformX, 0.01f)
+        assertEquals(124.572f, c.transformY, 0.01f)
+        assertEquals(3, c.pathSegments.size)
+        assertEquals(-1f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(0f, c.pathSegments[0].pts[1], 0.001f)
+        assertEquals(1f, c.pathSegments[1].pts[0], 0.001f)
+        // And the rendered points land exactly where Alight puts them: location + scale x raw point.
+        val pts = com.example.model.flattenPathSegments(c.pathSegments)
+        val xs = pts.map { 957.9204f + it.first * 301.5f * 1.126037f }
+        val ys = pts.map { 664.5722f + it.second * 301.5f }
+        assertEquals(618.42f, xs.minOrNull()!!, 0.5f)
+        assertEquals(1297.42f, xs.maxOrNull()!!, 0.5f)
+        assertEquals(664.5722f, ys.minOrNull()!!, 0.01f)
+    }
+
+    @Test
+    fun freehandCurvePathImportsWithFlattenedBounds() {
+        // A cubic the corpus does not use (its paths are all polylines) but the parser supports:
+        // M 0 0 C 0 100, 100 100, 100 0 — the curve's apex is y = 75, so the box is 100 x 75.
+        val xml = scene(
+            """<shape id="7" label="Arc" startTime="0" endTime="2000" fillType="color">
+  <transform><location value="500.000000,500.000000" /></transform>
+  <fillColor value="#ff224466" />
+  <path d="M 0.0 0.0C 0.0 100.0 100.0 100.0 100.0 0.0" />
+</shape>""", 1000, 1000
+        )
+        val c = AlightXmlImporter.parse(xml, 1000f).snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(
+            listOf(com.example.model.PATH_OP_MOVE, com.example.model.PATH_OP_CUBIC),
+            c.pathSegments.map { it.op }
+        )
+        // Box centre (50, 37.5), larger half extent 50: the move is (-1, -0.75), the apex control
+        // points reach y = (100 - 37.5) / 50 = 1.25 (past 1 on the minor axis, as the uniform
+        // divisor intends).
+        assertEquals(-1f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(-0.75f, c.pathSegments[0].pts[1], 0.001f)
+        assertEquals(1.25f, c.pathSegments[1].pts[1], 0.001f)
+        assertEquals(50f, c.transformX, 0.001f)
+        assertEquals(37.5f, c.transformY, 0.001f)
+        val pts = com.example.model.flattenPathSegments(c.pathSegments)
+        val xs = pts.map { 550f + it.first * 50f }
+        val ys = pts.map { 537.5f + it.second * 50f }
+        assertEquals(500f, xs.minOrNull()!!, 0.5f)
+        assertEquals(600f, xs.maxOrNull()!!, 0.5f)
+        assertEquals(500f, ys.minOrNull()!!, 0.5f)
+        assertEquals(575f, ys.maxOrNull()!!, 0.5f)
+    }
+
+    @Test
+    fun keyframedAndArcPathsStaySkipped() {
+        // Keyframed path data (a <path> with keyframe children instead of a `d`) is not read yet.
+        val kf = AlightXmlImporter.parse(
+            scene(
+                """<shape id="8" label="Morph" startTime="0" endTime="2000" fillType="color"><transform><location value="540,960" /></transform><path><kf t="0" v="M 0 0L 10 10" /></path></shape>"""
+            ), 1080f
+        )
+        assertTrue(kf.snapshot.tracks.flatMap { it.clips }.isEmpty())
+        assertTrue(kf.warnings.any { it.contains("keyframed path data is not supported yet") })
+        // An arc command has no honest polyline reading: the layer is skipped, not drawn wrong.
+        val arc = AlightXmlImporter.parse(
+            scene(
+                """<shape id="9" label="Arc" startTime="0" endTime="2000" fillType="color"><transform><location value="540,960" /></transform><path d="M 0 0A 50 50 0 0 1 100 100" /></shape>"""
+            ), 1080f
+        )
+        assertTrue(arc.snapshot.tracks.flatMap { it.clips }.isEmpty())
+        assertTrue(arc.warnings.any { it.contains("path command \"A\" is not supported yet") })
     }
 
     @Test
@@ -1707,15 +1854,15 @@ $layers
     }
 
     @Test
-    fun hiddenEffectsOnTheFreefireLayerAreNeverRead() {
+    fun hiddenEffectsOnTheFreefirePathLayerAreSkippedNowThatItImports() {
         // Verbatim layer 291434 of collected/edit-freefire-mental.xml: SIX hidden effects (oscillate,
-        // swing, oscillate, motionblur2, exposure, spotcolor2) sit between visible ones. But the layer
-        // is a freehand-path media shape (no `s` kind, a <path> child), which readShape skips BEFORE
-        // any effect is read — so today its hidden effects change nothing, and no hidden-effects
-        // warning appears for it. (The same holds for the file's other two hidden-effect layers and
-        // for shake-997's: 13 of the corpus's 16 hidden effects sit on such layers. When freehand
-        // path shapes are supported, this test must be revisited — the hidden six must then be
-        // skipped by the hidden check, not applied.)
+        // swing, oscillate, motionblur2, exposure, spotcolor2) sit between visible ones. Until build
+        // 102 the layer — a freehand-path media shape (no `s` kind, a <path> child) — was skipped
+        // before any effect was read, and this test pinned that. Since build 103 the path imports,
+        // so the layer produces a clip and its effects ARE read: the hidden six are skipped by the
+        // hidden check (13 of the corpus's 16 hidden effects sit on such path layers — this file
+        // holds 8 of them, shake-997 the other 5) with ONE aggregate warning, and only the visible
+        // tile / exposure / oscillate / swing apply.
         val xml = scene(
             """<shape id="291434" label="Kasih Nama Woi 2_720p.mp4" startTime="11100" endTime="13499" fillType="media" fillVideo="content://media/external/video/media/813" inTime="11066" outTime="2147483613">
     <transform>
@@ -1823,11 +1970,32 @@ $layers
   </shape>"""
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
-        // The layer is skipped as a freehand path shape, so it produces no clip and its effects —
-        // hidden or visible — are never read: no hidden-effects warning appears for it.
-        assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
-        assertTrue(r.warnings.any { it.contains("freehand path shapes are not supported yet") })
-        assertTrue(r.warnings.none { it.contains("hidden effects are disabled") })
+        // The layer imports as a PATH clip (the full-frame media quad, 1080x1920 in layer units).
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        assertEquals(1, clips.size)
+        val c = clips[0]
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(6, c.pathSegments.size)
+        assertEquals(-0.5625f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(-1f, c.pathSegments[0].pts[1], 0.001f)
+        assertTrue(r.warnings.none { it.contains("freehand path shapes are not supported yet") })
+        // The hidden six: skipped, named in ONE warning for the layer.
+        val hiddenWarnings = r.warnings.filter { it.contains("hidden effects are disabled") }
+        assertEquals(1, hiddenWarnings.size)
+        assertEquals(
+            "Layer \"Kasih Nama Woi 2_720p.mp4\": hidden effects are disabled in Alight Motion: " +
+                "skipped (oscillate, swing, oscillate, motionblur2, exposure, spotcolor2)",
+            hiddenWarnings[0]
+        )
+        // The visible oscillate (mag 25, along x) baked the position keys and the visible swing
+        // (a ∓3 deg) the rotation keys; the hidden oscillate (mag up to 499) and hidden swing
+        // (∓10 deg) baked nothing — every key stays inside the visible effects' reach.
+        val pos = c.keyframes[AnimProp.POSITION]
+        assertNotNull(pos)
+        assertTrue(pos!!.all { abs(it.a) <= 25.5f && abs(it.b) <= 25.5f })
+        val rot = c.keyframes[AnimProp.ROTATION]
+        assertNotNull(rot)
+        assertTrue(rot!!.all { abs(it.a) <= 3.5f })
     }
 
     @Test

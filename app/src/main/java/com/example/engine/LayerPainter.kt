@@ -29,6 +29,11 @@ import com.example.model.BlendKind
 import com.example.model.BlendModes
 import com.example.model.ExportSettings
 import com.example.model.LayerType
+import com.example.model.PATH_OP_CLOSE
+import com.example.model.PATH_OP_CUBIC
+import com.example.model.PATH_OP_LINE
+import com.example.model.PATH_OP_MOVE
+import com.example.model.PATH_OP_QUAD
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
 import com.example.model.opacityFraction
@@ -273,6 +278,24 @@ internal class LayerPainter(
                 }
                 canvas.drawPath(path, paint)
                 drawStrokePath(path)
+            }
+            "PATH" -> {
+                // A freehand outline (an imported Alight <path> shape): replay the stored segments in
+                // the box's local units. The fill follows the path's own winding; the stroke goes
+                // through drawStrokePath, so a drawing.progress trim measures this same outline.
+                val outline = Path()
+                for (seg in clip.pathSegments) {
+                    val q = seg.pts
+                    when (seg.op) {
+                        PATH_OP_MOVE -> if (q.size >= 2) outline.moveTo(q[0] * base, q[1] * base)
+                        PATH_OP_LINE -> if (q.size >= 2) outline.lineTo(q[0] * base, q[1] * base)
+                        PATH_OP_QUAD -> if (q.size >= 4) outline.quadTo(q[0] * base, q[1] * base, q[2] * base, q[3] * base)
+                        PATH_OP_CUBIC -> if (q.size >= 6) outline.cubicTo(q[0] * base, q[1] * base, q[2] * base, q[3] * base, q[4] * base, q[5] * base)
+                        PATH_OP_CLOSE -> outline.close()
+                    }
+                }
+                canvas.drawPath(outline, paint)
+                drawStrokePath(outline)
             }
             else -> { // CIRCLE
                 canvas.drawCircle(0f, 0f, base, paint)

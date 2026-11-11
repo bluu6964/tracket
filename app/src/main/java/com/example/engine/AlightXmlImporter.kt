@@ -26,7 +26,14 @@ import com.example.model.MaskMode
 import com.example.model.MaskShape
 import com.example.model.MaskState
 import com.example.model.ParentLink
+import com.example.model.PATH_OP_CLOSE
+import com.example.model.PATH_OP_CUBIC
+import com.example.model.PATH_OP_LINE
+import com.example.model.PATH_OP_MOVE
+import com.example.model.PATH_OP_QUAD
+import com.example.model.PathSeg
 import com.example.model.ProjectSnapshot
+import com.example.model.flattenPathSegments
 import com.example.model.TextAnimator
 import com.example.model.TimelineClip
 import com.example.model.colorValueAt
@@ -62,7 +69,10 @@ import kotlin.math.sin
  *  - `<shape>` layer (`.rect` / `.circle` / `.roundrect`): fill colour (or no fill, or a picture fill by uri),
  *    `size` x transform scale -> the shape's size, `cornerRadius` -> its corner radius, position / rotation / opacity, a `path-stroke` -> stroke
  *    colour + width, keyframed size / scale -> SCALE keyframes. `.line` / `.arrow` become a thin rectangle
- *    between their two points (the arrow head is not drawn). A freehand `<path>` shape is skipped.
+ *    between their two points (the arrow head is not drawn). A shape with no `s` kind but a `<path>`
+ *    child is a freehand vector layer: its `d` (M / L / H / V / C / S / Q / T / Z, absolute or relative)
+ *    becomes the clip's stored outline ([com.example.model.TimelineClip.pathSegments]); an arc command
+ *    or keyframed path data stays skipped with a warning.
  *  - `<embedScene>`: a real Group layer (see GroupOps) holding the layers of the nested `<scene>`; the group's
  *    move / scale / turn / opacity and the pivot (as the children's parent link) come from its own transform,
  *    and the nested times are remapped from the [inTime, outTime] window onto the group's length.
@@ -517,13 +527,14 @@ object AlightXmlImporter {
         val w = ctx.warnings
         val kind = el.getAttribute("s")
         if (kind == ".line" || kind == ".arrow") return readLineShape(el, ctx, kind)
+        // No `s` kind but a <path> child: a freehand vector layer (whole presets are built from them).
+        if (kind.isEmpty() && child(el, "path") != null) return readPathShape(el, ctx)
         val pattern = when (kind) {
             ".rect" -> "RECT"
             ".circle" -> "CIRCLE"
             ".roundrect" -> "ROUNDED_RECT"
             else -> {
                 val why = when {
-                    kind.isEmpty() && child(el, "path") != null -> "freehand path shapes are not supported yet"
                     kind.isEmpty() -> "it has no shape kind"
                     else -> "shape kind \"" + kind + "\" is not supported yet"
                 }
@@ -667,6 +678,374 @@ object AlightXmlImporter {
             scl = tr.scl, rot = tr.rot, size = sizeT, corner = cornerLocal
         )
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
+    }
+
+    /**
+     * A freehand `<path>` shape (no `s` kind): whole presets (the freefire / shake packs) draw their
+     * media quads, colour plates and stroke lines this way — 26 layers of the corpus, all simple
+     * M / L / Z polylines. The `d` points live in the layer's own frame — offsets from its anchor,
+     * composed by its transform like every Alight layer — so the import mirrors [readShape] with the
+     * path's bounding box in the role of `size`: the segments are stored centred on the box and
+     * divided by its larger half extent (a UNIFORM divisor — an anisotropic one would squash the
+     * stroke of a flat path, a horizontal line's box height being 0 — while [TimelineClip.shapeScaleX]
+     * / [TimelineClip.shapeScaleY] carry each axis' true size separately), and the box centre's offset
+     * from the anchor is folded into the position, composed through the anchor's own rotation / scale
+     * at every keyframe time so a keyframed anchor still carries the path exactly. (An effect baked
+     * later turns around the folded anchor instead of Alight's own; in the corpus every turning path
+     * layer is centred on its anchor, where the fold is a no-op.)
+     */
+    private fun readPathShape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val pathEl = child(el, "path")!!
+        val d = pathEl.getAttribute("d")
+        if (d.isBlank() || elementChildren(pathEl).isNotEmpty()) {
+            w += "Layer <shape>" + labelOf(el) + ": keyframed path data is not supported yet: skipped"
+            return null
+        }
+        val raw = parsePathData(d, w, el) ?: return null
+        val flat = flattenPathSegments(raw)
+        if (flat.isEmpty()) {
+            w += "Layer <shape>" + labelOf(el) + ": its path has no points: skipped"
+            return null
+        }
+        var minX = Float.POSITIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY
+        var maxX = Float.NEGATIVE_INFINITY
+        var maxY = Float.NEGATIVE_INFINITY
+        for ((x, y) in flat) {
+            minX = minOf(minX, x); minY = minOf(minY, y)
+            maxX = maxOf(maxX, x); maxY = maxOf(maxY, y)
+        }
+        val cx = (minX + maxX) / 2f
+        val cy = (minY + maxY) / 2f
+        val half = maxOf((maxX - minX) / 2f, (maxY - minY) / 2f)
+        if (half < 1e-6f) {
+            w += "Layer <shape>" + labelOf(el) + ": its path is a single point: skipped"
+            return null
+        }
+        val segments = raw.map { seg ->
+            PathSeg(seg.op, seg.pts.mapIndexed { i, v -> if (i % 2 == 0) (v - cx) / half else (v - cy) / half })
+        }
+
+        val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
+        val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
+        val durMs = (endMs - startMs).coerceAtLeast(250L)
+        val tr = readTransform(el, w, pivotUsed = false)
+
+        // Fill and stroke, exactly as a built-in shape reads them (a media fill keeps only its
+        // picture, as there; a video fill stays empty, also as there).
+        val fillColor = child(el, "fillColor")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
+        var fillImageUri: String? = null
+        var fillImageMode = IMG_FILL
+        val fillMode = when (val ft = el.getAttribute("fillType")) {
+            "none" -> FILL_NONE
+            "media" -> {
+                fillImageUri = el.getAttribute("fillImage").ifEmpty { null }
+                fillImageMode = when (el.getAttribute("mediaFillMode")) {
+                    "stretch" -> IMG_STRETCH
+                    "fit" -> IMG_FIT
+                    else -> IMG_FILL
+                }
+                if (fillImageUri == null) w += "Shape" + labelOf(el) + ": its picture is not in the XML: the fill stays empty"
+                FILL_IMAGE
+            }
+            "", "color" -> FILL_SOLID
+            else -> {
+                w += "Shape fill \"" + ft + "\" is not supported yet: a solid fill is used"
+                FILL_SOLID
+            }
+        }
+        warnBlending(el, w)
+
+        var strokeColor = 0xFFFFFFFFL
+        var strokeSz = 0f
+        val strokeEl = child(el, "path-stroke")
+        if (strokeEl != null && strokeEl.getAttribute("enabled") != "false") {
+            strokeColor = child(strokeEl, "color")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
+            strokeSz = child(strokeEl, "size")?.getAttribute("value")?.toFloatOrNull() ?: 0f
+        }
+
+        val box = ctx.shapeBoxPx
+        val sclV = tr.scl?.first() ?: listOf(1f, 1f)
+        val sclX = sclV.getOrNull(0) ?: 1f
+        val sclY = sclV.getOrNull(1) ?: sclX
+        val rendW = 2f * half * sclX
+        val rendH = 2f * half * sclY
+        // Same stroke rule as the built-in kinds: the stored dp is the stroke's share of the width.
+        val strokeWidth = when {
+            strokeSz <= 0f -> 0f
+            rendW > 0f -> APP_SHAPE_BOX_DP * strokeSz * sclX / rendW
+            else -> strokeSz * CANVAS_DP / ctx.sceneW
+        }
+
+        // The app's anchor is the clip position; the stored outline is centred on the path's box, so
+        // the position is the Alight anchor plus the box centre's offset, rotated / scaled with it.
+        fun anchorAt(t: Float): Pair<Float, Float> {
+            val loc = tr.loc?.valueAt(t)
+            val sc = tr.scl?.valueAt(t) ?: listOf(1f, 1f)
+            val rot = tr.rot?.valueAt(t)?.firstOrNull() ?: 0f
+            val ox = cx * (sc.getOrNull(0) ?: 1f)
+            val oy = cy * (sc.getOrNull(1) ?: sc.getOrNull(0) ?: 1f)
+            val rad = Math.toRadians(rot.toDouble())
+            val c = cos(rad).toFloat()
+            val s = sin(rad).toFloat()
+            val lx = loc?.getOrNull(0) ?: ctx.sceneW / 2f
+            val ly = loc?.getOrNull(1) ?: ctx.sceneH / 2f
+            return (lx + ox * c - oy * s) to (ly + ox * s + oy * c)
+        }
+        val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
+        val times = ((tr.loc?.keys ?: emptyList()) + (tr.scl?.keys ?: emptyList()) + (tr.rot?.keys ?: emptyList()))
+            .map { it.t }.distinct().sorted()
+        if (times.size >= 2) {
+            val keys = times.mapIndexed { i, t ->
+                val next = times.getOrNull(i + 1)
+                val e = if (next == null) Easing.LINEAR
+                else tr.loc?.keyAt(next)?.easing ?: tr.scl?.keyAt(next)?.easing
+                    ?: tr.rot?.keyAt(next)?.easing ?: Easing.LINEAR
+                val a = anchorAt(t)
+                Keyframe(
+                    (t.coerceIn(0f, 1f) * durMs).roundToLong(),
+                    (a.first - ctx.sceneW / 2f) * ctx.k, (a.second - ctx.sceneH / 2f) * ctx.k, e
+                )
+            }.distinctBy { it.timeMs }
+            if (keys.size >= 2) keyframes[AnimProp.POSITION] = keys
+        }
+        fun keys(prop: AnimProp, t: Track?, map: (List<Float>) -> Pair<Float, Float>) {
+            val l = trackKeys(t, durMs, map)
+            if (l.isNotEmpty()) keyframes[prop] = l
+        }
+        keys(AnimProp.ROTATION, tr.rot) { (it.firstOrNull() ?: 0f) to 0f }
+        keys(AnimProp.OPACITY, tr.opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
+        // The box in the role of `size`: a constant (half, half) track composed with the layer scale.
+        val sizeKeys = composedSizeKeys(Track(listOf(half, half), emptyList()), tr.scl, durMs, box)
+        if (sizeKeys.isNotEmpty()) keyframes[AnimProp.SCALE] = sizeKeys
+
+        val a0 = anchorAt(0f)
+        val posX = (a0.first - ctx.sceneW / 2f) * ctx.k
+        val posY = (a0.second - ctx.sceneH / 2f) * ctx.k
+        val built = TimelineClip(
+            id = UUID.randomUUID().toString(),
+            name = el.getAttribute("label").ifBlank { "Shape" },
+            type = LayerType.SHAPE,
+            isVisible = !isMaskLayer(el),
+            isMask = isMaskLayer(el),
+            startMs = startMs.coerceAtLeast(0L),
+            durationMs = durMs,
+            color = SHAPE_COLOR,
+            textColor = fillColor,
+            fillMode = fillMode,
+            fillImageUri = fillImageUri,
+            fillImageMode = fillImageMode,
+            shapePattern = "PATH",
+            pathSegments = segments,
+            shapeScaleX = rendW / box,
+            shapeScaleY = rendH / box,
+            strokeWidth = strokeWidth,
+            strokeColor = strokeColor,
+            transformX = posX,
+            transformY = posY,
+            shapeOffsetX = posX,
+            shapeOffsetY = posY,
+            scalePercent = rendW / box * 100f,
+            rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
+            opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+            keyframes = keyframes
+        )
+        // The layer's own outline, lent to a `movealongpath3` on the layer above it (see PathSpec):
+        // the raw flattened points, still in the layer's own (anchor-relative) frame.
+        ctx.outlineSpecs[built.id] = PathSpec(
+            kind = "PATH", startMs = built.startMs, durMs = built.durationMs,
+            loc = tr.loc ?: Track(listOf(ctx.sceneW / 2f, ctx.sceneH / 2f), emptyList()),
+            scl = tr.scl, rot = tr.rot,
+            pathPts = flat, pathClosed = raw.any { it.op == PATH_OP_CLOSE }
+        )
+        return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
+    }
+
+    /**
+     * Parses an SVG-style path `d` (Alight writes it with absolute M / L / Z in the corpus) into
+     * absolute [PathSeg]s in the layer's own units. M / L / H / V / C / S / Q / T / Z are supported,
+     * absolute or relative (S / T reflect the previous curve's control point, as SVG defines); a
+     * command outside that set (an arc, above all) or malformed data warns and returns null, so the
+     * layer is skipped rather than drawn wrong.
+     */
+    private fun parsePathData(d: String, w: MutableList<String>, el: Element): List<PathSeg>? {
+        fun fail(why: String): List<PathSeg>? {
+            w += "Layer <shape>" + labelOf(el) + ": " + why + ": skipped"
+            return null
+        }
+        // Tokens: command letters and numbers, in order (commas / whitespace are only separators).
+        val tokens = ArrayList<Any>()
+        val numRe = Regex("[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?")
+        var i = 0
+        while (i < d.length) {
+            val ch = d[i]
+            when {
+                ch.isLetter() -> { tokens += ch; i++ }
+                ch == ',' || ch.isWhitespace() -> i++
+                else -> {
+                    val m = numRe.find(d, i)
+                    if (m == null || m.range.first != i) return fail("its path data could not be read")
+                    tokens += m.value.toFloat()
+                    i = m.range.last + 1
+                }
+            }
+        }
+        val segs = ArrayList<PathSeg>()
+        var idx = 0
+        var cmd = ' '
+        var curX = 0f
+        var curY = 0f
+        var subX = 0f
+        var subY = 0f
+        var cubX = 0f
+        var cubY = 0f
+        var hasCub = false
+        var quaX = 0f
+        var quaY = 0f
+        var hasQua = false
+        fun hasNum(): Boolean = idx < tokens.size && tokens[idx] is Float
+        fun num(): Float? = if (hasNum()) tokens[idx++] as Float else null
+        while (idx < tokens.size) {
+            if (tokens[idx] is Char) {
+                cmd = tokens[idx++] as Char
+                if (cmd == 'Z' || cmd == 'z') {
+                    segs += PathSeg(PATH_OP_CLOSE)
+                    curX = subX; curY = subY
+                    hasCub = false; hasQua = false
+                    cmd = ' '
+                    continue
+                }
+            }
+            if (cmd == ' ') return fail("its path data could not be read")
+            val rel = cmd.isLowerCase()
+            fun px(v: Float) = if (rel) curX + v else v
+            fun py(v: Float) = if (rel) curY + v else v
+            when (cmd.uppercaseChar()) {
+                'M' -> {
+                    var first = true
+                    while (hasNum()) {
+                        val x = num() ?: return fail("its path data is incomplete")
+                        val y = num() ?: return fail("its path data is incomplete")
+                        curX = px(x); curY = py(y)
+                        if (first) {
+                            segs += PathSeg(PATH_OP_MOVE, listOf(curX, curY))
+                            subX = curX; subY = curY
+                            first = false
+                        } else {
+                            segs += PathSeg(PATH_OP_LINE, listOf(curX, curY))
+                        }
+                        hasCub = false; hasQua = false
+                    }
+                    if (first) return fail("its path data is incomplete")
+                }
+                'L' -> {
+                    var any = false
+                    while (hasNum()) {
+                        val x = num() ?: return fail("its path data is incomplete")
+                        val y = num() ?: return fail("its path data is incomplete")
+                        curX = px(x); curY = py(y)
+                        segs += PathSeg(PATH_OP_LINE, listOf(curX, curY))
+                        any = true
+                        hasCub = false; hasQua = false
+                    }
+                    if (!any) return fail("its path data is incomplete")
+                }
+                'H' -> {
+                    var any = false
+                    while (hasNum()) {
+                        val x = num() ?: return fail("its path data is incomplete")
+                        curX = px(x)
+                        segs += PathSeg(PATH_OP_LINE, listOf(curX, curY))
+                        any = true
+                        hasCub = false; hasQua = false
+                    }
+                    if (!any) return fail("its path data is incomplete")
+                }
+                'V' -> {
+                    var any = false
+                    while (hasNum()) {
+                        val y = num() ?: return fail("its path data is incomplete")
+                        curY = py(y)
+                        segs += PathSeg(PATH_OP_LINE, listOf(curX, curY))
+                        any = true
+                        hasCub = false; hasQua = false
+                    }
+                    if (!any) return fail("its path data is incomplete")
+                }
+                'C' -> {
+                    var any = false
+                    while (hasNum()) {
+                        val x1 = num() ?: return fail("its path data is incomplete")
+                        val y1 = num() ?: return fail("its path data is incomplete")
+                        val x2 = num() ?: return fail("its path data is incomplete")
+                        val y2 = num() ?: return fail("its path data is incomplete")
+                        val x = num() ?: return fail("its path data is incomplete")
+                        val y = num() ?: return fail("its path data is incomplete")
+                        val c1x = px(x1); val c1y = py(y1)
+                        cubX = px(x2); cubY = py(y2)
+                        curX = px(x); curY = py(y)
+                        segs += PathSeg(PATH_OP_CUBIC, listOf(c1x, c1y, cubX, cubY, curX, curY))
+                        any = true
+                        hasCub = true; hasQua = false
+                    }
+                    if (!any) return fail("its path data is incomplete")
+                }
+                'S' -> {
+                    var any = false
+                    while (hasNum()) {
+                        val x2 = num() ?: return fail("its path data is incomplete")
+                        val y2 = num() ?: return fail("its path data is incomplete")
+                        val x = num() ?: return fail("its path data is incomplete")
+                        val y = num() ?: return fail("its path data is incomplete")
+                        val c1x = if (hasCub) 2f * curX - cubX else curX
+                        val c1y = if (hasCub) 2f * curY - cubY else curY
+                        cubX = px(x2); cubY = py(y2)
+                        curX = px(x); curY = py(y)
+                        segs += PathSeg(PATH_OP_CUBIC, listOf(c1x, c1y, cubX, cubY, curX, curY))
+                        any = true
+                        hasCub = true; hasQua = false
+                    }
+                    if (!any) return fail("its path data is incomplete")
+                }
+                'Q' -> {
+                    var any = false
+                    while (hasNum()) {
+                        val x1 = num() ?: return fail("its path data is incomplete")
+                        val y1 = num() ?: return fail("its path data is incomplete")
+                        val x = num() ?: return fail("its path data is incomplete")
+                        val y = num() ?: return fail("its path data is incomplete")
+                        quaX = px(x1); quaY = py(y1)
+                        curX = px(x); curY = py(y)
+                        segs += PathSeg(PATH_OP_QUAD, listOf(quaX, quaY, curX, curY))
+                        any = true
+                        hasQua = true; hasCub = false
+                    }
+                    if (!any) return fail("its path data is incomplete")
+                }
+                'T' -> {
+                    var any = false
+                    while (hasNum()) {
+                        val x = num() ?: return fail("its path data is incomplete")
+                        val y = num() ?: return fail("its path data is incomplete")
+                        quaX = if (hasQua) 2f * curX - quaX else curX
+                        quaY = if (hasQua) 2f * curY - quaY else curY
+                        curX = px(x); curY = py(y)
+                        segs += PathSeg(PATH_OP_QUAD, listOf(quaX, quaY, curX, curY))
+                        any = true
+                        hasQua = true; hasCub = false
+                    }
+                    if (!any) return fail("its path data is incomplete")
+                }
+                else -> return fail("freehand path command \"" + cmd.uppercaseChar() + "\" is not supported yet")
+            }
+            // A command letter must follow (or the data ends): a number here would mean the group
+            // above stopped early, which the per-command loops already consume fully — but a stray
+            // number after Z-less data with cmd reset cannot occur; guard anyway.
+            if (hasNum() && cmd == ' ') return fail("its path data could not be read")
+        }
+        if (segs.isEmpty()) return fail("its path has no points")
+        return segs
     }
 
     /**
@@ -2610,8 +2989,9 @@ object AlightXmlImporter {
     /**
      * The vector outline of one shape layer of a scene, in raw Alight values (scene pixels), kept so a
      * `movealongpath3` on the layer above can follow it. [kind] is the shape reader's pattern
-     * ("CIRCLE" / "RECT" / "ROUNDED_RECT") or "LINE" (an `.line` / `.arrow`: the outline is its
-     * segment, [p1] -> [p2]). The transform / size tracks are the layer's own, evaluated with
+     * ("CIRCLE" / "RECT" / "ROUNDED_RECT"), "LINE" (an `.line` / `.arrow`: the outline is its
+     * segment, [p1] -> [p2]), or "PATH" (a freehand `<path>` shape: the outline is its flattened
+     * raw points, [pathPts]). The transform / size tracks are the layer's own, evaluated with
      * Alight's easing at the follower's time; a line's scale / rotation / pivot enter as first
      * values and a shape's pivot not at all — exactly how the layer's own reader renders it, so the
      * follower stays glued to the outline as the app itself draws that layer.
@@ -2621,7 +3001,9 @@ object AlightXmlImporter {
         val startMs: Long, val durMs: Long,
         val loc: Track?, val scl: Track?, val rot: Track?,
         val size: Track? = null, val corner: Float = 0f,
-        val p1: List<Float>? = null, val p2: List<Float>? = null, val pivot: List<Float> = emptyList()
+        val p1: List<Float>? = null, val p2: List<Float>? = null, val pivot: List<Float> = emptyList(),
+        /** A freehand path layer ("PATH"): its raw flattened outline points (anchor-relative) and whether it closes. */
+        val pathPts: List<Pair<Float, Float>>? = null, val pathClosed: Boolean = false
     )
 
     /** A recorded `movealongpath3`, resolved by [resolveMoveAlongPaths] once the scene is fully read. */
@@ -2733,6 +3115,15 @@ object AlightXmlImporter {
 
     /** The outline walk of a shape layer at its normalized time [n] (shape kinds only). */
     private fun PathSpec.shapeWalk(n: Float): OutlineWalk {
+        if (kind == "PATH") {
+            // A freehand outline: the raw points, scaled by the layer's own scale — they are already
+            // anchor-relative, like the built-in kinds' outlines.
+            val sc = scl?.valueAtEased(n) ?: listOf(1f, 1f)
+            val sx = sc.getOrNull(0) ?: 1f
+            val sy = sc.getOrNull(1) ?: sx
+            val pts = (pathPts ?: emptyList()).map { (it.first * sx) to (it.second * sy) }
+            return OutlineWalk(pts, closed = pathClosed)
+        }
         val scl = scl?.valueAtEased(n) ?: listOf(1f, 1f)
         val size = size?.valueAtEased(n) ?: listOf(100f, 100f)
         val sx = scl.getOrNull(0) ?: 1f

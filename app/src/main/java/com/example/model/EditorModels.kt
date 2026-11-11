@@ -18,6 +18,75 @@ const val GRAD_LINEAR = 0
 const val GRAD_RADIAL = 1
 const val GRAD_SWEEP = 2
 
+/** Ops of one segment of a freehand path ([TimelineClip.pathSegments]). */
+const val PATH_OP_MOVE = 0
+const val PATH_OP_LINE = 1
+const val PATH_OP_QUAD = 2
+const val PATH_OP_CUBIC = 3
+const val PATH_OP_CLOSE = 4
+
+/**
+ * One segment of a freehand path outline. [pts] holds the segment's points as x,y pairs
+ * (move / line: 1 pair, quad: 2, cubic: 3, close: none), in the basis [TimelineClip.pathSegments]
+ * documents. The points are absolute (a relative command of the source file is absolutized at
+ * import), so a renderer can replay the segments in order.
+ */
+@Serializable
+data class PathSeg(
+    val op: Int,
+    val pts: List<Float> = emptyList()
+)
+
+/**
+ * The outline of a freehand path as a polyline: every segment's end point, curves flattened at
+ * [stepsPerCurve] samples each. Move segments start a new sub-path (their point is included);
+ * a close segment repeats its sub-path's first point. Used by the importer's bounds and by tests.
+ */
+fun flattenPathSegments(segments: List<PathSeg>, stepsPerCurve: Int = 24): List<Pair<Float, Float>> {
+    val out = ArrayList<Pair<Float, Float>>()
+    var cur = 0f to 0f
+    var start = cur
+    fun quad(p0: Pair<Float, Float>, p1: Pair<Float, Float>, p2: Pair<Float, Float>, t: Float): Pair<Float, Float> {
+        val u = 1f - t
+        return (u * u * p0.first + 2f * u * t * p1.first + t * t * p2.first) to
+            (u * u * p0.second + 2f * u * t * p1.second + t * t * p2.second)
+    }
+    fun cubic(p0: Pair<Float, Float>, p1: Pair<Float, Float>, p2: Pair<Float, Float>, p3: Pair<Float, Float>, t: Float): Pair<Float, Float> {
+        val u = 1f - t
+        return (u * u * u * p0.first + 3f * u * u * t * p1.first + 3f * u * t * t * p2.first + t * t * t * p3.first) to
+            (u * u * u * p0.second + 3f * u * u * t * p1.second + 3f * u * t * t * p2.second + t * t * t * p3.second)
+    }
+    for (seg in segments) {
+        val q = seg.pts
+        when (seg.op) {
+            PATH_OP_MOVE -> if (q.size >= 2) {
+                cur = q[0] to q[1]; start = cur; out += cur
+            }
+            PATH_OP_LINE -> if (q.size >= 2) {
+                cur = q[0] to q[1]; out += cur
+            }
+            PATH_OP_QUAD -> if (q.size >= 4) {
+                val c = q[0] to q[1]
+                val e = q[2] to q[3]
+                for (i in 1..stepsPerCurve) out += quad(cur, c, e, i.toFloat() / stepsPerCurve)
+                cur = e
+            }
+            PATH_OP_CUBIC -> if (q.size >= 6) {
+                val c1 = q[0] to q[1]
+                val c2 = q[2] to q[3]
+                val e = q[4] to q[5]
+                for (i in 1..stepsPerCurve) out += cubic(cur, c1, c2, e, i.toFloat() / stepsPerCurve)
+                cur = e
+            }
+            PATH_OP_CLOSE -> {
+                out += start
+                cur = start
+            }
+        }
+    }
+    return out
+}
+
 /**
  * Canvas shape. "Original" follows the first video / photo (see [withOriginalAspect]);
  * until there is media it is 16:9.
@@ -157,6 +226,16 @@ data class TimelineClip(
      * gates the fill along the rectangle's length instead of gating a stroke.
      */
     val strokeTrimFill: Boolean = false,
+    /**
+     * Freehand outline of a `shapePattern == "PATH"` layer (an imported Alight Motion `<path>` shape —
+     * a preset layer with no `s` kind): the segments in the shape box's own units. The path's bounding
+     * box was centred on the layer anchor (any offset of the box from the layer's own origin is folded
+     * into the clip's position) and divided by the box's larger half extent, so coordinates span
+     * [-1, 1] on that axis; the box scale ([shapeScaleX] / [shapeScaleY], built from that same half
+     * extent and the layer's transform scale) carries the true size on both axes, so the renderers can
+     * replay the segments scaled by their usual box. Empty for every built-in kind.
+     */
+    val pathSegments: List<PathSeg> = emptyList(),
     // Transform parameters (2D, Pivot, 3D, Warp)
     val transformX: Float = 0f,
     val transformY: Float = 0f,

@@ -1642,9 +1642,12 @@ $layers
 
     @Test
     fun colorTuneImportsFromTheVetriPreset() {
-        // The vetri preset's colortune2: lift / gain vec3s of (hue, strength, luminance shift).
+        // The vetri preset's colortune2 values: lift / gain vec3s of (hue, strength, luminance shift).
+        // The preset's own element carries hidden="true" — since build 102 a hidden effect is disabled
+        // and skipped at import (see hiddenEffectsAreSkippedWithOneWarningPerLayer), so the attribute is
+        // dropped here to keep verifying the value mapping on an active effect.
         val c = onlyClip(shapeWith(
-            """<effect id="com.alightcreative.effects.colortune2" hidden="true" locallyApplied="false"><property name="lift" type="vec3" value="-118.477776,0.347525,-0.080692" /><property name="gain" type="vec3" value="-117.208038,0.258421,0.000000" /></effect>"""
+            """<effect id="com.alightcreative.effects.colortune2" locallyApplied="false"><property name="lift" type="vec3" value="-118.477776,0.347525,-0.080692" /><property name="gain" type="vec3" value="-117.208038,0.258421,0.000000" /></effect>"""
         ))
         val fx = c.effects.first { it.type == ClipFxLibrary.COLOR_TUNE }
         assertEquals(241.52f, fx.values[0], 0.05f)   // -118.478 wrapped into 0..360
@@ -1653,6 +1656,208 @@ $layers
         assertEquals(242.79f, fx.values[3], 0.05f)
         assertEquals(25.84f, fx.values[4], 0.01f)
         assertEquals(0f, fx.values[5], 0.01f)
+    }
+
+    @Test
+    fun hiddenEffectOnTheSubscriberLayerIsSkipped() {
+        // The "Subscriber & follow animation" file (1c3ff763…): the images.jpeg layer's only effect is
+        // a hidden exposure. hidden="true" disables an effect in Alight, so nothing of it is imported
+        // (before build 102 it became a live Exposure fx) and the layer reports it once.
+        val xml = scene(
+            """<shape id="635471" label="images.jpeg" hidden="true" startTime="0" endTime="6332" fillType="media" fillImage="content://media/external/images/media/1000184628" mediaFillMode="stretch" s=".rect"><transform><location value="960.000000,540.000000,0.000000" /><scale value="1.370139,1.370139" /></transform><effect id="com.alightcreative.effects.exposure" hidden="true" locallyApplied="true"><property name="exposure" type="float" value="0.160000" /><property name="gamma" type="float" value="1.285000" /><property name="offset" type="float" value="-0.690000" /></effect><property name="size" type="vec2" value="720.000000,540.000000" /></shape>""",
+            1920, 1080
+        )
+        val r = AlightXmlImporter.parse(xml, 1920f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.effects.isEmpty())
+        val hiddenWarnings = r.warnings.filter { it.contains("hidden effects are disabled") }
+        assertEquals(1, hiddenWarnings.size)
+        assertEquals(
+            "Layer \"images.jpeg\": hidden effects are disabled in Alight Motion: skipped (exposure)",
+            hiddenWarnings[0]
+        )
+    }
+
+    @Test
+    fun hiddenOscillateBakesNoPositionKeys() {
+        // A hidden oscillate is disabled in Alight: it must not bake the position keyframes a visible
+        // one bakes (see oscillateBakesPositionKeyframes for the visible control).
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.oscillate" hidden="true" locallyApplied="false"><property name="angle" type="float" value="90" /><property name="freq" type="float" value="1" /><property name="mag" type="float" value="100" /><property name="type" type="int" value="0" /></effect>"""
+        ))
+        assertTrue(c.effects.isEmpty())
+        assertTrue(c.keyframes[AnimProp.POSITION].isNullOrEmpty())
+    }
+
+    @Test
+    fun hiddenTextProgressIsNotStored() {
+        // The text reader stores textprogress as an animator; a hidden one is disabled in Alight, so
+        // nothing is stored (applyLayerEffects still reports it in the layer's hidden-effects warning).
+        val xml = scene(
+            """<text id="1" label="A" startTime="0" endTime="2000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
+  <effect id="com.alightcreative.effects.textprogress" hidden="true" locallyApplied="true"><property name="start" type="float" value="0" /><property name="end" type="float"><kf t="0" v="0" /><kf t="0.6" v="1" /></property><property name="cursor" type="int" value="0" /><property name="blink" type="bool" value="false" /></effect>
+  <content>HELLO</content></text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.textAnimators.isEmpty())
+        val hiddenWarnings = r.warnings.filter { it.contains("hidden effects are disabled") }
+        assertEquals(1, hiddenWarnings.size)
+        assertTrue(hiddenWarnings[0].contains("(textprogress)"))
+    }
+
+    @Test
+    fun hiddenEffectsOnTheFreefireLayerAreNeverRead() {
+        // Verbatim layer 291434 of collected/edit-freefire-mental.xml: SIX hidden effects (oscillate,
+        // swing, oscillate, motionblur2, exposure, spotcolor2) sit between visible ones. But the layer
+        // is a freehand-path media shape (no `s` kind, a <path> child), which readShape skips BEFORE
+        // any effect is read — so today its hidden effects change nothing, and no hidden-effects
+        // warning appears for it. (The same holds for the file's other two hidden-effect layers and
+        // for shake-997's: 13 of the corpus's 16 hidden effects sit on such layers. When freehand
+        // path shapes are supported, this test must be revisited — the hidden six must then be
+        // skipped by the hidden check, not applied.)
+        val xml = scene(
+            """<shape id="291434" label="Kasih Nama Woi 2_720p.mp4" startTime="11100" endTime="13499" fillType="media" fillVideo="content://media/external/video/media/813" inTime="11066" outTime="2147483613">
+    <transform>
+      <location value="540.000000,960.000000" />
+    </transform>
+    <effect id="com.alightcreative.effects.tile">
+      <property name="scale" type="float">
+        <kf t="0.000000" v="2.000000" />
+        <kf t="0.467213" v="1.000000" e="cubicBezier 0.0 1.0 0.58 1.0" />
+        <kf t="1.000000" v="2.000000" e="cubicBezier 0.42 0.0 1.0 0.0" />
+      </property>
+      <property name="phase" type="float" value="0.000000" />
+      <property name="mirror" type="bool" value="true" />
+      <property name="vertoffs" type="bool" value="false" />
+      <property name="angle" type="float" value="0.000000" />
+    </effect>
+    <effect id="com.alightcreative.effects.oscillate" hidden="true">
+      <property name="angle" type="float">
+        <kf t="0.000000" v="118.800003" />
+        <kf t="1.000000" v="32.400002" e="cubicBezier 0.42 0.0 0.58 1.0" />
+      </property>
+      <property name="freq" type="float" value="4.452000" />
+      <property name="mag" type="float">
+        <kf t="0.000000" v="334.329987" />
+        <kf t="1.000000" v="1.000000" e="cubicBezier 0.0 0.61455435 0.100250795 1.0" />
+      </property>
+      <property name="type" type="int" value="0" />
+    </effect>
+    <effect id="com.alightcreative.effects.swing" hidden="true">
+      <property name="freq" type="float" value="2.000000" />
+      <property name="a1" type="float">
+        <kf t="0.000000" v="-10.000000" />
+        <kf t="1.000000" v="0.000000" e="cubicBezier 0.0 0.52464634 0.47215346 1.0" />
+      </property>
+      <property name="a2" type="float">
+        <kf t="0.000000" v="10.000000" />
+        <kf t="1.000000" v="0.000000" e="cubicBezier 0.0 0.60694385 0.58 1.0" />
+      </property>
+      <property name="phase" type="float" value="0.980000" />
+      <property name="type" type="int" value="0" />
+    </effect>
+    <effect id="com.alightcreative.effects.oscillate" hidden="true">
+      <property name="angle" type="float" value="0.000000" />
+      <property name="freq" type="float" value="2.000000" />
+      <property name="mag" type="float">
+        <kf t="0.000000" v="499.000000" />
+        <kf t="1.000000" v="1.000000" e="cubicBezier 0.0 0.6326618 0.58 1.0" />
+      </property>
+      <property name="type" type="int" value="0" />
+    </effect>
+    <effect id="com.alightcreative.effects.motionblur2" hidden="true">
+      <property name="tune" type="float" value="1.000000" />
+      <property name="usePos" type="bool" value="true" />
+      <property name="useScale" type="bool" value="true" />
+      <property name="useAngle" type="bool" value="true" />
+    </effect>
+    <effect id="com.alightcreative.effects.exposure" hidden="true">
+      <property name="exposure" type="float">
+        <kf t="0.000000" v="2.000000" />
+        <kf t="0.485866" v="0.000000" e="cubicBezier 0.0 0.5306417 0.58 1.0" />
+      </property>
+      <property name="gamma" type="float" value="1.000000" />
+      <property name="offset" type="float" value="0.000000" />
+    </effect>
+    <effect id="com.alightcreative.spotcolor2" hidden="true">
+      <property name="choke" type="float" value="2.220000" />
+      <property name="color" type="color" value="#ffff4444" />
+      <property name="feather" type="float" value="0.000000" />
+      <property name="threshold" type="float" value="2.000000" />
+      <property name="saturation" type="float" value="0.000000" />
+    </effect>
+    <effect id="com.alightcreative.effects.exposure">
+      <property name="exposure" type="float" value="0.800000" />
+      <property name="gamma" type="float" value="0.620000" />
+      <property name="offset" type="float" value="0.000000" />
+    </effect>
+    <effect id="com.alightcreative.effects.oscillate">
+      <property name="angle" type="float" value="0.000000" />
+      <property name="freq" type="float" value="1.272000" />
+      <property name="mag" type="float" value="25.000000" />
+      <property name="type" type="int" value="0" />
+    </effect>
+    <effect id="com.alightcreative.effects.swing">
+      <property name="freq" type="float" value="0.290000" />
+      <property name="a1" type="float">
+        <kf t="1.343738" v="0.000000" e="cubicBezier 0.0 0.52464634 0.47215346 1.0" />
+        <kf t="0.000000" v="-3.000000" />
+      </property>
+      <property name="a2" type="float">
+        <kf t="1.343738" v="0.000000" e="cubicBezier 0.0 0.60694385 0.58 1.0" />
+        <kf t="0.000000" v="3.000000" />
+      </property>
+      <property name="phase" type="float" value="0.980000" />
+      <property name="type" type="int" value="0" />
+    </effect>
+    <effect id="com.alightcreative.effects.tile">
+      <property name="scale" type="float" value="1.000000" />
+      <property name="phase" type="float" value="0.000000" />
+      <property name="mirror" type="bool" value="true" />
+      <property name="vertoffs" type="bool" value="false" />
+      <property name="angle" type="float" value="0.000000" />
+    </effect>
+    <gain value="0.000000" />
+    <path d="M -540.0 -960.0L 540.0 -960.0L 540.0 960.0L -540.0 960.0L -540.0 -960.0Z" />
+  </shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        // The layer is skipped as a freehand path shape, so it produces no clip and its effects —
+        // hidden or visible — are never read: no hidden-effects warning appears for it.
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
+        assertTrue(r.warnings.any { it.contains("freehand path shapes are not supported yet") })
+        assertTrue(r.warnings.none { it.contains("hidden effects are disabled") })
+    }
+
+    @Test
+    fun hiddenAndVisibleEffectsOnOneLayerOnlyTheVisibleOnesLand() {
+        // Modelled on the freefire stack — hidden oscillate / motionblur2 / spotcolor2 alongside
+        // visible tile and exposure, on a layer that does import: only the visible effects land, the
+        // hidden ones contribute nothing (no Motion Blur, no baked position keys, no "not supported"
+        // warning for the hidden spotcolor2) and are reported in ONE warning for the layer.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.tile" locallyApplied="true"><property name="scale" type="float" value="1" /><property name="phase" type="float" value="0" /><property name="mirror" type="bool" value="true" /><property name="vertoffs" type="bool" value="false" /><property name="angle" type="float" value="0" /></effect>
+  <effect id="com.alightcreative.effects.oscillate" hidden="true" locallyApplied="false"><property name="angle" type="float" value="90" /><property name="freq" type="float" value="1" /><property name="mag" type="float" value="100" /><property name="type" type="int" value="0" /></effect>
+  <effect id="com.alightcreative.effects.motionblur2" hidden="true"><property name="tune" type="float" value="1" /><property name="usePos" type="bool" value="true" /><property name="useScale" type="bool" value="true" /><property name="useAngle" type="bool" value="true" /></effect>
+  <effect id="com.alightcreative.spotcolor2" hidden="true"><property name="choke" type="float" value="2.22" /><property name="color" type="color" value="#ffff4444" /><property name="feather" type="float" value="0" /><property name="threshold" type="float" value="2" /><property name="saturation" type="float" value="0" /></effect>
+  <effect id="com.alightcreative.effects.exposure" locallyApplied="true"><property name="exposure" type="float" value="0.8" /><property name="gamma" type="float" value="0.62" /><property name="offset" type="float" value="0" /></effect>"""
+        ), 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val hiddenWarnings = r.warnings.filter { it.contains("hidden effects are disabled") }
+        assertEquals(1, hiddenWarnings.size)
+        assertEquals(
+            "Layer \"Box\": hidden effects are disabled in Alight Motion: skipped (oscillate, motionblur2, spotcolor2)",
+            hiddenWarnings[0]
+        )
+        assertTrue(r.warnings.none { it.contains("spotcolor2 is not supported") })
+        assertEquals(2, c.effects.size)
+        assertEquals(1, c.effects.count { it.type == ClipFxLibrary.TILE })
+        val exposures = c.effects.filter { it.type == ClipFxLibrary.EXPOSURE }
+        assertEquals(1, exposures.size)
+        assertEquals(0.8f, exposures[0].values[0], 0.001f)
+        assertTrue(c.effects.none { it.type == ClipFxLibrary.MOTION_BLUR })
+        assertTrue(c.keyframes[AnimProp.POSITION].isNullOrEmpty())
     }
 
     @Test

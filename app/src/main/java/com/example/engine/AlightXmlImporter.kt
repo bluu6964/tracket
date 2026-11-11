@@ -452,7 +452,8 @@ object AlightXmlImporter {
         val animators = ArrayList<TextAnimator>()
         for (fx in elementChildren(el).filter { it.tagName == "effect" }) {
             val id = fx.getAttribute("id")
-            if (id in TEXT_STORED) {
+            // A hidden effect is disabled in Alight: not stored (applyLayerEffects reports it as skipped).
+            if (id in TEXT_STORED && fx.getAttribute("hidden") != "true") {
                 val animator = readAnimator(fx, id, size)
                 animators += animator
                 if (id == TEXTPROGRESS) {
@@ -987,12 +988,19 @@ object AlightXmlImporter {
 
     /**
      * Every `<effect>` of a layer the readers did not consume themselves, in document order (Alight applies
-     * them in order too: a later fill effect wins over an earlier one).
+     * them in order too: a later fill effect wins over an earlier one). An effect with `hidden="true"` is
+     * DISABLED in Alight — it renders nothing there — so it is skipped here like Alight skips it (passes
+     * 1–3 imported the corpus's 16 hidden effects as if active); the layer gets ONE warning listing them.
      */
     private fun applyLayerEffects(el: Element, base: TimelineClip, ctx: Ctx, durMs: Long, target: FxTarget): TimelineClip {
         var clip = base
+        val hiddenSkipped = ArrayList<String>()
         for (fx in elementChildren(el).filter { it.tagName == "effect" }) {
             val id = fx.getAttribute("id")
+            if (fx.getAttribute("hidden") == "true") {
+                hiddenSkipped += id.substringAfterLast('.')
+                continue
+            }
             if (target == FxTarget.TEXT && id in TEXT_STORED) continue   // the text reader stored it already
             clip = when (id) {
                 SOLIDCOLOR -> applySolidColor(fx, clip, ctx, durMs, target)
@@ -1039,6 +1047,10 @@ object AlightXmlImporter {
                     clip
                 }
             }
+        }
+        if (hiddenSkipped.isNotEmpty()) {
+            ctx.warnings += "Layer \"" + base.name + "\": hidden effects are disabled in Alight Motion: skipped (" +
+                hiddenSkipped.joinToString(", ") + ")"
         }
         return clip
     }

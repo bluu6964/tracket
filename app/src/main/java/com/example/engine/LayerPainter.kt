@@ -313,7 +313,7 @@ internal class LayerPainter(
             )
         }
 
-        val maxTextW = (frameW * 0.9f - 2f * padH).toInt().coerceAtLeast(1)
+        val maxTextW = (frameW * (if (clip.textWrapFrac > 0f) clip.textWrapFrac else 0.9f) - 2f * padH).toInt().coerceAtLeast(1)
         val align = when (clip.textAlign) {
             0 -> Layout.Alignment.ALIGN_NORMAL
             2 -> Layout.Alignment.ALIGN_OPPOSITE

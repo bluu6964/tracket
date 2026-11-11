@@ -104,10 +104,16 @@ import kotlin.math.sin
  *    STARTS at, so every easing moves one keyframe back when a track is converted
  *  - `location` is in scene pixels from the top-left corner; the app stores the move from the canvas centre in PREVIEW
  *    pixels (see PreviewFrameRef), so it is scaled by previewWidthPx / sceneWidth
- *  - Alight text `size` * `scale` is the font height in scene pixels; the app's text is 0.11 * canvas width at 100 %
- *  - a shape's rendered size is `size` * transform `scale` in scene pixels. The app draws a shape in a 130 dp box;
- *    the canvas is taken as 360 dp wide (the usual phone canvas: 1080 px at density 3), so the box is
- *    sceneWidth * 130 / 360 scene pixels, and a stroke width in scene pixels becomes size * 360 / sceneWidth dp
+ *  - Alight text is measured in units of sceneWidth / 512 px: the rendered font height is
+ *    `size` * `scale` * sceneWidth / 512 scene pixels (measured on the ST Intro export: size 18 at
+ *    scale 0.84 on a 1920 scene renders about 57 px tall, not 15). The app's text is 0.11 * canvas
+ *    width at 100 %. `wrapWidth` is in scene pixels and becomes the layer's max text width.
+ *  - a shape's `size` is a HALF extent (centre to edge): the rendered size is 2 * `size` * transform
+ *    `scale` in scene pixels (a media shape sized 960x540 fills a 1920x1080 scene exactly; the ST
+ *    Intro background rect, size 100 at scale 9.915, covers the frame). The app draws a shape in a
+ *    130 dp box; the canvas is taken as 360 dp wide (the usual phone canvas: 1080 px at density 3),
+ *    so the box is sceneWidth * 130 / 360 scene pixels. A path stroke is stored relative to its
+ *    shape (the app scales a stroke with its layer): dp = 130 * stroke * scale / rendered width.
  *  - in the XML, later layers are on top
  */
 object AlightXmlImporter {
@@ -172,6 +178,9 @@ object AlightXmlImporter {
 
     private val KNOWN_FAMILIES = setOf("Roboto", "Serif", "Monospace", "Cursive")
     private const val APP_FONT_FRACTION = 0.11f
+
+    /** Alight text units: one unit is sceneWidth / [TEXT_REF_UNITS] px (see the header rules). */
+    private const val TEXT_REF_UNITS = 512f
 
     /** The app's shape box at 100 % (dp, see OverlayPose.shapeBoxPx) and the canvas width it is measured against. */
     private const val APP_SHAPE_BOX_DP = 130f
@@ -340,11 +349,16 @@ object AlightXmlImporter {
         val rot = tr.rot
         val opa = tr.opa ?: child(el, "opacity")?.let { readTrack(it) }
 
+        // Alight's font height in scene pixels: size x scale, in units of sceneWidth / 512 px.
         val fontBase = APP_FONT_FRACTION * ctx.sceneW
         fun scalePct(v: List<Float>): Float {
             if (v.size >= 2 && abs(v[0] - v[1]) > 1e-3f) w += "Non-uniform scale: only the horizontal scale is used"
-            return size * (v.firstOrNull() ?: 1f) / fontBase * 100f
+            val emPx = size * (v.firstOrNull() ?: 1f) * ctx.sceneW / TEXT_REF_UNITS
+            return emPx / fontBase * 100f
         }
+        // wrapWidth is in scene pixels: the widest line Alight allows before wrapping.
+        val wrapFrac = el.getAttribute("wrapWidth").toFloatOrNull()?.takeIf { it > 0f }
+            ?.let { (it / ctx.sceneW).coerceIn(0.05f, 1f) } ?: 0f
 
         val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
         fun keys(prop: AnimProp, t: Track?, map: (List<Float>) -> Pair<Float, Float>) {
@@ -397,6 +411,7 @@ object AlightXmlImporter {
             fontFamily = family,
             fontWeight = weight,
             textAlign = when (el.getAttribute("align")) { "left" -> 0; "right" -> 2; else -> 1 },
+            textWrapFrac = wrapFrac,
             scalePercent = scalePct(sclV ?: listOf(1f, 1f)),
             transformX = ctx.posX(locV ?: emptyList()),
             transformY = ctx.posY(locV ?: emptyList()),
@@ -470,14 +485,15 @@ object AlightXmlImporter {
         }
         warnBlending(el, w)
 
-        // Stroke: <path-stroke><color/><size/></path-stroke>; a disabled one draws nothing.
+        // Stroke: <path-stroke><color/><size/></path-stroke>; a disabled one draws nothing. The size is kept
+        // raw here and converted once the rendered width is known (the app scales a stroke with its layer,
+        // so the stored dp is relative to the shape: see where rendW is computed below).
         var strokeColor = 0xFFFFFFFFL
-        var strokeWidth = 0f
+        var strokeSz = 0f
         val strokeEl = child(el, "path-stroke")
         if (strokeEl != null && strokeEl.getAttribute("enabled") != "false") {
             strokeColor = child(strokeEl, "color")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
-            val sz = child(strokeEl, "size")?.getAttribute("value")?.toFloatOrNull() ?: 0f
-            strokeWidth = sz * CANVAS_DP / ctx.sceneW
+            strokeSz = child(strokeEl, "size")?.getAttribute("value")?.toFloatOrNull() ?: 0f
         }
 
         val sizeT = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "size" }
@@ -502,12 +518,21 @@ object AlightXmlImporter {
             }
         }
 
-        // Rendered size in scene pixels = size x transform scale; the app size is measured against its 130 dp box.
+        // Rendered size in scene pixels: Alight's `size` is a HALF extent (centre to edge), so the full
+        // extent is 2 x size x transform scale; the app size is measured against its 130 dp box.
         val box = ctx.shapeBoxPx
         val sizeV = sizeT?.first() ?: listOf(100f, 100f)
         val sclV = tr.scl?.first() ?: listOf(1f, 1f)
-        val rendW = (sizeV.getOrNull(0) ?: 100f) * (sclV.getOrNull(0) ?: 1f)
-        val rendH = (sizeV.getOrNull(1) ?: sizeV.getOrNull(0) ?: 100f) * (sclV.getOrNull(1) ?: sclV.getOrNull(0) ?: 1f)
+        val rendW = 2f * (sizeV.getOrNull(0) ?: 100f) * (sclV.getOrNull(0) ?: 1f)
+        val rendH = 2f * (sizeV.getOrNull(1) ?: sizeV.getOrNull(0) ?: 100f) * (sclV.getOrNull(1) ?: sclV.getOrNull(0) ?: 1f)
+        // The app's stroke width is in canvas dp at layer scale 1 and is scaled by the layer's own scale
+        // when drawn, so the stored value keeps the stroke's share of the shape's rendered width:
+        // dp = 130 * (stroke x scale) / rendW. A shape that starts at scale 0 keeps the plain conversion.
+        val strokeWidth = when {
+            strokeSz <= 0f -> 0f
+            rendW > 0f -> APP_SHAPE_BOX_DP * strokeSz * (sclV.getOrNull(0) ?: 1f) / rendW
+            else -> strokeSz * CANVAS_DP / ctx.sceneW
+        }
 
         val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
         fun keys(prop: AnimProp, t: Track?, map: (List<Float>) -> Pair<Float, Float>) {
@@ -660,14 +685,14 @@ object AlightXmlImporter {
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
     }
 
-    /** SCALE keyframes of a shape: the rendered width (size x scale, X axis) against the app's shape box. */
+    /** SCALE keyframes of a shape: the rendered width (2 x size x scale, X axis — size is a half extent) against the app's shape box. */
     private fun composedSizeKeys(sizeT: Track?, scaleT: Track?, durMs: Long, box: Float): List<Keyframe> {
         val times = ((sizeT?.keys ?: emptyList()) + (scaleT?.keys ?: emptyList())).map { it.t }.distinct().sorted()
         if (times.size < 2) return emptyList()
         fun widthAt(t: Float): Float {
             val sz = sizeT?.valueAt(t) ?: listOf(100f, 100f)
             val sc = scaleT?.valueAt(t) ?: listOf(1f, 1f)
-            return (sz.getOrNull(0) ?: 100f) * (sc.getOrNull(0) ?: 1f) / box * 100f
+            return 2f * (sz.getOrNull(0) ?: 100f) * (sc.getOrNull(0) ?: 1f) / box * 100f
         }
         return times.mapIndexed { i, t ->
             val next = times.getOrNull(i + 1)

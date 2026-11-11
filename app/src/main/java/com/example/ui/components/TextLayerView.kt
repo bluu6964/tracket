@@ -128,7 +128,7 @@ fun TextLayerContent(
 
     Box(
         modifier = modifier
-            .widthIn(max = width * 0.9f)
+            .widthIn(max = width * (if (clip.textWrapFrac > 0f) clip.textWrapFrac else 0.9f))
             .then(bgModifier)
             .padding(horizontal = padH, vertical = padV)
     ) {

@@ -64,8 +64,10 @@ $layers
     @Test
     fun sizeTimesScaleBecomesScalePercent() {
         val c = AlightXmlImporter.parse(riseUp, 1080f).snapshot.tracks.flatMap { it.clips }[0]
-        // 30 * 2 = 60 scene px; the app's text is 0.11 * 1080 = 118.8 px at 100 %
-        assertEquals(60f / (0.11f * 1080f) * 100f, c.scalePercent, 0.01f)
+        // 30 * 2 = 60 Alight text units; one unit is sceneWidth / 512 px, so the font renders
+        // 60 * 1080 / 512 = 126.6 scene px tall; the app's text is 0.11 * 1080 = 118.8 px at 100 %.
+        // (Until the ST Intro parity fix this read size x scale as plain scene px, ~3.75x too small.)
+        assertEquals(60f * 1080f / 512f / (0.11f * 1080f) * 100f, c.scalePercent, 0.01f)
     }
 
     @Test
@@ -262,14 +264,95 @@ $layers
         assertEquals("RECT", rect.shapePattern)
         assertEquals(0xFF0E0E0EL, rect.textColor)
         assertEquals(com.example.model.FILL_SOLID, rect.fillMode)
-        // size 100x100 x scale (10.7, 5.76) = 1070x576 scene px, against the 130 dp box
-        assertEquals(1070f / box3, rect.shapeScaleX, 0.001f)
-        assertEquals(576f / box3, rect.shapeScaleY, 0.001f)
-        assertEquals(1070f / box3 * 100f, rect.scalePercent, 0.01f)
+        // size 100x100 x scale (10.7, 5.76); Alight's size is a HALF extent (centre to edge), so the
+        // rendered size is 2 * 100 * 10.7 = 2140x1152 scene px, against the 130 dp box. (Until the ST
+        // Intro parity fix the factor 2 was missing and every imported shape rendered at half size.)
+        assertEquals(2140f / box3, rect.shapeScaleX, 0.001f)
+        assertEquals(1152f / box3, rect.shapeScaleY, 0.001f)
+        assertEquals(2140f / box3 * 100f, rect.scalePercent, 0.01f)
         assertEquals(0f, rect.transformX, 0.001f)   // centred in the scene
         assertEquals(0f, rect.transformY, 0.001f)
         assertEquals(5832L, rect.durationMs)
         assertEquals(null, rect.groupId)
+    }
+
+    // ---- ST Intro parity (2026-11-11): the layers below are the real file's Rectangle 1, Circle 3 and
+    // "Channel Name" text, verbatim except their gradient / spacing effects, which do not affect geometry.
+    // In Alight's own export the rect covers the frame, the circle grows past it, and the text is one
+    // ~57 px line; in After Motion's build-90 export the rect covered 52 % of the frame, the text was
+    // 15 px and wrapped to two lines. These tests pin the corrected unit readings.
+
+    private val stIntro = scene(
+        """<shape id="633194" label="Rectangle 1" startTime="0" endTime="8032" fillType="color" mediaFillMode="stretch" s=".rect"><transform><location value="960.000000,540.000000,0.000000" /><scale value="9.914999,5.577187" /></transform><fillColor value="#ff141620" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+<shape id="633202" label="Circle 3" startTime="4333" endTime="8032" fillType="color" mediaFillMode="stretch" s=".circle"><transform><location value="960.000000,540.000000,0.000000" /><scale><kf t="0.004596" v="0.000000,0.000000" /><kf t="0.229792" v="11.745000,11.745000" e="cubicBezier 0.0 0.6401906 1.0 0.9554121" /></scale></transform><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+<text id="633209" startTime="5166" endTime="8032" fillType="color" mediaFillMode="stretch" size="18.000000" font="googlefonts?name=Roboto&amp;weight=700" wrapWidth="512" align="center"><transform><location value="960.000000,726.500000,0.000000" /><scale value="0.839844,0.839844" /></transform><fillColor value="#ff9257ff" /><content>Channel Name</content></text>""",
+        1920, 1080
+    )
+
+    @Test
+    fun stIntroBackgroundCoversTheFrame() {
+        val clips = AlightXmlImporter.parse(stIntro, 1920f).snapshot.tracks.flatMap { it.clips }
+        val rect = clips.first { it.name == "Rectangle 1" }
+        // Rendered width = shapeScaleX x the 130 dp box, as a share of the 1920 scene: 2*100*9.915 = 1983 px.
+        val fracW = rect.shapeScaleX * box3 / 1920f
+        assertEquals(1983f / 1920f, fracW, 0.01f)
+        assertTrue(fracW > 0.95f && fracW < 1.1f)   // covers the frame (it was 0.52 before the fix)
+        // Circle 3 grows from nothing to scale 11.745: its peak diameter must pass the frame width.
+        val circle = clips.first { it.name == "Circle 3" }
+        val peak = circle.keyframes[AnimProp.SCALE]!!.maxOf { it.a }
+        val diameter = peak / 100f * box3
+        assertTrue("peak diameter $diameter", diameter >= 1920f)
+    }
+
+    @Test
+    fun stIntroTextHasAlightFontSizeAndWrapWidth() {
+        val clips = AlightXmlImporter.parse(stIntro, 1920f).snapshot.tracks.flatMap { it.clips }
+        val t = clips.first { it.type == LayerType.TEXT }
+        assertEquals("Channel Name", t.text)
+        // Font height at render: 18 * 0.839844 * 1920 / 512 = 56.7 scene px (Alight's export measures
+        // about 57; the old reading gave 15.1, which is why the text was tiny and wrapped).
+        val emPx = t.scalePercent / 100f * 0.11f * 1920f
+        assertEquals(56.7f, emPx, 1.5f)
+        // wrapWidth 512 scene px of a 1920 scene; at a ~57 px em the 12 glyphs need roughly 340 px,
+        // so the line fits its box on one line, as in Alight.
+        assertEquals(512f / 1920f, t.textWrapFrac, 0.001f)
+        assertTrue(t.textWrapFrac * 1920f > 400f)
+    }
+
+    @Test
+    fun importGeometryDoesNotDependOnThePreviewWidthBasis() {
+        // Positions are stored in preview pixels, so a stored offset grows with the preview width —
+        // but the rendered geometry (offset / basis, and every size) must be the same for any basis,
+        // including 0, which falls back to scene pixels. Regression guard for the fresh-import bug:
+        // the import used to run with whatever PreviewFrameRef happened to hold (0 before any export),
+        // while the export used the screen's real preview width, shifting every off-centre layer.
+        val xml = scene(
+            """<shape id="1" label="Box" startTime="0" endTime="1000" fillType="color" s=".rect">
+  <transform><location value="700,500,0" /><scale value="2,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <property name="size" type="vec2" value="100,50" /></shape>
+<text id="2" label="T" startTime="0" endTime="1000" size="20" font="googlefonts?name=Roboto&amp;weight=400" wrapWidth="512" align="center">
+  <transform><location value="300,1500,0" /><scale value="1.5,1.5" /></transform>
+  <content>Hi</content></text>""", 1080, 1920
+        )
+        fun clipsAt(pw: Float) = AlightXmlImporter.parse(xml, pw).snapshot.tracks.flatMap { it.clips }
+        val base = clipsAt(1080f)
+        for (pw in listOf(0f, 777f, 1920f)) {
+            val basis = if (pw > 1f) pw else 1080f   // parse falls back to the scene width
+            val clips = clipsAt(pw)
+            val box0 = base.first { it.name == "Box" }
+            val boxN = clips.first { it.name == "Box" }
+            assertEquals(box0.shapeScaleX, boxN.shapeScaleX, 0.001f)
+            assertEquals(box0.shapeScaleY, boxN.shapeScaleY, 0.001f)
+            assertEquals(box0.scalePercent, boxN.scalePercent, 0.01f)
+            assertEquals(box0.transformX / 1080f, boxN.transformX / basis, 0.001f)
+            assertEquals(box0.transformY / 1080f, boxN.transformY / basis, 0.001f)
+            val t0 = base.first { it.type == LayerType.TEXT }
+            val tN = clips.first { it.type == LayerType.TEXT }
+            assertEquals(t0.scalePercent, tN.scalePercent, 0.01f)
+            assertEquals(t0.textWrapFrac, tN.textWrapFrac, 0.001f)
+            assertEquals(t0.transformX / 1080f, tN.transformX / basis, 0.001f)
+        }
     }
 
     @Test
@@ -280,7 +363,10 @@ $layers
         assertEquals("CIRCLE", c.shapePattern)
         assertEquals(com.example.model.FILL_NONE, c.fillMode)
         assertEquals(0xFFFFFFFFL, c.strokeColor)
-        assertEquals(29.5f * 360f / 1920f, c.strokeWidth, 0.001f)   // scene px -> dp of a 360 dp canvas
+        // The app scales a stroke with its layer, so the stored dp keeps the stroke's share of the
+        // shape's rendered width: 130 * 29.5 / (2 * 100). (Was a plain scene-px -> dp conversion,
+        // which left imported strokes several times too thin once the layer scale was applied.)
+        assertEquals(130f * 29.5f / 200f, c.strokeWidth, 0.001f)   // relative to the shape's full width
         assertEquals(1666L, c.startMs)
         assertEquals(1533L, c.durationMs)
         assertEquals(group2.id, c.groupId)
@@ -347,16 +433,16 @@ $layers
         assertEquals("ROUNDED_RECT", outline.shapePattern)
         assertEquals(com.example.model.FILL_NONE, outline.fillMode)
         assertEquals(0xFF009DFFL, outline.strokeColor)
-        assertEquals(10f * 360f / 1920f, outline.strokeWidth, 0.001f)
-        // Fallback size = the first keyframe (522x136) x the transform scale 1.122605.
-        assertEquals(522f * 1.122605f / box3, outline.shapeScaleX, 0.001f)
-        assertEquals(136f * 1.122605f / box3, outline.shapeScaleY, 0.001f)
+        assertEquals(130f * 10f / (2f * 522f), outline.strokeWidth, 0.001f)   // stroke relative to the shape (see Circle 3)
+        // Fallback size = the first keyframe (522x136) x the transform scale 1.122605, x2 (half extent).
+        assertEquals(522f * 2f * 1.122605f / box3, outline.shapeScaleX, 0.001f)
+        assertEquals(136f * 2f * 1.122605f / box3, outline.shapeScaleY, 0.001f)
         val keys = outline.keyframes[AnimProp.SCALE]!!
         assertEquals(listOf(1016L, 1516L, 3183L, 3850L), keys.map { it.timeMs })
-        assertEquals(522f * 1.122605f / box3 * 100f, keys[0].a, 0.01f)
-        assertEquals(136f * 1.122605f / box3 * 100f, keys[1].a, 0.01f)
-        assertEquals(136f * 1.122605f / box3 * 100f, keys[2].a, 0.01f)
-        assertEquals(372f * 1.122605f / box3 * 100f, keys[3].a, 0.01f)
+        assertEquals(522f * 2f * 1.122605f / box3 * 100f, keys[0].a, 0.01f)
+        assertEquals(136f * 2f * 1.122605f / box3 * 100f, keys[1].a, 0.01f)
+        assertEquals(136f * 2f * 1.122605f / box3 * 100f, keys[2].a, 0.01f)
+        assertEquals(372f * 2f * 1.122605f / box3 * 100f, keys[3].a, 0.01f)
         // The easing sits on the Alight keyframe a segment ends at; the app wants it on the one it starts at.
         assertEquals(com.example.model.Easing(0.49f, 0f, 0.22f, 1f), keys[0].easing)
         assertTrue(keys[1].easing.isLinear)
@@ -371,8 +457,8 @@ $layers
         val keys = c.keyframes[AnimProp.SCALE]!!
         assertEquals(listOf(17L, 216L, 1716L), keys.map { it.timeMs })   // of its 1733 ms
         assertEquals(0f, keys[0].a, 0.001f)
-        assertEquals(100f * 0.245f / box3 * 100f, keys[1].a, 0.01f)
-        assertEquals(100f * 0.365f / box3 * 100f, keys[2].a, 0.01f)
+        assertEquals(200f * 0.245f / box3 * 100f, keys[1].a, 0.01f)   // x2: size is a half extent
+        assertEquals(200f * 0.365f / box3 * 100f, keys[2].a, 0.01f)
         assertEquals(com.example.model.Easing(0.4f, 0f, 0.26333332f, 1f), keys[0].easing)
         assertEquals(com.example.model.Easing(0.61f, 0f, 0.64f, 1f), keys[1].easing)
         assertTrue(keys[2].easing.isLinear)
@@ -637,8 +723,9 @@ $layers
         assertEquals(com.example.model.FILL_IMAGE, c.fillMode)
         assertEquals("content://media/external/images/media/53288", c.fillImageUri)
         assertEquals(com.example.model.IMG_STRETCH, c.fillImageMode)
-        assertEquals(200f / (1080f * 130f / 360f), c.shapeScaleX, 0.001f)
-        assertEquals(50f / (1080f * 130f / 360f), c.shapeScaleY, 0.001f)
+        // size 100x50 at scale (2,1), half extent: the rendered size is 400x100 scene px.
+        assertEquals(400f / (1080f * 130f / 360f), c.shapeScaleX, 0.001f)
+        assertEquals(100f / (1080f * 130f / 360f), c.shapeScaleY, 0.001f)
     }
 
     @Test
@@ -892,7 +979,7 @@ $layers
   <content>A</content></text>"""
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
-        val base = 60f / (0.11f * 1080f) * 100f
+        val base = 60f * 1080f / 512f / (0.11f * 1080f) * 100f   // text units of sceneWidth / 512 px (see sizeTimesScaleBecomesScalePercent)
         val keys = c.keyframes[AnimProp.SCALE]!!
         assertEquals(listOf(0L, 500L, 1000L, 1500L, 2000L), keys.map { it.timeMs })
         assertEquals(base, keys[0].a, 0.01f)
@@ -911,9 +998,10 @@ $layers
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
         val box = 1080f * 130f / 360f
-        assertEquals(200f / box, c.shapeScaleX, 0.001f)
-        assertEquals(100f / box, c.shapeScaleY, 0.001f)
-        assertEquals(200f / box * 100f, c.scalePercent, 0.01f)
+        // size 100x50 renders 200x100 (half extent), then scaleassist x2 on both axes: 400x200.
+        assertEquals(400f / box, c.shapeScaleX, 0.001f)
+        assertEquals(200f / box, c.shapeScaleY, 0.001f)
+        assertEquals(400f / box * 100f, c.scalePercent, 0.01f)
     }
 
     @Test
@@ -1315,7 +1403,7 @@ $layers
   <content>A</content></text>"""
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
-        val base = 30f / (0.11f * 1080f) * 100f
+        val base = 30f * 1080f / 512f / (0.11f * 1080f) * 100f   // text units of sceneWidth / 512 px
         val keys = c.keyframes[AnimProp.SCALE]!!
         assertEquals(base * 1.1f, keys.first().a, base * 0.01f)        // mid + amp * sin(0)
         assertTrue(keys.maxOf { it.a } > base * 1.18f)                  // up to maxsize
@@ -1328,7 +1416,7 @@ $layers
             """<effect id="com.alightcreative.effects.transform" locallyApplied="true"><property name="scale" type="float" value="2" /><property name="alpha" type="float" value="0.5" /><property name="angle" type="float" value="0" /></effect>"""
         ))
         val box = 1080f * 130f / 360f
-        assertEquals(200f / box * 100f, c.scalePercent, 0.01f)   // the shape's own scale x 2
+        assertEquals(400f / box * 100f, c.scalePercent, 0.01f)   // the shape's own scale (200/box after the half-extent fix) x 2
         assertEquals(50f, c.opacity, 0.001f)
     }
 

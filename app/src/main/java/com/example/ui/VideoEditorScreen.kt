@@ -1780,9 +1780,16 @@ fun VideoEditorScreen(
                             val n = b.read(head).coerceAtLeast(0)
                             b.reset()
                             if (com.example.engine.AlightXmlImporter.looksLikeAlightXml(head.copyOf(n))) {
+                                // Positions are stored in preview pixels: the importer must get the SAME
+                                // preview width the export will use (this screen's state), not the engine's
+                                // frame ref — that ref is still 0 on a fresh import, which made the importer
+                                // fall back to scene pixels and shifted every off-centre layer at export.
                                 val x = com.example.engine.AlightXmlImporter.parse(
-                                    b, com.example.engine.PreviewFrameRef.widthPx
+                                    b, previewFrameWidthPx
                                 )
+                                if (previewFrameWidthPx > 1f) {
+                                    com.example.engine.PreviewFrameRef.widthPx = previewFrameWidthPx
+                                }
                                 val meta = projectStore.create(x.name, x.snapshot)
                                 Triple(
                                     meta, x.snapshot,

@@ -112,6 +112,11 @@ data class TimelineClip(
     val letterSpacing: Float = 0f,
     /** Line height, 80..200 (percent). */
     val lineHeightPercent: Float = 120f,
+    /**
+     * Widest line of text as a fraction of the frame width; 0 = the app default (0.9). An imported
+     * Alight layer keeps its `wrapWidth` (in scene pixels) here so its lines break where Alight's did.
+     */
+    val textWrapFrac: Float = 0f,
     /** Text outline thickness, 0..100 (0 = no outline). */
     val textStrokeThickness: Float = 0f,
     val textStrokeColor: Long = 0xFF000000,

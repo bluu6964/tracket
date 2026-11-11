@@ -128,7 +128,16 @@ fun TextLayerContent(
 
     Box(
         modifier = modifier
-            .widthIn(max = width * (if (clip.textWrapFrac > 0f) clip.textWrapFrac else 0.9f))
+            // An authored wrap width (textWrapFrac, from an Alight import) is an on-screen share of
+            // the frame; this box is laid out unscaled and scaled by the caller, so it is divided by
+            // the layer's scale — the same conversion as the render painters (see textLayoutBoxWidth).
+            .widthIn(
+                max = width * (
+                    if (clip.textWrapFrac > 0f) {
+                        clip.textWrapFrac / (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f)
+                    } else 0.9f
+                    )
+            )
             .then(bgModifier)
             .padding(horizontal = padH, vertical = padV)
     ) {

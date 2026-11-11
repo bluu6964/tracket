@@ -2,10 +2,16 @@ package com.example
 
 import com.example.engine.AlightXmlImporter
 import com.example.engine.CounterEval
+import com.example.engine.ParentRig
+import com.example.engine.textLayoutBoxWidth
 import com.example.model.AnimProp
 import com.example.model.ClipFxLibrary
 import com.example.model.LayerType
+import com.example.model.effectiveScalePercent
 import com.example.model.packColor
+import com.example.model.renderAt
+import com.example.model.shapeDrawScaleX
+import com.example.model.shapeDrawScaleY
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -373,8 +379,11 @@ $layers
         val link = c.parent!!
         assertEquals(group2.id, link.id)
         // The link's ref point is the group's pivot (0, 26.62) in the children's own frame: rest scale / rotation.
-        assertEquals(-960f, link.refX, 0.001f)
-        assertEquals(26.620605f - 540f, link.refY, 0.001f)
+        // (Build 93: the ref used to be pivot - child centre, which displaced every group child by about
+        // half a frame in build 91's phone comparison; Alight's <pivot> is the anchor's offset FROM the
+        // child scene's centre.)
+        assertEquals(0f, link.refX, 0.001f)
+        assertEquals(26.620605f, link.refY, 0.001f)
         assertEquals(100f, link.refScale, 0f)
         assertEquals(0f, link.refRot, 0f)
     }
@@ -387,17 +396,20 @@ $layers
         assertEquals(0L, group2.startMs)
         assertEquals(5833L, group2.durationMs)
         assertEquals(61.7748f, group2.scalePercent, 0.001f)
-        assertEquals(-12.5f, group2.transformY, 0.001f)
+        // The group's stored position is its anchor: loc (960, 527.5) + pivot (0, 26.62), centre-relative
+        // (build 93; before, the pivot was left out and the children carried the error instead).
+        assertEquals(14.120605f, group2.transformY, 0.001f)
         // A group inside it is itself a child of it.
         val group1 = clips.first { it.name == "Group 1" }
         assertEquals(group2.id, group1.groupId)
         assertEquals(group2.id, group1.parent!!.id)
         assertEquals(109.3878f, group1.scalePercent, 0.001f)
         // The group's own keyframed move / turn, with the easing of the segment it ends at moved one key back.
+        // The position keys are the anchor's: loc + pivot (-432.02, 0), centre-relative (build 93).
         val pos = group1.keyframes[AnimProp.POSITION]!!
         assertEquals(listOf(1016L, 1516L), pos.map { it.timeMs })
-        assertEquals(-0.5f, pos[0].a, 0.001f)
-        assertEquals(434.0308f, pos[1].a, 0.001f)
+        assertEquals(-432.51996f, pos[0].a, 0.001f)
+        assertEquals(2.0108f, pos[1].a, 0.001f)
         assertEquals(com.example.model.Easing(0.49f, 0f, 0.22333324f, 1f), pos[0].easing)
         val rot = group1.keyframes[AnimProp.ROTATION]!!
         assertEquals(listOf(0f, 180f), rot.map { it.a })
@@ -412,6 +424,92 @@ $layers
         val texts = clips.filter { it.type == LayerType.TEXT }
         assertEquals(2, texts.size)
         assertTrue(texts.all { it.groupId == textGroup.id })
+    }
+
+
+    // ---- Build 93: group-child geometry (ST Intro parity). The scene below is verbatim from the real
+    // ST Intro export: the "Group 1 Copy" pill group, the "Logo Here" group and the root-level end-card
+    // text. Alight reference (build-91 phone comparison): at 2.0 s the pill is 781x157 px centred at
+    // (960.5, 538.5); at the end card the logo sits at the frame centre with "Channel Name" on ONE line.
+
+    private val stIntroGroups = """<?xml version='1.0' encoding='UTF-8' ?>
+<scene title="ST Intro" width="1920" height="1080" exportWidth="1920" exportHeight="1080" precompose="dynamicResolution" bgcolor="#ff000000" totalTime="8032" fps="60" modifiedTime="1751521510607" amver="1002506" ffver="106" am="com.alightcreative.motion/5.0.199" amplatform="android" retime="freeze" retimeAdaptFPS="false">
+<embedScene id="633599" label="Group 1 Copy" startTime="0" endTime="8032" fillType="intrinsic" mediaFillMode="stretch"><transform><location value="959.000000,544.500000,0.000000" /><pivot value="7.500000,-8.500000" /></transform><fillColor value="#ff000000" /><shadow direction="outside" enabled="false"><color value="#ff2f1363" /><opacity value="0.400000" /><size value="63.000000" /><offset value="25.000000,25.000000" /></shadow><scene title="" width="1920" height="1080" exportWidth="1920" exportHeight="1080" precompose="dynamicResolution" bgcolor="#00000000" totalTime="8032" fps="30" modifiedTime="0" amver="1002592" ffver="106" am="com.alightcreative.motion/5.0.271.1002592" amplatform="android" retime="off" retimeAdaptFPS="false"><shape id="633216" label="Circle 2" startTime="1900" endTime="5065" fillType="color" mediaFillMode="stretch" s=".roundrect"><transform><location><kf t="0.352607" v="962.033203,534.500000,0.000000" /><kf t="0.552923" v="1360.459595,534.500000,0.000000" e="cubicBezier 0.44 0.0 0.13 1.0" /><kf t="0.573776" v="1360.459595,534.500000,0.000000" /><kf t="0.774092" v="962.033203,534.500000,0.000000" e="cubicBezier 0.87 0.0 0.56 1.0" /></location><scale><kf t="0.721327" v="0.792888,0.792888" /><kf t="0.826540" v="0.007222,0.007222" e="cubicBezier 0.44 0.0 0.13 1.0" /></scale></transform><fillColor><kf t="0.721327" v="#ffffffff" /><kf t="0.826540" v="#ffffffff" /></fillColor><effect id="com.alightcreative.effects.scaleassist" locallyApplied="true"><property name="axis" type="int" value="3" /><property name="scale" type="float"><kf t="0.573776" v="1.000000" /><kf t="0.721327" v="1.175000" e="cubicBezier 0.87 0.0 0.56 1.0" /><kf t="0.826540" v="1.000000" e="cubicBezier 0.44 0.0 0.13 1.0" /></property><property name="damp" type="float" value="1.000000" /></effect><property name="size" type="vec2"><kf t="-0.595261" v="100.000000,100.000000" /><kf t="-0.384518" v="494.000000,100.000000" e="cubicBezier 0.43666667 0.0 0.12666665 1.0" /><kf t="0.247393" v="494.000000,100.000000" /><kf t="0.552923" v="100.000000,100.000000" e="cubicBezier 0.44 0.0 0.13 1.0" /></property><property name="cornerRadius" type="float" value="100.000000" /></shape><shape id="633218" label="Circle Copy" startTime="0" endTime="8032" fillType="color" mediaFillMode="stretch" s=".roundrect"><transform><location><kf t="0.375498" v="962.033264,534.500000,0.000000" /><kf t="0.541584" v="962.033264,534.500000,0.000000" e="cubicBezier 0.87 0.0 0.56 1.0" /><kf t="0.454432" v="560.038818,534.500000,0.000000" e="cubicBezier 0.36333334 0.0 0.28666666 1.0" /><kf t="0.462649" v="560.038818,534.500000,0.000000" /></location><scale><kf t="0.520792" v="0.792888,0.792888" /><kf t="0.562251" v="1.335000,1.335000" e="cubicBezier 0.44 0.0 0.13 1.0" /></scale></transform><fillColor><kf t="0.541584" v="#ffffffff" /><kf t="0.562251" v="#ff7a32ff" /></fillColor><effect id="com.alightcreative.effects.scaleassist" locallyApplied="true"><property name="axis" type="int" value="3" /><property name="scale" type="float"><kf t="0.462649" v="1.000000" /><kf t="0.520792" v="1.175000" e="cubicBezier 0.87 0.0 0.56 1.0" /><kf t="0.562251" v="1.000000" e="cubicBezier 0.44 0.0 0.13 1.0" /></property><property name="damp" type="float" value="1.000000" /></effect><property name="size" type="vec2"><kf t="0.001992" v="100.000000,100.000000" /><kf t="0.085035" v="494.000000,100.000000" e="cubicBezier 0.43666667 0.0 0.12666665 1.0" /><kf t="0.334039" v="494.000000,100.000000" /><kf t="0.454432" v="100.000000,100.000000" e="cubicBezier 0.44 0.0 0.13 1.0" /></property><property name="cornerRadius" type="float" value="100.000000" /></shape><shape id="633219" label="send-message.png" startTime="0" endTime="2899" fillType="media" fillImage="content://media/external/images/media/53288" mediaFillMode="stretch" s=".rect"><transform><location><kf t="0.000000" v="967.187012,534.500000,0.000000" /><kf t="0.235598" v="1276.017090,534.500000,0.000000" e="cubicBezier 0.44 0.0 0.13 1.0" /></location><scale><kf t="0.741290" v="0.066808,0.066808" /><kf t="0.890997" v="0.066808,0.066808" /><kf t="0.810280" v="0.040379,0.040379" /></scale><opacity><kf t="0.925492" v="1.000000" /><kf t="0.994481" v="0.000000" /></opacity></transform><effect id="com.alightcreative.solidcolor" locallyApplied="true"><property name="color" type="color" value="#ffb891ff" /><property name="alpha" type="float" value="1.000000" /><property name="blendMode" type="int" value="0" /></effect><property name="size" type="vec2" value="540.000000,540.000000" /></shape><text id="633220" startTime="666" endTime="2899" fillType="color" mediaFillMode="stretch" size="18.000000" font="imported?name=MontserratAlternates-Bold.otf" wrapWidth="512" align="left"><transform><location value="870.454651,532.517761,0.000000" /><scale value="0.792888,0.792888" /><opacity><kf t="0.903269" v="1.000000" /><kf t="0.992835" v="0.000000" /></opacity></transform><fillColor value="#ffb891ff" /><effect id="com.alightcreative.effects.textprogress" locallyApplied="true"><property name="start" type="float" value="0.000000" /><property name="end" type="float"><kf t="0.007613" v="0.000000" /><kf t="0.619794" v="1.000000" /></property><property name="cursor" type="int" value="0" /><property name="blink" type="bool" value="false" /></effect><content>Channel Name</content></text></scene></embedScene>
+<embedScene id="633205" label="Logo Here" startTime="4133" endTime="8032" fillType="intrinsic" outTime="-2147482782" mediaFillMode="stretch"><transform><location value="960.000000,540.000000,0.000000" /><scale><kf t="0.012824" v="0.000000,0.000000" /><kf t="0.132342" v="0.380216,0.380216" e="cubicBezier 0.44 0.0 0.13 1.0" /></scale></transform><fillColor value="#ff000000" /><scene title="" width="1920" height="1080" exportWidth="1920" exportHeight="1080" precompose="dynamicResolution" bgcolor="#00000000" totalTime="3032" fps="30" modifiedTime="0" amver="1002592" ffver="106" am="com.alightcreative.motion/5.0.271.1002592" amplatform="android" retime="off" retimeAdaptFPS="false"><shape id="633203" label="images.png" startTime="0" endTime="3032" fillType="media" fillImage="content://media/external/images/media/1000033464" mediaFillMode="stretch" s=".rect"><transform><location value="960.000000,540.000000,0.000000" /></transform><property name="size" type="vec2" value="960.000000,503.500000" /></shape><shape id="633204" label="Mask" startTime="0" endTime="3032" fillType="color" blending="mask" mediaFillMode="stretch" s=".circle"><transform><location value="960.000000,540.000000,0.000000" /><scale value="3.235000,3.235000" /></transform><fillColor value="#ffd1c251" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape></scene></embedScene>
+<text id="633209" startTime="5166" endTime="8032" fillType="color" mediaFillMode="stretch" size="18.000000" font="googlefonts?name=Roboto&amp;weight=700" wrapWidth="512" align="center"><transform><location value="960.000000,726.500000,0.000000" /><scale value="0.839844,0.839844" /></transform><fillColor value="#ff9257ff" /><effect id="com.alightcreative.effects.textspacing" locallyApplied="true"><property name="letterspacing" type="float" value="0.130000" /><property name="linespacing" type="float" value="1.000000" /></effect><content>Channel Name</content></text>
+</scene>"""
+
+    @Test
+    fun stIntroGroupChildrenLandWhereAlightPutsThem() {
+        val clips = AlightXmlImporter.parse(stIntroGroups, 1920f).snapshot.tracks.flatMap { it.clips }
+        val rig = ParentRig(clips) { c, t -> c.renderAt(t) }
+        // The pill (Circle Copy) at 2.0 s: its location holds the first key (962.03, 534.5); composed
+        // through the group's anchor (loc 959,544.5 + pivot 7.5,-8.5) the centre lands at (1, -1) stored
+        // = (961, 539) absolute — Alight measured (960.5, 538.5). Before build 93 it landed at the
+        // bottom-right corner.
+        val pill = rig.adjusted(clips.first { it.name == "Circle Copy" }, 2000L)!!
+        assertEquals(1f, pill.transformX, 6f)
+        assertEquals(-1f, pill.transformY, 6f)
+        // And it keeps its shape: 783x159 px on screen (the size keyframes animate 100x100 -> 494x100).
+        // Before build 93 the height followed the width and it drew as a 783x783 disk.
+        val boxW = 1920f * 130f / 360f
+        assertEquals(783f, pill.shapeDrawScaleX * boxW, 40f)
+        assertEquals(159f, pill.shapeDrawScaleY * boxW, 25f)
+        // The end card: "Logo Here" scales 0 -> 0.380216 about the frame centre, so its Mask child
+        // composes to the centre — and, being a mask, it is hidden (in build 91 it painted a yellow
+        // circle over the card). Drawn diameter if it were shown: 0.9332 (its own size-based scale)
+        // x 0.380216 (the group's) x the 693 px app box = 246 px, Alight's 647 x 0.380216.
+        val mask = clips.first { it.name == "Mask" }
+        assertFalse(mask.isVisible)
+        val atCard = rig.adjusted(mask, 5500L)!!
+        assertEquals(0f, atCard.transformX, 6f)
+        assertEquals(0f, atCard.transformY, 6f)
+        assertEquals(246f, atCard.shapeDrawScaleX * (1920f * 130f / 360f), 8f)
+    }
+
+    @Test
+    fun stIntroEndCardTextBoxFitsItsLine() {
+        val clips = AlightXmlImporter.parse(stIntroGroups, 1920f).snapshot.tracks.flatMap { it.clips }
+        // The end-card "Channel Name" is a ROOT-level layer (not a group child): wrapWidth 512 of 1920.
+        val text = clips.first { it.type == LayerType.TEXT && it.parent == null }
+        assertEquals(512f / 1920f, text.textWrapFrac, 0.001f)
+        // Its layout box lives in unscaled layout units (font 211.2 px) and is scaled by ~0.268 when
+        // drawn, so the box must be ~512/0.268 wide there: "Channel Name" needs ~1400 layout px on one
+        // line. Build 91 used the raw fraction and got a ~110 px on-screen box (a 2-letter column).
+        val box = textLayoutBoxWidth(1920f, text.textWrapFrac, text.effectiveScalePercent / 100f, 52.8f)
+        assertTrue(box > 1400f)
+        assertEquals(483.6f, box * text.effectiveScalePercent / 100f, 20f)   // on screen: ~512 - padding
+        // App-made text (no authored width) is untouched by the conversion.
+        assertEquals(1920f * 0.9f - 2f * 52.8f, textLayoutBoxWidth(1920f, 0f, 0.2684f, 52.8f), 0.5f)
+    }
+
+    @Test
+    fun nestedGroupWithSmallerSceneUsesTheChildBasis() {
+        // Root 1920x1080; the group's own scene is 960x540 and the group scales it x2 about its anchor
+        // (loc + pivot). Children are stored in the CHILD scene's basis and composed around the pivot.
+        val xml = scene(
+            """<embedScene id="g" label="G" startTime="0" endTime="2000" fillType="intrinsic">
+<transform><location value="960.000000,540.000000,0.000000" /><pivot value="10.000000,20.000000" /><scale value="2.000000,2.000000" /></transform>
+<scene title="" width="960" height="540" totalTime="2000" fps="30">
+<shape id="c1" label="Centre" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="480.000000,270.000000,0.000000" /></transform><fillColor value="#ffff0000" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+<shape id="c2" label="Corner" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="960.000000,540.000000,0.000000" /></transform><fillColor value="#ff00ff00" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+</scene>
+</embedScene>""", w = 1920, h = 1080
+        )
+        val clips = AlightXmlImporter.parse(xml, 1920f).snapshot.tracks.flatMap { it.clips }
+        val g = clips.first { it.name == "G" }
+        assertEquals(10f, g.transformX, 0.001f)    // anchor = loc + pivot, centre-relative
+        assertEquals(20f, g.transformY, 0.001f)
+        val rig = ParentRig(clips) { c, t -> c.renderAt(t) }
+        // Child centre -> anchor + 2 x (centre - anchor-in-child-frame) = (10,20) + 2 x (-10,-20).
+        val centre = rig.adjusted(clips.first { it.name == "Centre" }, 0L)!!
+        assertEquals(-10f, centre.transformX, 0.01f)
+        assertEquals(-20f, centre.transformY, 0.01f)
+        // Child bottom-right corner (960,540 of a 960x540 scene) -> (10,20) + 2 x (470,250) = (950,520),
+        // i.e. just inside the root's own bottom-right (960,540 stored): the x2 scene covers the frame.
+        val corner = rig.adjusted(clips.first { it.name == "Corner" }, 0L)!!
+        assertEquals(950f, corner.transformX, 0.01f)
+        assertEquals(520f, corner.transformY, 0.01f)
     }
 
     @Test
@@ -443,6 +541,10 @@ $layers
         assertEquals(136f * 2f * 1.122605f / box3 * 100f, keys[1].a, 0.01f)
         assertEquals(136f * 2f * 1.122605f / box3 * 100f, keys[2].a, 0.01f)
         assertEquals(372f * 2f * 1.122605f / box3 * 100f, keys[3].a, 0.01f)
+        // The height rides in `b` (build 93): the size's height is 136 in every keyframe, so every key
+        // carries the same height % — and the layer keeps its 522x136 -> 136x136 aspect while animating.
+        assertEquals(136f * 2f * 1.122605f / box3 * 100f, keys[0].b, 0.01f)
+        assertEquals(136f * 2f * 1.122605f / box3 * 100f, keys[3].b, 0.01f)
         // The easing sits on the Alight keyframe a segment ends at; the app wants it on the one it starts at.
         assertEquals(com.example.model.Easing(0.49f, 0f, 0.22f, 1f), keys[0].easing)
         assertTrue(keys[1].easing.isLinear)
@@ -485,7 +587,8 @@ $layers
         val r = threeResult()
         assertTrue(r.warnings.any { it.contains("solidcolor") })
         assertTrue(r.warnings.any { it.contains("movealongpath3") })
-        assertTrue(r.warnings.any { it.contains("\"mask\"") })
+        // Mask layers get their own warning since build 93 (they are imported hidden, not as normal layers).
+        assertTrue(r.warnings.any { it.contains("is a mask in Alight") })
         assertTrue(r.warnings.any { it.contains("plain line") })
     }
 

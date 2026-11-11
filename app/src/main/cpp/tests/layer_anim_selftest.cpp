@@ -88,6 +88,19 @@ int main() {
         CHECK(near(f.cropX, (1.f - 0.75f) * 0.25f, 0.002f));
         CHECK(near(f.cropY, (1.f - 0.70f) * 0.75f, 0.002f));
     }
+    {   // scale_bComponentIsTheSeparateHeightScale (build 93): a SCALE track's b reaches clipAt as
+        // scaleYPercent; without b it stays 0 (the height follows the width, as before).
+        LayerAnim c = clip();
+        c.keys[P_SCALE] = {K(0, 100.f, 50.f), K(2000, 200.f, 80.f)};
+        c.finalize();
+        ClipValues v = c.clipAt(2000, 2000);  // 1000 ms into the layer: halfway through both components
+        CHECK(near(v.scalePercent, 150.f, 0.01f));
+        CHECK(near(v.scaleYPercent, 65.f, 0.01f));
+        LayerAnim plain = clip();
+        plain.keys[P_SCALE] = {K(0, 100.f), K(2000, 200.f)};
+        plain.finalize();
+        CHECK(plain.clipAt(2000, 2000).scaleYPercent == 0.f);
+    }
     {   // opacity_isAnimatedWithEasing
         LayerAnim c = clip();
         c.keys[P_OPACITY] = {K(0, 0.f), K(1000, 100.f)};

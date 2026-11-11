@@ -328,7 +328,9 @@ internal class LayerPainter(
             )
         }
 
-        val maxTextW = (frameW * (if (clip.textWrapFrac > 0f) clip.textWrapFrac else 0.9f) - 2f * padH).toInt().coerceAtLeast(1)
+        // Same conversion as the native painter (see textLayoutBoxWidth): an authored wrap width is an
+        // on-screen share of the frame, the layout here is unscaled and scaled only when drawn below.
+        val maxTextW = textLayoutBoxWidth(frameW.toFloat(), clip.textWrapFrac, scale, padH).toInt()
         val align = when (clip.textAlign) {
             0 -> Layout.Alignment.ALIGN_NORMAL
             2 -> Layout.Alignment.ALIGN_OPPOSITE

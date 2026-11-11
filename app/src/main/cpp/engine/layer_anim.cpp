@@ -190,6 +190,7 @@ ClipValues LayerAnim::clipAt(int64_t timeMs, int64_t trackMs) const {
     }
     o.posZ = pz.a;
     o.scalePercent = scl.a * trackScl;
+    o.scaleYPercent = scl.b * trackScl;
     o.rotationDeg = rot.a + trackRotDeg;
     o.cropWPercent = cs.a;
     o.cropHPercent = cs.b;

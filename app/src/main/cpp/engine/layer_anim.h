@@ -71,6 +71,9 @@ struct ClipValues {
     float fillA, fillB, grad1A, grad1B, grad2A, grad2B;
     // Stroke trim at the time (outline fractions); the statics when the layer has no trim keyframes.
     float strokeTrimStart = 0, strokeTrimEnd = 1;
+    // Separate height scale % of a SCALE track's `b` component (a shape's animated height, build 93);
+    // 0 = none (the height follows scalePercent, as before). Includes the tracking zoom, like scalePercent.
+    float scaleYPercent = 0;
 };
 
 class LayerAnim {

@@ -240,7 +240,13 @@ fun TimelineClip.propValues(p: AnimProp): Pair<Float, Float> = when (p) {
 
 fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when (p) {
     AnimProp.POSITION -> copy(transformX = a, transformY = b, shapeOffsetX = a, shapeOffsetY = b)
-    AnimProp.SCALE -> copy(scalePercent = a, shapeScaleX = a / 100f, shapeScaleY = a / 100f)
+    // SCALE: `a` is the width scale %; `b` > 0 is a separate height scale % (the Alight importer stores a
+    // shape's animated height there, see composedSizeKeys). b = 0 (everything the editor / presets write)
+    // keeps the uniform meaning: the height follows the width, exactly as before.
+    AnimProp.SCALE -> copy(
+        scalePercent = a, shapeScaleX = a / 100f,
+        shapeScaleY = if (b > 0f) b / 100f else a / 100f
+    )
     AnimProp.ROTATION -> copy(rotationDeg = a)
     AnimProp.POS_Z -> copy(transformZ = a)
     AnimProp.ROT_X -> copy(rotation3dX = a)

@@ -130,16 +130,17 @@ JNIEXPORT void JNICALL Java_com_example_engine_AnimNative_nativeEval(JNIEnv* env
     env->SetFloatArrayRegion(out, 0, env->GetArrayLength(out) < 17 ? env->GetArrayLength(out) : 17, v);
 }
 
-// Preview: out[21] = posX, posY, posZ, scale%, rotationDeg, cropW%, cropH%, cropX%, cropY%, opacity%, speed, rotX, rotY,
-//            fill a/b, grad1 a/b, grad2 a/b (packed colours), strokeTrimStart, strokeTrimEnd (outline fractions)
+// Preview: out[22] = posX, posY, posZ, scale%, rotationDeg, cropW%, cropH%, cropX%, cropY%, opacity%, speed, rotX, rotY,
+//            fill a/b, grad1 a/b, grad2 a/b (packed colours), strokeTrimStart, strokeTrimEnd (outline fractions),
+//            scaleY% (a SCALE track's b: a shape's separate height scale; 0 = follows scale%)
 JNIEXPORT void JNICALL Java_com_example_engine_AnimNative_nativeClipAt(JNIEnv* env, jclass, jlong p, jlong timeMs,
                                                                        jlong trackMs, jfloatArray out) {
     const am::ClipValues c = A(p)->clipAt(timeMs, trackMs);
-    const jfloat v[21] = {c.posX,         c.posY,         c.posZ,         c.scalePercent,   c.rotationDeg,  c.cropWPercent,
+    const jfloat v[22] = {c.posX,         c.posY,         c.posZ,         c.scalePercent,   c.rotationDeg,  c.cropWPercent,
                           c.cropHPercent, c.cropXPercent, c.cropYPercent, c.opacityPercent, c.speed,
                           c.rotX,         c.rotY,         c.fillA,        c.fillB,          c.grad1A,       c.grad1B,
-                          c.grad2A,       c.grad2B,       c.strokeTrimStart, c.strokeTrimEnd};
-    const jsize n = env->GetArrayLength(out) < 21 ? env->GetArrayLength(out) : 21;
+                          c.grad2A,       c.grad2B,       c.strokeTrimStart, c.strokeTrimEnd, c.scaleYPercent};
+    const jsize n = env->GetArrayLength(out) < 22 ? env->GetArrayLength(out) : 22;
     env->SetFloatArrayRegion(out, 0, n, v);
 }
 

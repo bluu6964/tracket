@@ -545,9 +545,6 @@ object AlightXmlImporter {
         val sizeKeys = composedSizeKeys(sizeT, tr.scl, durMs, box)
         if (sizeKeys.isNotEmpty()) {
             keyframes[AnimProp.SCALE] = sizeKeys
-            if (sizeT != null && sizeAspectVaries(sizeT, tr.scl)) {
-                w += "Keyframed shape size: only the width is animated in the app, the height follows it"
-            }
         }
 
         val posX = ctx.posX(tr.loc?.first() ?: emptyList())
@@ -556,6 +553,7 @@ object AlightXmlImporter {
             id = UUID.randomUUID().toString(),
             name = el.getAttribute("label").ifBlank { "Shape" },
             type = LayerType.SHAPE,
+            isVisible = !isMaskLayer(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = SHAPE_COLOR,
@@ -663,6 +661,7 @@ object AlightXmlImporter {
             id = UUID.randomUUID().toString(),
             name = el.getAttribute("label").ifBlank { if (isArrow) "Arrow" else "Line" },
             type = LayerType.SHAPE,
+            isVisible = !isMaskLayer(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = SHAPE_COLOR,
@@ -685,7 +684,13 @@ object AlightXmlImporter {
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
     }
 
-    /** SCALE keyframes of a shape: the rendered width (2 x size x scale, X axis — size is a half extent) against the app's shape box. */
+    /**
+     * SCALE keyframes of a shape: the rendered width AND height (2 x size x scale — size is a half extent)
+     * against the app's shape box, as the keyframes' `a` / `b`. Both components are animated: until build 93
+     * only the width was stored (b = 0) and the height followed the first keyframe's aspect, which drew a
+     * keyframed pill (ST Intro's 494x100 roundrect) as a square disk. A `b` of 0 keeps its old meaning
+     * (uniform: the height follows the width) for keyframes the editor / presets write.
+     */
     private fun composedSizeKeys(sizeT: Track?, scaleT: Track?, durMs: Long, box: Float): List<Keyframe> {
         val times = ((sizeT?.keys ?: emptyList()) + (scaleT?.keys ?: emptyList())).map { it.t }.distinct().sorted()
         if (times.size < 2) return emptyList()
@@ -694,43 +699,53 @@ object AlightXmlImporter {
             val sc = scaleT?.valueAt(t) ?: listOf(1f, 1f)
             return 2f * (sz.getOrNull(0) ?: 100f) * (sc.getOrNull(0) ?: 1f) / box * 100f
         }
+        fun heightAt(t: Float): Float {
+            val sz = sizeT?.valueAt(t) ?: listOf(100f, 100f)
+            val sc = scaleT?.valueAt(t) ?: listOf(1f, 1f)
+            val sy = sc.getOrNull(1) ?: sc.getOrNull(0) ?: 1f
+            return 2f * (sz.getOrNull(1) ?: sz.getOrNull(0) ?: 100f) * sy / box * 100f
+        }
         return times.mapIndexed { i, t ->
             val next = times.getOrNull(i + 1)
             val e = if (next == null) Easing.LINEAR
             else sizeT?.keyAt(next)?.easing ?: scaleT?.keyAt(next)?.easing ?: Easing.LINEAR
-            Keyframe((t.coerceIn(0f, 1f) * durMs).roundToLong(), widthAt(t), 0f, e)
+            Keyframe((t.coerceIn(0f, 1f) * durMs).roundToLong(), widthAt(t), heightAt(t), e)
         }.distinctBy { it.timeMs }
-    }
-
-    /** True when the keyframed size changes its height/width ratio (the app animates the width only). */
-    private fun sizeAspectVaries(sizeT: Track, scaleT: Track?): Boolean {
-        val times = (sizeT.keys.map { it.t } + (scaleT?.keys?.map { it.t } ?: emptyList())).distinct()
-        var lo = Float.MAX_VALUE
-        var hi = 0f
-        for (t in times) {
-            val sz = sizeT.valueAt(t)
-            val wdt = sz.getOrNull(0) ?: 0f
-            val hgt = sz.getOrNull(1) ?: 0f
-            if (wdt <= 0f) continue
-            val r = hgt / wdt
-            if (r < lo) lo = r
-            if (r > hi) hi = r
-        }
-        return hi > 0f && lo < Float.MAX_VALUE && hi / lo.coerceAtLeast(1e-6f) > 1.05f
     }
 
     private fun warnBlending(el: Element, w: MutableList<String>) {
         val b = el.getAttribute("blending")
-        if (b.isNotEmpty()) w += "Layer blending \"" + b + "\"" + labelOf(el) + " is not supported yet: imported as a normal layer"
+        if (b.isEmpty()) return
+        if (b == "mask") {
+            // A mask layer is never drawn in Alight — it cuts the layer below it. The app cannot apply
+            // that cut yet, so the layer is imported hidden instead of as a normal filled layer (which
+            // painted e.g. ST Intro's yellow "Mask" circle over the end card in build 91).
+            w += "Layer" + labelOf(el) + " is a mask in Alight: imported hidden (applying the mask to the layer below is not supported yet)"
+        } else {
+            w += "Layer blending \"" + b + "\"" + labelOf(el) + " is not supported yet: imported as a normal layer"
+        }
     }
+
+    /** True when the layer is an Alight mask (`blending="mask"`): it must not be drawn itself. */
+    private fun isMaskLayer(el: Element): Boolean = el.getAttribute("blending") == "mask"
 
     // ---- groups (embedScene) ------------------------------------------------------------------------------------
 
     /**
      * An `<embedScene>` -> the clips of its nested scene (times remapped into the parent's timeline) plus a real
      * Group layer on top of them. The nested layers keep their own positions: they follow the group through a
-     * [ParentLink] whose ref pose is the REST pose, so the group's whole transform reaches them (see ParentRig),
-     * measured around the embed's pivot: the link saves the pivot in the children's own coordinate frame.
+     * [ParentLink] (see ParentRig), measured around the embed's pivot.
+     *
+     * Alight's group composition, pinned by Sarowar's build-91 phone comparison of ST Intro (the importer used
+     * to store the pivot as an absolute child-scene point — ref = pivot − centre — which threw every child
+     * ~half a frame toward the bottom-right; measured error on "Logo Here" was (+365, +205) px at scale 0.38,
+     * exactly (scene centre × group scale)): the XML `location` is where the nested scene's CENTRE sits in the
+     * parent, and `<pivot>` is the anchor's offset from that centre (the corpus values cluster around 0, e.g.
+     * (7.5, −8.5); (−960, −540) is the top-left corner). The transform acts about the anchor, so the group
+     * clip's stored pose is the anchor itself (location + pivot, the pivot in the parent's frame) and the
+     * link's ref point is the pivot in the children's own (centre-relative) frame: at rest ParentRig then
+     * gives world = location + pivot + R·S·(child − pivot), which reproduces both measured ST Intro groups
+     * to under a pixel (the pill at (961, 539), the "Logo Here" mask at the frame centre).
      */
     private fun readGroup(el: Element, ctx: Ctx): Pair<List<TimelineClip>, TimelineClip>? {
         val w = ctx.warnings
@@ -764,12 +779,11 @@ object AlightXmlImporter {
         }
 
         val groupId = UUID.randomUUID().toString()
-        val link = ParentLink(
-            groupId,
-            ((pivotV.getOrNull(0) ?: 0f) - nW / 2f) * ctx.k,
-            ((pivotV.getOrNull(1) ?: 0f) - nH / 2f) * ctx.k,
-            100f, 0f
-        )
+        // The pivot in stored (preview) units: the link's ref point in the children's centre-relative
+        // frame, and the offset of the group's own stored pose (the anchor) in the parent's frame.
+        val pivotX = (pivotV.getOrNull(0) ?: 0f) * ctx.k
+        val pivotY = (pivotV.getOrNull(1) ?: 0f) * ctx.k
+        val link = ParentLink(groupId, pivotX, pivotY, 100f, 0f)
         val directIds = content.direct.mapTo(HashSet()) { it.id }
         val remapped = content.flat.mapNotNull { c ->
             val linked = if (c.id in directIds) c.copy(groupId = groupId, parent = link) else c
@@ -785,7 +799,7 @@ object AlightXmlImporter {
             val l = trackKeys(t, durMs, map)
             if (l.isNotEmpty()) keyframes[prop] = l
         }
-        keys(AnimProp.POSITION, tr.loc) { ctx.posX(it) to ctx.posY(it) }
+        keys(AnimProp.POSITION, tr.loc) { (ctx.posX(it) + pivotX) to (ctx.posY(it) + pivotY) }
         keys(AnimProp.SCALE, tr.scl) { scalePct(it) to 0f }
         keys(AnimProp.ROTATION, tr.rot) { (it.firstOrNull() ?: 0f) to 0f }
         keys(AnimProp.OPACITY, tr.opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
@@ -797,8 +811,8 @@ object AlightXmlImporter {
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = GROUP_COLOR,
-            transformX = ctx.posX(tr.loc?.first() ?: emptyList()),
-            transformY = ctx.posY(tr.loc?.first() ?: emptyList()),
+            transformX = ctx.posX(tr.loc?.first() ?: emptyList()) + pivotX,
+            transformY = ctx.posY(tr.loc?.first() ?: emptyList()) + pivotY,
             scalePercent = scalePct(tr.scl?.first() ?: listOf(1f, 1f)),
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
@@ -1170,9 +1184,13 @@ object AlightXmlImporter {
                 scaleT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } + listOf(0L, durMs))
                 .distinct().sorted()
             val keys = times.map { t ->
-                val base = baseKeys?.valueAt(t)?.first ?: clip0.scalePercent
+                val base = baseKeys?.valueAt(t)
+                // A shape's SCALE keys carry its height in `b` (see composedSizeKeys): the multiplier
+                // scales both, with the static height as the fallback when there are no base keys.
+                val baseA = base?.first ?: clip0.scalePercent
+                val baseB = base?.second ?: if (clip0.type == LayerType.SHAPE) clip0.shapeScaleY * 100f else 0f
                 val f = scaleT.scalarAt(if (durMs > 0L) t.toFloat() / durMs else 0f)
-                Keyframe(t, base * f, 0f, Easing.LINEAR)
+                Keyframe(t, baseA * f, baseB * f, Easing.LINEAR)
             }.distinctBy { it.timeMs }
             val firstA = keys.firstOrNull()?.a ?: clip0.scalePercent
             var clip = clip0.copy(scalePercent = firstA, keyframes = clip0.keyframes + (AnimProp.SCALE to keys))
@@ -1191,7 +1209,7 @@ object AlightXmlImporter {
             clip = clip.copy(shapeScaleX = clip0.shapeScaleX * f, shapeScaleY = clip0.shapeScaleY * f)
         }
         if (baseKeys != null) {
-            clip = clip.copy(keyframes = clip.keyframes + (AnimProp.SCALE to baseKeys.map { it.copy(a = it.a * f) }))
+            clip = clip.copy(keyframes = clip.keyframes + (AnimProp.SCALE to baseKeys.map { it.copy(a = it.a * f, b = it.b * f) }))
         }
         return clip
     }
@@ -2091,8 +2109,10 @@ object AlightXmlImporter {
             val amp = (maxT.scalarAt(n) - minAt(n)) / 2f
             val f = mid + amp * sin(phase).toFloat()
             if (t == 0L) factor0 = f
-            val base = baseKeys?.valueAt(t)?.first ?: clip0.scalePercent
-            raw += Keyframe(t, base * f, 0f, Easing.LINEAR)
+            val base = baseKeys?.valueAt(t)
+            val baseA = base?.first ?: clip0.scalePercent
+            val baseB = base?.second ?: if (clip0.type == LayerType.SHAPE) clip0.shapeScaleY * 100f else 0f
+            raw += Keyframe(t, baseA * f, baseB * f, Easing.LINEAR)
         }
         val keys = simplifyKeys(raw, 0.05f, 0.05f)
         val firstA = keys.firstOrNull()?.a ?: clip0.scalePercent

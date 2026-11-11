@@ -86,7 +86,12 @@ internal class NativeTextPainter(
         val bgOn = clip.bgOpacity > 0f
         val padH = maxOf(fontPx * 0.25f, if (bgOn) fontPx * clip.bgPadding / 100f * 0.9f else 0f)
         val padV = maxOf(fontPx * 0.12f, if (bgOn) fontPx * clip.bgPadding / 100f * 0.5f else 0f)
-        val maxTextW = (frameW * (if (clip.textWrapFrac > 0f) clip.textWrapFrac else 0.9f) - 2f * padH).toInt().coerceAtLeast(1)
+        // The authored wrap width is an on-screen share of the frame; the layout below is unscaled,
+        // so it is converted into layout units (see textLayoutBoxWidth).
+        val maxTextW = textLayoutBoxWidth(
+            frameW.toFloat(), clip.textWrapFrac,
+            (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f), padH
+        ).toInt()
 
         p[0] = fontPx
         p[1] = fontPx * clip.letterSpacing / 100f

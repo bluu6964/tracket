@@ -51,13 +51,14 @@ internal class NativeLayerAnim private constructor(private var ptr: Long) : Auto
         return out
     }
 
-    private val clipOut = FloatArray(21)
+    private val clipOut = FloatArray(22)
 
     /**
      * Preview: the clip fields at [timeMs] (keyframes + tracking of the picture at [trackMs]), same as Kotlin
      * renderAt. [0] posX [1] posY [2] posZ [3] scale% [4] rotationDeg [5] cropW% [6] cropH% [7] cropX% [8] cropY%
      * [9] opacity% [10] speed [11] rotX [12] rotY [13..14] fill a,b [15..16] grad1 a,b [17..18] grad2 a,b
-     * [19] strokeTrimStart [20] strokeTrimEnd. The returned array is reused by the next call.
+     * [19] strokeTrimStart [20] strokeTrimEnd [21] scaleY% (a SCALE track's b; 0 = follows scale%).
+     * The returned array is reused by the next call.
      */
     fun clipAt(timeMs: Long, trackMs: Long): FloatArray {
         AnimNative.nativeClipAt(ptr, timeMs, trackMs, clipOut)

@@ -63,7 +63,8 @@ internal object NativeRenderAt {
                 transformZ = v[2],
                 scalePercent = v[3],
                 shapeScaleX = if (scaled) v[3] / 100f else if (trackScaled) c.shapeScaleX * v[3] / c.scalePercent else c.shapeScaleX,
-                shapeScaleY = if (scaled) v[3] / 100f else if (trackScaled) c.shapeScaleY * v[3] / c.scalePercent else c.shapeScaleY,
+                // A SCALE track's b (v[21]) is a shape's separate height scale; 0 = uniform, as before.
+                shapeScaleY = if (scaled) (if (v[21] > 0f) v[21] / 100f else v[3] / 100f) else if (trackScaled) c.shapeScaleY * v[3] / c.scalePercent else c.shapeScaleY,
                 rotationDeg = v[4],
                 cropWidthPercent = v[5], cropHeightPercent = v[6],
                 cropHorizontalPercent = v[7], cropVerticalPercent = v[8],

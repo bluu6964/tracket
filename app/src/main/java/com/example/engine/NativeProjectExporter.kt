@@ -600,8 +600,8 @@ class NativeProjectExporter(private val context: Context) {
                                 // undoing the layer's own turn, so the picture's turn puts each copy back on the scene-space grid.
                                 val drawn = if (g.pose) rendered.flatMap { c ->
                                     val upright = if (cam.activeFor(c, timeMs)) uprightForCamera(c) else uprightForPose(c)
-                                    RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg)
-                                } else rendered.flatMap { RepeatEval.copiesOf(it) }
+                                    RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg, timeMs = timeMs)
+                                } else rendered.flatMap { RepeatEval.copiesOf(it, timeMs = timeMs) }
                                 // The mask layer cutting this picture (a masked layer always has a picture of
                                 // its own): evaluated like every layer and part of the key, so the cut follows
                                 // the mask's own animation. Outside the mask's span there is no cut.

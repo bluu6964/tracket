@@ -101,6 +101,11 @@ object ClipFxLibrary {
     // drawn once per copy with a shifted / turned / scaled pose. Its native type (56) never reaches the
     // shaders either (fxParseOps skips it: it is above FX_MAX), and toNative skips it like Motion Blur.
     const val REPEAT = "repeat"
+    // Repeat Radial / Repeat Scatter: the other two arrangements of Alight's repeat family (copies on a
+    // ring / scattered over a disc), resolved by RepeatEval in the same draw loops; native types 57 / 58
+    // sit above FX_MAX for the same reason.
+    const val REPEAT_RADIAL = "repeat_radial"
+    const val REPEAT_SCATTER = "repeat_scatter"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -185,6 +190,40 @@ object ClipFxLibrary {
                 FxParamDef("Offset Y", -500f, 500f, 0f, "px", step = 5f),
                 FxParamDef("Angle", -360f, 360f, 0f, "°", step = 3f),
                 FxParamDef("Scale", 0f, 200f, 100f, "%", step = 5f),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%", step = 5f)
+            )
+        ),
+        // Repeat Radial is resolved in the draw loop like Repeat: values[0] is the copy count,
+        // [1] the ring radius in preview px, [2] the first copy's angle, [3] the sweep the copies
+        // share, [4] the copies' orientation, [5] the copies' scale (%), [6] the copies' opacity
+        // (%). Values [7] (the per-copy turn), [8] (the per-copy scale step) and [9..11] (the
+        // alternating copies' colour, packed + flag) are written by the Alight importer only and
+        // survive panel edits like every value past the declared params.
+        FxDef(
+            REPEAT_RADIAL, 57, "Repeat Radial", "Distort", "Copies the layer on a circle around itself",
+            listOf(
+                FxParamDef("Count", 1f, 50f, 4f),
+                FxParamDef("Radius", 0f, 2000f, 200f, "px", step = 5f),
+                FxParamDef("Start Angle", -360f, 360f, 0f, "°", step = 3f),
+                FxParamDef("Sweep", 0f, 360f, 360f, "°", step = 3f),
+                FxParamDef("Orientation", -360f, 360f, 0f, "°", step = 3f),
+                FxParamDef("Copy Scale", 0f, 200f, 100f, "%", step = 5f),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%", step = 5f)
+            )
+        ),
+        // Repeat Scatter likewise: values[0] is the copy count, [1] the field radius in preview px,
+        // [2..3] the field offset, [4] the field seed, [5] the copy scale floor (%), [6] the copies'
+        // opacity (%). Values [7] (the field angle), [8..11] (the evolution track: t0, v0, t1, v1)
+        // and [12..14] (the alternating copies' colour, packed + flag) are the importer's.
+        FxDef(
+            REPEAT_SCATTER, 58, "Repeat Scatter", "Distort", "Scatters copies of the layer over a disc",
+            listOf(
+                FxParamDef("Count", 1f, 50f, 12f),
+                FxParamDef("Radius", 0f, 2000f, 400f, "px", step = 5f),
+                FxParamDef("Offset X", -1000f, 1000f, 0f, "px", step = 5f),
+                FxParamDef("Offset Y", -1000f, 1000f, 0f, "px", step = 5f),
+                FxParamDef("Seed", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Copy Scale", 0f, 100f, 20f, "%", step = 5f),
                 FxParamDef("Alpha", 0f, 100f, 100f, "%", step = 5f)
             )
         ),
@@ -643,12 +682,15 @@ object ClipFxLibrary {
      * The enabled effects as the flat array the C++ engine reads (groups of 8 floats: type, p0..p6), or null when there
      * is nothing to run. Max [MAX_EFFECTS] effects. Motion Blur is NOT emitted here: it needs the layer's motion at
      * the frame time, so [com.example.engine.MotionBlurEval.resolve] rewrites it to directional / radial blurs first
-     * (use that at every per-frame call site); Repeat is NOT emitted either: [com.example.engine.RepeatEval.copiesOf]
-     * draws the layer once per copy in the overlay loops. A layer with only Motion Blur or only Repeat still counts
+     * (use that at every per-frame call site); the Repeat family is NOT emitted either: [com.example.engine.RepeatEval.copiesOf]
+     * draws the layer once per copy in the overlay loops. A layer with only Motion Blur or only a Repeat still counts
      * in [hasEffects].
      */
     fun toNative(effects: List<ClipFx>): FloatArray? {
-        val on = effects.filter { it.enabled && def(it.type) != null && it.type != MOTION_BLUR && it.type != REPEAT }.take(MAX_EFFECTS)
+        val on = effects.filter {
+            it.enabled && def(it.type) != null && it.type != MOTION_BLUR && it.type != REPEAT &&
+                it.type != REPEAT_RADIAL && it.type != REPEAT_SCATTER
+        }.take(MAX_EFFECTS)
         if (on.isEmpty()) return null
         val out = FloatArray(on.size * 8)
         on.forEachIndexed { i, fx ->

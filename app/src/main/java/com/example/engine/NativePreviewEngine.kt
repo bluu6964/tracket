@@ -708,8 +708,8 @@ class NativePreviewEngine(context: Context) {
             // turn, so the picture's turn puts each copy back on the scene-space grid (see RepeatEval).
             val drawClips = if (g.pose) texts.flatMap { c ->
                 val upright = if (cam.activeFor(c, t)) uprightForCamera(c) else uprightForPose(c)
-                RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg)
-            } else texts.flatMap { RepeatEval.copiesOf(it) }
+                RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg, timeMs = t)
+            } else texts.flatMap { RepeatEval.copiesOf(it, timeMs = t) }
             // An imported text animator changes the picture with the time: the time is part of the key for those layers only.
             val animTimes = drawClips.map { if (it.textAnimators.isNotEmpty()) t else -1L }
             // The mask layer cutting this picture (a masked layer always has a picture of its own): the mask

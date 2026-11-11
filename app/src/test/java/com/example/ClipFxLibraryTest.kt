@@ -21,10 +21,11 @@ class ClipFxLibraryTest {
     }
 
     @Test fun nativeTypesCoverTheEngineRange() {
-        // FX_BLUR (1) .. FX_COPY_BG (54), plus FX_MOTION_BLUR (55) and FX_REPEAT (56): every type
-        // the engine knows has a tile, none outside that range. 55 and 56 are the odd ones: Kotlin
-        // resolves them before they reach the engine, and fxParseOps skips them (they sit above FX_MAX).
-        assertEquals((1..56).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+        // FX_BLUR (1) .. FX_COPY_BG (54), plus FX_MOTION_BLUR (55), FX_REPEAT (56), FX_REPEAT_RADIAL
+        // (57) and FX_REPEAT_SCATTER (58): every type the engine knows has a tile, none outside that
+        // range. 55..58 are the odd ones: Kotlin resolves them before they reach the engine, and
+        // fxParseOps skips them (they sit above FX_MAX).
+        assertEquals((1..58).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
     }
 
     @Test fun motionBlurIsSkippedByToNativeButCountsAsAnEffect() {
@@ -47,6 +48,18 @@ class ClipFxLibraryTest {
         val flat = ClipFxLibrary.toNative(listOf(rp, blur))!!
         assertEquals(8, flat.size)
         assertEquals(1f, flat[0], 0f)
+    }
+
+    @Test fun repeatRadialAndScatterAreSkippedByToNativeButCountAsEffects() {
+        val rr = ClipFxLibrary.create(ClipFxLibrary.REPEAT_RADIAL)!!
+        assertEquals(listOf(4f, 200f, 0f, 360f, 0f, 100f, 100f), rr.values)
+        assertNull(ClipFxLibrary.toNative(listOf(rr)))   // needs the draw loop: RepeatEval.copiesOf first
+        assertTrue(ClipFxLibrary.hasEffects(listOf(rr)))
+        val rs = ClipFxLibrary.create(ClipFxLibrary.REPEAT_SCATTER)!!
+        assertEquals(listOf(12f, 400f, 0f, 0f, 0f, 20f, 100f), rs.values)
+        assertNull(ClipFxLibrary.toNative(listOf(rs)))
+        assertTrue(ClipFxLibrary.hasEffects(listOf(rs)))
+        assertFalse(ClipFxLibrary.hasEffects(listOf(rs.copy(enabled = false))))
     }
 
     @Test fun everyEffectHasValidParams() {

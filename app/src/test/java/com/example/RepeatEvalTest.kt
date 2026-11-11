@@ -5,9 +5,11 @@ import com.example.model.ClipFx
 import com.example.model.ClipFxLibrary
 import com.example.model.LayerType
 import com.example.model.TimelineClip
+import com.example.model.packColor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.hypot
 
 class RepeatEvalTest {
 
@@ -113,5 +115,111 @@ class RepeatEvalTest {
         val c = shape().copy(effects = listOf(off, on))
         assertEquals(4, RepeatEval.countOf(RepeatEval.repeatOf(c)!!))
         assertTrue(RepeatEval.repeatOf(shape()) == null)
+    }
+
+    // ---- repeat.radial: copies on a ring, none at the centre -----------------------------
+
+    /** values = [count, radius, startAngle, sweep, orientation, baseScale %, alpha %, angle, scale %, alt...]. */
+    private fun radial(
+        count: Float = 4f, radius: Float = 100f, startAngle: Float = 0f, sweep: Float = 360f,
+        orientation: Float = 0f, baseScale: Float = 50f, alpha: Float = 100f, angle: Float = 0f,
+        scaleStep: Float = 100f, alt: List<Float> = listOf(0f, 0f, 0f)
+    ) = ClipFx(
+        type = ClipFxLibrary.REPEAT_RADIAL,
+        values = listOf(count, radius, startAngle, sweep, orientation, baseScale, alpha, angle, scaleStep) + alt
+    )
+
+    @Test
+    fun radialPutsCopiesOnARingAndSkipsTheCentre() {
+        val copies = RepeatEval.copiesOf(shape(fx = radial()))
+        assertEquals(4, copies.size)
+        // The layer sits at (10, 20). Angles 0 / 90 / 180 / 270 clockwise from straight up; the ring
+        // radius is TWICE the stored radius (frame-measured against Alight's ST Intro export).
+        val expected = listOf(10f to -180f, 210f to 20f, 10f to 220f, -190f to 20f)
+        copies.forEachIndexed { i, copy ->
+            assertEquals(expected[i].first, copy.transformX, 0.01f)
+            assertEquals(expected[i].second, copy.transformY, 0.01f)
+        }
+        assertTrue(copies.none { it.transformX == 10f && it.transformY == 20f })
+        // Each copy is turned by its ring angle; all are drawn at baseScale.
+        assertEquals(listOf(0f, 90f, 180f, 270f), copies.map { it.rotationDeg })
+        copies.forEach { assertEquals(50f, it.scalePercent, 0.001f) }
+    }
+
+    @Test
+    fun radialStartAngleAndOrientationTurnTheRing() {
+        // The ST Intro ring: start -175, sweep 353 over 4 copies, orientation -45, baseScale 0.35.
+        val copies = RepeatEval.copiesOf(
+            shape(fx = radial(startAngle = -175f, sweep = 353f, orientation = -45f, baseScale = 35f))
+        )
+        val angles = listOf(-175.0, -86.75, 1.5, 89.75)
+        copies.forEachIndexed { i, copy ->
+            val dx = (copy.transformX - 10f).toDouble()
+            val dy = (copy.transformY - 20f).toDouble()
+            assertEquals(angles[i], Math.toDegrees(kotlin.math.atan2(dx, -dy)), 0.01)
+            assertEquals(200.0, hypot(dx, dy), 0.01)
+            // Turned by ring angle + orientation; scaled by baseScale.
+            assertEquals((angles[i] - 45.0).toFloat(), copy.rotationDeg, 0.01f)
+            assertEquals(35f, copy.scalePercent, 0.001f)
+        }
+    }
+
+    @Test
+    fun radialAltColourPaintsTheOddCopies() {
+        val (pa, pb) = packColor(0xFFB891FFL)
+        val c = shape(fx = radial(alt = listOf(pa, pb, 1f))).copy(textColor = 0xFFFFFFFFL)
+        val copies = RepeatEval.copiesOf(c)
+        assertEquals(0xFFFFFFFFL, copies[0].textColor)
+        assertEquals(0xFFB891FFL, copies[1].textColor)
+        assertEquals(0xFFFFFFFFL, copies[2].textColor)
+        assertEquals(0xFFB891FFL, copies[3].textColor)
+    }
+
+    // ---- repeat.scatter: copies over a disc, drifting with the evolution ------------------
+
+    /** values = [count, radius, offsetX, offsetY, seed, scaleFloor %, alpha %, angle, evolution..., alt...]. */
+    private fun scatter(
+        count: Float = 10f, radius: Float = 500f, seed: Float = 0.23f,
+        alt: List<Float> = listOf(0f, 0f, 0f)
+    ) = ClipFx(
+        type = ClipFxLibrary.REPEAT_SCATTER,
+        // The ST Intro Circle 1 evolution (0 -> 1.79, 1 -> 2.45); offsets zero.
+        values = listOf(count, radius, 0f, 0f, seed, 13f, 100f, 0f, 0f, 1.79f, 1f, 2.45f) + alt
+    )
+
+    @Test
+    fun scatterKeepsCopiesInTheDiscAndDriftsWithEvolution() {
+        val c = shape(fx = scatter())   // clip spans 0..2000 ms, sits at (10, 20)
+        val atStart = RepeatEval.copiesOf(c, timeMs = 0L)
+        val atMid = RepeatEval.copiesOf(c, timeMs = 1000L)
+        assertEquals(10, atMid.size)
+        atMid.forEach { copy ->
+            assertTrue(hypot(copy.transformX - 10f, copy.transformY - 20f) <= 500.5f)
+            assertTrue(copy.scalePercent in 12.9f..100.1f)   // between the 13% floor and full size
+            assertEquals(100f, copy.opacity, 0.001f)
+        }
+        // Deterministic: the same frame time gives the same field.
+        assertEquals(atMid, RepeatEval.copiesOf(c, timeMs = 1000L))
+        // The evolution (1.79 -> 2.45 across the clip) moves the field.
+        val moved = atStart.indices.count { i ->
+            hypot(atStart[i].transformX - atMid[i].transformX, atStart[i].transformY - atMid[i].transformY) > 20f
+        }
+        assertTrue(moved >= 4)
+    }
+
+    @Test
+    fun scatterAltColourPaintsTheOddCopies() {
+        val (pa, pb) = packColor(0xFFB891FFL)
+        val c = shape(fx = scatter(alt = listOf(pa, pb, 1f))).copy(textColor = 0xFFFFFFFFL)
+        val copies = RepeatEval.copiesOf(c, timeMs = 1000L)
+        copies.forEachIndexed { i, copy ->
+            assertEquals(if (i % 2 == 1) 0xFFB891FFL else 0xFFFFFFFFL, copy.textColor)
+        }
+    }
+
+    @Test
+    fun scatterCountIsCappedAtTheDrawCap() {
+        val copies = RepeatEval.copiesOf(shape(fx = scatter(count = 150f)), timeMs = 0L)
+        assertEquals(RepeatEval.MAX_COUNT, copies.size)
     }
 }

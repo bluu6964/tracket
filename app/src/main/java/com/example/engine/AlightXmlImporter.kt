@@ -967,13 +967,8 @@ object AlightXmlImporter {
                 TRANSFORMFX -> applyTransformFx(fx, clip, ctx, durMs)
                 LIFT -> applyLift(fx, clip, ctx)
                 REPEAT -> applyRepeat(fx, clip, ctx)
-                REPEAT_RADIAL, REPEAT_SCATTER -> {
-                    // A circle of copies / a scattered field: a different arrangement from the plain
-                    // repeat, with no counterpart yet — named, not silently dropped.
-                    ctx.warnings += "Effect " + id.substringAfter("effects.") +
-                        " is not supported yet: the app cannot repeat a layer in a circle / scattered: skipped"
-                    clip
-                }
+                REPEAT_RADIAL -> applyRepeatRadial(fx, clip, ctx)
+                REPEAT_SCATTER -> applyRepeatScatter(fx, clip, ctx)
                 MOVEALONGPATH -> {
                     ctx.warnings += "Effect movealongpath3 is not supported yet: the app cannot follow a path: skipped"
                     clip
@@ -2027,6 +2022,150 @@ object AlightXmlImporter {
                 (alpha * 100f).coerceIn(0f, 100f)
             ),
             "repeat"
+        )
+    }
+
+    /**
+     * The repeat family's alternating-copy colour, packed the way [packColor] packs it (two floats
+     * plus a flag), or three zeroes when `colorAltCopies` is off or the effect has no fill colour:
+     * with it on, the odd copies take the effect's `fillColor` instead of the layer's own colour
+     * (the ST Intro scatter dots alternate white / lavender exactly so). Stored after the panel
+     * values of the Repeat Radial / Scatter effects (see [RepeatEval]).
+     */
+    private fun repeatAltColorPacked(props: Map<String, Track>): List<Float> {
+        val alt = (props["colorAltCopies"]?.scalarAt(0f) ?: 0f) != 0f
+        val colT = props["fillColor"]
+        if (!alt || colT == null) return listOf(0f, 0f, 0f)
+        val (pa, pb) = packColor(unpacked(colT.first()))
+        return listOf(pa, pb, 1f)
+    }
+
+    /**
+     * The repeat family's copy-window / ordering properties (start / end / phase / easing / overlap /
+     * shape / invert / random order): all default in every corpus file, and the app's copy expansion
+     * has no counterpart for any of them, so a non-default one is named once, not silently dropped.
+     */
+    private fun warnRepeatExtras(props: Map<String, Track>, w: MutableList<String>, short: String) {
+        fun nonDefault(name: String, default: Float): Boolean {
+            val t = props[name] ?: return false
+            return (listOf(t.constant) + t.keys.map { it.v }).any { (it.firstOrNull() ?: default) != default }
+        }
+        if (nonDefault("start", 0f) || nonDefault("end", 1f) || nonDefault("phase", 0f) ||
+            nonDefault("easeIn", 0f) || nonDefault("easeOut", 0f) || nonDefault("overlap", 0f) ||
+            nonDefault("shape", 0f) ||
+            (props["invert"]?.scalarAt(0f) ?: 0f) != 0f ||
+            (props["randomOrder"]?.scalarAt(0f) ?: 0f) != 0f
+        ) {
+            w += "Effect " + short + " is mapped approximately: its start / end window and copy ordering are not reproduced"
+        }
+    }
+
+    /**
+     * `repeat.radial` -> the app's Repeat Radial effect (see [RepeatEval]): [count] copies on a ring
+     * of `radius` around the layer (scene px -> preview px, like every position), the first at
+     * `startAngle`, sharing `sweep`, each turned by `orientation` and scaled by `baseScale`
+     * (x `scale` per step). Keyframed parameters take their first value (the pass-2 rule). A repeat
+     * on a video / group layer is stored but not drawn repeated yet, like the plain repeat.
+     */
+    private fun applyRepeatRadial(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val rawCount = (props["count"]?.firstValue(w, "repeat.radial", "count") ?: 1f).roundToInt()
+        val count = rawCount.coerceIn(1, RepeatEval.MAX_COUNT)
+        if (count != rawCount) {
+            w += "Effect repeat.radial: count " + rawCount + " is clamped to " + count + ", the most the app draws"
+        }
+        val radius = props["radius"]?.firstValue(w, "repeat.radial", "radius") ?: 0f
+        val startAngle = props["startAngle"]?.firstValue(w, "repeat.radial", "start angle") ?: 0f
+        val sweep = props["sweep"]?.firstValue(w, "repeat.radial", "sweep") ?: 360f
+        val orientation = props["orientation"]?.firstValue(w, "repeat.radial", "orientation") ?: 0f
+        val baseScale = props["baseScale"]?.firstValue(w, "repeat.radial", "base scale") ?: 1f
+        val scale = props["scale"]?.firstValue(w, "repeat.radial", "scale") ?: 1f
+        val alpha = props["alpha"]?.firstValue(w, "repeat.radial", "alpha") ?: 1f
+        val angle = props["angle"]?.firstValue(w, "repeat.radial", "angle") ?: 0f
+        warnRepeatExtras(props, w, "repeat.radial")
+        if (clip0.type == LayerType.VIDEO || clip0.type == LayerType.GROUP) {
+            w += "Effect repeat.radial on a video / group layer is stored but not drawn repeated yet"
+        }
+        return addFx(
+            clip0, ctx, ClipFxLibrary.REPEAT_RADIAL,
+            listOf(
+                count.toFloat(),
+                radius * ctx.k,
+                startAngle,
+                sweep,
+                orientation,
+                (baseScale * 100f).coerceIn(0f, 200f),
+                (alpha * 100f).coerceIn(0f, 100f),
+                angle,
+                (scale * 100f).coerceIn(0f, 200f)
+            ) + repeatAltColorPacked(props),
+            "repeat.radial"
+        )
+    }
+
+    /**
+     * `repeat.scatter` -> the app's Repeat Scatter effect (see [RepeatEval]): [count] copies over a
+     * disc of `radius` around the layer, shifted by `offset` (scene px -> preview px), placed by the
+     * `scatterSeed` field. The `evolution` track is stored as its first and last keyframes (a longer
+     * track's middle is approximated) and drifts the field at draw time. `blend` has no counterpart
+     * and is reported when non-zero. A repeat on a video / group layer is stored but not drawn
+     * repeated yet, like the plain repeat.
+     */
+    private fun applyRepeatScatter(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val rawCount = (props["count"]?.firstValue(w, "repeat.scatter", "count") ?: 1f).roundToInt()
+        val count = rawCount.coerceIn(1, RepeatEval.MAX_COUNT)
+        if (count != rawCount) {
+            w += "Effect repeat.scatter: count " + rawCount + " is clamped to " + count + ", the most the app draws"
+        }
+        val radius = props["radius"]?.firstValue(w, "repeat.scatter", "radius") ?: 0f
+        val offset = props["offset"]?.let {
+            if (it.keys.size >= 2) w += "Effect repeat.scatter: keyframed offset is not supported yet: the first value is used"
+            it.first()
+        } ?: listOf(0f, 0f)
+        val seed = props["scatterSeed"]?.firstValue(w, "repeat.scatter", "seed") ?: 0f
+        val scale = props["scale"]?.firstValue(w, "repeat.scatter", "scale") ?: 0f
+        val alpha = props["alpha"]?.firstValue(w, "repeat.scatter", "alpha") ?: 1f
+        val angle = props["angle"]?.firstValue(w, "repeat.scatter", "angle") ?: 0f
+        if ((props["blend"]?.scalarAt(0f) ?: 0f) != 0f) {
+            w += "Effect repeat.scatter is mapped approximately: its blend is not reproduced"
+        }
+        warnRepeatExtras(props, w, "repeat.scatter")
+        // The evolution track as (t0, v0, t1, v1): first and last keyframes, or the constant twice.
+        val evo = props["evolution"]
+        val evol = when {
+            evo == null -> listOf(0f, 0f, 1f, 0f)
+            evo.keys.isEmpty() -> {
+                val v = evo.constant.firstOrNull() ?: 0f
+                listOf(0f, v, 1f, v)
+            }
+            else -> {
+                if (evo.keys.size > 2) {
+                    w += "Effect repeat.scatter: keyframed evolution is approximated by its first and last keyframes"
+                }
+                val f = evo.keys.first()
+                val l = evo.keys.last()
+                listOf(f.t, f.v.firstOrNull() ?: 0f, l.t, l.v.firstOrNull() ?: 0f)
+            }
+        }
+        if (clip0.type == LayerType.VIDEO || clip0.type == LayerType.GROUP) {
+            w += "Effect repeat.scatter on a video / group layer is stored but not drawn repeated yet"
+        }
+        return addFx(
+            clip0, ctx, ClipFxLibrary.REPEAT_SCATTER,
+            listOf(
+                count.toFloat(),
+                radius * ctx.k,
+                (offset.getOrNull(0) ?: 0f) * ctx.k,
+                (offset.getOrNull(1) ?: 0f) * ctx.k,
+                seed,
+                (scale * 100f).coerceIn(0f, 100f),
+                (alpha * 100f).coerceIn(0f, 100f),
+                angle
+            ) + evol + repeatAltColorPacked(props),
+            "repeat.scatter"
         )
     }
 

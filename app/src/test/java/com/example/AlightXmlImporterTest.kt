@@ -3,6 +3,7 @@ package com.example
 import com.example.engine.AlightXmlImporter
 import com.example.engine.CounterEval
 import com.example.engine.ParentRig
+import com.example.engine.RepeatEval
 import com.example.engine.textLayoutBoxWidth
 import com.example.model.AnimProp
 import com.example.model.ClipFxLibrary
@@ -800,7 +801,11 @@ $layers
     }
 
     @Test
-    fun repeatRadialAndScatterStillSkip() {
+    fun repeatRadialAndScatterImport() {
+        // repeat.radial / repeat.scatter used to be skipped with a warning ("the app cannot repeat a
+        // layer in a circle / scattered") — which is why ST Intro's particle layers (build 94 parity
+        // round) imported as single shapes and drew nothing at all. They now map onto the Repeat
+        // Radial / Repeat Scatter effects (see RepeatEval).
         val xml = scene(
             """<shape id="9" label="Circle 1" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".circle">
   <transform><location value="540,960,0" /><scale value="1,1" /></transform>
@@ -816,9 +821,117 @@ $layers
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
-        assertTrue(c.effects.isEmpty())
-        assertTrue(r.warnings.any { it.contains("repeat.radial") && it.contains("skipped") })
-        assertTrue(r.warnings.any { it.contains("repeat.scatter") && it.contains("skipped") })
+        assertEquals(2, c.effects.size)
+        assertEquals(ClipFxLibrary.REPEAT_RADIAL, c.effects[0].type)
+        // [count, radius, startAngle, sweep, orientation, baseScale %, alpha %, angle, scale %, alt...]
+        assertEquals(listOf(4f, 223f, 0f, 360f, 0f, 100f, 100f, 0f, 100f, 0f, 0f, 0f), c.effects[0].values)
+        assertEquals(ClipFxLibrary.REPEAT_SCATTER, c.effects[1].type)
+        // [count, radius, offsetX, offsetY, seed, scale %, alpha %, angle, evolution..., alt...]
+        assertEquals(
+            listOf(10f, 1242f, 0f, 0f, 0f, 0f, 100f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f),
+            c.effects[1].values
+        )
+        assertFalse(r.warnings.any { it.contains("repeat.radial") || it.contains("repeat.scatter") })
+    }
+
+    /** The three particle layers of the real ST Intro, verbatim (ids 633223 / 633206 / 633208). */
+    private val stIntroParticles = """
+<shape id="633223" label="Circle 1" startTime="0" endTime="5365" fillType="color" mediaFillMode="stretch" s=".circle"><transform><location value="960.000000,540.000000,0.000000" /><scale value="0.255000,0.255000" /></transform><effect id="com.alightcreative.effects.repeat.scatter" locallyApplied="true"><property name="count" type="float" value="10.000000" /><property name="radius" type="float" value="1242.000000" /><property name="evolution" type="float"><kf t="0.002982" v="1.790000" /><kf t="0.997204" v="2.450000" /></property><property name="scatterSeed" type="float" value="0.230000" /><property name="offset" type="vec2" value="-778.000000,210.000000" /><property name="angle" type="float" value="0.000000" /><property name="scale" type="float" value="0.130000" /><property name="alpha" type="float" value="1.000000" /><property name="fillColor" type="color" value="#ffb891ff" /><property name="blend" type="float" value="1.160000" /><property name="colorAltCopies" type="bool" value="true" /><property name="start" type="float" value="0.000000" /><property name="end" type="float" value="1.000000" /><property name="phase" type="float" value="0.000000" /><property name="easeIn" type="float" value="0.000000" /><property name="easeOut" type="float" value="0.000000" /><property name="overlap" type="float" value="0.000000" /><property name="shape" type="int" value="0" /><property name="invert" type="bool" value="false" /><property name="randomOrder" type="bool" value="false" /><property name="seed" type="float" value="0.000000" /></effect><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+<shape id="633206" label="Line 1" startTime="4466" endTime="5599" fillType="none" mediaFillMode="stretch" s=".line"><transform><location value="960.000000,540.000000,0.000000" /><scale value="1.450000,1.450000" /><rotation value="39.512196" /><opacity><kf t="0.721094" v="1.000000" /><kf t="0.985878" v="0.000000" /></opacity></transform><fillColor value="#ff5bfc63" /><effect id="com.alightcreative.effects.repeat.radial" locallyApplied="true"><property name="count" type="float" value="4.000000" /><property name="radius" type="float" value="223.000000" /><property name="orientation" type="float" value="-45.000000" /><property name="startAngle" type="float" value="-175.000000" /><property name="sweep" type="float" value="353.000000" /><property name="baseScale" type="float" value="0.350000" /><property name="angle" type="float" value="0.000000" /><property name="scale" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /><property name="fillColor" type="color" value="#ff2d1ef6" /><property name="blend" type="float" value="0.000000" /><property name="colorAltCopies" type="bool" value="false" /><property name="start" type="float" value="0.000000" /><property name="end" type="float" value="1.000000" /><property name="phase" type="float" value="0.000000" /><property name="easeIn" type="float" value="0.000000" /><property name="easeOut" type="float" value="0.000000" /><property name="overlap" type="float" value="0.000000" /><property name="shape" type="int" value="0" /><property name="invert" type="bool" value="false" /><property name="randomOrder" type="bool" value="false" /><property name="seed" type="float" value="0.000000" /></effect><effect id="com.alightcreative.effects.drawing.progress" locallyApplied="true"><property name="start" type="float"><kf t="0.015004" v="100.000000" /><kf t="0.661959" v="0.000000" e="cubicBezier 0.0 0.44 0.37 1.0" /></property><property name="end" type="float"><kf t="0.338041" v="100.000000" /><kf t="0.985878" v="0.000000" e="cubicBezier 0.0 0.43676466 0.37 1.0" /></property></effect><path-stroke direction="centered" end-size="1.500000"><color value="#ffb891ff" /><size value="20.000000" /></path-stroke><property name="p1" type="vec2" value="-100.000000,100.000000" /><property name="p2" type="vec2" value="100.000000,-100.000000" /></shape>
+<shape id="633208" label="Line 1 Copy" startTime="4366" endTime="5147" fillType="none" speed="1.450000" mediaFillMode="stretch" s=".line"><transform><location value="960.000000,540.000000,0.000000" /><scale><kf t="0.985878" v="1.645000,1.645000" /><kf t="0.338923" v="1.240000,1.240000" /></scale><rotation value="-7.682922" /><opacity><kf t="0.721094" v="1.000000" /><kf t="0.985878" v="0.000000" /></opacity></transform><fillColor value="#ff5bfc63" /><effect id="com.alightcreative.effects.repeat.radial" locallyApplied="true"><property name="count" type="float" value="4.000000" /><property name="radius" type="float" value="223.000000" /><property name="orientation" type="float" value="-45.000000" /><property name="startAngle" type="float" value="-175.000000" /><property name="sweep" type="float" value="353.000000" /><property name="baseScale" type="float" value="0.350000" /><property name="angle" type="float" value="0.000000" /><property name="scale" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /><property name="fillColor" type="color" value="#ff2d1ef6" /><property name="blend" type="float" value="0.000000" /><property name="colorAltCopies" type="bool" value="false" /><property name="start" type="float" value="0.000000" /><property name="end" type="float" value="1.000000" /><property name="phase" type="float" value="0.000000" /><property name="easeIn" type="float" value="0.000000" /><property name="easeOut" type="float" value="0.000000" /><property name="overlap" type="float" value="0.000000" /><property name="shape" type="int" value="0" /><property name="invert" type="bool" value="false" /><property name="randomOrder" type="bool" value="false" /><property name="seed" type="float" value="0.000000" /></effect><effect id="com.alightcreative.effects.drawing.progress" locallyApplied="true"><property name="start" type="float"><kf t="0.015004" v="100.000000" /><kf t="0.661959" v="0.000000" e="cubicBezier 0.0 0.44 0.37 1.0" /></property><property name="end" type="float"><kf t="0.338041" v="100.000000" /><kf t="0.985878" v="0.000000" e="cubicBezier 0.0 0.43676466 0.37 1.0" /></property></effect><path-stroke direction="centered" end-size="1.500000"><color value="#ff767676" /><size value="8.000000" /></path-stroke><property name="p1" type="vec2" value="-100.000000,100.000000" /><property name="p2" type="vec2" value="100.000000,-100.000000" /></shape>
+"""
+
+    @Test
+    fun stIntroParticlesExpandToVisibleCopies() {
+        val r = AlightXmlImporter.parse(scene(stIntroParticles, 1920, 1080), 1920f)
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        assertFalse(r.warnings.any { it.contains("not supported yet") && it.contains("repeat") })
+        val box = 1920f * 130f / 360f
+
+        // --- The 2.0 s dots: "Circle 1" (a 51 px circle at the scene centre) + repeat.scatter.
+        val circle = clips.first { it.name == "Circle 1" }
+        val scatter = circle.effects.single { it.type == ClipFxLibrary.REPEAT_SCATTER }
+        assertEquals(10f, scatter.values[0], 0.001f)              // count
+        assertEquals(1242f, scatter.values[1], 0.001f)            // radius (preview px, k = 1)
+        assertEquals(-778f, scatter.values[2], 0.001f)            // offset x
+        assertEquals(210f, scatter.values[3], 0.001f)             // offset y
+        assertEquals(0.23f, scatter.values[4], 0.001f)            // scatter seed
+        assertEquals(13f, scatter.values[5], 0.001f)              // copy scale floor %
+        assertEquals(2.45f, scatter.values[11], 0.001f)           // evolution, last keyframe
+        assertEquals(1f, scatter.values[14], 0.001f)              // alternating colour on
+        val at2s = circle.renderAt(2000L)
+        val dots = RepeatEval.copiesOf(at2s, timeMs = 2000L)
+        assertEquals(10, dots.size)
+        var biggest = 0f
+        var inFrame = 0
+        dots.forEachIndexed { i, dot ->
+            assertTrue(dot.opacity > 0f)
+            val diameter = dot.shapeDrawScaleX * box           // base circle is 51 px; copies 0.13..1 x
+            assertTrue(diameter in 5f..52f)
+            if (diameter > biggest) biggest = diameter
+            // Centres stay inside the effect's disc around the layer + offset (scene coords).
+            val cx = 960f + dot.transformX
+            val cy = 540f + dot.transformY
+            val d = kotlin.math.hypot(cx - (960f - 778f), cy - (540f + 210f))
+            assertTrue(d <= 1242.5f)
+            if (cx in 0f..1920f && cy in 0f..1080f) inFrame++
+            // colorAltCopies: odd copies take the effect's lavender, even ones keep the white fill.
+            assertEquals(if (i % 2 == 1) 0xFFB891FFL else 0xFFFFFFFFL, dot.textColor)
+        }
+        // Alight's export at 2.0 s shows dots of 9..45 px; the field's copies span the same range.
+        // (How many land inside the frame depends on the field's exact draw, which is Alight's own
+        // generator — see RepeatEval's doc — so only a floor is asserted here.)
+        assertTrue(biggest >= 28f)
+        assertTrue(inFrame >= 2)
+        // The field drifts with the evolution track (1.79 -> 2.45): 0.5 s and 2.0 s differ.
+        val at05 = RepeatEval.copiesOf(circle.renderAt(500L), timeMs = 500L)
+        val moved = dots.indices.count { i ->
+            kotlin.math.hypot(dots[i].transformX - at05[i].transformX, dots[i].transformY - at05[i].transformY) > 20f
+        }
+        assertTrue(moved >= 4)
+
+        // --- The end-card dashes: "Line 1" / "Line 1 Copy" + repeat.radial (ring of 4, no centre copy).
+        for ((name, t) in listOf("Line 1" to 5500L, "Line 1 Copy" to 5000L)) {
+            val line = clips.first { it.name == name }
+            val radial = line.effects.single { it.type == ClipFxLibrary.REPEAT_RADIAL }
+            assertEquals(4f, radial.values[0], 0.001f)
+            assertEquals(223f, radial.values[1], 0.001f)
+            assertEquals(-175f, radial.values[2], 0.001f)         // start angle
+            assertEquals(353f, radial.values[3], 0.001f)          // sweep
+            assertEquals(-45f, radial.values[4], 0.001f)          // orientation
+            assertEquals(35f, radial.values[5], 0.001f)           // base scale %
+            val at = line.renderAt(t)
+            assertTrue(at.opacity > 0f)                           // mid-fade, still visible
+            val copies = RepeatEval.copiesOf(at, timeMs = t)
+            assertEquals(4, copies.size)
+            // Frame-measured against Alight's export: anchors sit at TWICE the radius, at angles
+            // startAngle + i * sweep/count measured clockwise from straight up.
+            val expected = listOf(-175.0, -86.75, 1.5, 89.75)
+            val seen = mutableListOf<Double>()
+            copies.forEach { copy ->
+                val dx = (copy.transformX - at.transformX).toDouble()
+                val dy = (copy.transformY - at.transformY).toDouble()
+                assertEquals(446.0, kotlin.math.hypot(dx, dy), 1.0)
+                seen += Math.toDegrees(kotlin.math.atan2(dx, -dy))
+                assertEquals(0.35f, copy.scalePercent / at.scalePercent, 0.01f)
+            }
+            expected.forEach { e -> assertTrue(seen.any { kotlin.math.abs(it - e) < 0.5 }) }
+        }
+    }
+
+    @Test
+    fun scatterCountAboveTheDrawCapIsClampedWithAWarning() {
+        // The collected winkoko preset scatters 150 copies; the app draws at most 50 (RepeatEval).
+        val xml = scene(
+            """<shape id="s1" label="Field" startTime="0" endTime="20032" fillType="color" s=".circle"><transform><location value="540.000000,960.000000,0.000000" /></transform><fillColor value="#ffffffff" />
+<effect id="com.alightcreative.effects.repeat.scatter" locallyApplied="true"><property name="count" type="float" value="150.000000" /><property name="radius" type="float" value="1300.000000" /></effect>
+</shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.single().clips.single()
+        assertEquals(50f, c.effects.single().values[0], 0.001f)
+        assertTrue(r.warnings.any { it.contains("repeat.scatter") && it.contains("clamped") })
+        assertEquals(50, RepeatEval.copiesOf(c).size)
     }
 
     @Test
@@ -1570,11 +1683,17 @@ $layers
     }
 
     @Test
-    fun repeatStaysAWarningWithReason() {
+    fun repeatRadialImportsInsteadOfWarning() {
+        // Used to stay a warning ("the app cannot repeat a layer in a circle"); since the particles
+        // fix it imports as a Repeat Radial effect like any other.
         val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.repeat.radial" locallyApplied="true"><property name="count" type="int" value="6" /></effect>"""
         ), 1080f)
-        assertTrue(r.warnings.any { it.contains("cannot repeat a layer") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(1, c.effects.size)
+        assertEquals(ClipFxLibrary.REPEAT_RADIAL, c.effects[0].type)
+        assertEquals(6f, c.effects[0].values[0], 0f)
+        assertFalse(r.warnings.any { it.contains("cannot repeat a layer") })
     }
 
     @Test

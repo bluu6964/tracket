@@ -88,7 +88,8 @@ import kotlin.math.sin
  *    string). Only its typing `cursor` is not drawn — a value other than 0 (the corpus only has 0) warns.
  *    `drawing.progress` -> the clip's stroke trim: `start` / `end` (percent of the path) become fractions,
  *    keyframed on the STROKE_TRIM track; on a line the trim gates the fill (the line's paint is its path),
- *    on text / group layers and on shapes without a stroke it stays a warning.
+ *    on a text layer it draws the glyph outlines trimmed (`strokeTrimText`); on group layers and on
+ *    shapes without a stroke it stays a warning.
  *  - `<audio>` layer (pass 3): an audio clip with its timing; `inTime` / `outTime` become the trim and
  *    `mediaFillMode` "stretch" a playback speed. The `src` is a content:// URI of the exporting phone;
  *    the import screen copies such files into the project ([AlightMediaLocalizer]) so they play — when
@@ -1479,16 +1480,17 @@ object AlightXmlImporter {
      * easing of a segment comes from the Alight keyframe it ends at, the `start` track first — the same rule as
      * the composed size keyframes). What is trimmed is the layer's stroke; an imported line has no stroke (its
      * paint is its path), so its trim gates the fill instead (the line reader sets `strokeTrimFill`). On a text
-     * or group layer there is nothing to trim, and a shape without a stroke has no outline to draw on: both
-     * stay warnings.
+     * layer the trimmed path is the glyphs' outlines: the clip is flagged `strokeTrimText` and the renderers
+     * draw those outlines (in the text colour) instead of the fill. On a group layer there is nothing to trim,
+     * and a shape without a stroke has no outline to draw on: both stay warnings.
      */
     private fun applyDrawingProgress(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long, target: FxTarget): TimelineClip {
         val w = ctx.warnings
-        if (target != FxTarget.SHAPE) {
-            w += "Effect drawing.progress is only supported on shape layers yet: skipped"
+        if (target == FxTarget.GROUP) {
+            w += "Effect drawing.progress is only supported on shape and text layers yet: skipped"
             return clip0
         }
-        if (clip0.strokeWidth <= 0f && !clip0.strokeTrimFill) {
+        if (target == FxTarget.SHAPE && clip0.strokeWidth <= 0f && !clip0.strokeTrimFill) {
             w += "Effect drawing.progress on a shape without a stroke: there is no outline to trim: skipped"
             return clip0
         }
@@ -1504,7 +1506,8 @@ object AlightXmlImporter {
             ((t?.valueAt(at)?.firstOrNull() ?: fallbackPct) / 100f).coerceIn(0f, 1f)
         var clip = clip0.copy(
             strokeTrimStart = frac(startT, 0f, 0f),
-            strokeTrimEnd = frac(endT, 0f, 100f)
+            strokeTrimEnd = frac(endT, 0f, 100f),
+            strokeTrimText = target == FxTarget.TEXT
         )
         val times = ((startT?.keys ?: emptyList()) + (endT?.keys ?: emptyList())).map { it.t }.distinct().sorted()
         if (times.size >= 2) {

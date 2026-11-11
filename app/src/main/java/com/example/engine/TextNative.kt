@@ -3,11 +3,13 @@ package com.example.engine
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Build
+import com.example.model.AnimProp
 import com.example.model.FILL_GRADIENT
 import com.example.model.FILL_IMAGE
 import com.example.model.FILL_NONE
 import com.example.model.LayerType
 import com.example.model.TimelineClip
+import com.example.model.valueAt
 import com.example.model.depthX
 import com.example.model.depthY
 import com.example.model.effectiveScalePercent
@@ -24,7 +26,7 @@ internal object TextNative {
     @JvmStatic external fun nativeEmojiAvailable(): Boolean
 
     /**
-     * p = 37 floats (+ 2 that the engine fills: the layout box, see [NativeTextPainter.lastBoxW]), c = 6 ARGB ints (+ the text animator colour as the 7th); see text_jni.cpp. [anim] = 11 floats of the text animators (null = none): a texttransform group and a textprogress group, each with its own on flag. Draws onto an ARGB_8888 bitmap, false = not drawn.
+     * p = 37 floats (+ 2 that the engine fills: the layout box, see [NativeTextPainter.lastBoxW]), c = 6 ARGB ints (+ the text animator colour as the 7th); see text_jni.cpp. [anim] = 15 floats of the text animators (null = none): a texttransform group, a textprogress group and a drawing.progress group, each with its own on flag. Draws onto an ARGB_8888 bitmap, false = not drawn.
      * [fillBitmap]: the picture of a picture fill (ARGB_8888), or null.
      */
     @JvmStatic external fun nativeDraw(
@@ -61,7 +63,7 @@ internal class NativeTextPainter(
 
     private val p = FloatArray(39)
     private val c = IntArray(7)
-    private val anim = FloatArray(11)
+    private val anim = FloatArray(15)
 
     /** Layout box (frame pixels, scale 1) of the last layer this painter drew; the pivot of the layer is a fraction of it. */
     @Volatile var lastBoxW = 0f
@@ -168,13 +170,15 @@ internal class NativeTextPainter(
             else -> "sans-serif"
         }
         val path = fontFile(clip.fontFamily)
-        // Imported text animators (Alight texttransform + textprogress): need the time of this frame,
-        // -1 = unknown = not animated. Each group carries its own on flag (anim[0] / anim[8]).
+        // Imported text animators (Alight texttransform + textprogress) and the drawing.progress
+        // outline trim: the animators need the time of this frame (-1 = unknown = not animated; the
+        // trim then falls back to the clip's stored window, like the shape trim in ShapeNative).
+        // Each group carries its own on flag (anim[0] / anim[8] / anim[11]).
         var animArr: FloatArray? = null
-        if (timeMs >= 0L && clip.textAnimators.isNotEmpty()) {
-            val tr = TextAnimEval.evaluate(clip, timeMs, fontPx)
-            val pr = TextProgressEval.evaluate(clip, timeMs)
-            if (tr != null || pr != null) {
+        if ((timeMs >= 0L && clip.textAnimators.isNotEmpty()) || clip.strokeTrimText) {
+            val tr = if (timeMs >= 0L && clip.textAnimators.isNotEmpty()) TextAnimEval.evaluate(clip, timeMs, fontPx) else null
+            val pr = if (timeMs >= 0L && clip.textAnimators.isNotEmpty()) TextProgressEval.evaluate(clip, timeMs) else null
+            if (tr != null || pr != null || clip.strokeTrimText) {
                 anim.fill(0f)
                 if (tr != null) {
                     anim[0] = 1f; anim[1] = tr.component.toFloat(); anim[2] = tr.start; anim[3] = tr.end
@@ -183,6 +187,11 @@ internal class NativeTextPainter(
                 }
                 if (pr != null) {
                     anim[8] = 1f; anim[9] = pr.start; anim[10] = pr.end
+                }
+                if (clip.strokeTrimText) {
+                    val (ts, te) = textTrimAt(clip, timeMs)
+                    anim[11] = 1f; anim[12] = ts; anim[13] = te
+                    anim[14] = drawOnStrokeWidthPx(clip, fontPx)
                 }
                 animArr = anim
             }
@@ -232,7 +241,31 @@ internal fun nativeTextEligible(clip: TimelineClip): Boolean {
     return true
 }
 
-/** Crop of a text / shape layer as [left, top, right, bottom] fractions of its box, or null. */
+/**
+ * The drawing.progress window of a text layer at [timeMs] (project time), as fractions of the
+ * concatenated glyph outline length. The STROKE_TRIM track is evaluated from the clip's keyframes
+ * when there are any (the same values a renderAt-evaluated clip already carries in its fields, so
+ * this is idempotent for evaluated clips and correct for raw ones); -1 = unknown time = the stored
+ * window. Shared by the native painter and the Canvas fallback so both draw the same window.
+ */
+internal fun textTrimAt(clip: TimelineClip, timeMs: Long): Pair<Float, Float> {
+    val keys = clip.keyframes[AnimProp.STROKE_TRIM]
+    if (timeMs >= 0L && !keys.isNullOrEmpty()) {
+        val (a, b) = keys.valueAt(timeMs - clip.startMs)
+        return a.coerceIn(0f, 1f) to b.coerceIn(0f, 1f)
+    }
+    return clip.strokeTrimStart.coerceIn(0f, 1f) to clip.strokeTrimEnd.coerceIn(0f, 1f)
+}
+
+/**
+ * Outline width (layout px, the units of [NativeTextPainter]'s fontPx) for a drawing.progress text
+ * layer: the layer's own text stroke width when it has one (same conversion as the p[23] stroke),
+ * else a default of 5% of the font size — a handwriting-weight outline at typical sizes. Alight
+ * stores no width for the animator itself, so the default is the app's approximation.
+ */
+internal fun drawOnStrokeWidthPx(clip: TimelineClip, fontPx: Float): Float =
+    if (clip.textStrokeThickness > 0f) fontPx * clip.textStrokeThickness / 100f * 0.4f else fontPx * 0.05f
+
 internal fun cropFractionsOfClip(clip: TimelineClip): FloatArray? {
     val cW = (clip.cropWidthPercent / 100f).coerceIn(0.05f, 1f)
     val cH = (clip.cropHeightPercent / 100f).coerceIn(0.05f, 1f)

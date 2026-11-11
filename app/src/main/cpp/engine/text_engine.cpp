@@ -9,6 +9,7 @@
 
 #include "text_blit.h"
 #include "text_layout.h"
+#include "outline_trim.h"
 
 #ifndef AM_TEXT_ENGINE
 #define AM_TEXT_ENGINE 0
@@ -756,24 +757,9 @@ void drawRoundRect(Image& img, float x0, float y0, float x1, float y1, float rad
     compositeMask(img, m, argb);
 }
 
-// Draws one glyph into an A8 mask (fill, or - with a stroker - the outline ring).
-bool rasterGlyph(Face& f, uint32_t gid, float px, bool bold, bool shear, FT_Stroker stroker, float x, float y,
-                 std::vector<uint8_t>& mask, int mw, int mh, float gain = 1.f) {
-    setSize(f, px);
-    FT_Matrix mat;
-    mat.xx = 0x10000; mat.xy = shear ? 0x4000 : 0; mat.yx = 0; mat.yy = 0x10000;
-    FT_Set_Transform(f.ft, &mat, nullptr);
-    if (FT_Load_Glyph(f.ft, gid, FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) return false;
-    FT_GlyphSlot slot = f.ft->glyph;
-    if (slot->format != FT_GLYPH_FORMAT_OUTLINE) return false;
-    if (bold) FT_Outline_Embolden(&slot->outline, (FT_Pos)std::lround(px / 24.f * 64.f));
-    FT_Glyph g = nullptr;
-    if (FT_Get_Glyph(slot, &g) != 0 || !g) return false;
-    if (stroker) {
-        FT_Glyph t = g;
-        if (FT_Glyph_Stroke(&t, stroker, 1) != 0) { if (t) FT_Done_Glyph(t); return false; }
-        g = t;
-    }
+// Converts glyph [g] (an outline or stroked outline glyph) to a bitmap at the sub-pixel origin of
+// (x, y) and adds it into the mask with the alpha [gain]. Takes ownership of [g] either way.
+bool blitGlyph(FT_Glyph g, float x, float y, std::vector<uint8_t>& mask, int mw, int mh, float gain) {
     const int ix = (int)std::floor(x), iy = (int)std::floor(y);
     FT_Vector origin;
     origin.x = (FT_Pos)std::lround((x - ix) * 64.f);
@@ -794,6 +780,147 @@ bool rasterGlyph(Face& f, uint32_t gid, float px, bool bold, bool shear, FT_Stro
     }
     FT_Done_Glyph(t);
     return true;
+}
+
+// Draws one glyph into an A8 mask (fill, or - with a stroker - the outline ring).
+bool rasterGlyph(Face& f, uint32_t gid, float px, bool bold, bool shear, FT_Stroker stroker, float x, float y,
+                 std::vector<uint8_t>& mask, int mw, int mh, float gain = 1.f) {
+    setSize(f, px);
+    FT_Matrix mat;
+    mat.xx = 0x10000; mat.xy = shear ? 0x4000 : 0; mat.yx = 0; mat.yy = 0x10000;
+    FT_Set_Transform(f.ft, &mat, nullptr);
+    if (FT_Load_Glyph(f.ft, gid, FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) return false;
+    FT_GlyphSlot slot = f.ft->glyph;
+    if (slot->format != FT_GLYPH_FORMAT_OUTLINE) return false;
+    if (bold) FT_Outline_Embolden(&slot->outline, (FT_Pos)std::lround(px / 24.f * 64.f));
+    FT_Glyph g = nullptr;
+    if (FT_Get_Glyph(slot, &g) != 0 || !g) return false;
+    if (stroker) {
+        FT_Glyph t = g;
+        if (FT_Glyph_Stroke(&t, stroker, 1) != 0) { if (t) FT_Done_Glyph(t); return false; }
+        g = t;
+    }
+    return blitGlyph(g, x, y, mask, mw, mh, gain);
+}
+
+namespace {
+
+// Sink for FT_Outline_Decompose: one segment list per contour, points in 26.6 glyph units.
+struct SegSink {
+    std::vector<std::vector<OSeg>> contours;
+    double cx = 0, cy = 0;  // current point
+    void moveTo(const FT_Vector* to) {
+        contours.emplace_back();
+        cx = to->x; cy = to->y;
+    }
+    void lineTo(const FT_Vector* to) {
+        OSeg s; s.kind = 0;
+        s.x[0] = cx; s.y[0] = cy; s.x[1] = to->x; s.y[1] = to->y;
+        contours.back().push_back(s);
+        cx = to->x; cy = to->y;
+    }
+    void conicTo(const FT_Vector* c, const FT_Vector* to) {
+        OSeg s; s.kind = 1;
+        s.x[0] = cx; s.y[0] = cy; s.x[1] = c->x; s.y[1] = c->y; s.x[2] = to->x; s.y[2] = to->y;
+        contours.back().push_back(s);
+        cx = to->x; cy = to->y;
+    }
+    void cubicTo(const FT_Vector* c1, const FT_Vector* c2, const FT_Vector* to) {
+        OSeg s; s.kind = 2;
+        s.x[0] = cx; s.y[0] = cy; s.x[1] = c1->x; s.y[1] = c1->y; s.x[2] = c2->x; s.y[2] = c2->y; s.x[3] = to->x; s.y[3] = to->y;
+        contours.back().push_back(s);
+        cx = to->x; cy = to->y;
+    }
+};
+int dcMoveTo(const FT_Vector* to, void* user) { ((SegSink*)user)->moveTo(to); return 0; }
+int dcLineTo(const FT_Vector* to, void* user) { ((SegSink*)user)->lineTo(to); return 0; }
+int dcConicTo(const FT_Vector* c, const FT_Vector* to, void* user) { ((SegSink*)user)->conicTo(c, to); return 0; }
+int dcCubicTo(const FT_Vector* c1, const FT_Vector* c2, const FT_Vector* to, void* user) { ((SegSink*)user)->cubicTo(c1, c2, to); return 0; }
+
+}  // namespace
+
+// Prepares glyph [gid] of [f] exactly as rasterGlyph does (size, shear transform, embolden) and
+// walks its outline into segment contours (26.6 glyph units). False = the glyph has no outline.
+bool glyphOutlineSegs(Face& f, uint32_t gid, float px, bool bold, bool shear,
+                      std::vector<std::vector<OSeg>>& out) {
+    setSize(f, px);
+    FT_Matrix mat;
+    mat.xx = 0x10000; mat.xy = shear ? 0x4000 : 0; mat.yx = 0; mat.yy = 0x10000;
+    FT_Set_Transform(f.ft, &mat, nullptr);
+    if (FT_Load_Glyph(f.ft, gid, FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) return false;
+    FT_GlyphSlot slot = f.ft->glyph;
+    if (slot->format != FT_GLYPH_FORMAT_OUTLINE) return false;
+    if (bold) FT_Outline_Embolden(&slot->outline, (FT_Pos)std::lround(px / 24.f * 64.f));
+    SegSink sink;
+    FT_Outline_Funcs fn;
+    fn.move_to = &dcMoveTo; fn.line_to = &dcLineTo; fn.conic_to = &dcConicTo; fn.cubic_to = &dcCubicTo;
+    fn.shift = 0; fn.delta = 0;
+    if (FT_Outline_Decompose(&slot->outline, &fn, &sink) != 0) return false;
+    out.clear();
+    for (auto& c : sink.contours) if (!c.empty()) out.push_back(std::move(c));
+    return !out.empty();
+}
+
+// Draws the part of one glyph's outline whose arc length (over this glyph's own concatenated
+// contours) lies in [a, b] — 26.6 units — stroked with [stroker], into the mask. The outline is
+// rebuilt from the exactly clipped segments and stroked by FreeType, so the drawing tip follows
+// the true bezier shapes; a window covering the whole glyph goes through the ordinary stroker.
+bool rasterGlyphTrimmed(Face& f, uint32_t gid, float px, bool bold, bool shear, FT_Stroker stroker,
+                        double a, double b, float x, float y,
+                        std::vector<uint8_t>& mask, int mw, int mh, float gain = 1.f) {
+    std::vector<std::vector<OSeg>> contours;
+    if (!glyphOutlineSegs(f, gid, px, bold, shear, contours)) return false;
+    std::vector<std::vector<OSeg>> clipped;
+    double off = 0;
+    for (auto& c : contours) {
+        const double len = contourLength(c);
+        if (len > 0) {
+            std::vector<OSeg> part = clipContour(c, a - off, b - off);
+            if (!part.empty()) clipped.push_back(std::move(part));
+        }
+        off += len;
+    }
+    if (clipped.empty()) return true;  // the window misses this glyph: drawn, as nothing
+    int nPts = 0, nCtr = 0;
+    for (auto& c : clipped) {
+        ++nCtr;
+        nPts += 1;
+        for (auto& s : c) nPts += s.n() - 1;
+    }
+    FT_Outline ol;
+    if (FT_Outline_New(g_lib, (FT_UInt)nPts, nCtr, &ol) != 0) return false;
+    ol.n_points = 0;
+    ol.n_contours = 0;
+    for (auto& c : clipped) {
+        auto put = [&](double px26, double py26, char tag) {
+            ol.points[ol.n_points].x = (FT_Pos)std::lround(px26);
+            ol.points[ol.n_points].y = (FT_Pos)std::lround(py26);
+            ol.tags[ol.n_points] = tag;
+            ++ol.n_points;
+        };
+        put(c[0].sx(), c[0].sy(), FT_CURVE_TAG_ON);
+        for (auto& s : c) {
+            if (s.kind == 0) {
+                put(s.x[1], s.y[1], FT_CURVE_TAG_ON);
+            } else if (s.kind == 1) {
+                put(s.x[1], s.y[1], FT_CURVE_TAG_CONIC);
+                put(s.x[2], s.y[2], FT_CURVE_TAG_ON);
+            } else {
+                put(s.x[1], s.y[1], FT_CURVE_TAG_CUBIC);
+                put(s.x[2], s.y[2], FT_CURVE_TAG_CUBIC);
+                put(s.x[3], s.y[3], FT_CURVE_TAG_ON);
+            }
+        }
+        ol.contours[ol.n_contours++] = (short)(ol.n_points - 1);
+    }
+    FT_Glyph g = nullptr;
+    if (FT_New_Glyph(g_lib, FT_GLYPH_FORMAT_OUTLINE, &g) != 0 || !g) { FT_Outline_Done(g_lib, &ol); return false; }
+    FT_OutlineGlyph og = (FT_OutlineGlyph)g;
+    FT_Outline_Done(g_lib, &og->outline);  // the empty outline FT_New_Glyph made
+    og->outline = ol;
+    FT_Glyph t = g;
+    if (FT_Glyph_Stroke(&t, stroker, 1) != 0) { if (t) FT_Done_Glyph(t); return false; }
+    return blitGlyph(t, x, y, mask, mw, mh, gain);
 }
 
 }  // namespace
@@ -1081,7 +1208,7 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
     const float shadowSigma = rq.shadowOn ? (0.57735f * std::max(0.f, rq.shadowBlur) + 0.5f) : 0.f;
     float rs = std::max(0.01f, rq.scale);
     auto marginFor = [&](float s) {
-        float m = 2.f + rq.strokeW * s * 0.5f;
+        float m = 2.f + (rq.drawOn ? rq.drawStrokeW : rq.strokeW) * s * 0.5f;
         if (rq.shadowOn) m += std::max(std::fabs(rq.shadowDx), std::fabs(rq.shadowDy)) * s + 3.f * shadowSigma * s;
         // A text animator moves letters away from the box: the picture needs room for them (and for the shadow of a moved letter).
         if (rq.animOn) m += std::max(std::fabs(rq.animDx), std::fabs(rq.animDy)) * s;
@@ -1111,14 +1238,20 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
     const float ox = M + subX, oy = M + subY;  // box origin inside the picture
 
     // ---- masks
-    std::vector<uint8_t> fillMask, strokeMask;
-    const bool wantFill = rq.fillOn;
-    const bool wantStroke = rq.strokeW > 0.f;
+    std::vector<uint8_t> fillMask, strokeMask, drawMask;
+    const bool wantFill = rq.fillOn && !rq.drawOn;      // drawing progress replaces the fill with the trimmed outline
+    const bool wantStroke = !rq.drawOn && rq.strokeW > 0.f;
     if (wantFill) fillMask.assign((size_t)imgW * imgH, 0);
     if (wantStroke) strokeMask.assign((size_t)imgW * imgH, 0);
     FT_Stroker stroker = nullptr;
     if (wantStroke && FT_Stroker_New(g_lib, &stroker) == 0)
         FT_Stroker_Set(stroker, (FT_Fixed)std::lround(rq.strokeW * rs * 0.5f * 64.f), FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0);
+    FT_Stroker drawStroker = nullptr;
+    if (rq.drawOn && rq.drawStrokeW > 0.f) {
+        drawMask.assign((size_t)imgW * imgH, 0);
+        if (FT_Stroker_New(g_lib, &drawStroker) == 0)
+            FT_Stroker_Set(drawStroker, (FT_Fixed)std::lround(rq.drawStrokeW * rs * 0.5f * 64.f), FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0);
+    }
 
     // ---- text animator: which unit (letter / word / line) every cluster belongs to
     std::vector<std::vector<int>> unitOf(pcl.size());
@@ -1171,6 +1304,44 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
     std::vector<uint8_t> tintMask;  // glyphs that are drawn (partly) in the animator colour
     if (animating && rq.animRecolor && wantFill) tintMask.assign((size_t)imgW * imgH, 0);
 
+    // ---- drawing progress: every glyph's outline length and its offset in the concatenated
+    // outline of the whole text, measured on the outlines exactly as they are drawn (same raster
+    // size, embolden, shear), in draw order — line by line, visual order inside a line, the order
+    // the loop below rasterizes. Glyphs the textprogress window hides still count (the layout is
+    // computed from the full text, like the reveal itself); colour glyphs have no outline and
+    // contribute nothing. The window is order-free, like the animators' ranges.
+    std::vector<float> glyphOff, glyphLen;
+    double drawS = 0, drawE = 0;  // the trim window in raster px over the concatenated lengths
+    if (rq.drawOn) {
+        glyphOff.assign(glyphs.size(), 0.f);
+        glyphLen.assign(glyphs.size(), 0.f);
+        double total = 0;
+        std::vector<int> ord;
+        for (const LineRec& l : lines) {
+            const std::vector<Cluster>& cl = pcl[l.para];
+            visualOrder(cl, l.first, l.last, ord);
+            for (int k : ord) {
+                const Cluster& c = cl[k];
+                for (int g = c.g0; g < c.g0 + c.gn; ++g) {
+                    const GlyphRec& gr = glyphs[g];
+                    Face& f = *fonts[gr.font];
+                    if (f.color || f.colrEmoji) continue;
+                    const bool bold = rq.weight >= 600 && f.weight < 600;
+                    const bool shear = rq.italic && !f.italic;
+                    std::vector<std::vector<OSeg>> contours;
+                    double len26 = 0;
+                    if (glyphOutlineSegs(f, gr.gid, px * rs, bold, shear, contours))
+                        for (auto& cc : contours) len26 += contourLength(cc);
+                    glyphOff[(size_t)g] = (float)total;
+                    glyphLen[(size_t)g] = (float)(len26 / 64.0);
+                    total += len26 / 64.0;
+                }
+            }
+        }
+        drawS = (double)std::min(rq.drawStart, rq.drawEnd) * total;
+        drawE = (double)std::max(rq.drawStart, rq.drawEnd) * total;
+    }
+
     int glyphDrawn = 0;
     int colorDrawn = 0;
     Image colorImg;  // emoji pictures (own colours), drawn on top of the text
@@ -1210,6 +1381,22 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
                 const bool bold = rq.weight >= 600 && f.weight < 600;
                 const bool shear = rq.italic && !f.italic;
                 const float x = ox + (pen + gr.x + mvx) * rs, y = oy + (baseY + gr.y + mvy) * rs;
+                if (rq.drawOn) {
+                    // The trimmed outline replaces everything else for this glyph: fully inside the
+                    // window it is stroked whole, straddling an edge it is cut exactly at the edge.
+                    if (f.color || f.colrEmoji) continue;  // no outline to draw on
+                    const double g0 = glyphOff[(size_t)g], g1 = g0 + glyphLen[(size_t)g];
+                    if (drawStroker && glyphLen[(size_t)g] > 0.f && g1 > drawS && g0 < drawE) {
+                        if (g0 >= drawS && g1 <= drawE) {
+                            if (rasterGlyph(f, gr.gid, px * rs, bold, shear, drawStroker, x, y, drawMask, imgW, imgH, unitAlpha)) ++glyphDrawn;
+                        } else if (rasterGlyphTrimmed(f, gr.gid, px * rs, bold, shear, drawStroker,
+                                                       (drawS - g0) * 64.0, (drawE - g0) * 64.0,
+                                                       x, y, drawMask, imgW, imgH, unitAlpha)) {
+                            ++glyphDrawn;
+                        }
+                    }
+                    continue;
+                }
                 if (animating && !(f.color || f.colrEmoji)) {
                     const float tint = tintMask.empty() ? 0.f : unitMove;
                     const float gFill = unitAlpha * (1.f - tint), gTint = unitAlpha * tint;
@@ -1244,16 +1431,17 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
         }
     }
     if (stroker) FT_Stroker_Done(stroker);
+    if (drawStroker) FT_Stroker_Done(drawStroker);
     FT_Set_Transform(primary->ft, nullptr, nullptr);
 
     // ---- compose: background, outline, shadow, fill (same order as the Canvas version)
     if (rq.bgOn && argbA(rq.bgArgb) > 0)
         drawRoundRect(img, ox, oy, ox + boxWs, oy + boxHs, rq.bgCornerFrac * std::min(boxWs, boxHs), rq.bgArgb);
     if (wantStroke) compositeMask(img, strokeMask, rq.strokeArgb);
-    if (rq.shadowOn && (wantFill || haveColor) && argbA(rq.shadowArgb) > 0) {
+    if (rq.shadowOn && (wantFill || haveColor || rq.drawOn) && argbA(rq.shadowArgb) > 0) {
         std::vector<uint8_t> sh((size_t)imgW * imgH, 0);
-        std::vector<uint8_t> ink;  // what casts the shadow: the text fill and the emoji pictures
-        if (wantFill) ink = fillMask; else ink.assign((size_t)imgW * imgH, 0);
+        std::vector<uint8_t> ink;  // what casts the shadow: the text fill (or the drawn outline), and the emoji pictures
+        if (wantFill) ink = fillMask; else if (rq.drawOn) ink = drawMask; else ink.assign((size_t)imgW * imgH, 0);
         if (haveColor) for (size_t i = 0; i < ink.size(); ++i) ink[i] = std::max(ink[i], colorImg.px[i * 4 + 3]);
         const int dx = (int)std::lround(rq.shadowDx * rs), dy = (int)std::lround(rq.shadowDy * rs);
         for (int y = 0; y < imgH; ++y) {
@@ -1267,13 +1455,20 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
         blurAlpha(sh, imgW, imgH, shadowSigma * rs);
         compositeMask(img, sh, rq.shadowArgb);
     }
+    // The text block starts at (padH + dx, padV) inside the box; Android's block is maxTextW wide.
+    const float dxBlock = rq.align == 0 ? 0.f : rq.align == 2 ? tightW - rq.maxTextW : (tightW - rq.maxTextW) * 0.5f;
     if (wantFill) {
         if (rq.fillKind == 0) {
             compositeMask(img, fillMask, rq.fillArgb);
         } else {
-            // The text block starts at (padH + dx, padV) inside the box; Android's block is maxTextW wide.
-            const float dxBlock = rq.align == 0 ? 0.f : rq.align == 2 ? tightW - rq.maxTextW : (tightW - rq.maxTextW) * 0.5f;
             compositeFill(img, fillMask, rq, ox + (rq.padH + dxBlock) * rs, oy + rq.padV * rs, rs, rq.maxTextW, layoutH);
+        }
+    }
+    if (rq.drawOn) {  // the trimmed outline is painted like the fill it replaces
+        if (rq.fillKind == 0) {
+            compositeMask(img, drawMask, rq.fillArgb);
+        } else {
+            compositeFill(img, drawMask, rq, ox + (rq.padH + dxBlock) * rs, oy + rq.padV * rs, rs, rq.maxTextW, layoutH);
         }
     }
     if (!tintMask.empty()) compositeMask(img, tintMask, rq.animArgb | 0xFF000000u);

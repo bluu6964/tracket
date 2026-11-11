@@ -6,6 +6,7 @@ import com.example.engine.ParentRig
 import com.example.engine.RepeatEval
 import com.example.engine.textLayoutBoxWidth
 import com.example.model.AnimProp
+import com.example.model.at
 import com.example.model.ClipFxLibrary
 import com.example.model.LayerType
 import com.example.model.effectiveScalePercent
@@ -1396,7 +1397,7 @@ $layers
     }
 
     @Test
-    fun drawingProgressOnTextStaysAWarning() {
+    fun drawingProgressOnTextBecomesAnOutlineTrim() {
         val xml = scene(
             """<text id="1" label="A" startTime="0" endTime="2000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
   <transform><location value="540,960,0" /><scale value="1,1" /></transform>
@@ -1405,9 +1406,85 @@ $layers
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        // Text layers take the trim too (build 106): the renderers stroke the glyph outlines
+        // trimmed to the window instead of filling the glyphs.
+        assertTrue(c.strokeTrimText)
         assertEquals(0f, c.strokeTrimStart, 0f)
-        assertEquals(1f, c.strokeTrimEnd, 0f)
-        assertTrue(r.warnings.any { it.contains("drawing.progress") })
+        assertEquals(0.5f, c.strokeTrimEnd, 0f)
+        assertTrue(c.keyframes[AnimProp.STROKE_TRIM].isNullOrEmpty())
+        assertFalse(r.warnings.any { it.contains("drawing.progress") })
+    }
+
+    @Test
+    fun drawingProgressOnTheRealTextPresetImportsKeyframedOutlineTrim() {
+        // Verbatim <text> from collected/text-motion-graphics-preset.xml ("Text Preset") — the only
+        // text-layer drawing.progress in the corpus. start stays 0; end draws 0 -> 100 over the
+        // first third of the 2999 ms span with AM's easeInOut cubic bezier on the end keyframe.
+        // The animator carries no fill behaviour: the fill is replaced by the outline.
+        val xml = """<?xml version='1.0' encoding='UTF-8' ?>
+<scene title="(8)alight motion  preset" width="1920" height="1080" bgcolor="#ff000000" totalTime="44415" fps="30">
+<text id="6301534" startTime="31033" endTime="34032" speed="0.677559" fillType="color" mediaFillMode="stretch" size="64.000000" font="imported?name=Destoria-Free.otf" wrapWidth="2836" align="center">
+    <transform>
+      <location value="954.500000,741.000000,0.000000" />
+    </transform>
+    <effect id="com.alightcreative.effects.texttransform" locallyApplied="false">
+      <property name="start" type="float" value="0.000000" />
+      <property name="end" type="float" value="1.000000" />
+      <property name="phase" type="float" value="0.000000" />
+      <property name="component" type="int" value="1" />
+      <property name="anchor" type="int" value="0" />
+      <property name="offset" type="vec2">
+        <kf t="0.024594" v="-550.000000,0.000000" />
+        <kf t="0.418101" v="0.000000,0.000000" e="cubicBezier 0.0 0.7334559 0.2183333 1.0" />
+        <kf t="0.992130" v="-550.000000,0.000000" e="cubicBezier 0.78 0.0 1.0 0.26999998" />
+      </property>
+      <property name="angle" type="float">
+        <kf t="0.418101" v="0.000000" />
+        <kf t="0.024594" v="-5.000000" />
+        <kf t="0.992130" v="5.000000" />
+      </property>
+      <property name="scale" type="float" value="0.000000" />
+      <property name="stretch" type="float" value="0.000000" />
+      <property name="alpha" type="float" value="0.000000" />
+      <property name="useFillColor" type="bool" value="false" />
+      <property name="fillColor" type="color" value="#ff00ff00" />
+      <property name="easeIn" type="float" value="0.000000" />
+      <property name="easeOut" type="float" value="0.000000" />
+      <property name="overlap" type="float" value="0.000000" />
+      <property name="shape" type="int" value="0" />
+      <property name="randomOrder" type="bool" value="false" />
+      <property name="seed" type="float" value="0.000000" />
+    </effect>
+    <effect id="com.alightcreative.effects.drawing.progress" locallyApplied="false">
+      <property name="start" type="float" value="0.000000" />
+      <property name="end" type="float">
+        <kf t="0.000000" v="0.000000" />
+        <kf t="0.335445" v="100.000000" e="cubicBezier 0.42 0.0 0.58 1.0" />
+      </property>
+    </effect>
+    <shadow direction="outside" />
+    <content>Text Preset</content>
+  </text>
+</scene>"""
+        val r = AlightXmlImporter.parse(xml, 1920f)
+        val c = r.snapshot.tracks.flatMap { it.clips }.single { it.text == "Text Preset" }
+        assertTrue(c.strokeTrimText)
+        assertEquals(0f, c.strokeTrimStart, 0f)
+        assertEquals(0f, c.strokeTrimEnd, 0f)
+        val keys = c.keyframes[AnimProp.STROKE_TRIM]!!
+        assertEquals(2, keys.size)
+        assertEquals(0L, keys[0].timeMs)
+        assertEquals(1006L, keys[1].timeMs)
+        assertEquals(0f, keys[0].a, 0f); assertEquals(0f, keys[0].b, 0f)
+        assertEquals(0f, keys[1].a, 0f); assertEquals(1f, keys[1].b, 0f)
+        assertEquals(com.example.model.Easing(0.42f, 0f, 0.58f, 1f), keys[0].easing)
+        // The window evaluates through TimelineClip.at: closed at the start, half open at the
+        // easing's midpoint (503 ms is exactly half the segment), fully open at the last key.
+        assertEquals(0f, c.at(c.startMs).strokeTrimEnd, 0f)
+        assertEquals(0.5f, c.at(c.startMs + 503).strokeTrimEnd, 0.02f)
+        assertEquals(1f, c.at(c.startMs + 1006).strokeTrimEnd, 0f)
+        assertEquals(0f, c.at(c.startMs + 503).strokeTrimStart, 0f)
+        assertFalse(r.warnings.any { it.contains("drawing.progress") })
     }
 
     @Test

@@ -236,6 +236,14 @@ data class TimelineClip(
      */
     val strokeTrimFill: Boolean = false,
     /**
+     * True when the trim came from a `drawing.progress` on a TEXT layer: the renderers then draw the
+     * glyphs' OUTLINES (in the text colour) trimmed by [strokeTrimStart] / [strokeTrimEnd] over the
+     * concatenated outline length, instead of the filled text — Alight Motion's draw-on handwriting look.
+     * The outline width is the layer's own text stroke width when it has one, else a default share of
+     * the font size (see NativeTextPainter).
+     */
+    val strokeTrimText: Boolean = false,
+    /**
      * Freehand outline of a `shapePattern == "PATH"` layer (an imported Alight Motion `<path>` shape —
      * a preset layer with no `s` kind): the segments in the shape box's own units. The path's bounding
      * box was centred on the layer anchor (any offset of the box from the layer's own origin is folded

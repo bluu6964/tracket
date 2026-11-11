@@ -86,6 +86,18 @@ struct Request {
     // is handed over as progressOn at all - see the importer).
     bool progressOn = false;
     float progressStart = 0.f, progressEnd = 1.f;
+
+    // Drawing progress (Alight Motion "drawing.progress" on a text layer, window already evaluated
+    // for this frame by Kotlin: TextNative.kt): the glyphs' OUTLINES are drawn stroked in the fill
+    // colour, trimmed to [drawStart, drawEnd] of the concatenated outline length of the whole text
+    // (draw order: line by line, visual order inside a line) — the draw-on handwriting look. The
+    // fill, the layer's own stroke ring and the underline / strike are not drawn in this mode;
+    // colour (emoji) glyphs have no outline and are skipped. drawStrokeW is the outline width in
+    // px at scale 1 (the layer's text stroke width when it has one, else a default share of the
+    // font size — the choice is made in Kotlin, see drawOnStrokeWidthPx).
+    bool drawOn = false;
+    float drawStart = 0.f, drawEnd = 1.f;
+    float drawStrokeW = 0.f;
 };
 
 /** What a system font match returns (Android AFontMatcher). */

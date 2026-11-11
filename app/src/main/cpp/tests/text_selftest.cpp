@@ -18,6 +18,7 @@
 #include "engine/text_blit.h"
 #include "engine/text_engine.h"
 #include "engine/text_layout.h"
+#include "engine/outline_trim.h"
 
 using namespace am::text;
 
@@ -691,10 +692,91 @@ static void testProgress() {
     }
 }
 
+// ---- outline trim math (drawing.progress on text): segment lengths, arc-length parameters,
+// exact sub-chain extraction over a concatenated contour.
+static void testOutlineTrim() {
+    auto line = [](double x0, double y0, double x1, double y1) {
+        OSeg s; s.kind = 0; s.x[0] = x0; s.y[0] = y0; s.x[1] = x1; s.y[1] = y1; return s;
+    };
+    // A 100 x 100 square contour (closed: the last segment returns to the start).
+    const std::vector<OSeg> sq = { line(0, 0, 100, 0), line(100, 0, 100, 100), line(100, 100, 0, 100), line(0, 100, 0, 0) };
+    CHECK(std::fabs(contourLength(sq) - 400.0) < 1e-9);
+    // A window over exactly the middle two sides.
+    const auto mid = clipContour(sq, 100, 300);
+    CHECK(mid.size() == 2 && std::fabs(contourLength(mid) - 200.0) < 1e-9);
+    // A window cutting two segments keeps the tail of side 1 and the head of side 2.
+    const auto cut = clipContour(sq, 50, 150);
+    CHECK(cut.size() == 2 && std::fabs(contourLength(cut) - 100.0) < 1e-6);
+    CHECK(std::fabs(cut.front().sx() - 50) < 1e-9 && std::fabs(cut.front().sy()) < 1e-9);
+    CHECK(std::fabs(cut.back().ex() - 100) < 1e-9 && std::fabs(cut.back().ey() - 50) < 1e-9);
+    // Empty and missed windows keep nothing.
+    CHECK(clipContour(sq, 10, 10).empty());
+    CHECK(clipContour(sq, 500, 600).empty());
+    // A conic arc: length between the chord and the control polygon; the curve is symmetric, so
+    // the parameter at half the length is 0.5 and splitting there halves the length too.
+    OSeg arc; arc.kind = 1;
+    arc.x[0] = 0; arc.y[0] = 0; arc.x[1] = 100; arc.y[1] = 0; arc.x[2] = 100; arc.y[2] = 100;
+    const double alen = segLength(arc);
+    CHECK(alen > 141.5 && alen < 200.0);
+    CHECK(std::fabs(segParamAtLength(arc, alen / 2) - 0.5) < 0.01);
+    OSeg a1, a2;
+    segSplit(arc, 0.5, a1, a2);
+    CHECK(std::fabs(segLength(a1) - segLength(a2)) < alen * 0.02);
+    double mx, my;
+    segPoint(arc, 0.5, mx, my);
+    CHECK(std::fabs(mx - 75) < 1e-9 && std::fabs(my - 25) < 1e-9);
+    // A symmetric cubic: midpoint and a half-length clip ending exactly at it.
+    OSeg cub; cub.kind = 2;
+    cub.x[0] = 0; cub.y[0] = 0; cub.x[1] = 0; cub.y[1] = 100; cub.x[2] = 100; cub.y[2] = 100; cub.x[3] = 100; cub.y[3] = 0;
+    segPoint(cub, 0.5, mx, my);
+    CHECK(std::fabs(mx - 50) < 1e-9 && std::fabs(my - 75) < 1e-9);
+    const double clen = segLength(cub);
+    const auto chalf = clipContour(std::vector<OSeg>{cub}, 0, clen / 2);
+    CHECK(chalf.size() == 1 && std::fabs(contourLength(chalf) - clen / 2) < clen * 0.01);
+    CHECK(std::fabs(chalf[0].ex() - 50) < 0.5 && std::fabs(chalf[0].ey() - 75) < 0.5);
+}
+
+// ---- draw-on rendering: the trimmed glyph outlines replace the fill.
+static void testDrawOn() {
+    const char* latin = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    if (!fileExists(latin)) { std::printf("skip draw-on tests (no %s)\n", latin); return; }
+    const int W = 600, H = 300;
+    std::vector<uint8_t> bmp((size_t)W * H * 4, 0);
+    auto render = [&](const Request& rq) {
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(draw(bmp.data(), W, H, W * 4, rq));
+        return alphaSum(bmp);
+    };
+    Request r;
+    r.text = "Draw On";
+    r.fontPath = latin;
+    r.fontPx = 80; r.maxTextW = 560; r.padH = 15; r.padV = 7; r.cx = 300; r.cy = 150;
+    const long fill = render(r);
+    CHECK(fill > 10000);
+    // An empty window draws nothing at all.
+    r.drawOn = true; r.drawStrokeW = 2.f; r.drawStart = 0.f; r.drawEnd = 0.f;
+    CHECK(render(r) == 0);
+    // The full window draws the outline ring only: visible ink, strictly less than the fill.
+    r.drawEnd = 1.f;
+    const long full = render(r);
+    CHECK(full > 2000 && full < fill);
+    // The two halves of the window partition the outline: each draws something, and together
+    // they cover the full outline within AA slack at the joint.
+    r.drawEnd = 0.5f;
+    const long h1 = render(r);
+    r.drawStart = 0.5f; r.drawEnd = 1.f;
+    const long h2 = render(r);
+    CHECK(h1 > 200 && h2 > 200);
+    CHECK(h1 < full && h2 < full);
+    CHECK(std::labs(h1 + h2 - full) < full / 8);
+}
+
 int main() {
+    testOutlineTrim();
     testLayout();
     testBlit();
     testEngine();
+    testDrawOn();
     testFill();
     testRtl();
     testEmoji();

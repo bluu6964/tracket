@@ -329,7 +329,10 @@ internal class LayerPainter(
         // shown part instead (same window and cluster counting, see TextProgressEval).
         // -1 = unknown time = the whole authored text, as before.
         val counted = if (timeMs >= 0L) CounterEval.displayText(full, clip, timeMs) ?: full else full
-        val content = if (timeMs >= 0L) {
+        // With drawing.progress (strokeTrimText) the trim window over the FULL text governs what is
+        // drawn, so the textprogress string cut does not apply (the C++ engine likewise counts the
+        // hidden clusters' outline lengths in the total).
+        val content = if (timeMs >= 0L && !clip.strokeTrimText) {
             TextProgressEval.evaluate(clip, timeMs)?.let { TextProgressEval.visibleText(counted, it.start, it.end) } ?: counted
         } else counted
         val textColor = argb(clip.textColor, fallback = 0xFFFFFFFF)
@@ -405,6 +408,27 @@ internal class LayerPainter(
 
         canvas.translate(padH + dx, padV)
 
+        // Imported drawing.progress on a text layer: the glyph outlines are drawn, trimmed to the
+        // [start, end] window of their concatenated length, instead of the fill (and of the stroke
+        // underlay below) — the same window and width rule as the C++ text engine (see textTrimAt /
+        // drawOnStrokeWidthPx).
+        if (clip.strokeTrimText) {
+            val (ts, te) = textTrimAt(clip, timeMs)
+            val seg = trimPath(textOutlinePath(tp, layout, content), ts, te)
+            if (seg != null) {
+                val sp = TextPaint(tp).apply {
+                    style = Paint.Style.STROKE
+                    strokeJoin = Paint.Join.ROUND
+                    strokeCap = Paint.Cap.ROUND
+                    strokeWidth = drawOnStrokeWidthPx(clip, fontPx)
+                    color = textColor
+                }
+                canvas.drawPath(seg, sp)
+            }
+            canvas.restore()
+            return
+        }
+
         // Optional stroke outline (drawn underneath the fill)
         if (clip.textStrokeThickness > 0f) {
             val strokePaint = TextPaint(tp).apply {
@@ -436,6 +460,50 @@ internal class LayerPainter(
         }
         layout.draw(canvas)
         canvas.restore()
+    }
+
+    /** The glyph outlines of every laid-out line as one path (each line's glyphs at their layout positions). */
+    private fun textOutlinePath(tp: TextPaint, layout: Layout, content: String): Path {
+        val path = Path()
+        for (i in 0 until layout.lineCount) {
+            val ls = layout.getLineStart(i)
+            val le = layout.getLineEnd(i)
+            if (le <= ls) continue
+            tp.getTextPath(content, ls, le, layout.getLineLeft(i), layout.getLineBaseline(i).toFloat(), path)
+        }
+        return path
+    }
+
+    /**
+     * The [start, end] window (fractions, order-free) of a path's concatenated contour length:
+     * every contour is measured in order and the overlapping pieces are kept — the Canvas twin of
+     * the glyph trim in the C++ text engine. Null when the window is empty.
+     */
+    private fun trimPath(path: Path, start: Float, end: Float): Path? {
+        val lo = minOf(start, end).coerceIn(0f, 1f)
+        val hi = maxOf(start, end).coerceIn(0f, 1f)
+        if (hi <= lo) return null
+        var total = 0f
+        val measure = android.graphics.PathMeasure(path, false)
+        do {
+            total += measure.length
+        } while (measure.nextContour())
+        if (total <= 0f) return null
+        val s = lo * total
+        val e = hi * total
+        val out = Path()
+        var off = 0f
+        val m = android.graphics.PathMeasure(path, false)
+        do {
+            val len = m.length
+            if (len > 0f) {
+                val a = (s - off).coerceIn(0f, len)
+                val b = (e - off).coerceIn(0f, len)
+                if (b > a) m.getSegment(a, b, out, true)
+            }
+            off += len
+        } while (m.nextContour())
+        return out
     }
 
     /** Crop of a shape / text layer as [left, top, right, bottom] fractions of its box, or null. */

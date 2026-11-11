@@ -50,10 +50,11 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeEmojiAvailab
 // c[6]: fill, stroke, shadow, background colour, gradient colour 1, gradient colour 2 (ARGB ints)
 // fillBitmap: the fill picture (premultiplied RGBA8888) or null
 // levelsA / paraRtlA: bidi embedding level per code point, 1 flag per paragraph (see Request::bidiLevels) or null
-// animA (null = no text animator, 11 floats; each group has its own on flag so the two can travel together):
+// animA (null = no text animator, up to 15 floats; each group has its own on flag so the three can travel together):
 //        0 texttransform on (0 / 1), 1 component (0 letter, 1 word, 2 line), 2 start, 3 end, 4 dx, 5 dy, 6 alpha,
 //        7 recolour (0 / 1) - the recolour ARGB is the 7th entry of cA (when cA has 7), see Request::animOn;
-//        8 textprogress on (0 / 1), 9 progress start, 10 progress end, see Request::progressOn.
+//        8 textprogress on (0 / 1), 9 progress start, 10 progress end, see Request::progressOn;
+//        11 drawing progress on (0 / 1), 12 draw start, 13 draw end, 14 outline width px, see Request::drawOn.
 JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeDraw(
     JNIEnv* env, jclass, jobject bitmap, jstring text, jstring fontPath, jstring family, jfloatArray pA, jintArray cA,
     jobject fillBitmap, jbyteArray levelsA, jbyteArray paraRtlA, jfloatArray animA) {
@@ -103,6 +104,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeDraw(
         if (a[8] > 0.5f) {
             r.progressOn = true;
             r.progressStart = a[9]; r.progressEnd = a[10];
+        }
+    }
+    if (animA && env->GetArrayLength(animA) >= 15) {
+        float a[4];
+        env->GetFloatArrayRegion(animA, 11, 4, a);
+        if (a[0] > 0.5f) {
+            r.drawOn = true;
+            r.drawStart = a[1]; r.drawEnd = a[2]; r.drawStrokeW = a[3];
         }
     }
     r.fillArgb = (uint32_t)c[0]; r.strokeArgb = (uint32_t)c[1]; r.shadowArgb = (uint32_t)c[2]; r.bgArgb = (uint32_t)c[3];

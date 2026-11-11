@@ -306,15 +306,9 @@ internal class LayerPainter(
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = textColor
             textSize = fontPx
-            typeface = Typeface.create(
-                Typeface.DEFAULT,
-                when {
-                    clip.fontWeight >= 700 && clip.isItalic -> Typeface.BOLD_ITALIC
-                    clip.fontWeight >= 700 -> Typeface.BOLD
-                    clip.isItalic -> Typeface.ITALIC
-                    else -> Typeface.NORMAL
-                }
-            )
+            // The layer's own weight (100..900), not just bold-or-not: the weight-aware create picks
+            // the closest cut of the family (and synthesizes when the family has no such cut).
+            typeface = Typeface.create(Typeface.DEFAULT, clip.fontWeight.coerceIn(100, 900), clip.isItalic)
             isUnderlineText = clip.isUnderline
             isStrikeThruText = clip.isStrikethrough
             letterSpacing = clip.letterSpacing / 100f

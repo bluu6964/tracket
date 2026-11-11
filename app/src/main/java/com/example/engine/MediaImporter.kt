@@ -96,6 +96,51 @@ object MediaImporter {
             }
         }
 
+    /**
+     * Copies ONE content:// file into the same app storage [read] uses (`filesDir/imports`) and returns
+     * the stable FileProvider uri of the copy, or null when the file cannot be read. Used by the Alight
+     * XML import ([AlightMediaLocalizer]): those projects link media on the exporting phone, and without
+     * a local copy the layers render empty / silent. Blocking IO — call off the main thread.
+     */
+    fun copyToImports(context: Context, uri: Uri): String? = runCatching {
+        val mediaDir = File(context.filesDir, "imports").apply { mkdirs() }
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        val name = displayName(context, uri)
+        val ext = extensionForMime(mime)
+            ?: name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+                .takeIf { it.length in 1..5 && it.all { c -> c.isLetterOrDigit() } }
+            ?: "bin"
+        val dest = File(mediaDir, "imp_${System.currentTimeMillis()}_${(uri.toString().hashCode() and 0xFFFFFF)}.$ext")
+        val copied = context.contentResolver.openInputStream(uri)?.use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+        } ?: 0L
+        if (copied <= 0L || dest.length() == 0L) {
+            dest.delete()
+            return@runCatching null
+        }
+        try {
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", dest).toString()
+        } catch (_: Exception) {
+            Uri.fromFile(dest).toString()
+        }
+    }.getOrNull()
+
+    /** File extension for a mime type (audio included — [extensionFor] below only knows photo / video). */
+    private fun extensionForMime(mime: String?): String? {
+        if (mime == null) return null
+        return android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: when (mime) {
+            "audio/mpeg" -> "mp3"
+            "audio/mp4", "audio/x-m4a" -> "m4a"
+            "audio/wav", "audio/x-wav" -> "wav"
+            "audio/ogg" -> "ogg"
+            "image/jpeg" -> "jpg"
+            "image/png" -> "png"
+            "image/webp" -> "webp"
+            "video/mp4" -> "mp4"
+            else -> null
+        }
+    }
+
     private fun displayName(context: Context, uri: Uri): String =
         runCatching {
             context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)

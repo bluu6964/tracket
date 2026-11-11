@@ -79,8 +79,10 @@ import kotlin.math.sin
  *    keyframed on the STROKE_TRIM track; on a line the trim gates the fill (the line's paint is its path),
  *    on text / group layers and on shapes without a stroke it stays a warning.
  *  - `<audio>` layer (pass 3): an audio clip with its timing; `inTime` / `outTime` become the trim and
- *    `mediaFillMode` "stretch" a playback speed. The `src` is a content:// URI of the exporting phone, so
- *    the clip stays silent until the file is picked again (a warning says so).
+ *    `mediaFillMode` "stretch" a playback speed. The `src` is a content:// URI of the exporting phone;
+ *    the import screen copies such files into the project ([AlightMediaLocalizer]) so they play — when
+ *    that copy fails the clip stays silent until the file is picked again (a warning says so). The same
+ *    copy applies to the picture fills of media shapes (`fillImage`).
  *  - effects (pass 3): `wipe2` -> a keyframeable rectangular [ClipMask] (the app has no wipe effect of its
  *    own); `gaussianblur` / `edgeglow` / `darkglow` / `exposure` / `tile` / `rgbsep` / `hueshift` /
  *    `satvib` / `brightcont2` / `invert` / `vignette` / `zoomblur2` / `zoomblur3` / `dblur` / `lensblur2` /
@@ -338,8 +340,10 @@ object AlightXmlImporter {
      * An `<audio>` element -> an audio clip with its timing. `inTime` / `outTime` (the part of the file the
      * layer plays) become the clip's trim, and `mediaFillMode` "stretch" (the file section is stretched onto
      * the layer's length) becomes a playback speed. The `src` is a content:// URI from the phone that
-     * exported the XML, so it cannot resolve here: the clip is imported with the URI and stays silent until
-     * the file is picked again (a warning says so). A `<volume>` child, when present, sets the clip volume.
+     * exported the XML; the importer stays pure and keeps the URI — the import screen then copies the file
+     * into the project ([AlightMediaLocalizer]) and this warning is dropped. Only when that copy cannot be
+     * made does the warning's promise hold: the clip is silent until the file is picked again. A `<volume>`
+     * child, when present, sets the clip volume.
      */
     private fun readAudio(el: Element, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
@@ -2495,7 +2499,11 @@ object AlightXmlImporter {
             if (i <= 0) null else p.substring(0, i) to p.substring(i + 1).replace('+', ' ')
         }.toMap()
         val name = parts["name"].orEmpty()
-        val weight = (parts["weight"]?.toIntOrNull() ?: 600).coerceIn(100, 900)
+        // No weight in the spec means Alight's regular text weight, 400. Only `imported` fonts omit it
+        // (their weight lives in the font file, which the app cannot load, so the substituted family is
+        // drawn regular — like Alight itself does when the file is missing on the phone). The old 600
+        // default made every such layer render semibold / synthetically bold (ST Intro's "Channel Name").
+        val weight = (parts["weight"]?.toIntOrNull() ?: 400).coerceIn(100, 900)
         val family = if (name in KNOWN_FAMILIES) name else {
             if (name.isNotEmpty()) warnings += "Font \"" + name + "\" is not in the app: Roboto is used"
             "Roboto"

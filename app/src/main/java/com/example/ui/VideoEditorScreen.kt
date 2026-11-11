@@ -1790,10 +1790,22 @@ fun VideoEditorScreen(
                                 if (previewFrameWidthPx > 1f) {
                                     com.example.engine.PreviewFrameRef.widthPx = previewFrameWidthPx
                                 }
-                                val meta = projectStore.create(x.name, x.snapshot)
+                                // Media layers link files on the phone that exported the XML: copy
+                                // them into the project's own storage and point the layers at the
+                                // copies, so pictures show and the audio plays (a file that cannot
+                                // be copied keeps its link and is named in the notes).
+                                val loc = com.example.engine.AlightMediaLocalizer.localize(
+                                    x.snapshot, x.warnings,
+                                    context.packageName + ".fileprovider"
+                                ) { src ->
+                                    com.example.engine.MediaImporter.copyToImports(
+                                        context, android.net.Uri.parse(src)
+                                    )
+                                }
+                                val meta = projectStore.create(x.name, loc.snapshot)
                                 Triple(
-                                    meta, x.snapshot,
-                                    if (x.warnings.isNotEmpty()) ". Notes: " + x.warnings.take(3).joinToString("; ") else ""
+                                    meta, loc.snapshot,
+                                    if (loc.warnings.isNotEmpty()) ". Notes: " + loc.warnings.take(3).joinToString("; ") else ""
                                 )
                             } else {
                                 val r = com.example.engine.ProjectArchive.import(b, context.filesDir) { f ->

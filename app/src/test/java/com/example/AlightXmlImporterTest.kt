@@ -218,7 +218,10 @@ $layers
         val w = ArrayList<String>()
         assertEquals("Roboto" to 900, AlightXmlImporter.parseFont("googlefonts?name=Roboto&weight=900", w))
         assertTrue(w.isEmpty())
-        assertEquals("Roboto" to 600, AlightXmlImporter.parseFont("", w))
+        // No weight in the spec = Alight's regular weight (400). This used to default to 600, which
+        // made every `imported`-font layer (they never carry a weight) render semibold / faux-bold.
+        assertEquals("Roboto" to 400, AlightXmlImporter.parseFont("", w))
+        assertEquals("Roboto" to 400, AlightXmlImporter.parseFont("imported?name=MontserratAlternates-Bold.otf", w))
     }
 
     // ---- Shapes and groups: a trimmed excerpt of the real export "3" (the last embedScene "Shape" is left out) ----

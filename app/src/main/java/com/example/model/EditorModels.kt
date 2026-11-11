@@ -8,6 +8,8 @@ const val FILL_NONE = 0
 const val FILL_SOLID = 1
 const val FILL_GRADIENT = 2
 const val FILL_IMAGE = 3
+/** A playing video clipped to the layer's outline (build 104); the ref is [TimelineClip.fillVideoUri]. */
+const val FILL_VIDEO = 4
 
 /** How a picture fills a layer: cover it (crop), fit inside it, or stretch to it. */
 const val IMG_FILL = 0
@@ -169,6 +171,13 @@ data class TimelineClip(
     /** Image fill (fillMode == FILL_IMAGE): picture uri and IMG_FILL / IMG_FIT / IMG_STRETCH. */
     val fillImageUri: String? = null,
     val fillImageMode: Int = IMG_FILL,
+    /**
+     * Video fill (fillMode == FILL_VIDEO, build 104): the video that plays inside the shape's outline,
+     * mapped by the same [fillImageMode]. Its source window rides on the clip's own media fields:
+     * [trimStartMs] = the file position at the layer's start, [sourceDurationMs] = the window's end
+     * (AM's `inTime` / `outTime` on the shape element), played linearly like a media layer.
+     */
+    val fillVideoUri: String? = null,
     // ---- Text layer styling (only used by LayerType.TEXT) ----
     val fontFamily: String = "Roboto",
     val fontWeight: Int = 600,

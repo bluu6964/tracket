@@ -86,6 +86,7 @@ object ProjectArchive {
                 c.copy(
                     uri = pack(c.uri, label),
                     fillImageUri = pack(c.fillImageUri, label),
+                    fillVideoUri = pack(c.fillVideoUri, label),
                     cutoutDir = pack(c.cutoutDir, label),
                     faceBlurDir = pack(c.faceBlurDir, label),
                     planarRemove = c.planarRemove?.let { pr ->
@@ -197,6 +198,7 @@ object ProjectArchive {
                     c.copy(
                         uri = resolve(c.uri, label, true),
                         fillImageUri = resolve(c.fillImageUri, label, true),
+                        fillVideoUri = resolve(c.fillVideoUri, label, true),
                         cutoutDir = resolve(c.cutoutDir, label, false),
                         faceBlurDir = resolve(c.faceBlurDir, label, false),
                         planarRemove = c.planarRemove?.let { pr ->

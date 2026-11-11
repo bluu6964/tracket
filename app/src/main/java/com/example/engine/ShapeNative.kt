@@ -3,6 +3,7 @@ package com.example.engine
 import android.graphics.Bitmap
 import com.example.model.FILL_GRADIENT
 import com.example.model.FILL_IMAGE
+import com.example.model.FILL_VIDEO
 import com.example.model.FILL_NONE
 import com.example.model.TimelineClip
 import com.example.model.depthX
@@ -116,6 +117,15 @@ internal class NativeShapePainter(
                 p[22] = clip.fillImageMode.toFloat()
                 // Missing picture = no fill (like the Canvas version): the C++ side draws no fill without pixels.
                 fillBmp = clip.fillImageUri?.let(fillImage)?.takeIf { it.config == Bitmap.Config.ARGB_8888 && !it.isRecycled }
+            }
+            FILL_VIDEO -> {
+                p[16] = 2f
+                p[22] = clip.fillImageMode.toFloat()
+                // A video fill shows its poster frame here (FillImages resolves a video uri to its
+                // first frame): the render engines cut the playing video by this shape's silhouette
+                // where they can (build 104); everywhere else the fill is the poster, never blank
+                // and never the solid colour the unknown mode would have fallen back to.
+                fillBmp = clip.fillVideoUri?.let(fillImage)?.takeIf { it.config == Bitmap.Config.ARGB_8888 && !it.isRecycled }
             }
             else -> p[16] = 0f
         }

@@ -65,7 +65,9 @@ internal object PreviewFrameRef {
  */
 internal class LayerPainter(
     private val frameW: Int,
-    private val frameH: Int
+    private val frameH: Int,
+    /** The preview reads the real screen density itself (PreviewFrameRef.density is stale there). */
+    private val densityOverride: Float? = null
 ) {
     /** [applyOpacity]: false when the caller applies the layer's opacity itself (blend shader). */
     /** [timeMs]: timeline time of this frame (animated stickers pick their frame from it). */
@@ -142,7 +144,7 @@ internal class LayerPainter(
 
     /** Export pixels per preview pixel (the preview frame is smaller than the export frame). */
     private val k: Float = PreviewFrameRef.widthPx.let { if (it > 0f) frameW / it else 1f }
-    private val density: Float = PreviewFrameRef.density
+    private val density: Float = densityOverride ?: PreviewFrameRef.density
 
     /**
      * Sticker (PNG or animated frame folder): same placement as the preview's 130 dp box
@@ -200,6 +202,18 @@ internal class LayerPainter(
                 paint.shader = com.example.engine.buildGradientShader(clip, base * 2f, base * 2f, -base, -base)
             com.example.model.FILL_IMAGE -> {
                 val uri = clip.fillImageUri
+                val bmp = uri?.let { com.example.engine.FillImages.loadSync(it) }
+                if (bmp != null) {
+                    paint.shader = com.example.engine.buildImageShader(
+                        bmp, uri, clip.fillImageMode, (base * 2f).toInt(), (base * 2f).toInt(), -base, -base
+                    )
+                } else paint.alpha = 0
+            }
+            com.example.model.FILL_VIDEO -> {
+                // The poster frame of the fill video (FillImages resolves a video uri to its first
+                // frame): the render engines composite the playing video over this where they can
+                // (build 104); this Canvas path is the fallback and shows the poster.
+                val uri = clip.fillVideoUri
                 val bmp = uri?.let { com.example.engine.FillImages.loadSync(it) }
                 if (bmp != null) {
                     paint.shader = com.example.engine.buildImageShader(

@@ -136,9 +136,11 @@ class NativeProjectExporter(private val context: Context) {
     private class ImageLayer(val textureId: Int, val width: Int, val height: Int)
 
     /** Text / shape / sticker layers drawn into one picture; [blendId] != 0 = one layer with a blend mode. */
-    private class OverlayGroup(val clips: List<TimelineClip>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false, val mask: TimelineClip? = null) {
+    private class OverlayGroup(val clips: List<TimelineClip>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false, val mask: TimelineClip? = null, val mediaFill: Boolean = false) {
         // fx = a layer with effects (Effects panel): its own picture, the C++ effects run on it before it is drawn.
         // mask = the mask layer cutting this layer (Alight style): the layer has a picture of its own, cut before upload.
+        // mediaFill = one shape filled with a playing video (build 104): its own picture holds only the
+        // shape's outline; the video is composited under it, cut by the silhouette in silBmp / silTex.
         // pose = a layer turned in 3D / with its own pivot (OverlayPose.kt): drawn upright into its own picture and
         // placed by the renderer. boxW / boxH = its box at scale 1 (the pivot is a fraction of it).
         var boxW = 0f
@@ -148,6 +150,9 @@ class NativeProjectExporter(private val context: Context) {
         var tex = 0
         var uploaded = false
         var lastSignature: List<Any>? = null
+        var silBmp: Bitmap? = null
+        var silTex = 0
+        var silUploaded = false
         // fx layers that are not placed by the renderer: the box of the layer inside the picture (the effects run on it).
         var region: FxRegion? = null
     }
@@ -189,6 +194,10 @@ class NativeProjectExporter(private val context: Context) {
                     error("Native export requires Android 8.0 (API 26) or newer and the native engine.")
                 }
                 val videos = HashMap<String, VideoLayerSource>()
+                // Video fills of shapes (build 104), keyed by the shape's id; opened with the picture
+                // sources below, closed with them. A fill that cannot be opened is NOT an error (unlike
+                // a video layer): the shape falls back to the fill's poster frame.
+                val fillVideos = HashMap<String, VideoLayerSource>()
                 // Keyframes / tracking / pose of every picture layer are evaluated in C++ (layer_anim.cpp).
                 val anims = HashMap<String, NativeLayerAnim>()
                 val previewW = PreviewFrameRef.widthPx
@@ -254,7 +263,13 @@ class NativeProjectExporter(private val context: Context) {
                         if (cur.isNotEmpty() && mediaBetween(cur.last(), c)) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                         val spec = BlendModes.find(c.blendMode)
                         val hasFx = ClipFxLibrary.hasEffects(c.effects)
-                        if (overlayNeedsPose(c) || cam.affects(c)) {
+                        if (mediaFillClipOf(listOf(c)) != null && !overlayNeedsPose(c) && !cam.affects(c)) {
+                            // A shape filled with a playing video (build 104): always a picture of its
+                            // own — the outline raster the video is composited under. Pose / camera
+                            // layers keep the poster path below.
+                            if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
+                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id], mediaFill = true)
+                        } else if (overlayNeedsPose(c) || cam.affects(c)) {
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                             level += OverlayGroup(listOf(c), spec.shaderId, pose = true, fx = hasFx)
                         } else if (maskByTarget.containsKey(c.id)) {
@@ -332,6 +347,15 @@ class NativeProjectExporter(private val context: Context) {
                         }
                     }
 
+                    // ---- open the shapes' video fills (build 104) ----
+                    for (c in all.filter { it.isVideoFilledShape() && it.isVisible }.distinctBy { it.id }) {
+                        val src = runCatching {
+                            VideoLayerSource.open(context, Uri.parse(c.fillVideoUri!!), renderer, pool)
+                        }.getOrNull()
+                        if (src != null) fillVideos[c.id] = src
+                        else Log.w(TAG, "video fill of '${c.name}' could not be opened; its poster frame is used")
+                    }
+
                     require(encoder.start(renderer, outputFile.absolutePath, w, h, fps, bitrate)) {
                         encoder.errorMessage().ifBlank { "Could not start native H.264 export." }
                     }
@@ -344,6 +368,8 @@ class NativeProjectExporter(private val context: Context) {
 
                     // ---- frames ----
                     val shown = HashSet<String>()
+                    // Shapes whose video fill has shown at least one frame (build 104).
+                    val fillShown = HashSet<String>()
                     // A hardware decoder that outputs only black (seen with several video layers on some chips):
                     // the first frames of every layer are checked; a black one is re-opened with a software decoder.
                     val probes = HashMap<String, Int>()
@@ -553,6 +579,56 @@ class NativeProjectExporter(private val context: Context) {
                             }
                         }
                     }
+                    // A video-filled shape's live composite (build 104): the fill video is placed into
+                    // the shape's box (FillVideoPlacement), cut by the shape's silhouette texture, run
+                    // through the layer's effects when it has any, and drawn — the shape's own outline
+                    // picture goes over it afterwards. False = could not composite (the caller keeps
+                    // the poster raster). Renderer results (group pass, mask cut, effects) are drawn
+                    // before the next such call, as everywhere in this engine.
+                    fun drawFillVideoComposite(
+                        src: VideoLayerSource, evalClip: TimelineClip, silTex: Int, silBmp: Bitmap,
+                        fx: Boolean, ops: FloatArray?, blendId: Int, timeMs: Long
+                    ): Boolean {
+                        val pose = fillVideoPose(
+                            evalClip, w, h, if (previewW > 0f) w / previewW else 1f,
+                            PreviewFrameRef.density, src.contentWidth, src.contentHeight
+                        ) ?: return false
+                        if (!renderer.beginGroup()) return false
+                        val lp = LayerParams().apply {
+                            offsetX = pose.offsetX; offsetY = pose.offsetY
+                            scaleX = pose.scaleX; scaleY = pose.scaleY
+                            rotationDeg = pose.rotationDeg
+                        }
+                        renderer.drawLayer(src.textureId, true, src.texMatrix, src.contentWidth, src.contentHeight, src.drawRotation, lp)
+                        val placed = renderer.endGroup()
+                        if (placed == 0) return false
+                        val cut = renderer.applyTexMask(placed, false, IDENTITY_TEX_MATRIX, w, h, 0, silTex)
+                        if (cut == 0) return false
+                        var tex = cut
+                        var contW = w
+                        var contH = h
+                        var placeLp: LayerParams? = null
+                        if (fx && ops != null) {
+                            val reg = OverlayFx.regionOf(silBmp)
+                            val fxTex = renderer.applyFx(
+                                tex, false, IDENTITY_TEX_MATRIX, w, h, 0,
+                                0, 0f, 0, false, canvasRgb, ops, ClipFxLibrary.grainFrame(timeMs), null,
+                                reg?.crop(w, h), true
+                            )
+                            if (fxTex != 0) {
+                                tex = fxTex
+                                if (reg != null) {
+                                    contW = reg.w
+                                    contH = reg.h
+                                    placeLp = reg.place(w, h)
+                                }
+                            }
+                        }
+                        val outLp = (placeLp ?: LayerParams()).apply { opacity = evalClip.opacityFraction }
+                        if (blendId == 0) renderer.drawLayer(tex, false, IDENTITY_TEX_MATRIX, contW, contH, 0, outLp)
+                        else renderer.drawLayerBlended(tex, false, IDENTITY_TEX_MATRIX, contW, contH, 0, outLp, blendId, canvasRgb)
+                        return true
+                    }
                     // One level of the frame: the top level, or the layers inside a Group.
                     fun drawScope(scopeId: String?, depth: Int, timeMs: Long) {
                         val levelGroups = overlayGroups[scopeId ?: ""] ?: emptyList()
@@ -591,11 +667,43 @@ class NativeProjectExporter(private val context: Context) {
                                     .sortedBy { overlayKey(it) }
                                 if (rendered.isEmpty()) continue
                                 drawMediaUpTo(overlayKey(rendered.first()), laneIdx[rendered.first().id] ?: 0)  // pictures behind this group go first
+                                // A video-filled shape (build 104): the fill is sought to this frame —
+                                // a fill NEVER fails the export; any trouble leaves the poster raster.
+                                // The live composite runs for a single repeat copy; several copies
+                                // rasterise the poster like any repeated layer.
+                                val fillClip = if (g.mediaFill) mediaFillClipOf(g.clips) else null
+                                val fillCopies = if (fillClip != null) RepeatEval.copiesOf(rendered[0], timeMs = timeMs) else null
+                                var fillSrc: VideoLayerSource? = null
+                                var useVideo = false
+                                if (fillClip != null && fillCopies != null && fillCopies.size == 1) {
+                                    val src = fillVideos[fillClip.id]
+                                    if (src != null) {
+                                        val targetMs = fillSourceMs(fillClip, timeMs, src.clip.durationUs / 1000L)
+                                        val st = runCatching {
+                                            var s = src.seek(targetMs * 1000L)
+                                            var tries = 0
+                                            while (s == DecoderPool.BUSY && tries++ < 30) { Thread.sleep(10); s = src.seek(targetMs * 1000L) }
+                                            s
+                                        }.getOrNull()
+                                        if (st == DecoderPool.OK || st == DecoderPool.SAME) fillShown.add(fillClip.id)
+                                        if (fillClip.id in fillShown) {
+                                            fillSrc = src
+                                            useVideo = fillVideoPose(
+                                                fillCopies[0], w, h, if (previewW > 0f) w / previewW else 1f,
+                                                PreviewFrameRef.density, src.contentWidth, src.contentHeight
+                                            ) != null
+                                        }
+                                    }
+                                }
                                 // A layer placed by the renderer (pose) is drawn upright: only what changes the picture is in
                                 // the key, so a layer that just turns or moves is not redrawn. A layer with the Repeat effect is
                                 // drawn once per copy (RepeatEval.copiesOf): in its own upright picture the copies are placed by
                                 // undoing the layer's own turn, so the picture's turn puts each copy back on the scene-space grid.
-                                val drawn = if (g.pose) rendered.flatMap { c ->
+                                val drawn = if (fillClip != null) {
+                                    // Live: only the outline is rasterised (the video is composited
+                                    // under it). Poster: the whole shape, poster fill included.
+                                    if (useVideo) listOf(strokeOnlyCopy(fillCopies!![0])) else fillCopies!!
+                                } else if (g.pose) rendered.flatMap { c ->
                                     val upright = if (cam.activeFor(c, timeMs)) uprightForCamera(c) else uprightForPose(c)
                                     RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg, timeMs = timeMs)
                                 } else rendered.flatMap { RepeatEval.copiesOf(it, timeMs = timeMs) }
@@ -609,9 +717,11 @@ class NativeProjectExporter(private val context: Context) {
                                     } else null
                                 } else null
                                 // A sticker's animation frame depends on the time, so it is part of the key.
+                                // The fill's raster mode is part of it too: live (outline only) and
+                                // poster (whole shape) are different pictures.
                                 val signature = drawn.map { r ->
                                     if (r.type == LayerType.STICKER) r to r.sourceOffsetMs(timeMs - r.startMs) else r
-                                } + listOf<Any>(maskAdj ?: "")
+                                } + listOf<Any>(maskAdj ?: "", useVideo)
                                 if (g.bmp == null) {
                                     g.bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                                     g.canvas = android.graphics.Canvas(g.bmp!!)
@@ -638,6 +748,43 @@ class NativeProjectExporter(private val context: Context) {
                                         painter.nativeTarget = g.bmp
                                         cv.drawBitmap(scratch, 0f, 0f, maskDstInPaint)
                                     }
+                                    // The video fill's window (build 104): the shape's silhouette,
+                                    // rasterised with the same painter (white fill, no stroke, no
+                                    // opacity — the composite applies it), cut by the same mask layer
+                                    // when there is one, and uploaded as the texture the renderer
+                                    // multiplies the placed video by.
+                                    if (fillClip != null && useVideo) {
+                                        if (g.silBmp == null) {
+                                            g.silBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                                            g.silTex = renderer.createTexture2d()
+                                        }
+                                        val sil = g.silBmp!!
+                                        sil.eraseColor(0)
+                                        painter.nativeTarget = sil
+                                        painter.draw(android.graphics.Canvas(sil), silhouetteCopy(fillCopies!![0]), applyOpacity = false, timeMs = timeMs)
+                                        if (maskAdj != null) {
+                                            var scratch = maskScratchBmp
+                                            if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
+                                                scratch?.recycle()
+                                                scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                                                maskScratchBmp = scratch
+                                            }
+                                            scratch.eraseColor(0)
+                                            painter.nativeTarget = scratch
+                                            painter.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
+                                            android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, maskDstInPaint)
+                                        }
+                                        painter.nativeTarget = g.bmp
+                                        if (g.silTex != 0) {
+                                            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, g.silTex)
+                                            if (!g.silUploaded) {
+                                                GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, sil, 0)
+                                                g.silUploaded = true
+                                            } else {
+                                                GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, sil)
+                                            }
+                                        }
+                                    }
                                     if (g.pose) painter.boxOf(drawn[0]).let { g.boxW = it.first; g.boxH = it.second }
                                     GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, g.tex)
                                     if (!g.uploaded) {
@@ -657,7 +804,16 @@ class NativeProjectExporter(private val context: Context) {
                                 var contW = w          // size of the picture that is drawn (the layer's box when the effects ran on it)
                                 var contH = h
                                 var boxLp: LayerParams? = null
-                                if (g.fx) {
+                                // Video fill (build 104): the playing video, cut by the shape's
+                                // silhouette (and run through the layer's effects when it has any),
+                                // goes down first; the group's own picture — the shape's outline, or
+                                // the poster when the video could not be shown — is drawn over it by
+                                // the branches below, without the effects a second time.
+                                val fillDrawn = if (fillClip != null && useVideo && fillSrc != null && g.silTex != 0 && g.silBmp != null) {
+                                    val ops = if (g.fx) fxOpsOf(rendered[0], timeMs, g.clips.firstOrNull { it.id == rendered[0].id } ?: rendered[0]) else null
+                                    drawFillVideoComposite(fillSrc!!, fillCopies!![0], g.silTex, g.silBmp!!, g.fx, ops, g.blendId, timeMs)
+                                } else false
+                                if (g.fx && !fillDrawn) {
                                     val ops = fxOpsOf(rendered[0], timeMs, g.clips.firstOrNull { it.id == rendered[0].id } ?: rendered[0])
                                     if (ops != null) {
                                         val reg = g.region
@@ -778,13 +934,16 @@ class NativeProjectExporter(private val context: Context) {
                     throw IllegalStateException((t.message ?: t.javaClass.simpleName) + info, t)
                 } finally {
                     videos.values.forEach { runCatching { it.close() } }
+                    fillVideos.values.forEach { runCatching { it.close() } }
                     anims.values.forEach { runCatching { it.close() } }
                     images.values.forEach { runCatching { renderer.deleteTexture(it.textureId) } }
                     runCatching { removePatches.release(renderer) }
                     overlayGroups.values.forEach { level ->
                         level.forEach { g ->
                             if (g.tex != 0) runCatching { renderer.deleteTexture(g.tex) }
+                            if (g.silTex != 0) runCatching { renderer.deleteTexture(g.silTex) }
                             g.bmp?.recycle()
+                            g.silBmp?.recycle()
                         }
                     }
                     maskScratchBmp?.recycle()

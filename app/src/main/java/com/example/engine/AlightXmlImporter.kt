@@ -10,6 +10,7 @@ import com.example.model.ClipMask
 import com.example.model.Easing
 import com.example.model.FILL_GRADIENT
 import com.example.model.FILL_IMAGE
+import com.example.model.FILL_VIDEO
 import com.example.model.FILL_NONE
 import com.example.model.FILL_SOLID
 import com.example.model.GRAD_LINEAR
@@ -548,21 +549,28 @@ object AlightXmlImporter {
         val durMs = (endMs - startMs).coerceAtLeast(250L)
         val tr = readTransform(el, w, pivotUsed = false)
 
-        // Fill: the <fillColor> child, or the picture of a media fill (the uri travels in the XML).
+        // Fill: the <fillColor> child, or the media of a media fill (a still in `fillImage`, a
+        // playing video in `fillVideo` — the uri travels in the XML either way).
         val fillColor = child(el, "fillColor")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
         var fillImageUri: String? = null
+        var fillVideoUri: String? = null
         var fillImageMode = IMG_FILL
         val fillMode = when (val ft = el.getAttribute("fillType")) {
             "none" -> FILL_NONE
             "media" -> {
-                fillImageUri = el.getAttribute("fillImage").ifEmpty { null }
                 fillImageMode = when (el.getAttribute("mediaFillMode")) {
                     "stretch" -> IMG_STRETCH
                     "fit" -> IMG_FIT
                     else -> IMG_FILL
                 }
-                if (fillImageUri == null) w += "Shape" + labelOf(el) + ": its picture is not in the XML: the fill stays empty"
-                FILL_IMAGE
+                fillVideoUri = el.getAttribute("fillVideo").ifEmpty { null }
+                if (fillVideoUri != null) {
+                    FILL_VIDEO
+                } else {
+                    fillImageUri = el.getAttribute("fillImage").ifEmpty { null }
+                    if (fillImageUri == null) w += "Shape" + labelOf(el) + ": its picture is not in the XML: the fill stays empty"
+                    FILL_IMAGE
+                }
             }
             "", "color" -> FILL_SOLID
             else -> {
@@ -570,6 +578,15 @@ object AlightXmlImporter {
                 FILL_SOLID
             }
         }
+        // A video fill's own window in its file: the element's inTime / outTime, kept like a media
+        // layer's trim (AM's outTime 2147476647 is its "to the end of the file" sentinel; the
+        // renderers clamp to the real duration). A "stretch" fill mode stretches that window onto
+        // the layer's length, as it does for audio.
+        val fillInMs = if (fillMode == FILL_VIDEO) el.getAttribute("inTime").toLongOrNull() ?: 0L else 0L
+        val fillOutMs = if (fillMode == FILL_VIDEO) el.getAttribute("outTime").toLongOrNull() ?: 0L else 0L
+        val fillSpeed = if (fillMode == FILL_VIDEO && el.getAttribute("mediaFillMode") == "stretch" &&
+            fillOutMs > fillInMs && (fillOutMs - fillInMs) != durMs
+        ) (fillOutMs - fillInMs).toFloat() / durMs else 1f
         warnBlending(el, w)
 
         // Stroke: <path-stroke><color/><size/></path-stroke>; a disabled one draws nothing. The size is kept
@@ -655,6 +672,10 @@ object AlightXmlImporter {
             textColor = fillColor,
             fillMode = fillMode,
             fillImageUri = fillImageUri,
+            fillVideoUri = fillVideoUri,
+            trimStartMs = fillInMs,
+            sourceDurationMs = fillOutMs,
+            speed = fillSpeed,
             fillImageMode = fillImageMode,
             shapePattern = pattern,
             shapeScaleX = rendW / box,
@@ -732,22 +753,28 @@ object AlightXmlImporter {
         val durMs = (endMs - startMs).coerceAtLeast(250L)
         val tr = readTransform(el, w, pivotUsed = false)
 
-        // Fill and stroke, exactly as a built-in shape reads them (a media fill keeps only its
-        // picture, as there; a video fill stays empty, also as there).
+        // Fill and stroke, exactly as a built-in shape reads them (a media fill keeps its picture
+        // or its video, as there).
         val fillColor = child(el, "fillColor")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
         var fillImageUri: String? = null
+        var fillVideoUri: String? = null
         var fillImageMode = IMG_FILL
         val fillMode = when (val ft = el.getAttribute("fillType")) {
             "none" -> FILL_NONE
             "media" -> {
-                fillImageUri = el.getAttribute("fillImage").ifEmpty { null }
                 fillImageMode = when (el.getAttribute("mediaFillMode")) {
                     "stretch" -> IMG_STRETCH
                     "fit" -> IMG_FIT
                     else -> IMG_FILL
                 }
-                if (fillImageUri == null) w += "Shape" + labelOf(el) + ": its picture is not in the XML: the fill stays empty"
-                FILL_IMAGE
+                fillVideoUri = el.getAttribute("fillVideo").ifEmpty { null }
+                if (fillVideoUri != null) {
+                    FILL_VIDEO
+                } else {
+                    fillImageUri = el.getAttribute("fillImage").ifEmpty { null }
+                    if (fillImageUri == null) w += "Shape" + labelOf(el) + ": its picture is not in the XML: the fill stays empty"
+                    FILL_IMAGE
+                }
             }
             "", "color" -> FILL_SOLID
             else -> {
@@ -755,6 +782,12 @@ object AlightXmlImporter {
                 FILL_SOLID
             }
         }
+        // A video fill's window in its file, as in readShape.
+        val fillInMs = if (fillMode == FILL_VIDEO) el.getAttribute("inTime").toLongOrNull() ?: 0L else 0L
+        val fillOutMs = if (fillMode == FILL_VIDEO) el.getAttribute("outTime").toLongOrNull() ?: 0L else 0L
+        val fillSpeed = if (fillMode == FILL_VIDEO && el.getAttribute("mediaFillMode") == "stretch" &&
+            fillOutMs > fillInMs && (fillOutMs - fillInMs) != durMs
+        ) (fillOutMs - fillInMs).toFloat() / durMs else 1f
         warnBlending(el, w)
 
         var strokeColor = 0xFFFFFFFFL
@@ -835,6 +868,10 @@ object AlightXmlImporter {
             textColor = fillColor,
             fillMode = fillMode,
             fillImageUri = fillImageUri,
+            fillVideoUri = fillVideoUri,
+            trimStartMs = fillInMs,
+            sourceDurationMs = fillOutMs,
+            speed = fillSpeed,
             fillImageMode = fillImageMode,
             shapePattern = "PATH",
             pathSegments = segments,

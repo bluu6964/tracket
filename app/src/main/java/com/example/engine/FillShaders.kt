@@ -147,5 +147,25 @@ object FillImages {
         while (bounds.outWidth / sample > 1600 || bounds.outHeight / sample > 1600) sample *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
         ctx.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    }.getOrNull() ?: posterFrame(ctx, uri)
+
+    /**
+     * A video fill's poster (build 104): when the uri names a video rather than a picture, every
+     * bitmap path (the Canvas painter, pose / repeat fallbacks, the legacy exporter) shows its
+     * first frame, so the shape is never blank where the live composite does not run. The live
+     * engines prefer the playing video; this is only the still underneath.
+     */
+    private fun posterFrame(ctx: Context, uri: String): Bitmap? = runCatching {
+        val mmr = android.media.MediaMetadataRetriever()
+        try {
+            mmr.setDataSource(ctx, android.net.Uri.parse(uri))
+            val frame = mmr.getFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: return@runCatching null
+            val longest = maxOf(frame.width, frame.height)
+            if (longest <= 1600) frame
+            else Bitmap.createScaledBitmap(frame, frame.width * 1600 / longest, frame.height * 1600 / longest, true)
+        } finally {
+            runCatching { mmr.release() }
+        }
     }.getOrNull()
 }

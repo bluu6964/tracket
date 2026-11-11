@@ -50,6 +50,7 @@ object AlightMediaLocalizer {
         for (c in snapshot.tracks.flatMap { it.clips }) {
             if (needsCopy(c.uri, ownAuthority)) sources += c.uri!!
             if (needsCopy(c.fillImageUri, ownAuthority)) sources += c.fillImageUri!!
+            if (needsCopy(c.fillVideoUri, ownAuthority)) sources += c.fillVideoUri!!
         }
         if (sources.isEmpty()) return Result(snapshot, warnings, 0, emptyList())
 
@@ -74,6 +75,9 @@ object AlightMediaLocalizer {
                 val f = c.fillImageUri
                 if (f != null && f in owned) out = out.copy(fillImageUri = owned[f])
                 if (f != null && f in failed && c.name !in failedNames) failedNames += c.name
+                val v = c.fillVideoUri
+                if (v != null && v in owned) out = out.copy(fillVideoUri = owned[v])
+                if (v != null && v in failed && c.name !in failedNames) failedNames += c.name
                 out
             })
         }

@@ -36,6 +36,9 @@ internal object RendererNative {
         faceMask: Int, faceStrength: Float, cutMask: Int, flatten: Boolean, canvas: FloatArray,
         fxOps: FloatArray?, grainFrame: Int, maskOps: FloatArray?, bgAligned: Boolean
     ): Int
+    @JvmStatic external fun nativeApplyTexMask(
+        r: Long, tex: Int, oes: Boolean, params: FloatArray, maskTex: Int
+    ): Int
 }
 
 /** Texture matrix of a texture that is already upright (what [NativeRenderer.applyFx] returns). */
@@ -267,6 +270,23 @@ class NativeRenderer private constructor(private var ptr: Long) : AutoCloseable 
         return RendererNative.nativeApplyFx(
             ptr, tex, external, params, faceMask, faceStrength, cutMask, flatten, canvasRgb, fxOps, grainFrame, maskOps, backdrop
         )
+    }
+
+    /**
+     * Cuts a ready picture by a layer mask (an Alight `blending="mask"` layer over a GROUP layer):
+     * the picture keeps only where the mask layer is (alpha multiply, DST_IN). [maskTex] = a plain 2D
+     * texture of the mask layer drawn by the Kotlin painters (first row = TOP of the canvas, e.g. an
+     * uploaded Bitmap). Returns a 2D texture with the cut, upright picture (draw it with
+     * [IDENTITY_TEX_MATRIX] and rotation 0, same content size), valid until the next [applyFx] /
+     * applyTexMask call; 0 when it failed (the caller draws the picture uncut).
+     */
+    fun applyTexMask(
+        tex: Int, external: Boolean, texMatrix: FloatArray,
+        contentW: Int, contentH: Int, contentRotation: Int,
+        maskTex: Int
+    ): Int {
+        fillParams(texMatrix, contentW, contentH, contentRotation, LayerParams())
+        return RendererNative.nativeApplyTexMask(ptr, tex, external, params, maskTex)
     }
 
     /** RGBA, rows bottom to top. Call before [endFrame]. */

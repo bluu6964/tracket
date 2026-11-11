@@ -7,7 +7,9 @@ import com.example.model.TimelineClip
  * layer it sits on is cut to the mask's own (animated) shape. The importer resolves each mask to the layer
  * directly below it in its scene and stores the link ([TimelineClip.maskTargetId]); the renderers use this
  * pairing to give a masked layer its own picture and cut that picture with the mask layer's rendering
- * (alpha multiply). Kept free of Android types so the importer tests can pin the pairing rules.
+ * (alpha multiply). A masked GROUP layer is cut the same way, as its composed picture (the renderer's
+ * group pass), in the scope the group itself sits in. Kept free of Android types so the importer tests
+ * can pin the pairing rules.
  */
 object LayerMaskLinks {
 

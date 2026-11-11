@@ -510,6 +510,15 @@ class NativePreviewEngine(context: Context) {
             // Remove: the clean patch on the moving surface, right after the layer's own picture.
             RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, blendId, canvasRgb)
         }
+        // The mask layer cutting a Group layer of one level (Alight style), evaluated at [t] like every
+        // layer — or null: no mask on the group, or the mask is not there at [t] (outside the mask
+        // layer's own span there is no cut).
+        fun groupMaskFor(c: TimelineClip, t: Long): TimelineClip? {
+            val scopeClips = GroupOps.scopeTracks(liveTracks, c.groupId).flatMap { it.clips }
+            val mc = LayerMaskLinks.masksByTarget(scopeClips)[c.id] ?: return null
+            if (!mc.isActiveAt(t)) return null
+            return if (rig.hasLinks) rig.adjusted(mc, t) else NativeRenderAt.renderAt(mc, t)
+        }
         // A Group layer is ONE layer: the layers inside are drawn into their own picture (the renderer's group pass), and that
         // picture gets the group's opacity, blend mode, effects and masks like a photo would. The group's move / scale / turn
         // already reached the layers inside through their parent link (ParentRig), so the picture is placed at 0 / 0 / 1.
@@ -528,9 +537,24 @@ class NativePreviewEngine(context: Context) {
             val fxOps = fxOpsOf(c, t)
             val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
             var drawTex = tex
+            // A mask layer sitting on this group (Alight style) cuts the composed picture, before the
+            // group's own effects — the same order as a masked shape / text layer's picture. The mask
+            // is evaluated like every layer, so the cut follows its own animation; outside the mask
+            // layer's own span there is no cut. (In the beginGroup fallback above there is no group
+            // picture, so a mask on such a group cannot cut — the layers are already on the frame.)
+            val maskAdj = groupMaskFor(c, t)
+            if (maskAdj != null) {
+                val pw = PreviewFrameRef.widthPx
+                val cutTex = cutGroupPicture(
+                    r, drawTex, maskAdj, outW, outH,
+                    if (pw > 0f) outW / pw else 1f, appCtx.resources.displayMetrics.density, t
+                )
+                if (cutTex != 0) drawTex = cutTex
+                else Log.w(TAG, "layer mask '${maskAdj.name}' was not applied to group '${c.name}', drawn uncut")
+            }
             if (fxOps != null || maskOps != null) {
                 val fxTex = r.applyFx(
-                    tex, false, IDENTITY_TEX_MATRIX, outW, outH, 0,
+                    drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0,
                     0, 0f, 0, false, canvasRgb, fxOps, ClipFxLibrary.grainFrame(t), maskOps, null, true
                 )
                 if (fxTex != 0) drawTex = fxTex
@@ -798,18 +822,16 @@ class NativePreviewEngine(context: Context) {
         }
     }
 
-    /** Scratch picture a mask layer is drawn into before it cuts a masked layer's picture (see [applyLayerMask]). */
+    /** Scratch picture a mask layer is drawn into before it cuts a masked layer's picture (see [drawMaskScratch]). */
     private var maskScratch: Bitmap? = null
 
     /**
-     * Cuts [bmp] (a masked layer's own picture) by the mask layer's alpha: the mask layer is drawn into a
-     * scratch picture with the same painters and multiplied over the picture (DST_IN: the picture keeps
-     * only where the mask is). [mask] is the mask layer evaluated at the frame's time, so the cut follows
-     * its animation. False = the mask could not be drawn (the picture is left uncut).
+     * Draws the mask layer [mask] (already evaluated at [t]) into the shared scratch picture and
+     * returns it — the same painters that draw every layer, so the rendering is what the mask layer
+     * would look like if it were drawn. Null = the mask could not be drawn (callers leave the masked
+     * picture uncut).
      */
-    private fun applyLayerMask(
-        bmp: Bitmap, mask: TimelineClip, w: Int, h: Int, k: Float, dens: Float, t: Long
-    ): Boolean {
+    private fun drawMaskScratch(mask: TimelineClip, w: Int, h: Int, k: Float, dens: Float, t: Long): Bitmap? {
         var scratch = maskScratch
         if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
             scratch?.recycle()
@@ -822,9 +844,51 @@ class NativePreviewEngine(context: Context) {
             LayerType.TEXT -> textPainter.draw(scratch, mask, w, h, k, true, cropFractionsOfClip(mask), t)
             else -> false
         }
-        if (!drawn) return false
+        return if (drawn) scratch else null
+    }
+
+    /**
+     * Cuts [bmp] (a masked layer's own picture) by the mask layer's alpha: the mask layer is drawn into a
+     * scratch picture with the same painters and multiplied over the picture (DST_IN: the picture keeps
+     * only where the mask is). [mask] is the mask layer evaluated at the frame's time, so the cut follows
+     * its animation. False = the mask could not be drawn (the picture is left uncut).
+     */
+    private fun applyLayerMask(
+        bmp: Bitmap, mask: TimelineClip, w: Int, h: Int, k: Float, dens: Float, t: Long
+    ): Boolean {
+        val scratch = drawMaskScratch(mask, w, h, k, dens, t) ?: return false
         android.graphics.Canvas(bmp).drawBitmap(scratch, 0f, 0f, MASK_DST_IN_PAINT)
         return true
+    }
+
+    /** Texture the mask layer is uploaded into before it cuts a group picture (see [cutGroupPicture]). */
+    private var groupMaskTex = 0
+    private var groupMaskTexW = 0
+    private var groupMaskTexH = 0
+
+    /**
+     * Cuts [tex] (a Group layer's composed picture, a renderer texture) by the mask layer's alpha:
+     * the mask is drawn exactly as in [applyLayerMask], uploaded, and the renderer multiplies the
+     * picture by it (DST_IN, see [NativeRenderer.applyTexMask]). Returns the cut picture's texture,
+     * or 0 when the cut could not be made (the caller draws the picture uncut).
+     */
+    private fun cutGroupPicture(
+        r: NativeRenderer, tex: Int, mask: TimelineClip, w: Int, h: Int, k: Float, dens: Float, t: Long
+    ): Int {
+        val scratch = drawMaskScratch(mask, w, h, k, dens, t) ?: return 0
+        if (groupMaskTex == 0 || groupMaskTexW != w || groupMaskTexH != h) {
+            if (groupMaskTex != 0) r.deleteTexture(groupMaskTex)
+            groupMaskTex = r.createTexture2d()
+            if (groupMaskTex == 0) return 0
+            groupMaskTexW = w
+            groupMaskTexH = h
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, scratch, 0)
+        } else {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
+            GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
+        }
+        return r.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
     }
 
     private fun logPoolStats() {

@@ -108,6 +108,14 @@ public:
     // pointing at an upright 2D texture (texMatrix = identity, contentRotation = 0). The texture is
     // owned by the renderer and valid until the next applyFx() call. Crop / transform stay in `out`.
     bool applyFx(const LayerDraw& src, const LayerFx& fx, LayerDraw* out);
+    // Layer mask over a ready picture (an Alight `blending="mask"` layer cutting a GROUP layer's
+    // composed picture): multiplies the picture by the mask texture's alpha (DST_IN — the picture
+    // keeps only where the mask is). `maskTex` is a plain 2D texture whose first row is the TOP of
+    // the canvas (e.g. an uploaded Bitmap of the mask layer drawn by the Kotlin painters); the
+    // picture itself is a renderer texture (rows bottom-to-top), the shader flips the mask's v.
+    // Same ownership as applyFx: the result lives in the fx targets, valid until the next
+    // applyFx / applyTexMask call. False = nothing was done (the caller draws the source itself).
+    bool applyTexMask(const LayerDraw& src, uint32_t maskTex, LayerDraw* out);
     // Group pass: a Group layer is drawn as ONE picture. beginGroup() makes the frame target a transparent canvas-sized
     // picture (premultiplied RGBA); everything drawn until endGroup() lands in it, blend modes of the layers inside blend
     // with the group's own contents only. endGroup() puts the previous target back (the frame, or the group this one is
@@ -177,6 +185,7 @@ private:
     uint32_t targetFbo_ = 0;
     // Effects (renderer_fx.cpp)
     uint32_t fxDown_ = 0, fxBlur_ = 0, fxFace_ = 0, fxCut_ = 0;
+    uint32_t fxLayerMask_ = 0;  // applyTexMask's program (built lazily, released with the fx programs)
     uint32_t fxTex_[2] = {0, 0}, fxFbo_[2] = {0, 0};      // picture-sized ping-pong targets
     uint32_t lowTex_[2] = {0, 0}, lowFbo_[2] = {0, 0};    // small pictures for the blur
     int fxW_ = 0, fxH_ = 0, lowW_ = 0, lowH_ = 0;

@@ -286,6 +286,33 @@ JNIEXPORT jint JNICALL Java_com_example_engine_RendererNative_nativeApplyFx(
     return (jint)out.texture;
 }
 
+// Layer mask over a ready picture (a group layer's composed picture): params = the same layout as
+// nativeDrawLayer for the picture; maskTex = a plain 2D texture of the mask layer (first row = top
+// of the canvas, e.g. an uploaded Bitmap). Returns the cut picture's texture (draw it with an
+// identity texture matrix, rotation 0, same content size), or 0 when nothing could be done.
+JNIEXPORT jint JNICALL Java_com_example_engine_RendererNative_nativeApplyTexMask(
+    JNIEnv* env, jclass, jlong p, jint tex, jboolean oes, jfloatArray params, jint maskTex) {
+    jfloat v[46] = {0};
+    const jsize len = env->GetArrayLength(params);
+    env->GetFloatArrayRegion(params, 0, len < 46 ? len : 46, v);
+    am::LayerDraw d;
+    d.texture = (uint32_t)tex;
+    d.oes = oes == JNI_TRUE;
+    for (int i = 0; i < 16; ++i) d.texMatrix[i] = v[i];
+    d.contentW = (int)v[16];
+    d.contentH = (int)v[17];
+    d.contentRotation = (int)v[18];
+    if (len >= 29 && v[27] > 0.f && v[28] > 0.f) {
+        d.cropX = v[25];
+        d.cropY = v[26];
+        d.cropW = v[27];
+        d.cropH = v[28];
+    }
+    am::LayerDraw out;
+    if (!R(p)->applyTexMask(d, (uint32_t)maskTex, &out)) return 0;
+    return (jint)out.texture;
+}
+
 JNIEXPORT jboolean JNICALL Java_com_example_engine_RendererNative_nativeReadPixels(JNIEnv* env, jclass, jlong p,
                                                                                  jint x, jint y, jint w, jint h,
                                                                                  jbyteArray out) {

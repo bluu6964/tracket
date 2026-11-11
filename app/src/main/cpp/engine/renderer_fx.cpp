@@ -115,6 +115,24 @@ void main() {
 }
 )";
 
+// Layer mask over a ready picture (a group layer's composed picture, cut by the Alight mask layer
+// sitting on it): the picture keeps only where the mask layer is (DST_IN). The mask is the mask
+// layer drawn by the Kotlin painters into a Bitmap and uploaded: a bitmap texture, row 0 = top,
+// read with v flipped, and its ALPHA is the coverage (the same rule the CPU overlay path applies
+// with a PorterDuff DST_IN paint). The picture is premultiplied, so its colour scales along.
+const char* kFxTexMask = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uMask;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 c = texture(uTex, vUv);
+    float a = texture(uMask, vec2(vUv.x, 1.0 - vUv.y)).a;
+    oColor = vec4(c.rgb * a, c.a * a);
+}
+)";
+
 uint32_t compileShader(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, nullptr);
@@ -257,6 +275,8 @@ void Renderer::releaseFx() {
         dropTarget(&lowTex_[i], &lowFbo_[i]);
     }
     fxW_ = fxH_ = lowW_ = lowH_ = 0;
+    if (fxLayerMask_) glDeleteProgram(fxLayerMask_);
+    fxLayerMask_ = 0;
     if (fxDown_) glDeleteProgram(fxDown_);
     if (fxBlur_) glDeleteProgram(fxBlur_);
     if (fxFace_) glDeleteProgram(fxFace_);
@@ -427,6 +447,88 @@ bool Renderer::applyFx(const LayerDraw& d, const LayerFx& fx, LayerDraw* out) {
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
     out->texture = fxTex_[cur];
+    out->oes = false;
+    for (int i = 0; i < 16; ++i) out->texMatrix[i] = (i % 5 == 0) ? 1.f : 0.f;  // identity
+    out->contentRotation = 0;  // the picture is already upright
+    return true;
+}
+
+bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, LayerDraw* out) {
+    if (!out) return false;
+    *out = d;
+    if (!ok_ || d.texture == 0 || maskTex == 0 || d.contentW <= 0 || d.contentH <= 0) return false;
+    if (!fxLayerMask_) fxLayerMask_ = makeProgram(kFxTexMask);
+    if (!fxLayerMask_) return false;
+
+    // Same picture geometry as applyFx (a crop runs the pass on that part of the picture only).
+    const float ccw = std::fmin(1.f, std::fmax(0.01f, d.cropW));
+    const float cch = std::fmin(1.f, std::fmax(0.01f, d.cropH));
+    const int W = std::max(1, (int)std::lround((double)d.contentW * ccw));
+    const int H = std::max(1, (int)std::lround((double)d.contentH * cch));
+    if (!ensureFxTargets(W, H, 0, 0)) return false;
+
+    // The frame clip must not cut this pass (see applyFx): saved, off for the call, restored at the end.
+    const GLboolean scissorWas = glIsEnabled(GL_SCISSOR_TEST);
+    GLint scissorBox[4] = {0, 0, 0, 0};
+    if (scissorWas) glGetIntegerv(GL_SCISSOR_BOX, scissorBox);
+    glDisable(GL_SCISSOR_TEST);
+
+    GLint prevFbo = 0;
+    GLint vp[4] = {0, 0, w_, h_};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, vp);
+
+    // 0) the source picture, upright and at its own size, into target 0 (same copy as applyFx).
+    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[0]);
+    glViewport(0, 0, W, H);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    {
+        const int sw = w_, sh = h_;
+        w_ = W;  // drawLayer fits the picture into the canvas: here canvas == picture, scale 1
+        h_ = H;
+        LayerDraw n = d;
+        n.offsetX = n.offsetY = 0.f;
+        n.scaleX = n.scaleY = 1.f;
+        n.rotationDeg = 0.f;
+        n.opacity = 1.f;
+        n.cropX = d.cropX;
+        n.cropY = d.cropY;
+        n.cropW = d.cropW;
+        n.cropH = d.cropH;
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        drawLayer(n);
+        w_ = sw;
+        h_ = sh;
+    }
+
+    // 1) the mask multiply into target 1: the picture keeps only where the mask layer is.
+    glDisable(GL_BLEND);
+    glBindVertexArray(vao_);
+    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[1]);
+    glViewport(0, 0, W, H);
+    glUseProgram(fxLayerMask_);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fxTex_[0]);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, maskTex);
+    glUniform1i(glGetUniformLocation(fxLayerMask_, "uTex"), 0);
+    glUniform1i(glGetUniformLocation(fxLayerMask_, "uMask"), 1);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    // back to what the caller had
+    glActiveTexture(GL_TEXTURE0);
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    if (scissorWas) {
+        glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3]);
+        glEnable(GL_SCISSOR_TEST);
+    }
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    out->texture = fxTex_[1];
     out->oes = false;
     for (int i = 0; i < 16; ++i) out->texMatrix[i] = (i % 5 == 0) ? 1.f : 0.f;  // identity
     out->contentRotation = 0;  // the picture is already upright

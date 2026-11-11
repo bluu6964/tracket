@@ -291,10 +291,11 @@ object AlightXmlImporter {
      * Alight layer masks (`blending="mask"`): a mask layer is never drawn in Alight — it cuts the layer
      * directly below it in the same scene, following its own animation. The imported mask clip stays in
      * the model flagged [TimelineClip.isMask] (hidden, and the renderers never draw it); here it is
-     * linked to the layer below ([TimelineClip.maskTargetId]) and the renderers apply the cut. Only
-     * shape / text layers can be cut or serve as the mask in this pass — a mask over a group or a media
-     * layer, a mask over another mask, and a mask with no imported layer below it stay unlinked and are
-     * reported instead of being guessed at.
+     * linked to the layer below ([TimelineClip.maskTargetId]) and the renderers apply the cut. Shape,
+     * text and group layers can be cut (a group is cut as its composed picture); only shape / text
+     * layers can serve as the mask in this pass — a mask over a media (video) layer, a mask over
+     * another mask, and a mask with no imported layer below it stay unlinked and are reported instead
+     * of being guessed at.
      */
     private fun resolveMaskLinks(directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx) {
         val w = ctx.warnings
@@ -311,9 +312,9 @@ object AlightXmlImporter {
                     w += "Mask layer \"" + m.name + "\" sits on another mask: imported hidden (stacked masks are not applied yet)"
                     false
                 }
-                below.type != LayerType.SHAPE && below.type != LayerType.TEXT -> {
+                below.type != LayerType.SHAPE && below.type != LayerType.TEXT && below.type != LayerType.GROUP -> {
                     w += "Mask layer \"" + m.name + "\" masks a " + below.type.displayName.lowercase() +
-                        " layer: imported hidden (a mask is applied to shape and text layers so far)"
+                        " layer: imported hidden (a mask is applied to shape, text and group layers so far)"
                     false
                 }
                 m.type != LayerType.SHAPE && m.type != LayerType.TEXT -> {

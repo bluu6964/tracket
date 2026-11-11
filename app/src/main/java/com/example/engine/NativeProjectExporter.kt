@@ -279,7 +279,12 @@ class NativeProjectExporter(private val context: Context) {
                     m[""] = buildOverlayGroups(null)
                     for (id in groupIds) m[id] = buildOverlayGroups(id)
                 }
-                val painter = if (overlayGroups.values.any { it.isNotEmpty() }) LayerPainter(w, h) else null
+                // A mask layer over a Group layer needs the painter too (it draws the mask that cuts the
+                // group's composed picture), even when the project has no overlay layers at all.
+                val groupMaskTargetIds = all.filter { it.isMask }.mapNotNull { it.maskTargetId }.toSet()
+                val painter = if (overlayGroups.values.any { it.isNotEmpty() } ||
+                    all.any { it.type == LayerType.GROUP && it.id in groupMaskTargetIds }
+                ) LayerPainter(w, h) else null
                 // Text layers: C++ engine (chosen font, HarfBuzz shaping) when this build has it; Canvas otherwise.
                 if (painter != null && TextNative.isAvailable) {
                     painter.nativeText = NativeTextPainter(fontFile = { name ->
@@ -297,6 +302,9 @@ class NativeProjectExporter(private val context: Context) {
                     xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
                 }
                 var maskScratchBmp: Bitmap? = null
+                // Texture the mask layer is uploaded into before it cuts a group picture (see drawGroupLayer).
+                var groupMaskTex = 0
+                var groupMaskTexUploaded = false
                 val canvasRgb = floatArrayOf(bgR, bgG, bgB)
                 var lastFrame = -1
                 try {
@@ -479,6 +487,15 @@ class NativeProjectExporter(private val context: Context) {
                     // picture gets the group's opacity, blend mode, effects and masks like a photo would. The group's move / scale /
                     // turn already reached the layers inside through their parent link (ParentRig), so it is placed at 0 / 0 / 1.
                     var drawScopeRef: (String?, Int, Long) -> Unit = { _, _, _ -> }
+                    // The mask layer cutting a Group layer of one level (Alight style), evaluated at
+                    // [timeMs] like every layer — or null: no mask on the group, or the mask is not
+                    // there then (outside the mask layer's own span there is no cut).
+                    fun groupMaskFor(clip: TimelineClip, timeMs: Long): TimelineClip? {
+                        val scopeClips = GroupOps.scopeTracks(tracks, clip.groupId).flatMap { it.clips }
+                        val mc = LayerMaskLinks.masksByTarget(scopeClips)[clip.id] ?: return null
+                        if (!mc.isActiveAt(timeMs)) return null
+                        return if (rig.hasLinks) rig.adjusted(mc, timeMs) else mc.renderAt(timeMs)
+                    }
                     fun drawGroupLayer(clip: TimelineClip, timeMs: Long, depth: Int) {
                         if (timeMs < clip.startMs || timeMs >= clip.endMs) return
                         val g = if (rig.hasLinks) rig.adjusted(clip, timeMs) else clip.renderAt(timeMs)
@@ -495,9 +512,41 @@ class NativeProjectExporter(private val context: Context) {
                         val fxOps = fxOpsOf(clip, timeMs)
                         val maskOps = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                         var drawTex = tex
+                        // A mask layer sitting on this group (Alight style) cuts the composed picture,
+                        // before the group's own effects — the same order as a masked shape / text
+                        // layer's picture. The mask layer is drawn with the same painter as every
+                        // overlay (into the shared scratch picture), uploaded, and the renderer
+                        // multiplies the group picture by its alpha (DST_IN). Outside the mask layer's
+                        // own span there is no cut. (In the beginGroup fallback above there is no group
+                        // picture, so a mask on such a group cannot cut.)
+                        val maskAdj = groupMaskFor(clip, timeMs)
+                        if (maskAdj != null) {
+                            val p = painter ?: error("No layer painter available to draw the mask on group '${clip.name}'.")
+                            var scratch = maskScratchBmp
+                            if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
+                                scratch?.recycle()
+                                scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                                maskScratchBmp = scratch
+                            }
+                            scratch.eraseColor(0)
+                            p.nativeTarget = scratch
+                            p.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
+                            if (groupMaskTex == 0) groupMaskTex = renderer.createTexture2d()
+                            if (groupMaskTex == 0) error("Could not create the mask texture for group '${clip.name}'.")
+                            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
+                            if (!groupMaskTexUploaded) {
+                                GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, scratch, 0)
+                                groupMaskTexUploaded = true
+                            } else {
+                                GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
+                            }
+                            val cutTex = renderer.applyTexMask(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
+                            if (cutTex == 0) error("Native layer mask failed on group '${clip.name}'.")
+                            drawTex = cutTex
+                        }
                         if (fxOps != null || maskOps != null) {
                             val fxTex = renderer.applyFx(
-                                tex, false, IDENTITY_TEX_MATRIX, w, h, 0,
+                                drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0,
                                 0, 0f, 0, false, canvasRgb, fxOps, ClipFxLibrary.grainFrame(timeMs), maskOps, null, true
                             )
                             if (fxTex == 0) error("Native effects / masks failed on group '${clip.name}'.")

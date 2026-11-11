@@ -205,7 +205,7 @@ class NativeProjectExporter(private val context: Context) {
                 fun fxOpsOf(c: TimelineClip, timeMs: Long, sample: TimelineClip = c): FloatArray? =
                     ClipFxLibrary.toNative(
                         MotionBlurEval.resolve(c.effects, { ms ->
-                            NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg) }
+                            NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
                         }, timeMs, frameMs, canvasH)
                     )
                 // Puts a picture layer on the corners its camera sees it at (corner pin path); false = behind the camera.

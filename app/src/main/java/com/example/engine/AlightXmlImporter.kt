@@ -1889,10 +1889,11 @@ object AlightXmlImporter {
 
     /**
      * `motionblur` / `motionblur2` / `motionblur4` -> the app's Motion Blur (see MotionBlurEval for
-     * the per-frame maths: a directional blur along the layer's position velocity, `tune` as its
-     * strength). Only `usePos` is reproduced this cycle — scale / rotation blur need a radial blur
-     * and are reported, not guessed. A missing flag is read as off, except `usePos` (an effect with
-     * no flags listed is just "motion blur"); an effect that blurs scale / rotation only is skipped.
+     * the per-frame maths: a directional blur along the layer's position velocity plus a radial
+     * blur around the layer centre for its scale / rotation velocity, `tune` as the strength).
+     * The three `use*` flags are stored as values[1..3] so the resolver only blurs the kinds
+     * Alight blurs; a missing flag is read as off, except `usePos` (an effect with no flags listed
+     * is just "motion blur"). An effect with all three flags off is skipped.
      */
     private fun applyMotionBlur(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
@@ -1902,15 +1903,25 @@ object AlightXmlImporter {
         val usePos = (props["usePos"]?.scalarAt(0f) ?: 1f) >= 0.5f
         val useScale = (props["useScale"]?.scalarAt(0f) ?: 0f) >= 0.5f
         val useAngle = (props["useAngle"]?.scalarAt(0f) ?: 0f) >= 0.5f
-        if (!usePos) {
-            w += "Effect " + short + " is not supported yet: it blurs scale / rotation only, and the app blurs position motion only so far: skipped"
+        if (!usePos && !useScale && !useAngle) {
+            w += "Effect " + short + " is not supported yet: all of usePos / useScale / useAngle are off: skipped"
             return clip0
         }
-        val missing = listOfNotNull(if (useScale) "scale" else null, if (useAngle) "rotation" else null)
-        val approx = if (missing.isEmpty()) "a directional blur along the layer's motion"
-        else "only its position blur is reproduced (" + missing.joinToString(" and ") + " blur is not yet)"
-        w += "Effect " + short + " is mapped approximately as " + approx
-        return addFx(clip0, ctx, ClipFxLibrary.MOTION_BLUR, listOf((tune * 100f).coerceIn(0f, 100f)), short)
+        val kinds = listOfNotNull(
+            if (usePos) "a directional blur along the layer's position motion" else null,
+            if (useScale || useAngle) "a radial blur for its " +
+                listOfNotNull(if (useScale) "scale" else null, if (useAngle) "rotation" else null)
+                    .joinToString(" and ") + " motion" else null
+        )
+        w += "Effect " + short + " is mapped approximately as " + kinds.joinToString(" and ")
+        return addFx(
+            clip0, ctx, ClipFxLibrary.MOTION_BLUR,
+            listOf(
+                (tune * 100f).coerceIn(0f, 100f),
+                if (usePos) 1f else 0f, if (useScale) 1f else 0f, if (useAngle) 1f else 0f
+            ),
+            short
+        )
     }
 
     /**

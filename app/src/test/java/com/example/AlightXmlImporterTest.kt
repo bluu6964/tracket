@@ -464,6 +464,9 @@ $layers
         assertEquals(1, c.effects.size)
         assertEquals(ClipFxLibrary.MOTION_BLUR, c.effects[0].type)
         assertEquals(20f, c.effects[0].values[0], 0.01f)   // tune 0.2 -> Strength 20
+        assertEquals(1f, c.effects[0].values[1], 0f)   // usePos
+        assertEquals(1f, c.effects[0].values[2], 0f)   // useScale
+        assertEquals(1f, c.effects[0].values[3], 0f)   // useAngle
         // Position blur is reproduced; scale / rotation blur is reported, not guessed.
         assertTrue(r.warnings.any { it.contains("motionblur4") && it.contains("approximately") })
         assertTrue(r.warnings.any { it.contains("scale") && it.contains("rotation") })
@@ -471,7 +474,7 @@ $layers
     }
 
     @Test
-    fun motionblurWithoutPositionIsSkipped() {
+    fun motionblurWithoutPositionMapsToRadialOnly() {
         val xml = scene(
             """<shape id="9" label="Box" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
   <transform><location value="540,960,0" /><scale value="1,1" /></transform>
@@ -485,8 +488,12 @@ $layers
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
-        assertTrue(c.effects.isEmpty())
-        assertTrue(r.warnings.any { it.contains("motionblur") && it.contains("skipped") })
+        // Scale-only now maps (radial blur) instead of being skipped; only the scale flag is on.
+        assertEquals(1, c.effects.size)
+        assertEquals(ClipFxLibrary.MOTION_BLUR, c.effects[0].type)
+        assertEquals(listOf(100f, 0f, 1f, 0f), c.effects[0].values)
+        assertTrue(r.warnings.any { it.contains("motionblur") && it.contains("radial") })
+        assertFalse(r.warnings.any { it.contains("motionblur") && it.contains("skipped") })
     }
 
     @Test
@@ -504,6 +511,7 @@ $layers
         assertEquals(1, c.effects.size)
         assertEquals(ClipFxLibrary.MOTION_BLUR, c.effects[0].type)
         assertEquals(100f, c.effects[0].values[0], 0.01f)
+        assertEquals(listOf(100f, 1f, 0f, 0f), c.effects[0].values)   // no flags listed: position only
         assertTrue(r.warnings.any { it.contains("motionblur2") && it.contains("approximately") })
         assertFalse(r.warnings.any { it.contains("scale") && it.contains("rotation") })
     }

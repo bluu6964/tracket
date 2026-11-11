@@ -342,8 +342,11 @@ fun ClipEffectsPanel(
                                 labelWidth = 118.dp,
                                 value = value,
                                 onValueChange = { v ->
-                                    val vals = def.params.indices.map { i ->
-                                        if (i == idx) v else (fx.values.getOrNull(i) ?: def.params[i].default)
+                                    // Keep values past the declared params (Motion Blur stores its
+                                    // usePos / useScale / useAngle flags there); rebuilding from the
+                                    // params alone would silently drop them.
+                                    val vals = (0 until maxOf(def.params.size, fx.values.size)).map { i ->
+                                        if (i == idx) v else (fx.values.getOrNull(i) ?: def.params.getOrNull(i)?.default ?: 0f)
                                     }
                                     onChange(effects.map { if (it.id == fx.id) it.copy(values = vals) else it })
                                 },
@@ -361,7 +364,7 @@ fun ClipEffectsPanel(
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(EditorSurfaceVariant)
                                 .bouncyClickable(onClick = {
-                                    val vals = def.params.map { it.default }
+                                    val vals = def.params.map { it.default } + fx.values.drop(def.params.size)
                                     onChange(effects.map { if (it.id == fx.id) it.copy(values = vals) else it })
                                 })
                                 .padding(horizontal = 12.dp, vertical = 6.dp)

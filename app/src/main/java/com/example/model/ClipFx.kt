@@ -162,8 +162,12 @@ object ClipFxLibrary {
                 FxParamDef("Trail", 0f, 100f, 0f, "%")
             )
         ),
+        // Motion Blur is resolved per frame by MotionBlurEval: values[0] is the Strength the panel
+        // shows; values[1..3] (usePos / useScale / useAngle, 1 = on) are written by the Alight
+        // importer and default to on when absent — keep them when editing values (see
+        // ClipEffectsPanel), or an imported scale-only blur silently becomes blur-all.
         FxDef(
-            MOTION_BLUR, 55, "Motion Blur", "Blur", "Smears the layer along its own motion, like a camera shutter (position movement only)",
+            MOTION_BLUR, 55, "Motion Blur", "Blur", "Smears the layer along its own motion, like a camera shutter (position, scale and rotation)",
             listOf(FxParamDef("Strength", 0f, 100f, 100f, "%"))
         ),
         FxDef(
@@ -620,7 +624,7 @@ object ClipFxLibrary {
     /**
      * The enabled effects as the flat array the C++ engine reads (groups of 8 floats: type, p0..p6), or null when there
      * is nothing to run. Max [MAX_EFFECTS] effects. Motion Blur is NOT emitted here: it needs the layer's motion at
-     * the frame time, so [com.example.engine.MotionBlurEval.resolve] rewrites it to a directional blur first
+     * the frame time, so [com.example.engine.MotionBlurEval.resolve] rewrites it to directional / radial blurs first
      * (use that at every per-frame call site); a layer with only Motion Blur still counts in [hasEffects].
      */
     fun toNative(effects: List<ClipFx>): FloatArray? {

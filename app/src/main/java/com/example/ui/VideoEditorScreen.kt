@@ -1674,6 +1674,14 @@ fun VideoEditorScreen(
     var showProjects by remember { mutableStateOf(false) }
     var projectList by remember { mutableStateOf(emptyList<com.example.model.ProjectMeta>()) }
 
+    // ---- Missing media substitution (build 111): files an imported preset points at lived on the
+    // phone that made it. The user can drop their own file into each such spot — right after the
+    // import, or later from the Projects dialog. ----
+    val ownAuthority = remember { context.packageName + ".fileprovider" }
+    var missingMediaItems by remember { mutableStateOf<List<com.example.engine.MissingMedia.Item>>(emptyList()) }
+    var showMissingMedia by remember { mutableStateOf(false) }
+    var pendingMissingItem by remember { mutableStateOf<com.example.engine.MissingMedia.Item?>(null) }
+
     fun reportMissingMedia(snap: com.example.model.ProjectSnapshot) {
         val missing = com.example.engine.ProjectFiles.missingMedia(snap.tracks, context.filesDir)
         if (missing.isNotEmpty()) {
@@ -1689,6 +1697,31 @@ fun VideoEditorScreen(
         runCatching { projectStore.save(id, viewModel.snapshot()) }
     }
 
+    /** Points at the Projects-dialog entry when an opened project has files only another phone had. */
+    fun noteUnresolvableMedia(snap: com.example.model.ProjectSnapshot) {
+        val n = com.example.engine.MissingMedia.collect(snap, ownAuthority).size
+        if (n > 0) {
+            android.widget.Toast.makeText(
+                context,
+                if (n == 1) "1 media file is missing — Projects ▸ Missing media to replace it"
+                else "$n media files are missing — Projects ▸ Missing media to replace them",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    /** A picked replacement was copied into the project's storage: re-point every layer that used the missing file. */
+    fun applyMissingSubstitution(item: com.example.engine.MissingMedia.Item, copiedUri: String) {
+        val before = viewModel.snapshot()
+        val after = com.example.engine.MissingMedia.substitute(before, item.sourceUri, copiedUri)
+        if (after === before) return
+        val byId = after.tracks.flatMap { it.clips }.associateBy { it.id }
+        item.clipIds.forEach { cid -> byId[cid]?.let { nc -> viewModel.updateClip(cid) { nc } } }
+        missingMediaItems = com.example.engine.MissingMedia.collect(after, ownAuthority)
+        saveProjectNow()
+        scope.launch { snackbarHostState.showSnackbar("\"" + item.label + "\" now uses your file") }
+    }
+
     // Restore once (a rotation keeps the ViewModel, so its project id is already set then).
     LaunchedEffect(Unit) {
         if (viewModel.projectId.value == null) {
@@ -1699,6 +1732,7 @@ fun VideoEditorScreen(
                 viewModel.loadProject(loaded.second, loaded.first)
                 withContext(Dispatchers.IO) { projectStore.lastId = loaded.first }
                 reportMissingMedia(loaded.second)
+                noteUnresolvableMedia(loaded.second)
             }
         }
     }
@@ -1830,6 +1864,14 @@ fun VideoEditorScreen(
                     withContext(Dispatchers.IO) { projectStore.lastId = ok.first.id }
                     showProjects = false
                     android.widget.Toast.makeText(context, "Project imported" + ok.third, android.widget.Toast.LENGTH_LONG).show()
+                    // Files this preset points at lived on the exporting phone: offer the user's
+                    // own files for those spots right away (skipping is fine — they stay empty,
+                    // and Projects ▸ Missing media offers the same step later).
+                    val missing = com.example.engine.MissingMedia.collect(ok.second, ownAuthority)
+                    if (missing.isNotEmpty()) {
+                        missingMediaItems = missing
+                        showMissingMedia = true
+                    }
                 } else {
                     android.widget.Toast.makeText(
                         context, "Import failed: " + (result.exceptionOrNull()?.message ?: "unknown error"),
@@ -1837,6 +1879,45 @@ fun VideoEditorScreen(
                     ).show()
                 }
             }
+        }
+    }
+
+    // Missing-media pickers (build 111): one item at a time; the pick is copied into the project's
+    // own storage through the same path as the import-time media copy, then every layer that used
+    // the missing file is re-pointed at the copy.
+    fun onMissingPicked(uri: android.net.Uri?) {
+        val item = pendingMissingItem
+        pendingMissingItem = null
+        if (uri == null || item == null) return
+        scope.launch {
+            val copied = withContext(Dispatchers.IO) {
+                com.example.engine.MediaImporter.copyToImports(context, uri)
+            }
+            if (copied != null) {
+                applyMissingSubstitution(item, copied)
+            } else {
+                snackbarHostState.showSnackbar("Could not read the selected file")
+            }
+        }
+    }
+
+    val missingVisualPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> onMissingPicked(uri) }
+
+    val missingAudioPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri -> onMissingPicked(uri) }
+
+    fun onReplaceMissing(item: com.example.engine.MissingMedia.Item) {
+        pendingMissingItem = item
+        when (item.kind) {
+            com.example.engine.MissingMedia.Kind.IMAGE ->
+                missingVisualPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            com.example.engine.MissingMedia.Kind.VIDEO ->
+                missingVisualPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+            com.example.engine.MissingMedia.Kind.AUDIO ->
+                missingAudioPicker.launch(arrayOf("audio/*"))
         }
     }
 
@@ -3587,6 +3668,7 @@ fun VideoEditorScreen(
                         viewModel.loadProject(snap, id)
                         withContext(Dispatchers.IO) { projectStore.lastId = id }
                         reportMissingMedia(snap)
+                        noteUnresolvableMedia(snap)
                     }
                     showProjects = false
                 }
@@ -3605,6 +3687,12 @@ fun VideoEditorScreen(
                 exportProjectLauncher.launch(safe + "." + com.example.engine.ProjectArchive.EXTENSION)
             },
             onImport = { importProjectLauncher.launch(arrayOf("*/*")) },
+            missingMediaCount = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority).size,
+            onFixMissingMedia = {
+                missingMediaItems = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority)
+                showProjects = false
+                showMissingMedia = true
+            },
             onDelete = { id ->
                 scope.launch {
                     if (id == viewModel.projectId.value) {
@@ -3619,6 +3707,14 @@ fun VideoEditorScreen(
                     }
                 }
             }
+        )
+    }
+
+    if (showMissingMedia && missingMediaItems.isNotEmpty()) {
+        com.example.ui.components.MissingMediaDialog(
+            items = missingMediaItems,
+            onReplace = { onReplaceMissing(it) },
+            onDismiss = { showMissingMedia = false }
         )
     }
 

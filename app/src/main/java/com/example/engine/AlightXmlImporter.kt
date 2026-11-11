@@ -202,6 +202,7 @@ object AlightXmlImporter {
     const val PIXELATE2 = "com.alightcreative.effects.pixelate2"
     const val MOTIONBLUR = "com.alightcreative.effects.motionblur"
     const val MOTIONBLUR2 = "com.alightcreative.effects.motionblur2"
+    const val MOTIONBLUR3 = "com.alightcreative.effects.motionblur3"
     const val MOTIONBLUR4 = "com.alightcreative.effects.motionblur4"
 
     /** Effect ids the text reader stores as [TextAnimator] itself (the effect pass must not warn about them). */
@@ -1986,7 +1987,7 @@ object AlightXmlImporter {
                 VIGNETTE -> applyVignette(fx, clip, ctx)
                 ZOOMBLUR2, ZOOMBLUR3 -> applyZoomBlur(fx, clip, ctx)
                 DBLUR -> applyDirectionalBlur(fx, clip, ctx)
-                MOTIONBLUR, MOTIONBLUR2, MOTIONBLUR4 -> applyMotionBlur(fx, clip, ctx)
+                MOTIONBLUR, MOTIONBLUR2, MOTIONBLUR3, MOTIONBLUR4 -> applyMotionBlur(fx, clip, ctx)
                 LENSBLUR2 -> applyLensBlur(fx, clip, ctx)
                 SHARPENFX -> applySharpenFx(fx, clip, ctx)
                 PINCHBULGE, PINCHBULGE2 -> applyPinchBulge(fx, clip, ctx)
@@ -2583,8 +2584,16 @@ object AlightXmlImporter {
      */
     private fun applyGaussianBlur(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val props = fxProps(fx)
-        val strength = props["strength"]?.firstValue(ctx.warnings, "gaussianblur", "strength") ?: return clip0
-        return addFx(clip0, ctx, ClipFxLibrary.BLUR, listOf((strength * 50f).coerceIn(0f, 100f)), "gaussianblur")
+        val strengthT = props["strength"] ?: return clip0
+        val strength = strengthT.scalarAtEased(0f)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.BLUR,
+            withTails(
+                listOf((strength * 50f).coerceIn(0f, 100f)),
+                tailsOf(trackTail(strengthT))
+            ),
+            "gaussianblur"
+        )
     }
 
     /**
@@ -2601,7 +2610,8 @@ object AlightXmlImporter {
         val w = ctx.warnings
         val short = id.substringAfterLast('.')
         val props = fxProps(fx)
-        val size = props["size"]?.firstValue(w, short, "size") ?: 0.02f
+        val sizeT = props["size"]
+        val size = sizeT?.scalarAtEased(0f) ?: 0.02f
         val angle = props["angle"]?.firstValue(w, short, "angle") ?: 45f
         val alpha = props["alpha"]?.firstValue(w, short, "alpha") ?: 1f
         val solidity = props["solidity"]?.firstValue(w, short, "solidity") ?: 1f
@@ -2618,16 +2628,22 @@ object AlightXmlImporter {
             w += "Effect " + short + " is approximated by the app's Long Shadow: " + aspects.joinToString(", ")
         }
         val boxH = layerBoxPx(clip0, ctx).second
-        val lenPct = if (boxH > 1f) (size * ctx.sceneH / boxH * 100f).coerceIn(0f, 100f) else (size * 100f).coerceIn(0f, 100f)
+        // The slot holds the length as a % of the layer's box height; a keyframed size rides the
+        // tail PRE-CONVERTED by the same per-layer factor (constant across the layer), resolved
+        // by [AmFxEval] at scale 1.
+        fun lenPct(s: Float) = if (boxH > 1f) (s * ctx.sceneH / boxH * 100f).coerceIn(0f, 100f) else (s * 100f).coerceIn(0f, 100f)
         val ang = ((angle % 360f) + 360f) % 360f
         return addFx(
             clip0, ctx, ClipFxLibrary.LONG_SHADOW,
-            listOf(
-                lenPct, ang,
-                (alpha * 100f).coerceIn(0f, 100f),
-                (solidity * 100f).coerceIn(0f, 100f),
-                (fade * 100f).coerceIn(0f, 100f),
-                packed
+            withTails(
+                listOf(
+                    lenPct(size), ang,
+                    (alpha * 100f).coerceIn(0f, 100f),
+                    (solidity * 100f).coerceIn(0f, 100f),
+                    (fade * 100f).coerceIn(0f, 100f),
+                    packed
+                ),
+                tailsOf(trackTail(sizeT) { s -> lenPct(s) })
             ),
             short
         )
@@ -2647,17 +2663,17 @@ object AlightXmlImporter {
     private fun applyRays(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
-        val strength = props["strength"]?.firstValue(w, "rays", "strength") ?: 1f
+        val strengthT = props["strength"]
+        val strength = strengthT?.scalarAtEased(0f) ?: 1f
         val intensity = props["intensity"]?.firstValue(w, "rays", "intensity") ?: 1f
         val threshold = props["threshold"]?.firstValue(w, "rays", "threshold") ?: 0f
         val cpT = props["centerPoint"]
-        if (cpT != null && cpT.keys.size >= 2) {
-            w += "Effect rays: keyframed centerPoint is not supported yet: the first value is used"
-        }
-        val cp = cpT?.valueAt(0f)
+        val cp = cpT?.valueAtEased(0f)
         val (boxW, boxH) = layerBoxPx(clip0, ctx)
-        val cx = if (cp != null && boxW > 1f) (50f + (cp.getOrNull(0) ?: 0f) / boxW * 100f).coerceIn(0f, 100f) else 50f
-        val cy = if (cp != null && boxH > 1f) (50f + (cp.getOrNull(1) ?: 0f) / boxH * 100f).coerceIn(0f, 100f) else 50f
+        fun cxOf(x: Float) = if (boxW > 1f) (50f + x / boxW * 100f).coerceIn(0f, 100f) else 50f
+        fun cyOf(y: Float) = if (boxH > 1f) (50f + y / boxH * 100f).coerceIn(0f, 100f) else 50f
+        val cx = cxOf(cp?.getOrNull(0) ?: 0f)
+        val cy = cyOf(cp?.getOrNull(1) ?: 0f)
         val fillT = props["fillColor"]
         if (fillT != null && fillT.keys.size >= 2) {
             w += "Effect rays: keyframed fillColor is not supported yet: the first value is used"
@@ -2681,11 +2697,20 @@ object AlightXmlImporter {
             (if (aspects.isEmpty()) "" else ": " + aspects.joinToString(", "))
         return addFx(
             clip0, ctx, ClipFxLibrary.LIGHT_RAYS,
-            listOf(
-                (threshold * 100f).coerceIn(0f, 100f),
-                (strength * 33f).coerceIn(0f, 100f),
-                (intensity * 100f).coerceIn(0f, 300f),
-                cx, cy, hue, amount
+            withTails(
+                listOf(
+                    (threshold * 100f).coerceIn(0f, 100f),
+                    (strength * 33f).coerceIn(0f, 100f),
+                    (intensity * 100f).coerceIn(0f, 300f),
+                    cx, cy, hue, amount
+                ),
+                // Strength and the centre ride tails PRE-CONVERTED into slot units (the x33
+                // length scale, the box-relative centre %), resolved by [AmFxEval] at scale 1.
+                tailsOf(
+                    trackTail(strengthT) { s -> (s * 33f).coerceIn(0f, 100f) },
+                    pointTail(cpT, 0) { x -> cxOf(x) },
+                    pointTail(cpT, 1) { y -> cyOf(y) }
+                )
             ),
             "rays"
         )
@@ -2750,9 +2775,33 @@ object AlightXmlImporter {
     }
 
     /** A scalar track as an [AmFxEval] values tail, or empty when the track is not animated. */
-    private fun trackTail(t: Track?): List<Float> {
+    private fun trackTail(t: Track?): List<Float> = trackTail(t) { it }
+
+    /**
+     * A scalar track as an [AmFxEval] values tail with each key's value mapped first — for the
+     * parameters whose fx slot holds a CONVERTED unit (Long Shadow's length is a % of the
+     * layer's box, Light Rays' length / centre are scaled / box-relative): the tail then holds
+     * slot units directly and [AmFxEval] resolves it at scale 1.
+     */
+    private fun trackTail(t: Track?, map: (Float) -> Float): List<Float> {
         if (t == null || t.keys.size < 2) return emptyList()
-        return AmFxEval.encodeTrack(t.keys.map { k -> Triple(k.t, k.v.firstOrNull() ?: 0f, k.easing) })
+        return AmFxEval.encodeTrack(t.keys.map { k -> Triple(k.t, map(k.v.firstOrNull() ?: 0f), k.easing) })
+    }
+
+    /** One component of a point track as an [AmFxEval] values tail, mapped like [trackTail]. */
+    private fun pointTail(t: Track?, component: Int, map: (Float) -> Float): List<Float> {
+        if (t == null || t.keys.size < 2) return emptyList()
+        return AmFxEval.encodeTrack(t.keys.map { k -> Triple(k.t, map(k.v.getOrNull(component) ?: 0f), k.easing) })
+    }
+
+    /**
+     * Joins encoded tails in [AmFxEval]'s declared order: a constant parameter contributes a
+     * count-0 placeholder when a sibling IS animated, so the sequence the resolver walks stays
+     * aligned; when nothing is animated there is no tail at all.
+     */
+    private fun tailsOf(vararg encoded: List<Float>): List<Float> {
+        if (encoded.all { it.isEmpty() }) return emptyList()
+        return encoded.flatMap { if (it.isEmpty()) listOf(0f) else it }
     }
 
     /**
@@ -2761,10 +2810,18 @@ object AlightXmlImporter {
      * animated, so the sequence the resolver walks stays aligned; when nothing is animated
      * there is no tail at all.
      */
-    private fun trackTails(vararg tracks: Track?): List<Float> {
-        if (tracks.all { it == null || it.keys.size < 2 }) return emptyList()
-        return tracks.flatMap { t -> if (t == null || t.keys.size < 2) listOf(0f) else trackTail(t) }
+    private fun trackTails(vararg tracks: Track?): List<Float> =
+        tailsOf(*tracks.map { trackTail(it) }.toTypedArray())
+
+    /** [values] padded with zeros out to [AmFxEval.TAIL_START] and the tails appended (no-op without tails). */
+    private fun withTails(values: List<Float>, tails: List<Float>): List<Float> {
+        if (tails.isEmpty()) return values
+        return values + List(maxOf(0, AmFxEval.TAIL_START - values.size)) { 0f } + tails
     }
+
+    /** The largest |value| a scalar track takes (its constant or any key) — for aspect checks that must see past t = 0. */
+    private fun Track.peakAbs(): Float =
+        (listOf(constant) + keys.map { it.v }).maxOfOrNull { abs(it.firstOrNull() ?: 0f) } ?: 0f
 
     /** The first value of a point track the native fx model cannot animate, with the pass-2 style note. */
     private fun Track.firstPoint(w: MutableList<String>, short: String, prop: String, dx: Float, dy: Float): Pair<Float, Float> {
@@ -2790,21 +2847,23 @@ object AlightXmlImporter {
      * 1 Multiply, 2 Screen, 3 Over, 4 Under) and mixes by alpha; `offset` is added to the
      * flipped coordinate. Corpus: 51 instances, all type / blendMode / offset at the defaults;
      * alpha is static 1 in 36 and KEYFRAMED (0<->1 flip-flash pulses) in 15 — the keyframed
-     * alpha rides the values tail and [AmFxEval] resolves it per frame.
+     * alpha rides the values tail and [AmFxEval] resolves it per frame, as does a keyframed
+     * `offset` (none in the corpus; `type` / `blendMode` are discrete and stay first-value).
      */
     private fun applyMirror(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
         val type = (props["type"]?.firstValue(w, "mirror", "type") ?: 0f).toInt().coerceIn(0, 1)
         val blend = (props["blendMode"]?.firstValue(w, "mirror", "blendMode") ?: 0f).toInt().coerceIn(0, 4)
-        val offset = (props["offset"]?.firstValue(w, "mirror", "offset") ?: 0f) * 100f
+        val offsetT = props["offset"]
+        val offset = (offsetT?.scalarAtEased(0f) ?: 0f) * 100f
         val alphaT = props["alpha"]
         val alpha = (alphaT?.valueAtEased(0f)?.firstOrNull() ?: 1f) * 100f
         val values = listOf(
             type.toFloat(), blend.toFloat(),
             alpha.coerceIn(0f, 100f), offset.coerceIn(-200f, 200f),
             0f, 0f, 0f
-        ) + trackTail(alphaT)
+        ) + tailsOf(trackTail(alphaT), trackTail(offsetT))
         return addFx(clip0, ctx, ClipFxLibrary.AM_MIRROR, values, "mirror")
     }
 
@@ -2816,26 +2875,32 @@ object AlightXmlImporter {
      * toward fillColor. Corpus: 8 instances — radius 0.1, fillColor #FF0088FF, blend 0,
      * fill / alpha 1 everywhere; power 2 (4 in yura-preset-9x16), strength 0.05 (0.10 there);
      * threshold is KEYFRAMED in all 8 (the sweep IS the effect), so it rides the values tail
-     * and [AmFxEval] resolves it per frame. AM's `blend` has no native slot and is reported
-     * when it is not 0.
+     * and [AmFxEval] resolves it per frame; the secondary scalars (radius / power / strength /
+     * fill / alpha) ride behind it the same way when keyframed (none are in the corpus). AM's
+     * `blend` has no native slot and is reported when it is not 0.
      */
     private fun applyGlowScan(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
         val thrT = props["threshold"]
         val threshold = (thrT?.valueAtEased(0f)?.firstOrNull() ?: 0.5f) * 100f
-        val radius = (props["radius"]?.firstValue(w, "glowscan", "radius") ?: 0.1f) * 100f
-        val power = props["power"]?.firstValue(w, "glowscan", "power") ?: 2f
-        val strength = (props["strength"]?.firstValue(w, "glowscan", "strength") ?: 0.05f) * 100f
-        val fillT = props["fillColor"]
-        if (fillT != null && fillT.keys.size >= 2) {
+        val radiusT = props["radius"]
+        val radius = (radiusT?.scalarAtEased(0f) ?: 0.1f) * 100f
+        val powerT = props["power"]
+        val power = powerT?.scalarAtEased(0f) ?: 2f
+        val strengthT = props["strength"]
+        val strength = (strengthT?.scalarAtEased(0f) ?: 0.05f) * 100f
+        val colT = props["fillColor"]
+        if (colT != null && colT.keys.size >= 2) {
             w += "Effect glowscan: keyframed fillColor is not supported yet: the first value is used"
         }
-        val packed = if (fillT != null) (unpacked(fillT.valueAt(0f)) and 0xFFFFFFL).toFloat() else 0x0088FF.toFloat()
+        val packed = if (colT != null) (unpacked(colT.valueAt(0f)) and 0xFFFFFFL).toFloat() else 0x0088FF.toFloat()
         val blend = props["blend"]?.scalarAt(0f) ?: 0f
         if (abs(blend) > 1e-4f) w += "Effect glowscan: its blend setting is not reproduced"
-        val fill = (props["fill"]?.firstValue(w, "glowscan", "fill") ?: 1f) * 100f
-        val alpha = (props["alpha"]?.firstValue(w, "glowscan", "alpha") ?: 1f) * 100f
+        val fillT = props["fill"]
+        val fill = (fillT?.scalarAtEased(0f) ?: 1f) * 100f
+        val alphaT = props["alpha"]
+        val alpha = (alphaT?.scalarAtEased(0f) ?: 1f) * 100f
         val values = listOf(
             threshold.coerceIn(0f, 100f),
             radius.coerceIn(0f, 100f),
@@ -2844,7 +2909,10 @@ object AlightXmlImporter {
             fill.coerceIn(0f, 100f),
             alpha.coerceIn(0f, 100f),
             packed
-        ) + trackTail(thrT)
+        ) + tailsOf(
+            trackTail(thrT), trackTail(radiusT), trackTail(powerT),
+            trackTail(strengthT), trackTail(fillT), trackTail(alphaT)
+        )
         return addFx(clip0, ctx, ClipFxLibrary.GLOW_SCAN, values, "glowscan")
     }
 
@@ -3085,18 +3153,23 @@ object AlightXmlImporter {
 
     /** `exposure` -> the app's Exposure: stops as-is, offset 0..1 -> -100..100, gamma as a percent. */
     private fun applyExposureFx(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
-        val w = ctx.warnings
         val props = fxProps(fx)
-        val ev = props["exposure"]?.firstValue(w, "exposure", "exposure") ?: 0f
-        val gamma = props["gamma"]?.firstValue(w, "exposure", "gamma") ?: 1f
-        val offset = props["offset"]?.firstValue(w, "exposure", "offset") ?: 0f
+        val evT = props["exposure"]
+        val offT = props["offset"]
+        val gammaT = props["gamma"]
+        val ev = evT?.scalarAtEased(0f) ?: 0f
+        val gamma = gammaT?.scalarAtEased(0f) ?: 1f
+        val offset = offT?.scalarAtEased(0f) ?: 0f
         return addFx(
             clip0, ctx, ClipFxLibrary.EXPOSURE,
-            listOf(
-                ev.coerceIn(-5f, 5f),
-                (offset * 100f).coerceIn(-100f, 100f),
-                (gamma * 100f).coerceIn(20f, 300f),
-                0f
+            withTails(
+                listOf(
+                    ev.coerceIn(-5f, 5f),
+                    (offset * 100f).coerceIn(-100f, 100f),
+                    (gamma * 100f).coerceIn(20f, 300f),
+                    0f
+                ),
+                tailsOf(trackTail(evT), trackTail(offT), trackTail(gammaT))
             ),
             "exposure"
         )
@@ -3289,23 +3362,33 @@ object AlightXmlImporter {
     /**
      * `tile` -> the app's Motion Tile: Alight's `scale` (how many tiles fit the frame) becomes the tile
      * count on both axes, `mirror` the mirrored edges, `phase` the phase on both axes. A rotated tile grid
-     * (`angle`) and the vertical offset mode have no counterpart and are reported.
+     * (`angle`) and the vertical offset mode have no counterpart and are reported. A keyframed `scale` or
+     * `phase` (the corpus animates both heavily — the phase sweeps run to several whole cycles) rides the
+     * values tail: [AmFxEval] resolves the one track into both axis slots per frame (the tile shader reads
+     * phase through fract / mod, so whole cycles in the tail stay frame-faithful).
      */
     private fun applyTile(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
         val aspects = ArrayList<String>()
-        val angle = props["angle"]?.scalarAt(0f) ?: 0f
-        if (abs(angle) > 1e-4f) aspects += "its angle is not reproduced"
-        if ((props["vertoffs"]?.scalarAt(0f) ?: 0f) > 0.5f) aspects += "its vertical offset is not reproduced"
+        if ((props["angle"]?.peakAbs() ?: 0f) > 1e-4f) aspects += "its angle is not reproduced"
+        val vertT = props["vertoffs"]
+        if (vertT != null && (listOf(vertT.constant) + vertT.keys.map { it.v })
+                .any { (it.firstOrNull() ?: 0f) > 0.5f }
+        ) aspects += "its vertical offset is not reproduced"
         if (aspects.isNotEmpty()) w += "Effect tile is mapped approximately: " + aspects.joinToString(", ")
-        val scale = props["scale"]?.firstValue(w, "tile", "scale") ?: 1f
+        val scaleT = props["scale"]
+        val scale = scaleT?.scalarAtEased(0f) ?: 1f
         val mirror = if ((props["mirror"]?.scalarAt(0f) ?: 0f) > 0.5f) 1f else 0f
-        val phase = ((props["phase"]?.scalarAt(0f) ?: 0f) * 100f).coerceIn(-100f, 100f)
+        val phaseT = props["phase"]
+        val phase = ((phaseT?.scalarAtEased(0f) ?: 0f) * 100f).coerceIn(-100f, 100f)
         val tiles = scale.coerceIn(1f, 10f)
         return addFx(
             clip0, ctx, ClipFxLibrary.TILE,
-            listOf(tiles, tiles, mirror, phase, phase, 0f, 0f),
+            withTails(
+                listOf(tiles, tiles, mirror, phase, phase, 0f, 0f),
+                tailsOf(trackTail(scaleT), trackTail(phaseT))
+            ),
             "tile"
         )
     }
@@ -3319,11 +3402,16 @@ object AlightXmlImporter {
         val w = ctx.warnings
         val props = fxProps(fx)
         w += "Effect rgbsep is mapped to RGB Split approximately: its channel mode is not reproduced"
-        val strength = props["strength"]?.firstValue(w, "rgbsep", "strength") ?: 0f
-        val angle = ((props["angle"]?.scalarAt(0f) ?: 0f) % 360f + 360f) % 360f
+        val strengthT = props["strength"]
+        val strength = strengthT?.scalarAtEased(0f) ?: 0f
+        val angleT = props["angle"]
+        val angle = ((angleT?.scalarAtEased(0f) ?: 0f) % 360f + 360f) % 360f
         return addFx(
             clip0, ctx, ClipFxLibrary.RGB_SPLIT,
-            listOf((strength * 100f).coerceIn(0f, 100f), angle, 0f),
+            withTails(
+                listOf((strength * 100f).coerceIn(0f, 100f), angle, 0f),
+                tailsOf(trackTail(strengthT), trackTail(angleT))
+            ),
             "rgbsep"
         )
     }
@@ -3331,9 +3419,10 @@ object AlightXmlImporter {
     /**
      * `hueshift`: a constant shift becomes the app's Hue / Saturation effect. A keyframed shift on a layer
      * with a plain colour of its own (a solid-filled shape, a text layer) is baked into the FILL_COLOR
-     * keyframes instead — an HSV hue rotation of the layer's colour by the shift at every keyframe time —
-     * because the fx model cannot animate. Anywhere else (a group, a gradient or picture fill) the first
-     * value is used with a note.
+     * keyframes instead — an HSV hue rotation of the layer's colour by the shift at every keyframe time.
+     * Anywhere else (a group, a gradient or picture fill) the shift rides the Hue / Saturation values tail
+     * in RAW degrees (the sweeps run to several full turns: 1190 in the corpus) and [AmFxEval] resolves it
+     * per frame — the engine's hue rotation fmods by 360, so unwrapped degrees stay exact.
      */
     private fun applyHueShift(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long, target: FxTarget): TimelineClip {
         val w = ctx.warnings
@@ -3346,10 +3435,14 @@ object AlightXmlImporter {
         }
         val bakeable = target == FxTarget.TEXT || (target == FxTarget.SHAPE && clip0.fillMode == FILL_SOLID)
         if (!bakeable) {
-            val wrapped = wrapHue(hueT.scalarAt(0f))
-            w += "Effect hueshift: keyframed hue is not supported yet: the first value is used"
-            if (abs(wrapped) < 0.01f) return clip0
-            return addFx(clip0, ctx, ClipFxLibrary.HUE_SAT, listOf(wrapped, 0f, 0f, 0f), "hueshift")
+            return addFx(
+                clip0, ctx, ClipFxLibrary.HUE_SAT,
+                withTails(
+                    listOf(hueT.scalarAtEased(0f), 0f, 0f, 0f),
+                    tailsOf(trackTail(hueT), emptyList())
+                ),
+                "hueshift"
+            )
         }
         val baseKeys = clip0.keyframes[AnimProp.FILL_COLOR]
         val times = ((hueT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }) +
@@ -3414,28 +3507,43 @@ object AlightXmlImporter {
         return (a shl 24) or (ch(rr) shl 16) or (ch(gg) shl 8) or ch(bb)
     }
 
-    /** `satvib` -> Hue / Saturation: saturation 0..1 -> %, vibrance is 1-based in Alight, 0-based here. */
+    /**
+     * `satvib` -> Hue / Saturation: saturation 0..1 -> %, vibrance is 1-based in Alight, 0-based here.
+     * Alight serialises the vibrance property as `vib` (all 56 corpus instances; a `vibrance` spelling
+     * is accepted as a fallback) — before build 117 the importer read only `vibrance`, so every import
+     * silently took the default 1. A keyframed saturation rides the values tail (in [AmFxEval]'s
+     * Hue / Saturation order it is the second track; the hue track is a placeholder); a keyframed
+     * vibrance has no tail (none in the corpus) and keeps the first-value note.
+     */
     private fun applySatVib(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
-        val sat = props["saturation"]?.firstValue(w, "satvib", "saturation") ?: 0f
-        val vib = props["vibrance"]?.firstValue(w, "satvib", "vibrance") ?: 1f
+        val satT = props["saturation"]
+        val sat = satT?.scalarAtEased(0f) ?: 0f
+        val vib = (props["vib"] ?: props["vibrance"])?.firstValue(w, "satvib", "vib") ?: 1f
         return addFx(
             clip0, ctx, ClipFxLibrary.HUE_SAT,
-            listOf(0f, (sat * 100f).coerceIn(-100f, 100f), 0f, ((vib - 1f) * 100f).coerceIn(-100f, 100f)),
+            withTails(
+                listOf(0f, (sat * 100f).coerceIn(-100f, 100f), 0f, ((vib - 1f) * 100f).coerceIn(-100f, 100f)),
+                tailsOf(emptyList(), trackTail(satT))
+            ),
             "satvib"
         )
     }
 
     /** `brightcont2` -> Brightness & Contrast, both 0..1 in Alight, -100..100 in the app. */
     private fun applyBrightCont(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
-        val w = ctx.warnings
         val props = fxProps(fx)
-        val b = props["brightness"]?.firstValue(w, "brightcont", "brightness") ?: 0f
-        val c = props["contrast"]?.firstValue(w, "brightcont", "contrast") ?: 0f
+        val bT = props["brightness"]
+        val cT = props["contrast"]
+        val b = bT?.scalarAtEased(0f) ?: 0f
+        val c = cT?.scalarAtEased(0f) ?: 0f
         return addFx(
             clip0, ctx, ClipFxLibrary.BRIGHT_CONTRAST,
-            listOf((b * 100f).coerceIn(-100f, 100f), (c * 100f).coerceIn(-100f, 100f)),
+            withTails(
+                listOf((b * 100f).coerceIn(-100f, 100f), (c * 100f).coerceIn(-100f, 100f)),
+                tailsOf(trackTail(bT), trackTail(cT))
+            ),
             "brightcont"
         )
     }
@@ -3469,10 +3577,13 @@ object AlightXmlImporter {
         val w = ctx.warnings
         val props = fxProps(fx)
         val aspects = ArrayList<String>()
-        if ((props["punchout"]?.scalarAt(0f) ?: 0f) > 0.5f) aspects += "its punch-out"
-        if (abs(props["tint"]?.scalarAt(0f) ?: 0f) > 1e-4f) aspects += "its tint"
-        val overlay = props["overlaycolor"]?.let { unpacked(it.first()) } ?: 0xFF000000L
-        if (overlay != 0xFF000000L) aspects += "its overlay colour"
+        if ((props["punchout"]?.peakAbs() ?: 0f) > 0.5f) aspects += "its punch-out"
+        if ((props["tint"]?.peakAbs() ?: 0f) > 1e-4f) aspects += "its tint"
+        val overlayT = props["overlaycolor"]
+        val overlay = if (overlayT != null) {
+            (listOf(overlayT.constant) + overlayT.keys.map { it.v }).any { unpacked(it) != 0xFF000000L }
+        } else false
+        if (overlay) aspects += "its overlay colour"
         if (aspects.isNotEmpty()) {
             w += "Effect vignette is mapped approximately: " + aspects.joinToString(", ") +
                 if (aspects.size == 1) " is not reproduced" else " are not reproduced"
@@ -3493,26 +3604,33 @@ object AlightXmlImporter {
 
     /** `zoomblur2` / `zoomblur3` -> Radial Blur in its zoom mode, around the centre (Alight zooms from the layer centre). */
     private fun applyZoomBlur(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
-        val w = ctx.warnings
         val short = fx.getAttribute("id").substringAfterLast('.')
         val props = fxProps(fx)
-        val strength = props["strength"]?.firstValue(w, short, "strength") ?: 0f
+        val strengthT = props["strength"]
+        val strength = strengthT?.scalarAtEased(0f) ?: 0f
         return addFx(
             clip0, ctx, ClipFxLibrary.RADIAL_BLUR,
-            listOf((strength * 100f).coerceIn(0f, 100f), 100f, 50f, 50f),
+            withTails(
+                listOf((strength * 100f).coerceIn(0f, 100f), 100f, 50f, 50f),
+                tailsOf(trackTail(strengthT))
+            ),
             short
         )
     }
 
     /** `dblur` -> Directional Blur: its angle and strength; the app's comet trail stays off. */
     private fun applyDirectionalBlur(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
-        val w = ctx.warnings
         val props = fxProps(fx)
-        val angle = ((props["angle"]?.scalarAt(0f) ?: 0f) % 360f + 360f) % 360f
-        val strength = props["strength"]?.firstValue(w, "dblur", "strength") ?: 0f
+        val angleT = props["angle"]
+        val angle = ((angleT?.scalarAtEased(0f) ?: 0f) % 360f + 360f) % 360f
+        val strengthT = props["strength"]
+        val strength = strengthT?.scalarAtEased(0f) ?: 0f
         return addFx(
             clip0, ctx, ClipFxLibrary.DIR_BLUR,
-            listOf(angle, (strength * 100f).coerceIn(0f, 100f), 0f),
+            withTails(
+                listOf(angle, (strength * 100f).coerceIn(0f, 100f), 0f),
+                tailsOf(trackTail(angleT), trackTail(strengthT))
+            ),
             "dblur"
         )
     }
@@ -3698,7 +3816,7 @@ object AlightXmlImporter {
     }
 
     /**
-     * `motionblur` / `motionblur2` / `motionblur4` -> the app's Motion Blur (see MotionBlurEval for
+     * `motionblur` / `motionblur2` / `motionblur3` / `motionblur4` -> the app's Motion Blur (see MotionBlurEval for
      * the per-frame maths: a directional blur along the layer's position velocity plus a radial
      * blur around the layer centre for its scale / rotation velocity, `tune` as the strength).
      * The three `use*` flags are stored as values[1..3] so the resolver only blurs the kinds
@@ -3709,7 +3827,8 @@ object AlightXmlImporter {
         val w = ctx.warnings
         val short = fx.getAttribute("id").substringAfterLast('.')
         val props = fxProps(fx)
-        val tune = props["tune"]?.firstValue(w, short, "tune") ?: 1f
+        val tuneT = props["tune"]
+        val tune = tuneT?.scalarAtEased(0f) ?: 1f
         val usePos = (props["usePos"]?.scalarAt(0f) ?: 1f) >= 0.5f
         val useScale = (props["useScale"]?.scalarAt(0f) ?: 0f) >= 0.5f
         val useAngle = (props["useAngle"]?.scalarAt(0f) ?: 0f) >= 0.5f
@@ -3726,9 +3845,15 @@ object AlightXmlImporter {
         w += "Effect " + short + " is mapped approximately as " + kinds.joinToString(" and ")
         return addFx(
             clip0, ctx, ClipFxLibrary.MOTION_BLUR,
-            listOf(
-                (tune * 100f).coerceIn(0f, 100f),
-                if (usePos) 1f else 0f, if (useScale) 1f else 0f, if (useAngle) 1f else 0f
+            withTails(
+                listOf(
+                    (tune * 100f).coerceIn(0f, 100f),
+                    if (usePos) 1f else 0f, if (useScale) 1f else 0f, if (useAngle) 1f else 0f
+                ),
+                // The tail holds tune RAW (not the slot's 0..100 coercion): [AmFxEval] rewrites
+                // slot 0 per frame and MotionBlurEval reads the resolved strength, so a tune
+                // sweeping past 1 (4.0 in am-renderer-preset3) keeps its peak.
+                tailsOf(trackTail(tuneT))
             ),
             short
         )
@@ -3775,12 +3900,16 @@ object AlightXmlImporter {
         val short = fx.getAttribute("id").substringAfterLast('.')
         val props = fxProps(fx)
         w += "Effect " + short + " is mapped approximately"
-        val strength = props["strength"]?.firstValue(w, short, "strength") ?: 0f
+        val strengthT = props["strength"]
+        val strength = strengthT?.scalarAtEased(0f) ?: 0f
         val radius = props["radius"]?.scalarAt(0f) ?: 0f
         val radiusPct = if (radius <= 1f) radius * 100f else 100f
         return addFx(
             clip0, ctx, ClipFxLibrary.BULGE,
-            listOf((strength * 100f).coerceIn(-100f, 100f), radiusPct.coerceIn(0f, 100f), 50f, 50f),
+            withTails(
+                listOf((strength * 100f).coerceIn(-100f, 100f), radiusPct.coerceIn(0f, 100f), 50f, 50f),
+                tailsOf(trackTail(strengthT))
+            ),
             short
         )
     }

@@ -22,6 +22,7 @@ import com.example.model.shapeDrawScaleY
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -1759,7 +1760,7 @@ $layers
     }
 
     @Test
-    fun keyframedExposureUsesFirstValueWithNote() {
+    fun keyframedExposureRidesTheTailAndResolves() {
         val xml = shapeWith(
             """<effect id="com.alightcreative.effects.exposure" locallyApplied="true"><property name="exposure" type="float"><kf t="0" v="0.5" /><kf t="1" v="1.5" /></property><property name="gamma" type="float" value="1" /><property name="offset" type="float" value="0" /></effect>"""
         )
@@ -1767,7 +1768,270 @@ $layers
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
         val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.EXPOSURE }
         assertEquals(0.5f, fx.values[0], 0.001f)
-        assertTrue(r.warnings.any { it.contains("Effect exposure: keyframed exposure") })
+        assertFalse(r.warnings.any { it.contains("keyframed exposure") })
+        assertEquals(2f, fx.values[7], 0.001f)   // the EV tail: two keys, from index 7
+        val mid = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs / 2).single()
+        assertEquals(1.0f, mid.values[0], 0.001f)   // linear 0.5 -> 1.5, half-way
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(1.5f, end.values[0], 0.001f)
+        assertEquals(100f, end.values[2], 0.001f)   // gamma untouched (constant, no tail of its own)
+    }
+
+    @Test
+    fun keyframedExposureAndOffsetResolveTogether() {
+        // Verbatim from edit-winkoko-preset.xml: exposure pulses 0 -> 1 -> 0 (the peak key at
+        // t = 0.385422 eased), offset follows it 0 -> 0.1; gamma constant. Both tracks ride
+        // the tail in EV / offset / gamma order and resolve per frame.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.exposure" locallyApplied="false"><property name="exposure" type="float"><kf t="1.000000" v="0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.000000" v="0.000000" /><kf t="0.385422" v="1.000000" e="cubicBezier 0.69499993 0.0 1.0 0.0" /></property><property name="gamma" type="float" value="1.000000" /><property name="offset" type="float"><kf t="0.000000" v="0.000000" /><kf t="0.385422" v="0.100000" e="cubicBezier 0.87730336 0.0 1.0 0.0" /></property></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.EXPOSURE }
+        assertEquals(0f, fx.values[0], 0.001f)
+        assertEquals(3f, fx.values[7], 0.001f)   // EV tail: 3 keys
+        // 771 ms in = rel 0.3855, just past the peak key at t = 0.385422: EV is back at
+        // ~0.993 on the eased fall, the offset track (2 keys) clamps to its last value.
+        val peak = AmFxEval.resolve(listOf(fx), c, c.startMs + 771L).single()
+        assertEquals(1.0f, peak.values[0], 0.01f)    // the EV peak
+        assertEquals(10f, peak.values[1], 0.01f)     // offset 0.1 -> 10 at its last key
+        assertEquals(100f, peak.values[2], 0.001f)   // gamma constant
+    }
+
+    @Test
+    fun tileKeyframedScaleResolvesBothAxes() {
+        // Verbatim from am-renderer-preset10.xml: scale 1.2 -> 1.0 -> 1.2 (the segment easings
+        // are AM's own), phase constant, mirrored edges, no vertical offset.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.tile" locallyApplied="false"><property name="mirror" type="bool" value="true" /><property name="scale" type="float"><kf t="0.475269" v="1.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.023656" v="1.200000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.950538" v="1.200000" e="cubicBezier 1.0 0.0 1.0 1.0" /></property><property name="phase" type="float" value="0.000000" /><property name="vertoffs" type="bool" value="false" /><property name="angle" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.TILE }
+        assertEquals(1.2f, fx.values[0], 0.001f)   // clamped to the first key at t = 0
+        assertEquals(1.2f, fx.values[1], 0.001f)
+        assertEquals(1f, fx.values[2], 0.001f)     // mirror
+        val dip = AmFxEval.resolve(listOf(fx), c, c.startMs + 950L).single()   // rel 0.475, at the 1.0 key
+        assertEquals(1.0f, dip.values[0], 0.01f)
+        assertEquals(1.0f, dip.values[1], 0.01f)   // one track drives both axes
+        val back = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(1.2f, back.values[0], 0.01f)
+    }
+
+    @Test
+    fun tileKeyframedPhaseSweepsWholeCycles() {
+        // Verbatim from am-renderer-preset10.xml: phase 0 -> 7.015 -> 0 across the last sixth
+        // of the layer (whole cycles — the tile shader's fract/mod keeps the scroll faithful),
+        // scale constant. vertoffs is on: a discrete mode with no counterpart, still reported.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.tile" locallyApplied="true"><property name="scale" type="float" value="1.000000" /><property name="phase" type="float"><kf t="0.834290" v="0.000000" /><kf t="0.915164" v="7.015000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="1.000000" v="0.000000" e="cubicBezier 1.0 0.0 1.0 1.0" /></property><property name="mirror" type="bool" value="true" /><property name="vertoffs" type="bool" value="true" /><property name="angle" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.any { it.contains("its vertical offset is not reproduced") })
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.TILE }
+        assertEquals(0f, fx.values[7], 0.001f)   // scale is constant: a count-0 placeholder
+        assertEquals(3f, fx.values[8], 0.001f)   // then the phase track: three keys
+        val peak = AmFxEval.resolve(listOf(fx), c, c.startMs + 1830L).single()   // rel 0.915, at the 7.015 key
+        assertEquals(701.5f, peak.values[3], 0.5f)
+        assertEquals(701.5f, peak.values[4], 0.5f)
+        assertEquals(1f, peak.values[0], 0.001f)   // scale untouched
+    }
+
+    @Test
+    fun satvibKeyframedSaturationResolvesAndVibIsRead() {
+        // Verbatim from am-renderer-preset7.xml: saturation -1 -> 0 (keys out of order, the
+        // closing key eased), vib constant 1. The tail sits in the Hue / Saturation order:
+        // a count-0 hue placeholder, then the saturation track.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.satvib" locallyApplied="false"><property name="saturation" type="float"><kf t="1.359515" v="0.000000" /><kf t="0.000000" v="-1.000000" /><kf t="0.994891" v="0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /></property><property name="vib" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.HUE_SAT }
+        assertEquals(-100f, fx.values[1], 0.001f)   // saturation -1 at t = 0
+        assertEquals(0f, fx.values[7], 0.001f)      // hue placeholder
+        assertEquals(3f, fx.values[8], 0.001f)      // saturation track: three keys
+        val done = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(0f, done.values[1], 0.001f)
+        // Verbatim from am-renderer-preset3.xml: vib is 2 there — before build 117 the
+        // importer read a `vibrance` property Alight never writes and lost it.
+        val c2 = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.satvib" locallyApplied="true"><property name="saturation" type="float" value="-1.000000" /><property name="vib" type="float" value="2.000000" /></effect>"""
+        ))
+        val fx2 = c2.effects.first { it.type == ClipFxLibrary.HUE_SAT }
+        assertEquals(-100f, fx2.values[1], 0.001f)
+        assertEquals(100f, fx2.values[3], 0.001f)   // (2 - 1) x 100
+    }
+
+    @Test
+    fun hueshiftKeyframedOnAMediaShapeRidesTheTailInRawDegrees() {
+        // Verbatim from am-renderer-preset2.xml: hue sweeps 1190 -> 0 (three full turns and a
+        // third) on a PICTURE-filled shape — not bakeable into a fill colour, so the shift
+        // rides the Hue / Saturation tail in raw degrees (the engine fmods by 360).
+        val xml = scene(
+            """<shape id="9" label="pic.png" startTime="0" endTime="2000" fillType="media" fillImage="content://media/external/images/media/123" mediaFillMode="stretch" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.hueshift" locallyApplied="false"><property name="hue" type="float"><kf t="0.956522" v="0.000000" /><kf t="0.000000" v="1190.000000" /></property></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed hue") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertNull(c.keyframes[AnimProp.FILL_COLOR])   // nothing was baked
+        val fx = c.effects.first { it.type == ClipFxLibrary.HUE_SAT }
+        assertEquals(1190f, fx.values[0], 0.001f)   // raw degrees at t = 0
+        val mid = AmFxEval.resolve(listOf(fx), c, c.startMs + 957L).single()   // rel 0.4785
+        assertEquals(594.7f, mid.values[0], 1.5f)   // linear: 1190 x (1 - 0.4785 / 0.956522)
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(0f, end.values[0], 0.001f)
+    }
+
+    @Test
+    fun gaussianBlurKeyframedStrengthResolves() {
+        // Verbatim from am-renderer-preset10.xml: strength 0.3 -> 0, the closing key eased.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.gaussianblur" locallyApplied="false"><property name="strength" type="float"><kf t="0.000000" v="0.300000" /><kf t="0.384120" v="0.000000" e="cubicBezier 0.0 0.7117647 0.58 1.0" /></property></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.BLUR }
+        assertEquals(15f, fx.values[0], 0.001f)   // 0.3 x 50
+        assertEquals(2f, fx.values[7], 0.001f)    // the tail: two keys
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(0f, end.values[0], 0.001f)
+    }
+
+    @Test
+    fun dblurKeyframedStrengthResolves() {
+        // Verbatim from am-renderer-preset8.xml: strength blips 0 -> 0.05 -> 0 mid-layer.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.dblur" locallyApplied="false"><property name="strength" type="float"><kf t="0.486789" v="0.050000" e="cubicBezier 0.8458706 0.0 1.0 1.0" /><kf t="0.166533" v="0.000000" /><kf t="0.794235" v="0.000000" e="cubicBezier 0.0 0.0 0.14999998 1.0" /></property><property name="angle" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.DIR_BLUR }
+        assertEquals(0f, fx.values[1], 0.001f)   // clamped to the first key (0) at t = 0
+        val peak = AmFxEval.resolve(listOf(fx), c, c.startMs + 974L).single()   // rel 0.487, just past the blip key
+        assertEquals(5f, peak.values[1], 0.25f)   // 0.05 x 100
+    }
+
+    @Test
+    fun zoomblur3KeyframedStrengthResolves() {
+        // Verbatim from am-renderer-preset2.xml: strength 0 -> 0.65 -> 0, both segments eased.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.zoomblur3" locallyApplied="false"><property name="strength" type="float"><kf t="0.000000" v="0.000000" /><kf t="0.541118" v="0.650000" e="cubicBezier 1.0 0.0 1.0 1.0" /><kf t="0.989309" v="0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /></property><property name="adaptive" type="bool" value="true" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.RADIAL_BLUR }
+        assertEquals(0f, fx.values[0], 0.001f)
+        val near = AmFxEval.resolve(listOf(fx), c, c.startMs + 1083L).single()   // rel 0.5415, just past the peak key
+        assertEquals(63.4f, near.values[0], 0.5f)   // 0.65 easing out on the (0,0,0,1) curve
+    }
+
+    @Test
+    fun motionblur4KeyframedTuneResolves() {
+        // Verbatim from am-renderer-preset6.xml: tune 1.0 -> 1.7 over the last sixth, all
+        // three motion kinds on.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.motionblur4" locallyApplied="true"><property name="tune" type="float"><kf t="0.834339" v="1.000000" /><kf t="0.998298" v="1.700000" /></property><property name="usePos" type="bool" value="true" /><property name="useScale" type="bool" value="true" /><property name="useAngle" type="bool" value="true" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed tune") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.MOTION_BLUR }
+        assertEquals(100f, fx.values[0], 0.001f)   // clamped to the first key at t = 0
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(170f, end.values[0], 0.001f)
+    }
+
+    @Test
+    fun motionblur3ImportsAndItsTuneResolvesPastOne() {
+        // Verbatim from am-renderer-preset3.xml: tune 1.0 -> 4.0 over the second half.
+        // motionblur3 carries the family's exact property set (109 corpus instances) but was
+        // missing from the dispatch until build 117 — it warn-and-skipped like an unknown id.
+        // The tail holds tune raw, so the resolved strength keeps the 4x peak (the fx slot's
+        // own 0..100 coercion applies only to the stored t = 0 value).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.motionblur3" locallyApplied="true"><property name="tune" type="float"><kf t="0.500000" v="1.000000" /><kf t="0.991266" v="4.000000" /></property></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("motionblur3") && it.contains("not supported") })
+        assertFalse(r.warnings.any { it.contains("keyframed tune") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.MOTION_BLUR }
+        assertEquals(100f, fx.values[0], 0.001f)
+        assertEquals(1f, fx.values[1], 0.001f)   // usePos defaults on
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(400f, end.values[0], 0.001f)   // tune 4.0 x 100, uncoerced from the tail
+    }
+
+    @Test
+    fun pinchbulge2KeyframedStrengthResolves() {
+        // Verbatim from presetrezz.xml: strength dips to -0.44 mid-layer (the dip key's easing
+        // overshoots below -1 in y — AM's own curve), radius 0.61.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.pinchbulge2" locallyApplied="false"><property name="strength" type="float"><kf t="0.000000" v="0.000000" e="cubicBezier 0.0 0.0 0.19 1.0" /><kf t="1.000000" v="0.000000" e="cubicBezier 0.0 0.0 0.19 1.0" /><kf t="0.523297" v="-0.440000" e="cubicBezier 0.79 -1.0514705 1.0 1.0" /></property><property name="radius" type="float" value="0.610000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.BULGE }
+        assertEquals(61f, fx.values[1], 0.01f)   // radius %
+        val dip = AmFxEval.resolve(listOf(fx), c, c.startMs + 1047L).single()   // rel 0.5235, just past the dip key
+        assertEquals(-44f, dip.values[0], 1f)
+    }
+
+    @Test
+    fun brightcont2KeyframedBrightnessResolves() {
+        // Verbatim from zooms-toji-pack.xml: brightness 1 -> 0 over the first two thirds,
+        // contrast constant 0.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.brightcont2" locallyApplied="true"><property name="brightness" type="float"><kf t="0.631890" v="0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.000000" v="1.000000" /></property><property name="contrast" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.BRIGHT_CONTRAST }
+        assertEquals(100f, fx.values[0], 0.001f)
+        assertEquals(2f, fx.values[7], 0.001f)   // the brightness track: two keys
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(0f, end.values[0], 0.001f)
+        assertEquals(0f, end.values[1], 0.001f)
+    }
+
+    @Test
+    fun mirrorKeyframedOffsetResolvesBehindTheAlphaPlaceholder() {
+        // No corpus instance animates mirror's offset (type / blendMode never animate either —
+        // they are discrete and stay first-value); the plumbing carries it as the second tail,
+        // behind a count-0 placeholder for the constant alpha.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.mirror" locallyApplied="false"><property name="type" type="int" value="0" /><property name="blendMode" type="int" value="0" /><property name="alpha" type="float" value="1.000000" /><property name="offset" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="0.500000" /></property></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.AM_MIRROR }
+        assertEquals(0f, fx.values[7], 0.001f)   // alpha placeholder
+        assertEquals(2f, fx.values[8], 0.001f)   // offset track: two keys
+        val mid = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs / 2).single()
+        assertEquals(25f, mid.values[3], 0.001f)   // 0.25 x 100
+        assertEquals(100f, mid.values[2], 0.001f)  // alpha untouched
+    }
+
+    @Test
+    fun glowScanKeyframedStrengthResolvesBehindPlaceholders() {
+        // No corpus instance animates glowscan's secondaries either; strength rides as the
+        // fourth tail, behind placeholders for the constant threshold / radius / power.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.glowscan" locallyApplied="false"><property name="threshold" type="float" value="0.500000" /><property name="radius" type="float" value="0.100000" /><property name="power" type="float" value="2.000000" /><property name="strength" type="float"><kf t="0.000000" v="0.050000" /><kf t="1.000000" v="0.200000" /></property><property name="fillColor" type="color" value="#ff0088ff" /><property name="blend" type="float" value="0.000000" /><property name="fill" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.GLOW_SCAN }
+        assertEquals(0f, fx.values[7], 0.001f)    // threshold placeholder
+        assertEquals(0f, fx.values[8], 0.001f)    // radius placeholder
+        assertEquals(0f, fx.values[9], 0.001f)    // power placeholder
+        assertEquals(2f, fx.values[10], 0.001f)   // strength track: two keys
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(20f, end.values[3], 0.001f)   // 0.2 x 100
+        assertEquals(50f, end.values[0], 0.001f)   // threshold untouched
     }
 
     @Test
@@ -1869,7 +2133,7 @@ $layers
     }
 
     @Test
-    fun longShadow2KeyframedSizeUsesFirstValue() {
+    fun longShadow2KeyframedSizeRidesTheTailPreConverted() {
         // The toji pack: size keyframed 0.075 -> 0.014 under a 202 degree angle, in a square scene.
         val xml = scene(
             """<text id="7" startTime="0" endTime="2000" fillType="color" size="56.000000" font="googlefonts?name=Roboto&amp;weight=900" wrapWidth="900" align="center">
@@ -1892,7 +2156,12 @@ $layers
         val fx = c.effects.first { it.type == ClipFxLibrary.LONG_SHADOW }
         assertEquals(7.5f, fx.values[0], 0.01f)
         assertEquals(202f, fx.values[1], 0.01f)
-        assertTrue(r.warnings.any { it.contains("longshadow2") && it.contains("keyframed size") })
+        assertFalse(r.warnings.any { it.contains("longshadow2") && it.contains("keyframed size") })
+        // A text layer's box is the scene, so the tail keys are pre-converted at x100:
+        // 0.075 -> 7.5 and 0.014 -> 1.4. At the layer's end the segment (which runs to
+        // t = 2.164339, past the span) is at f = 1 / 2.164339: 7.5 - 6.1 x 0.46204 = 4.68.
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(4.68f, end.values[0], 0.05f)
     }
 
     @Test
@@ -1924,13 +2193,18 @@ $layers
         assertEquals(53.70f, fx.values[4], 0.05f)       // 50 + 40 / 1080 x 100
         assertEquals(244.17f, fx.values[5], 0.5f)       // hue of #2d1ef6
         assertEquals(100f, fx.values[6], 0.01f)
-        assertTrue(r.warnings.any { it.contains("rays") && it.contains("keyframed centerPoint") })
+        assertFalse(r.warnings.any { it.contains("rays") && it.contains("keyframed centerPoint") })
         assertTrue(r.warnings.any { it.contains("rays is approximated by the app's Light Rays") })
         assertFalse(r.warnings.any { it.contains("rays") && it.contains("blend") })
+        // The centre rides two pre-converted tails: at rel 0.5 the key (130, 40) lands exactly:
+        // cx = 50 + 130 / 1920 x 100 = 56.77, cy = 50 + 40 / 1080 x 100 = 53.70.
+        val mid = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs / 2).single()
+        assertEquals(56.77f, mid.values[3], 0.05f)
+        assertEquals(53.70f, mid.values[4], 0.05f)
     }
 
     @Test
-    fun raysKeyframedStrengthUsesFirstValue() {
+    fun raysKeyframedStrengthRidesTheTailPreConverted() {
         // Toji pack, second rays: strength keyframed from 0, centre constant at (65, 0) layer px.
         val xml = scene(
             """<text id="8" startTime="0" endTime="2000" fillType="color" size="56.000000" font="googlefonts?name=Roboto&amp;weight=900" wrapWidth="900" align="center">
@@ -1956,7 +2230,12 @@ $layers
         assertEquals(300f, fx.values[2], 0.01f)         // 4.65 x 100, capped
         assertEquals(56.02f, fx.values[3], 0.05f)       // 50 + 65 / 1080 x 100
         assertEquals(50f, fx.values[4], 0.01f)
-        assertTrue(r.warnings.any { it.contains("rays") && it.contains("keyframed strength") })
+        assertFalse(r.warnings.any { it.contains("rays") && it.contains("keyframed strength") })
+        // The strength tail is pre-converted at x33: at the peak key (t = 0.364211, ~728 ms)
+        // the length is 3.03 x 33 = 99.99; the constant centre contributes placeholders only.
+        val peak = AmFxEval.resolve(listOf(fx), c, c.startMs + 728L).single()
+        assertEquals(99.99f, peak.values[1], 0.5f)
+        assertEquals(56.02f, peak.values[3], 0.05f)
     }
 
     @Test

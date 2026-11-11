@@ -13,11 +13,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * AmFxEval: the keyframed-parameter tails of Alight's Mirror (alpha) and Glow Scan
- * (threshold). The tracks pinned here are the corpus' own: celz-preset-9x16's glowscan
- * threshold (1 -> 0 across t = 0.908925, the end key eased (0, 0, 0, 1)) and
- * winkoko-preset-may24's second mirror alpha (keys OUTSIDE the span: -0.875269 -> 0,
- * 0.959140 -> 1, eased (0.42, 0, 0.58, 1)).
+ * AmFxEval: the keyframed-parameter tails of Alight's effects. The tracks pinned here are
+ * the corpus' own: celz-preset-9x16's glowscan threshold (1 -> 0 across t = 0.908925, the
+ * end key eased (0, 0, 0, 1)) and winkoko-preset-may24's second mirror alpha (keys OUTSIDE
+ * the span: -0.875269 -> 0, 0.959140 -> 1, eased (0.42, 0, 0.58, 1)). Build 117 adds the
+ * resolver mechanics of the wider family: Tile's one-track-two-slots, Exposure's three-track
+ * walk, the Hue / Saturation placeholder alignment and Long Shadow's pre-converted tail.
  */
 class AmFxEvalTest {
 
@@ -174,5 +175,75 @@ class AmFxEvalTest {
         val mid = AmFxEval.resolve(listOf(fx), clip(), 500L + 883L).single()
         assertEquals(-10.71f, mid.values[0], 0.05f)
         assertEquals(51f, mid.values[1], 0.001f)   // radius untouched
+    }
+
+    @Test
+    fun tileOneTrackDrivesBothAxisSlots() {
+        // Build 117: Tile's scale and phase are single AM properties feeding BOTH axis slots.
+        // Scale track 1.2 -> 1.0, then a constant phase behind a count-0 placeholder... here
+        // phase is animated too (0 -> 2 cycles), so both tails are real tracks.
+        val scaleTail = AmFxEval.encodeTrack(listOf(Triple(0f, 1.2f, null), Triple(1f, 1f, null)))
+        val phaseTail = AmFxEval.encodeTrack(listOf(Triple(0f, 0f, null), Triple(1f, 2f, null)))
+        val fx = ClipFx(
+            type = ClipFxLibrary.TILE,
+            values = listOf(1.2f, 1.2f, 1f, 0f, 0f, 0f, 0f) + scaleTail + phaseTail
+        )
+        val mid = AmFxEval.resolve(listOf(fx), clip(), 1500L).single()   // rel 0.5
+        assertEquals(1.1f, mid.values[0], 0.001f)
+        assertEquals(1.1f, mid.values[1], 0.001f)   // the y tiles follow the same track
+        assertEquals(100f, mid.values[3], 0.001f)   // one cycle in, x and y phase alike
+        assertEquals(100f, mid.values[4], 0.001f)
+        assertEquals(1f, mid.values[2], 0.001f)     // mirror untouched
+    }
+
+    @Test
+    fun exposureThreeTracksWalkInOrder() {
+        // EV (scale 1), offset (x100), gamma (x100): only offset is animated here, so the EV
+        // track is a count-0 placeholder and gamma never gets a tail at all.
+        val offTail = AmFxEval.encodeTrack(listOf(Triple(0f, 0f, null), Triple(1f, 0.1f, null)))
+        val fx = ClipFx(
+            type = ClipFxLibrary.EXPOSURE,
+            values = listOf(0.5f, 0f, 100f, 0f, 0f, 0f, 0f) + listOf(0f) + offTail
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip(), 2500L).single()   // rel 1
+        assertEquals(0.5f, end.values[0], 0.001f)   // EV untouched behind its placeholder
+        assertEquals(10f, end.values[1], 0.001f)    // offset 0.1 x 100
+        assertEquals(100f, end.values[2], 0.001f)   // gamma untouched (no third tail)
+    }
+
+    @Test
+    fun hueSatSaturationTailStepsOverTheHuePlaceholder() {
+        // A satvib import: hue constant (placeholder), saturation animated -1 -> 0.
+        val satTail = AmFxEval.encodeTrack(listOf(Triple(0f, -1f, null), Triple(1f, 0f, null)))
+        val fx = ClipFx(
+            type = ClipFxLibrary.HUE_SAT,
+            values = listOf(0f, -100f, 0f, 0f, 0f, 0f, 0f) + listOf(0f) + satTail
+        )
+        val mid = AmFxEval.resolve(listOf(fx), clip(), 1500L).single()   // rel 0.5
+        assertEquals(0f, mid.values[0], 0.001f)
+        assertEquals(-50f, mid.values[1], 0.001f)
+        // A hueshift import carries the hue track FIRST (raw degrees, scale 1).
+        val hueTail = AmFxEval.encodeTrack(listOf(Triple(0f, 1190f, null), Triple(1f, 0f, null)))
+        val fx2 = ClipFx(
+            type = ClipFxLibrary.HUE_SAT,
+            values = listOf(1190f, 0f, 0f, 0f, 0f, 0f, 0f) + hueTail
+        )
+        val mid2 = AmFxEval.resolve(listOf(fx2), clip(), 1500L).single()
+        assertEquals(595f, mid2.values[0], 0.001f)
+        assertEquals(0f, mid2.values[1], 0.001f)   // no saturation tail: untouched
+    }
+
+    @Test
+    fun longShadowPreConvertedTailResolvesAtScaleOne() {
+        // The importer pre-converts size keys into the slot's length % (the conversion depends
+        // on the layer's box); the resolver's scale is 1.
+        val tail = AmFxEval.encodeTrack(listOf(Triple(0f, 7.5f, null), Triple(1f, 1.4f, null)))
+        val fx = ClipFx(
+            type = ClipFxLibrary.LONG_SHADOW,
+            values = listOf(7.5f, 202f, 100f, 100f, 0f, 0f, 0f) + tail
+        )
+        val mid = AmFxEval.resolve(listOf(fx), clip(), 1500L).single()   // rel 0.5
+        assertEquals(4.45f, mid.values[0], 0.001f)
+        assertEquals(202f, mid.values[1], 0.001f)   // angle untouched
     }
 }

@@ -809,7 +809,7 @@ class NativePreviewEngine(context: Context) {
             val drawClips = if (fillOrig != null) {
                 // Live: only the outline is rasterised (the video is composited under it).
                 // Poster: the whole shape, poster fill included.
-                if (useVideo) listOf(strokeOnlyCopy(fillCopies!![0])) else fillCopies!!
+                if (useVideo) listOf(fillCopies!![0].strokeOnlyCopy()) else fillCopies!!
             } else if (g.pose) texts.flatMap { c ->
                 val upright = if (cam.activeFor(c, t)) uprightForCamera(c) else uprightForPose(c)
                 RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg, timeMs = t)
@@ -874,7 +874,7 @@ class NativePreviewEngine(context: Context) {
                     sil.eraseColor(0)
                     val fp = fillPainterFor(w, h, dens)
                     fp.nativeTarget = sil
-                    fp.draw(android.graphics.Canvas(sil), silhouetteCopy(fillCopies!![0]), applyOpacity = false, timeMs = t)
+                    fp.draw(android.graphics.Canvas(sil), fillCopies!![0].silhouetteCopy(), applyOpacity = false, timeMs = t)
                     if (maskAdj != null) {
                         drawMaskScratch(maskAdj, w, h, k, dens, t)?.let { scratch ->
                             android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, MASK_DST_IN_PAINT)

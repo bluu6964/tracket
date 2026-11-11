@@ -702,7 +702,7 @@ class NativeProjectExporter(private val context: Context) {
                                 val drawn = if (fillClip != null) {
                                     // Live: only the outline is rasterised (the video is composited
                                     // under it). Poster: the whole shape, poster fill included.
-                                    if (useVideo) listOf(strokeOnlyCopy(fillCopies!![0])) else fillCopies!!
+                                    if (useVideo) listOf(fillCopies!![0].strokeOnlyCopy()) else fillCopies!!
                                 } else if (g.pose) rendered.flatMap { c ->
                                     val upright = if (cam.activeFor(c, timeMs)) uprightForCamera(c) else uprightForPose(c)
                                     RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg, timeMs = timeMs)
@@ -761,7 +761,7 @@ class NativeProjectExporter(private val context: Context) {
                                         val sil = g.silBmp!!
                                         sil.eraseColor(0)
                                         painter.nativeTarget = sil
-                                        painter.draw(android.graphics.Canvas(sil), silhouetteCopy(fillCopies!![0]), applyOpacity = false, timeMs = timeMs)
+                                        painter.draw(android.graphics.Canvas(sil), fillCopies!![0].silhouetteCopy(), applyOpacity = false, timeMs = timeMs)
                                         if (maskAdj != null) {
                                             var scratch = maskScratchBmp
                                             if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {

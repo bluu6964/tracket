@@ -62,7 +62,7 @@ class MissingMediaArchiveTest {
             id = "vid", name = "intro.mp4", type = LayerType.SHAPE, startMs = 0, durationMs = 3000, color = 0,
             fillVideoUri = "am:5A2183027F5DE730E692BBF35E5CB75D328D856A.mp4"
         )
-        val imported = ProjectSnapshot(tracks = listOf(TimelineTrack("t", "L", listOf(logoShape, videoShape))))
+        val imported = ProjectSnapshot(tracks = listOf(TimelineTrack("t", "L", clips = listOf(logoShape, videoShape))))
         assertEquals(2, MissingMedia.collect(imported, ownAuthority).size)
 
         var snap = MissingMedia.substitute(imported, logoShape.fillImageUri!!, myLogo)

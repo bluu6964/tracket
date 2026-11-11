@@ -78,12 +78,28 @@ internal object AmFxEval {
         ClipFxLibrary.BRIGHT_CONTRAST -> listOf(Tracked(0, 100f), Tracked(1, 100f))  // brightness, contrast
         ClipFxLibrary.LONG_SHADOW -> listOf(Tracked(0, 1f))                    // length (the tail is pre-converted to the slot's %)
         ClipFxLibrary.LIGHT_RAYS -> listOf(Tracked(1, 1f), Tracked(3, 1f), Tracked(4, 1f))  // length, centre x, centre y (pre-converted)
+        // v164 tier:
+        ClipFxLibrary.CHROMA_KEY_AM -> listOf(Tracked(1, 100f), Tracked(2, 100f))  // threshold, feather
+        ClipFxLibrary.COLOR_BALANCE_AM -> listOf(
+            Tracked(0, 1f), Tracked(1, 1f), Tracked(2, 1f), Tracked(3, 1f), Tracked(4, 1f),
+            Tracked(5, 1f), Tracked(6, 1f), Tracked(7, 1f), Tracked(8, 1f)
+        )  // the nine band values (AM units already); fix luminance is a flag, never tracked
+        ClipFxLibrary.COLOR_TEMP_AM -> listOf(Tracked(0, 1f), Tracked(1, 100f))  // temperature, strength
+        ClipFxLibrary.COLOR_TINT_AM -> listOf(Tracked(0, 1f), Tracked(1, 100f))  // hue (raw degrees), strength
+        ClipFxLibrary.SPIN_BLUR_AM -> listOf(Tracked(0, 1f))                      // angle (raw degrees)
+        ClipFxLibrary.OFFSET_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))         // offset x, offset y (AM units)
+        ClipFxLibrary.RADIAL_WIPE_AM -> listOf(Tracked(0, 1f))                    // progress (degrees)
+        ClipFxLibrary.HEX_SHIFT_AM -> listOf(Tracked(0, 1f), Tracked(4, 1f))      // strength (raw), angle (raw degrees)
+        ClipFxLibrary.SOFT_GLOW_AM -> listOf(Tracked(0, 100f))                    // strength
+        ClipFxLibrary.FILL_BEHIND_AM -> listOf(Tracked(0, 100f), Tracked(10, 1f), Tracked(11, 1f))  // strength, bg offset x / y
         else -> emptyList()
     }
 
     /** Where the tail sequence of [type] starts in its values. */
     private fun tailStart(type: String): Int = when (type) {
-        ClipFxLibrary.TURBULENT_DISPLACE_AM, ClipFxLibrary.PIXELATE_AM -> EXT_TAIL_START
+        ClipFxLibrary.TURBULENT_DISPLACE_AM, ClipFxLibrary.PIXELATE_AM,
+        ClipFxLibrary.COLOR_BALANCE_AM, ClipFxLibrary.HEX_SHIFT_AM,
+        ClipFxLibrary.SOFT_GLOW_AM, ClipFxLibrary.FILL_BEHIND_AM -> EXT_TAIL_START
         else -> TAIL_START
     }
 

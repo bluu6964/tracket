@@ -158,6 +158,9 @@ private:
     bool fxFourColorGradient(const FxOp& op, int W, int H, int* cur);
     bool fxTurbulentAm(const FxOp& op, int W, int H, int* cur);
     bool fxPixelateAm(const FxOp& op, int W, int H, int* cur);
+    bool fxChromaKeyAm(const FxOp& op, int W, int H, int* cur);
+    bool fxSoftGlowAm(const FxOp& op, int W, int H, int* cur);
+    bool fxFillBehindAm(const FxOp& op, int W, int H, int* cur);
     // Copy Background: the frame so far is copied into texBackdrop_ at the start of applyFx; bgRect_ = the part of the canvas
     // the picture covers (x, y from the BOTTOM, w, h as fractions), bgOk_ = the copy was made for this call.
     bool bgOk_ = false;

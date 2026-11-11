@@ -3459,4 +3459,260 @@ $layers
         val group = r.snapshot.tracks.flatMap { it.clips }.single { it.type == LayerType.GROUP }
         assertEquals("Screen", group.blendMode)
     }
+
+    // ---- v164: the parked tier (hunt round 2; defs recovered in defs-batch3) ----
+
+    @Test
+    fun shakeV1BakesSimplexPositionKeys() {
+        // Verbatim from dj-pambasilet-marz.xml (one of its four identical shake v1 layers):
+        // mag pulses 120 -> 0 -> 120, speed 2, angle 45, slack 0.25 — baked with the def's own
+        // simplex script, NOT shake2's value noise, and with no slack warning (v1 USES slack).
+        val xml = shapeWith(
+            """<effect id="com.alightcreative.effects.shake" locallyApplied="false"><property name="mag" type="float"><kf t="0.025751" v="120.000000" /><kf t="0.474249" v="0.000000" e="cubicBezier 0.0 0.7395722 0.15890624 1.0" /><kf t="0.976395" v="120.000000" e="cubicBezier 0.84000003 0.0 1.0 0.26" /></property><property name="speed" type="float" value="2.000000" /><property name="evolution" type="float" value="0.000000" /><property name="seed" type="float" value="0.000000" /><property name="angle" type="float" value="45.000000" /><property name="slack" type="float" value="0.250000" /></effect>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertTrue(r.warnings.none { it.contains("shake is not supported") })
+        assertTrue(r.warnings.none { it.contains("Effect shake: its slack") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val pos = c.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos.size >= 8)
+        // |d| <= mag * sqrt(1 + slack^2) ~ 124 at the pulse peaks, and the noise really moves.
+        assertTrue(pos.all { abs(it.a) <= 130f && abs(it.b) <= 130f })
+        assertTrue(pos.maxOf { Math.hypot(it.a.toDouble(), it.b.toDouble()) } > 5.0)
+        val again = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(pos, again.keyframes[AnimProp.POSITION])   // deterministic
+    }
+
+    @Test
+    fun brightcontV1MapsExactlyLikeV2() {
+        // Verbatim from am-renderer-preset3.xml. brightcont v1's shader is byte-identical to
+        // brightcont2's (defs-batch3), so it takes the same Brightness & Contrast mapping.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.brightcont" locallyApplied="false"><property name="contrast" type="float" value="0.100000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("brightcont is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.BRIGHT_CONTRAST }
+        assertEquals(listOf(0f, 10f), fx.values.subList(0, 2))
+    }
+
+    @Test
+    fun chromaKeyAmImports() {
+        // Verbatim from proyek-baru-273-copy.xml: a black key at threshold 0.1 / feather 0.05.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.chromakey" locallyApplied="true"><property name="keyColor" type="color" value="#ff000000" /><property name="threshold" type="float" value="0.100000" /><property name="feather" type="float" value="0.050000" /><property name="defringe" type="bool" value="false" /><property name="invert" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("chromakey is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.CHROMA_KEY_AM }
+        assertEquals(listOf(0f, 10f, 5f, 0f, 0f, 0f, 0f), fx.values)
+        assertEquals(75f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun colorBalanceAmImports() {
+        // Verbatim from cwlzy-preset.xml — but WITHOUT its hidden="true": both corpus
+        // instances are hidden and stay skipped (next test); this pins the mapping itself.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.colorbalance" locallyApplied="false"><property name="crLow" type="float" value="100.000000" /><property name="mgLow" type="float" value="-100.000000" /><property name="ybLow" type="float" value="100.000000" /><property name="crMid" type="float" value="0.000000" /><property name="mgMid" type="float" value="0.000000" /><property name="ybMid" type="float" value="0.000000" /><property name="crHigh" type="float" value="0.000000" /><property name="mgHigh" type="float" value="0.000000" /><property name="ybHigh" type="float" value="0.000000" /><property name="fixLum" type="bool" value="true" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("colorbalance is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.COLOR_BALANCE_AM }
+        assertEquals(
+            listOf(100f, -100f, 100f, 0f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f),
+            fx.values
+        )
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(76f, arr[0], 0.001f)    // the main group
+        assertEquals(77f, arr[8], 0.001f)    // the EXT group right behind it
+        assertEquals(1f, arr[11], 0.001f)    // fixLum rides the EXT group (q2)
+    }
+
+    @Test
+    fun colorBalanceHiddenInstanceStaysSkipped() {
+        // The corpus instances as they actually are: hidden="true" — skipped as hidden (the
+        // build-102 rule), NOT reported as unsupported.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.colorbalance" hidden="true" locallyApplied="false"><property name="crLow" type="float" value="100.000000" /><property name="fixLum" type="bool" value="true" /></effect>"""
+        ), 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.effects.none { it.type == ClipFxLibrary.COLOR_BALANCE_AM })
+        assertTrue(r.warnings.any { it.contains("hidden effects are disabled") })
+        assertTrue(r.warnings.none { it.contains("colorbalance is not supported") })
+    }
+
+    @Test
+    fun colorTemperatureImports() {
+        // Verbatim from am-renderer-preset4.xml: 5540 K at strength 0.987.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.colortemperature" locallyApplied="false"><property name="temperature" type="float" value="5.540000" /><property name="strength" type="float" value="0.987000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("colortemperature is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.COLOR_TEMP_AM }
+        assertEquals(5.54f, fx.values[0], 0.001f)
+        assertEquals(98.7f, fx.values[1], 0.01f)
+        assertEquals(78f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun colorTintImports() {
+        // Verbatim from am-renderer-preset3.xml: tint vec3 (hue -55.3, strength 0.0484, unused 0).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.colortint" locallyApplied="false"><property name="tint" type="vec3" value="-55.304688,0.048402,0.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("colortint is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.COLOR_TINT_AM }
+        assertEquals(-55.304688f, fx.values[0], 0.001f)
+        assertEquals(4.8402f, fx.values[1], 0.001f)
+        assertEquals(79f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun spinBlurKeyframedAngleRidesTheTail() {
+        // Verbatim from celz-preset-9x16.xml: the angle sweeps 0 -> 8 -> 0 degrees.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.spinblur2" locallyApplied="false"><property name="angle" type="float"><kf t="0.531532" v="8.000000" e="cubicBezier 0.65 0.0 1.0 1.0" /><kf t="0.919670" v="0.000000" e="cubicBezier 0.0 0.0 0.34517413 1.0" /><kf t="0.131381" v="0.000000" /></property></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("spinblur2 is not supported") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.SPIN_BLUR_AM }
+        assertEquals(0f, fx.values[0], 0.001f)   // the value at the layer's start
+        assertEquals(3f, fx.values[7], 0.001f)   // the tail: three keys
+        val peak = AmFxEval.resolve(listOf(fx), clip, clip.startMs + (clip.durationMs * 0.531532).toLong()).single()
+        assertEquals(8f, peak.values[0], 0.01f)
+        assertEquals(80f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun offsetKeyframedRidesTwoTails() {
+        // Verbatim from rax-preset-249.xml: a slide-in, offset keyframed -9999 -> 0.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.offset" locallyApplied="true"><property name="offset" type="vec2"><kf t="0.000000" v="-9999.000000,0.000000" /><kf t="0.414656" v="0.000000,0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /></property><property name="feather" type="float" value="0.000000" /><property name="mask" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("offset is not supported") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.OFFSET_AM }
+        assertEquals(-9999f, fx.values[0], 0.001f)
+        assertEquals(2f, fx.values[7], 0.001f)   // the x tail: two keys (the y tail is a placeholder)
+        val done = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(0f, done.values[0], 0.001f)
+        assertEquals(81f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun radialWipeImportsWithItsProgressTail() {
+        // Verbatim from shared-preset-likenya.xml: progress keyframed 360 -> 0 (a wipe-in).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.radialwipe" locallyApplied="false"><property name="progress" type="float"><kf t="0.001006" v="360.000000" /><kf t="0.482818" v="0.000000" e="cubicBezier 0.42 0.0 0.0 1.0" /></property><property name="offset" type="float" value="0.000000" /><property name="feather" type="float" value="0.000000" /><property name="direction" type="int" value="0" /><property name="repeatCount" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("radialwipe is not supported") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.RADIAL_WIPE_AM }
+        assertEquals(360f, fx.values[0], 0.001f)
+        assertEquals(ClipFxLibrary.packPoint(0f, 0f), fx.values[4])
+        assertEquals(2f, fx.values[7], 0.001f)   // the progress tail
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(0f, end.values[0], 0.001f)
+        assertEquals(82f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun findEdgesAmImports() {
+        // Verbatim from am-renderer-preset1.xml: smoothing 1, threshold 1 (the top of its
+        // range), inverted.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.findedges" locallyApplied="false"><property name="smoothing" type="float" value="1.000000" /><property name="threshold" type="float" value="1.000000" /><property name="invert" type="bool" value="true" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("findedges is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.FIND_EDGES_AM }
+        assertEquals(listOf(1f, 100f, 1f, 0f, 0f, 0f, 0f), fx.values)
+        assertEquals(83f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun hexShiftImportsWithStrengthAndAngleTails() {
+        // Verbatim from likk-preset-33.xml: strength 0 -> 0.011 -> 0 and angle ~3508 -> 3259
+        // -> 3508, both keyframed (the strength track's last segment carries AM's `random`
+        // easing, read as linear like the transform tracks read unknown easings).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.hexshift" locallyApplied="false"><property name="strength" type="float"><kf t="-0.706714" v="0.000000" /><kf t="0.030035" v="0.011000" /><kf t="1.000000" v="0.000000" e="random 0.5 0.5 0.5 0.5 0.5 0.0" /></property><property name="size" type="float" value="127.000000" /><property name="stretch" type="vec2" value="0.090000,1.000000" /><property name="angle" type="float"><kf t="-0.706714" v="3508.500000" /><kf t="0.030035" v="3259.500000" /><kf t="1.000000" v="3508.500000" e="cubicBezier 0.0 0.0 0.0 1.0" /></property><property name="seed" type="float" value="0.100000" /><property name="screenSpace" type="bool" value="true" /><property name="maskToLayer" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("hexshift is not supported") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.HEX_SHIFT_AM }
+        assertEquals(0.0106f, fx.values[0], 0.0005f)      // strength at t = 0 (between the first keys)
+        assertEquals(127f, fx.values[1], 0.001f)
+        assertEquals(9f, fx.values[2], 0.001f)            // stretch x 0.09 as %
+        assertEquals(100f, fx.values[3], 0.001f)
+        assertEquals(3269.7f, fx.values[4], 1f)           // angle at t = 0
+        assertEquals(0.1f, fx.values[5], 0.001f)
+        assertEquals(1f, fx.values[6], 0.001f)            // screen space
+        assertEquals(0f, fx.values[7], 0.001f)            // EXT: mask to layer off
+        assertEquals(3f, fx.values[14], 0.001f)           // the strength tail: three keys
+        assertEquals(3f, fx.values[33], 0.001f)           // the angle tail behind it
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(84f, arr[0], 0.001f)
+        assertEquals(85f, arr[8], 0.001f)                 // the EXT group
+    }
+
+    @Test
+    fun softGlowImports() {
+        // Verbatim from valzy-prst-362.xml: all static, outsideAlpha 0 (no backdrop warning).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.softglow" locallyApplied="false"><property name="strength" type="float" value="0.500000" /><property name="brightness" type="float" value="1.000000" /><property name="contrast" type="float" value="0.700000" /><property name="highlights" type="float" value="1.000000" /><property name="color" type="color" value="#ffffffff" /><property name="blend" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /><property name="outsideAlpha" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("softglow is not supported") })
+        assertTrue(r.warnings.none { it.contains("softglow: its outside") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.SOFT_GLOW_AM }
+        assertEquals(
+            listOf(50f, 100f, 70f, 100f, 0xFFFFFF.toFloat(), 100f, 100f, 0f, 0f, 0f, 0f, 0f, 0f, 0f),
+            fx.values
+        )
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(86f, arr[0], 0.001f)
+        assertEquals(87f, arr[8], 0.001f)
+    }
+
+    @Test
+    fun fillBehindImportsWithBgOffsetTails() {
+        // Verbatim from winkoko-preset-1080sq.xml: bgOffset keyframed in x only; brightness /
+        // fgAlpha / fgScale / fgOffset all at their defaults, so nothing is reported.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.fillbehind" locallyApplied="false"><property name="strength" type="float" value="0.080000" /><property name="feather" type="float" value="0.050000" /><property name="saturation" type="float" value="0.000000" /><property name="brightness" type="float" value="0.000000" /><property name="gamma" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /><property name="fgAlpha" type="float" value="1.000000" /><property name="tintColor" type="color" value="#ffff5566" /><property name="tintStrength" type="float" value="0.000000" /><property name="edgeColor" type="color" value="#ff000000" /><property name="edgeStrength" type="float" value="0.075000" /><property name="scanLines" type="float" value="0.298000" /><property name="scanLineCount" type="float" value="742.000000" /><property name="fgScale" type="float" value="1.000000" /><property name="bgOffset" type="vec2"><kf t="0.640714" v="0.000000,0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.786699" v="-274.000000,0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.927170" v="351.000000,0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.997567" v="-277.000000,0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /></property><property name="bgScale" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("fillbehind is not supported") })
+        assertTrue(r.warnings.none { it.contains("fillbehind: its") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.FILL_BEHIND_AM }
+        val expected = listOf(8f, 5f, 100f, 0f, 0xFF5566.toFloat(), 7.5f, 29.8f, 742f, 100f, 0f, 0f, 0f, 100f, 0f)
+        assertEquals(expected.size, fx.values.subList(0, 14).size)
+        expected.forEachIndexed { i, v -> assertEquals("values[$i]", v, fx.values[i], 0.001f) }
+        assertEquals(0f, fx.values[14], 0.001f)   // the strength tail is a placeholder (static)
+        assertEquals(4f, fx.values[15], 0.001f)   // the bg offset x tail: four keys
+        val mid = AmFxEval.resolve(listOf(fx), clip, clip.startMs + (clip.durationMs * 0.786699).toLong()).single()
+        assertEquals(-274f, mid.values[10], 0.01f)
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(88f, arr[0], 0.001f)
+        assertEquals(89f, arr[8], 0.001f)
+    }
+
+    @Test
+    fun lightglowStaysParked() {
+        // Verbatim from am-renderer-preset1.xml (without its hidden="true"; the corpus pair is
+        // hidden anyway). The def was recovered (defs-batch3) but its downsample pass names no
+        // shader — the kernel is an AM host built-in — so the effect stays honestly parked.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.lightglow" locallyApplied="false"><property name="strength" type="float" value="0.055000" /><property name="threshold" type="float" value="0.000000" /><property name="intensity" type="float" value="3.670000" /><property name="color" type="color" value="#ffff5566" /><property name="blend" type="float" value="0.000000" /><property name="halo" type="float" value="0.000000" /><property name="alpha" type="float" value="0.750000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.any { it.contains("lightglow is not supported yet") })
+    }
+
+    @Test
+    fun displacemapradStaysParked() {
+        // Verbatim from celz-preset-9x16.xml. The def was recovered, but the shader samples
+        // the running composite (`comp` texture) and no def states whether that is
+        // backdrop-only or backdrop+self — the whole displacemap family stays parked.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.displacemaprad" locallyApplied="false"><property name="offsAngle" type="float"><kf t="0.919670" v="0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.131381" v="0.000000" /><kf t="0.519520" v="80.000000" e="cubicBezier 1.0 0.0 1.0 1.0" /><kf t="0.506757" v="-80.000000" e="cubicBezier 0.42 0.0 1.0 0.0" /></property><property name="offsRadius" type="float" value="0.000000" /><property name="typex" type="int" value="1" /><property name="typey" type="int" value="2" /><property name="edges" type="int" value="1" /><property name="fromctr" type="bool" value="true" /><property name="invert" type="bool" value="true" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.any { it.contains("displacemaprad is not supported yet") })
+    }
 }

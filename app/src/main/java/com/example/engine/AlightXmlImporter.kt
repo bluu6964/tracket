@@ -55,6 +55,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -204,6 +205,21 @@ object AlightXmlImporter {
     const val MOTIONBLUR2 = "com.alightcreative.effects.motionblur2"
     const val MOTIONBLUR3 = "com.alightcreative.effects.motionblur3"
     const val MOTIONBLUR4 = "com.alightcreative.effects.motionblur4"
+    // v164: the parked tier (defs-batch3). SHAKE_V1 is the ORIGINAL shake (a JS auto-transform
+    // in its def), not shake2 above; BRIGHTCONT_V1's shader is byte-identical to brightcont2's.
+    const val SHAKE_V1 = "com.alightcreative.effects.shake"
+    const val BRIGHTCONT_V1 = "com.alightcreative.effects.brightcont"
+    const val CHROMAKEY = "com.alightcreative.effects.chromakey"
+    const val COLORBALANCE = "com.alightcreative.effects.colorbalance"
+    const val COLORTEMPERATURE = "com.alightcreative.effects.colortemperature"
+    const val COLORTINT = "com.alightcreative.effects.colortint"
+    const val SPINBLUR2 = "com.alightcreative.effects.spinblur2"
+    const val OFFSETFX = "com.alightcreative.effects.offset"
+    const val RADIALWIPE = "com.alightcreative.effects.radialwipe"
+    const val FINDEDGES = "com.alightcreative.effects.findedges"
+    const val HEXSHIFT = "com.alightcreative.effects.hexshift"
+    const val SOFTGLOW = "com.alightcreative.effects.softglow"
+    const val FILLBEHIND = "com.alightcreative.effects.fillbehind"
 
     /** Effect ids the text reader stores as [TextAnimator] itself (the effect pass must not warn about them). */
     private val TEXT_STORED = setOf(TEXTTRANSFORM, RANDOMDISPLACE, TEXTPROGRESS, COUNTER)
@@ -2012,6 +2028,19 @@ object AlightXmlImporter {
                 SWIRL4, SWIRL3 -> applySwirl(fx, clip, ctx, id)
                 HALFTONEDOTS -> applyHalftoneDots(fx, clip, ctx)
                 PIXELATE2 -> applyPixelate(fx, clip, ctx)
+                SHAKE_V1 -> applyShakeV1(fx, clip, ctx, durMs)
+                BRIGHTCONT_V1 -> applyBrightCont(fx, clip, ctx)
+                CHROMAKEY -> applyChromaKeyAm(fx, clip, ctx)
+                COLORBALANCE -> applyColorBalanceAm(fx, clip, ctx)
+                COLORTEMPERATURE -> applyColorTempAm(fx, clip, ctx)
+                COLORTINT -> applyColorTintAm(fx, clip, ctx)
+                SPINBLUR2 -> applySpinBlurAm(fx, clip, ctx)
+                OFFSETFX -> applyOffsetAm(fx, clip, ctx)
+                RADIALWIPE -> applyRadialWipeAm(fx, clip, ctx)
+                FINDEDGES -> applyFindEdgesAm(fx, clip, ctx)
+                HEXSHIFT -> applyHexShiftAm(fx, clip, ctx)
+                SOFTGLOW -> applySoftGlowAm(fx, clip, ctx)
+                FILLBEHIND -> applyFillBehindAm(fx, clip, ctx)
                 else -> {
                     ctx.warnings += "Effect " + id.substringAfterLast('.') + " is not supported yet: skipped"
                     clip
@@ -3149,6 +3178,392 @@ object AlightXmlImporter {
             saturation.coerceIn(0f, 100f), offset.first, offset.second, 0f, 0f, 0f, 0f
         ) + trackTail(sizeT)
         return addFx(clip0, ctx, ClipFxLibrary.PIXELATE_AM, values, "pixelate2")
+    }
+
+    // ---- v164: Alight's parked tier (hunt round 2; every definition recovered, defs-batch3) ----
+
+    /**
+     * `shake` (v1) -> baked into the POSITION keyframes like shake2, but with the ORIGINAL
+     * effect's own script (recovered from its def): the displacement is AM's simplex noise of
+     * the layer's own location and an evolution that runs on ABSOLUTE scene time
+     * (evolution + t*speed - speed), the across-axis component scaled by `slack` (def 0.25),
+     * the pair rotated by `angle`. Unlike shake2 there is no freq / zshake. The noise is the
+     * Ashima snoise AM's own shaders use ([simplexNoise3]); the seed offsets are the def's.
+     */
+    private fun applyShakeV1(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val magT = props["mag"] ?: return clip0
+        val magMax = (magT.keys.map { abs(it.v.firstOrNull() ?: 0f) } +
+            listOf(abs(magT.constant.firstOrNull() ?: 0f), abs(magT.first().firstOrNull() ?: 0f))).maxOrNull() ?: 0f
+        if (magMax < 1e-4f) return clip0
+        val speed = props["speed"]?.firstValue(w, "shake", "speed") ?: 1f
+        val evolution = props["evolution"]?.firstValue(w, "shake", "evolution") ?: 0f
+        val seed = (props["seed"]?.firstValue(w, "shake", "seed") ?: 0f).toDouble()
+        val angle = props["angle"]?.firstValue(w, "shake", "angle") ?: 45f
+        val slack = props["slack"]?.firstValue(w, "shake", "slack") ?: 0.25f
+        val rad = Math.toRadians(angle.toDouble())
+        val ca = cos(rad).toFloat()
+        val sa = sin(rad).toFloat()
+        // bakeDelta integrates a layer-local phase; v1's evolution runs on absolute time, so
+        // the phase starts at evolution - speed + speed * (the layer's start in seconds).
+        val phase0 = 2.0 * Math.PI * (evolution - speed + speed * (clip0.startMs / 1000f))
+        val extra = magT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }
+        val baseKeys = clip0.keyframes[AnimProp.POSITION]
+        val basePlain = clip0.propValues(AnimProp.POSITION)
+        return bakeDelta(clip0, AnimProp.POSITION, durMs, ctx, phase0, { speed }, extra) { phase, norm ->
+            val evo = phase / (2.0 * Math.PI)
+            val tMs = (norm * durMs).roundToLong()
+            val base = baseKeys?.valueAt(tMs) ?: basePlain
+            val locX = (base.first / ctx.k + ctx.sceneW / 2f).toDouble()
+            val locY = (base.second / ctx.k + ctx.sceneH / 2f).toDouble()
+            val mag = magT.scalarAtEased(norm).toDouble()
+            val dx = simplexNoise3(locX + seed * 54623.245, locY, evo + seed * 49235.319798) * mag
+            val dy = simplexNoise3(locX, locY + seed * 8723.5647, evo + 7468.329 + seed * 19337.940385) * mag * slack
+            ((dx * ca - dy * sa) * ctx.k).toFloat() to ((dx * sa + dy * ca) * ctx.k).toFloat()
+        }
+    }
+
+    /** Ashima simplex noise (the snoise of AM's own shaders), in double precision like AM's JS. */
+    private fun simplexNoise3(x: Double, y: Double, z: Double): Double {
+        fun mod289(v: Double) = v - floor(v * (1.0 / 289.0)) * 289.0
+        fun permute(v: Double) = mod289(((v * 34.0) + 1.0) * v)
+        fun taylor(r: Double) = 1.79284291400159 - 0.85373472095314 * r
+        val c1 = 1.0 / 6.0
+        val c2 = 1.0 / 3.0
+        val s = (x + y + z) * c2
+        var ix = floor(x + s)
+        var iy = floor(y + s)
+        var iz = floor(z + s)
+        val t = (ix + iy + iz) * c1
+        val x0 = doubleArrayOf(x - ix + t, y - iy + t, z - iz + t)
+        val g = doubleArrayOf(
+            if (x0[0] >= x0[1]) 1.0 else 0.0,
+            if (x0[1] >= x0[2]) 1.0 else 0.0,
+            if (x0[2] >= x0[0]) 1.0 else 0.0
+        )
+        val l = doubleArrayOf(1.0 - g[0], 1.0 - g[1], 1.0 - g[2])
+        val i1 = doubleArrayOf(min(g[0], l[2]), min(g[1], l[0]), min(g[2], l[1]))
+        val i2 = doubleArrayOf(max(g[0], l[2]), max(g[1], l[0]), max(g[2], l[1]))
+        val x1 = doubleArrayOf(x0[0] - i1[0] + c1, x0[1] - i1[1] + c1, x0[2] - i1[2] + c1)
+        val x2 = doubleArrayOf(x0[0] - i2[0] + c2, x0[1] - i2[1] + c2, x0[2] - i2[2] + c2)
+        val x3 = doubleArrayOf(x0[0] - 0.5, x0[1] - 0.5, x0[2] - 0.5)
+        ix = mod289(ix); iy = mod289(iy); iz = mod289(iz)
+        val p = DoubleArray(4)
+        for (k in 0..3) {
+            val oz = when (k) { 0 -> 0.0; 1 -> i1[2]; 2 -> i2[2]; else -> 1.0 }
+            val oy = when (k) { 0 -> 0.0; 1 -> i1[1]; 2 -> i2[1]; else -> 1.0 }
+            val ox = when (k) { 0 -> 0.0; 1 -> i1[0]; 2 -> i2[0]; else -> 1.0 }
+            p[k] = permute(permute(permute(iz + oz) + iy + oy) + ix + ox)
+        }
+        val n_ = 0.142857142857
+        val nsx = 2.0 * n_
+        val nsy = 0.5 * n_ - 1.0
+        val nsz = n_
+        val gx = DoubleArray(4)
+        val gy = DoubleArray(4)
+        for (k in 0..3) {
+            val j = p[k] - 49.0 * floor(p[k] * nsz * nsz)
+            val xf = floor(j * nsz)
+            val yf = floor(j - 7.0 * xf)
+            gx[k] = xf * nsx + nsy
+            gy[k] = yf * nsx + nsy
+        }
+        val h = DoubleArray(4) { 1.0 - abs(gx[it]) - abs(gy[it]) }
+        val b0 = doubleArrayOf(gx[0], gx[1], gy[0], gy[1])
+        val b1 = doubleArrayOf(gx[2], gx[3], gy[2], gy[3])
+        val s0 = DoubleArray(4) { floor(b0[it]) * 2.0 + 1.0 }
+        val s1 = DoubleArray(4) { floor(b1[it]) * 2.0 + 1.0 }
+        val sh = DoubleArray(4) { if (h[it] > 0.0) 0.0 else -1.0 }
+        val a0 = doubleArrayOf(
+            b0[0] + s0[0] * sh[0], b0[2] + s0[2] * sh[0],
+            b0[1] + s0[1] * sh[1], b0[3] + s0[3] * sh[1]
+        )
+        val a1 = doubleArrayOf(
+            b1[0] + s1[0] * sh[2], b1[2] + s1[2] * sh[2],
+            b1[1] + s1[1] * sh[3], b1[3] + s1[3] * sh[3]
+        )
+        fun grad(px: Double, py: Double, pz: Double, v: DoubleArray): Double {
+            val n = taylor(px * px + py * py + pz * pz)
+            return px * n * v[0] + py * n * v[1] + pz * n * v[2]
+        }
+        fun corner(v: DoubleArray, px: Double, py: Double, pz: Double): Double {
+            val m = max(0.6 - (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]), 0.0)
+            val w2 = m * m
+            return w2 * w2 * grad(px, py, pz, v)
+        }
+        return 42.0 * (
+            corner(x0, a0[0], a0[1], h[0]) + corner(x1, a0[2], a0[3], h[1]) +
+                corner(x2, a1[0], a1[1], h[2]) + corner(x3, a1[2], a1[3], h[3])
+            )
+    }
+
+    /**
+     * `chromakey` -> the app's Chroma Key (Alight) — NOT the app's own Chroma Key: AM's def
+     * measures the YUV distance (luma counted a quarter) to the key colour on the
+     * unpremultiplied pixel, with a defringe subtraction and a transparent half-texel border.
+     * Corpus: 1 instance (black key, threshold 0.1, feather 0.05). Keyframed threshold /
+     * feather ride the tail; the key colour is a colour and stays first-value.
+     */
+    private fun applyChromaKeyAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val key = props["keyColor"]?.packedColor(w, "chromakey", "keyColor") ?: 0x00FF00.toFloat()
+        val thrT = props["threshold"]
+        val feaT = props["feather"]
+        val thr = (thrT?.scalarAtEased(0f) ?: 0.1f) * 100f
+        val fea = (feaT?.scalarAtEased(0f) ?: 0.05f) * 100f
+        val values = listOf(
+            key, thr.coerceIn(0f, 100f), fea.coerceIn(0f, 100f),
+            boolOf(props["defringe"], false), boolOf(props["invert"], false), 0f, 0f
+        ) + tailsOf(trackTail(thrT), trackTail(feaT))
+        return addFx(clip0, ctx, ClipFxLibrary.CHROMA_KEY_AM, values, "chromakey")
+    }
+
+    /**
+     * `colorbalance` -> the app's Color Balance (Alight): per-band (low / mid / high, by
+     * luma) channel gains of (filter + 100) / 100 in YUV space, fixLum restoring the input
+     * luma. Corpus: 2 instances, both hidden="true" (skipped at import like Alight skips
+     * them) with the extreme defaults (crLow 100, mgLow -100, ybLow 100, fixLum true). Every
+     * band value may ride a tail from index 14; fixLum is a flag and stays first-value.
+     */
+    private fun applyColorBalanceAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val names = listOf("crLow", "mgLow", "ybLow", "crMid", "mgMid", "ybMid", "crHigh", "mgHigh", "ybHigh")
+        val tracks = names.map { props[it] }
+        val bands = tracks.map { (it?.scalarAtEased(0f) ?: 0f).coerceIn(-100f, 100f) }
+        val fixLum = boolOf(props["fixLum"], true)
+        val values = listOf(
+            bands[0], bands[1], bands[2], bands[3], bands[4], bands[5], bands[6],
+            bands[7], bands[8], fixLum, 0f, 0f, 0f, 0f
+        ) + tailsOf(*tracks.map { trackTail(it) }.toTypedArray())
+        return addFx(clip0, ctx, ClipFxLibrary.COLOR_BALANCE_AM, values, "colorbalance")
+    }
+
+    /**
+     * `colortemperature` -> the app's Color Temperature (Alight): a Kelvin->RGB gain from
+     * AM's own polynomial fit, mixed by strength. Corpus: 2 instances (5.54 K x1000 at 0.987,
+     * 7.0 at 1.0), both static; keyframed temperature / strength ride the tail.
+     */
+    private fun applyColorTempAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val props = fxProps(fx)
+        val tempT = props["temperature"]
+        val strT = props["strength"]
+        val temp = tempT?.scalarAtEased(0f) ?: 6.5f
+        val str = (strT?.scalarAtEased(0f) ?: 1f) * 100f
+        val values = listOf(
+            temp.coerceIn(1f, 40f), str.coerceIn(0f, 100f), 0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(trackTail(tempT), trackTail(strT))
+        return addFx(clip0, ctx, ClipFxLibrary.COLOR_TEMP_AM, values, "colortemperature")
+    }
+
+    /**
+     * `colortint` -> the app's Color Tint (Alight): the pixel's chroma mixes toward the tint
+     * hue's chroma by strength * alpha (AM's def; the tint's third component is unused there,
+     * commented out in the shader). Corpus: 1 instance (hue -55.3, strength 0.048).
+     */
+    private fun applyColorTintAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val props = fxProps(fx)
+        val tintT = props["tint"]
+        val v = tintT?.valueAtEased(0f)
+        val hue = v?.getOrNull(0) ?: 0f
+        val str = (v?.getOrNull(1) ?: 0f) * 100f
+        val hueTail = if (tintT != null && tintT.keys.size >= 2)
+            AmFxEval.encodeTrack(tintT.keys.map { k -> Triple(k.t, k.v.getOrNull(0) ?: 0f, k.easing) })
+        else emptyList()
+        val strTail = if (tintT != null && tintT.keys.size >= 2)
+            AmFxEval.encodeTrack(tintT.keys.map { k -> Triple(k.t, k.v.getOrNull(1) ?: 0f, k.easing) })
+        else emptyList()
+        val values = listOf(hue, str.coerceIn(0f, 100f), 0f, 0f, 0f, 0f, 0f) +
+            tailsOf(hueTail, strTail)
+        return addFx(clip0, ctx, ClipFxLibrary.COLOR_TINT_AM, values, "colortint")
+    }
+
+    /**
+     * `spinblur2` -> the app's Spin Blur (Alight): taps rotated over [-angle/2, +angle/2],
+     * their count from the arc length at each radius. Corpus: 3 instances (angle 1.2 static,
+     * 1.0 static, and one KEYFRAMED 0 -> 8 -> 0 — the keyframed angle rides the tail).
+     * No instance carries a centerPoint (the layer centre everywhere).
+     */
+    private fun applySpinBlurAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val angT = props["angle"]
+        val ang = angT?.scalarAtEased(0f) ?: 5f
+        val centre = props["centerPoint"]?.firstPoint(w, "spinblur2", "centre", 0f, 0f) ?: (0f to 0f)
+        val values = listOf(ang, centre.first, centre.second, 0f, 0f, 0f, 0f) +
+            tailsOf(trackTail(angT))
+        return addFx(clip0, ctx, ClipFxLibrary.SPIN_BLUR_AM, values, "spinblur2")
+    }
+
+    /**
+     * `offset` -> the app's Offset (Alight): the layer wrap-shifted over itself, the seam
+     * cross-faded by feather, the shifted copy masked by the layer's silhouette when mask
+     * is on. Corpus: 2 instances — a constant (489, 0) shift and a KEYFRAMED slide-in from
+     * -9999 (the offset rides two tails, x then y). (The def's `scale` spinner is commented
+     * out in AM's own definition — it does nothing there either.)
+     */
+    private fun applyOffsetAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val props = fxProps(fx)
+        val offT = props["offset"]
+        val off = offT?.valueAtEased(0f)
+        val ox = off?.getOrNull(0) ?: 0f
+        val oy = off?.getOrNull(1) ?: 0f
+        val feather = (props["feather"]?.firstValue(ctx.warnings, "offset", "feather") ?: 0f) * 100f
+        val values = listOf(
+            ox, oy, feather.coerceIn(0f, 100f), boolOf(props["mask"], false), 0f, 0f, 0f
+        ) + tailsOf(pointTail(offT, 0) { it }, pointTail(offT, 1) { it })
+        return addFx(clip0, ctx, ClipFxLibrary.OFFSET_AM, values, "offset")
+    }
+
+    /**
+     * `radialwipe` -> the app's Radial Wipe (Alight): an angular matte around the centre.
+     * Corpus: 1 instance, progress KEYFRAMED 360 -> 0 (a wipe-in; it rides the tail),
+     * direction 0, repeat 1, feather / offset 0, no centerPoint. (The def's start / end
+     * spinners are not read by AM's own shader — it hardcodes start = 0.)
+     */
+    private fun applyRadialWipeAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val progT = props["progress"]
+        val prog = progT?.scalarAtEased(0f) ?: 45f
+        val feather = props["feather"]?.firstValue(w, "radialwipe", "feather") ?: 0f
+        val direction = (props["direction"]?.firstValue(w, "radialwipe", "direction") ?: 0f).toInt().coerceIn(0, 2)
+        val repeat = (props["repeatCount"]?.firstValue(w, "radialwipe", "repeatCount") ?: 1f).coerceIn(1f, 36f)
+        val centre = props["centerPoint"]?.firstPoint(w, "radialwipe", "centre", 0f, 0f) ?: (0f to 0f)
+        val offset = props["offset"]?.firstValue(w, "radialwipe", "offset") ?: 0f
+        val values = listOf(
+            prog, feather, direction.toFloat(), repeat,
+            ClipFxLibrary.packPoint(centre.first, centre.second), offset, 0f
+        ) + tailsOf(trackTail(progT))
+        return addFx(clip0, ctx, ClipFxLibrary.RADIAL_WIPE_AM, values, "radialwipe")
+    }
+
+    /**
+     * `findedges` -> the app's Find Edges (Alight): a Scharr gradient of the premultiplied
+     * luma. Corpus: 1 instance (smoothing 1, threshold 1 — at the top of its range, so the
+     * gradient is clamped away almost everywhere — invert true).
+     */
+    private fun applyFindEdgesAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val smoothing = props["smoothing"]?.firstValue(w, "findedges", "smoothing") ?: 1f
+        val threshold = (props["threshold"]?.firstValue(w, "findedges", "threshold") ?: 0f) * 100f
+        val values = listOf(
+            smoothing.coerceIn(0f, 10f), threshold.coerceIn(0f, 100f),
+            boolOf(props["invert"], false), 0f, 0f, 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.FIND_EDGES_AM, values, "findedges")
+    }
+
+    /**
+     * `hexshift` -> the app's Hex Shift (Alight): each hexagonal cell displaces the sampling
+     * by its own fixed random vector (AM's hash, pinned by the def). Corpus: 2 instances,
+     * identical — strength KEYFRAMED 0 -> 0.011 -> 0 and angle KEYFRAMED ~3508 -> 3259 ->
+     * 3508 (both ride tails from index 14), size 127, stretch (0.09, 1), seed 0.1,
+     * screenSpace on, maskToLayer off, no position. The angle track's last segment carries
+     * AM's `random` easing, which the importer's easing model reads as linear (the transform
+     * tracks do the same); in screen space AM anchors the grid to the screen, here it is
+     * anchored to the layer, like Turbulent Displace's.
+     */
+    private fun applyHexShiftAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val strT = props["strength"]
+        val angT = props["angle"]
+        val str = strT?.scalarAtEased(0f) ?: 0.1f
+        val size = props["size"]?.firstValue(w, "hexshift", "size") ?: 10f
+        val stretch = props["stretch"]?.firstPoint(w, "hexshift", "stretch", 1f, 1f) ?: (1f to 1f)
+        val ang = angT?.scalarAtEased(0f) ?: 0f
+        val seed = props["seed"]?.firstValue(w, "hexshift", "seed") ?: 0f
+        val position = props["position"]?.firstPoint(w, "hexshift", "position", 0f, 0f) ?: (0f to 0f)
+        val values = listOf(
+            str, size.coerceIn(0.5f, 500f),
+            (stretch.first * 100f).coerceIn(1f, 1000f), (stretch.second * 100f).coerceIn(1f, 1000f),
+            ang, seed, boolOf(props["screenSpace"], false),
+            boolOf(props["maskToLayer"], false), ClipFxLibrary.packPoint(position.first, position.second),
+            0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(trackTail(strT), trackTail(angT))
+        return addFx(clip0, ctx, ClipFxLibrary.HEX_SHIFT_AM, values, "hexshift")
+    }
+
+    /**
+     * `softglow` -> the app's Soft Glow (Alight): the blurred copy, brightened and pushed
+     * toward the tint colour by its own luminance, screen-blended over the layer. Corpus:
+     * 1 instance, all static (strength 0.5, brightness 1, contrast 0.7, highlights 1, white,
+     * blend 1, alpha 1, outsideAlpha 0). AM's backdrop branch (outsideAlpha > 0, it samples
+     * the running composite) is not reproduced and is reported when used.
+     */
+    private fun applySoftGlowAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val strT = props["strength"]
+        val str = (strT?.scalarAtEased(0f) ?: 0.1f) * 100f
+        val bright = (props["brightness"]?.firstValue(w, "softglow", "brightness") ?: 1f) * 100f
+        val contrast = (props["contrast"]?.firstValue(w, "softglow", "contrast") ?: 0.2f) * 100f
+        val highlights = (props["highlights"]?.firstValue(w, "softglow", "highlights") ?: 0.5f) * 100f
+        val color = props["color"]?.packedColor(w, "softglow", "color") ?: 0xFF5566.toFloat()
+        val blend = (props["blend"]?.firstValue(w, "softglow", "blend") ?: 0.25f) * 100f
+        val alpha = (props["alpha"]?.firstValue(w, "softglow", "alpha") ?: 1f) * 100f
+        val outside = (props["outsideAlpha"]?.firstValue(w, "softglow", "outsideAlpha") ?: 0f) * 100f
+        if (outside > 0.5f) {
+            w += "Effect softglow: its outside (backdrop) glow is not reproduced"
+        }
+        val values = listOf(
+            str.coerceIn(0f, 200f), bright.coerceIn(0f, 200f), contrast.coerceIn(0f, 100f),
+            highlights.coerceIn(0f, 100f), color, blend.coerceIn(0f, 100f), alpha.coerceIn(0f, 100f),
+            outside.coerceIn(0f, 100f), 0f, 0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(trackTail(strT))
+        return addFx(clip0, ctx, ClipFxLibrary.SOFT_GLOW_AM, values, "softglow")
+    }
+
+    /**
+     * `fillbehind` -> the app's Fill Behind (Alight): the blurred copy, colour-adjusted
+     * (saturation / tint / gamma / scanlines), fills behind the feathered foreground with an
+     * edge-colour rim. Corpus: 1 instance — strength 0.08, feather 0.05, gamma 1, tint
+     * #FF5566 at strength 0, edge black at 0.075, scanLines 0.298 over 742 lines, bgOffset
+     * KEYFRAMED (it rides two tails at values 10/11). Four AM params have no native slot —
+     * brightness, fgAlpha, fgScale, fgOffset — and are reported when not at their defaults
+     * (all four are, in the corpus instance).
+     */
+    private fun applyFillBehindAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val strT = props["strength"]
+        val str = (strT?.scalarAtEased(0f) ?: 0.3f) * 100f
+        val feather = (props["feather"]?.firstValue(w, "fillbehind", "feather") ?: 0.05f) * 100f
+        val gamma = (props["gamma"]?.firstValue(w, "fillbehind", "gamma") ?: 1f) * 100f
+        val tintStr = (props["tintStrength"]?.firstValue(w, "fillbehind", "tintStrength") ?: 0f) * 100f
+        val tint = props["tintColor"]?.packedColor(w, "fillbehind", "tintColor") ?: 0f
+        val edgeStr = (props["edgeStrength"]?.firstValue(w, "fillbehind", "edgeStrength") ?: 0f) * 100f
+        val edge = props["edgeColor"]?.packedColor(w, "fillbehind", "edgeColor") ?: 0f
+        val scan = (props["scanLines"]?.firstValue(w, "fillbehind", "scanLines") ?: 0f) * 100f
+        val scanCount = props["scanLineCount"]?.firstValue(w, "fillbehind", "scanLineCount") ?: 720f
+        val bgScale = (props["bgScale"]?.firstValue(w, "fillbehind", "bgScale") ?: 1f) * 100f
+        val alpha = (props["alpha"]?.firstValue(w, "fillbehind", "alpha") ?: 1f) * 100f
+        val sat = (props["saturation"]?.firstValue(w, "fillbehind", "saturation") ?: 0f) * 100f
+        val bgOffT = props["bgOffset"]
+        val bgOff = bgOffT?.valueAtEased(0f)
+        val bgOx = bgOff?.getOrNull(0) ?: 0f
+        val bgOy = bgOff?.getOrNull(1) ?: 0f
+        val brightness = props["brightness"]?.firstValue(w, "fillbehind", "brightness") ?: 0f
+        if (abs(brightness) > 1e-4f) w += "Effect fillbehind: its brightness is not reproduced"
+        val fgAlpha = props["fgAlpha"]?.firstValue(w, "fillbehind", "fgAlpha") ?: 1f
+        if (abs(fgAlpha - 1f) > 1e-4f) w += "Effect fillbehind: its foreground alpha is not reproduced"
+        val fgScale = props["fgScale"]?.firstValue(w, "fillbehind", "fgScale") ?: 1f
+        if (abs(fgScale - 1f) > 1e-4f) w += "Effect fillbehind: its foreground scale is not reproduced"
+        val fgOff = props["fgOffset"]?.first()
+        if (fgOff != null && (abs(fgOff.getOrNull(0) ?: 0f) > 1e-4f || abs(fgOff.getOrNull(1) ?: 0f) > 1e-4f)) {
+            w += "Effect fillbehind: its foreground offset is not reproduced"
+        }
+        val values = listOf(
+            str.coerceIn(0f, 200f), feather.coerceIn(0f, 100f), gamma.coerceIn(1f, 999f),
+            tintStr.coerceIn(0f, 100f), tint, edgeStr.coerceIn(0f, 100f), scan.coerceIn(0f, 100f),
+            scanCount.coerceIn(0f, 2160f), bgScale.coerceIn(1f, 10000f), edge,
+            bgOx, bgOy, alpha.coerceIn(0f, 100f), sat.coerceIn(-100f, 100f)
+        ) + tailsOf(trackTail(strT), pointTail(bgOffT, 0) { it }, pointTail(bgOffT, 1) { it })
+        return addFx(clip0, ctx, ClipFxLibrary.FILL_BEHIND_AM, values, "fillbehind")
     }
 
     /** `exposure` -> the app's Exposure: stops as-is, offset 0..1 -> -100..100, gamma as a percent. */

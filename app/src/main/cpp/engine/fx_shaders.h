@@ -225,6 +225,34 @@ void main() {
         float ra = max(rays.r, max(rays.g, rays.b));
         float a = clamp(c0.a + ra * (1.0 - c0.a), 0.0, 1.0);
         oColor = vec4(min(c0.rgb + rays, vec3(a)), a);
+    } else if (uMode == 8) {
+        // Spin blur (Alight Motion's spinblur2, its recovered shader): taps rotated over
+        // [-angle/2, +angle/2] around the centre, their count from the arc length at the
+        // fragment's own radius, clamped 1..100 — AM's loop bound is an int uniform there, a
+        // break here, same taps. uP[0] is the angle in degrees, uP[1] / uP[2] the centre
+        // (AM units, /500 from the layer centre, y up). Samples outside the layer clamp to
+        // the edge, as AM's texture does.
+        float angDeg = uP[0];
+        vec2 cen = vec2(0.5 + uP[1] / 500.0, 0.5 - uP[2] / 500.0);
+        vec2 v = vUv - cen;
+        v.y /= uAspect;
+        float r = length(v);
+        float l = 6.283185 * r * angDeg / 360.0;
+        float a = angDeg * 0.0174533;
+        float amin = a / 2.0;
+        int nSamples = int(clamp(l / uTexel.x, 1.01, 100.01));
+        vec4 acc = c0;
+        for (int i = 1; i < 100; i++) {
+            if (i >= nSamples) break;
+            float sampleAngle = -amin + a * float(i) / float(nSamples);
+            float s = sin(sampleAngle);
+            float c = cos(sampleAngle);
+            mat2 rot = mat2(c, -s, s, c);
+            vec2 temp = v * rot;
+            temp.y *= uAspect;
+            acc += tap(cen + temp);
+        }
+        oColor = acc / float(nSamples);
     } else {
         // Long shadow: the layer's own silhouette, extruded along the angle and laid UNDER the layer in
         // the shadow colour. Coverage at a pixel = the source alpha found marching from the pixel back
@@ -267,6 +295,7 @@ precision highp int;
 uniform sampler2D uTex;
 uniform int uMode;
 uniform float uP[7];
+uniform float uQ[7];
 in vec2 vUv;
 out vec4 oColor;
 )" AM_FX_DITHER R"(
@@ -510,6 +539,59 @@ void main() {
             adj = rgb - oc + nc;
         }
         o = mix(rgb, mix(rgb, adj, p), clamp(uP[4], 0.0, 100.0) / 100.0);
+    } else if (uMode == 18) {
+        // Colour balance (Alight Motion's colorbalance, its recovered shader): YUV band weights
+        // (lows / mids / highs over fixed luma bands) build a per-channel gain of
+        // (filter + 100) / 100, and fixLum restores the input luma afterwards. AM computes on
+        // the sampled (premultiplied) colour, so this branch does too and un-divides at the
+        // end (the tail below multiplies back by c.a). uP[0..6] are crLow, mgLow, ybLow,
+        // crMid, mgMid, ybMid, crHigh (AM units -100..100); uQ[0..2] are mgHigh, ybHigh and
+        // the fix-luminance flag. The same maths lives in fx_plan.cpp (fxColorBalanceAmMap).
+        mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+        mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+        vec3 yuv = c.rgb * rgb2yuv;
+        float low = 1.0 - smoothstep(0.222, 0.444, yuv.x);
+        float midLow = smoothstep(0.222, 0.444, yuv.x) * step(yuv.x, 0.555);
+        float midHigh = (1.0 - smoothstep(0.555, 0.777, yuv.x)) * step(0.555, yuv.x) * step(yuv.x, 0.777);
+        float high = smoothstep(0.555, 0.777, yuv.x);
+        vec3 filter = vec3(uP[0], uP[1], uP[2]) * low
+                    + vec3(uP[3], uP[4], uP[5]) * (midLow + midHigh)
+                    + vec3(uP[6], uQ[0], uQ[1]) * high;
+        filter = clamp(filter, -100.0, 100.0);
+        vec3 conv = (filter + 100.0) / 100.0;
+        vec3 convYuv = (c.rgb * conv) * rgb2yuv;
+        if (uQ[2] > 0.5) convYuv.x = yuv.x;
+        o = (convYuv * yuv2rgb) / c.a;
+    } else if (uMode == 19) {
+        // Colour temperature (Alight Motion's colortemperature, its recovered shader): a
+        // Kelvin -> RGB gain from AM's own polynomial fit (two halves split at 6500 K, mixed
+        // back to white below 1000 K), mixed in by the strength. uP[0] is the temperature in
+        // AM units (Kelvin / 1000), uP[1] the strength %. A multiplicative gain is the same in
+        // straight and premultiplied space, so the plain `rgb` is exact here. The same maths
+        // lives in fx_plan.cpp (fxColorTempAmGain) — keep the two in step.
+        float T = clamp(uP[0], 1.0, 40.0) * 1000.0;
+        mat3 m = T <= 6500.0
+            ? mat3(vec3(0.0, -2902.1955373783176, -8257.7997278925690),
+                   vec3(0.0, 1669.5803561666639, 2575.2827530017594),
+                   vec3(1.0, 1.3302673723350029, 1.8993753891711275))
+            : mat3(vec3(1745.0425298314172, 1216.6168361476490, -8257.7997278925690),
+                   vec3(-2666.3474220535695, -2173.1012343082230, 2575.2827530017594),
+                   vec3(0.55995389139931482, 0.70381203140554553, 1.8993753891711275));
+        vec3 gain = mix(clamp(m[0] / (vec3(clamp(T, 1000.0, 40000.0)) + m[1]) + m[2], vec3(0.0), vec3(1.0)),
+                        vec3(1.0), smoothstep(1000.0, 0.0, T));
+        o = mix(rgb, rgb * gain, clamp(uP[1], 0.0, 100.0) / 100.0);
+    } else if (uMode == 20) {
+        // Colour tint (Alight Motion's colortint, its recovered shader): the pixel's chroma
+        // mixes toward the tint colour's chroma (HSV hue at full saturation, value 0.5) by
+        // strength * alpha — AM works on the sampled (premultiplied) colour, so this branch
+        // does too and un-divides at the end. uP[0] is the hue in degrees, uP[1] the
+        // strength %. The same maths lives in fx_plan.cpp (fxColorTintAmMap).
+        mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+        mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+        vec3 tintedYuv = (hueRgb(uP[0]) * 0.5) * rgb2yuv;
+        vec3 yuv = c.rgb * rgb2yuv;
+        yuv.yz = mix(yuv.yz, tintedYuv.yz, clamp(uP[1], 0.0, 100.0) / 100.0 * c.a);
+        o = (yuv * yuv2rgb) / c.a;
     }
     o = clamp(o + amDither(), 0.0, 1.0);
     oColor = vec4(o * c.a, c.a);
@@ -528,10 +610,25 @@ uniform float uAspect;
 uniform int uFrame;
 uniform int uMode;
 uniform float uP[7];
+uniform float uQ[7];
 in vec2 vUv;
 out vec4 oColor;
 
 const float PI = 3.14159265;
+
+// GLSL smoothstep by the formula, so REVERSED edges ramp the other way instead of being
+// undefined (AM's own shaders rely on that, e.g. radialwipe's p0 / p2). fxSstep in fx_plan.cpp
+// is the same formula.
+float amSstep(float e0, float e1, float x) {
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+// Alight hexshift's cell hash (its constants, pinned by the def).
+float amHexRand(vec2 co) {
+    float dt = dot(co, vec2(719.310, 178.233));
+    float sn = mod(dt, 3.14);
+    return fract(sin(sn) * 33758.5453);
+}
 
 // Reads the picture at uv. Outside the picture the picture is mirrored back in (no see-through holes at the edges of a
 // warped layer, no smeared edge pixels either).
@@ -692,6 +789,105 @@ void main() {
         vec3 c1 = vec3(mod(floor(pk1 / 65536.0), 256.0), mod(floor(pk1 / 256.0), 256.0), mod(pk1, 256.0)) / 255.0;
         vec3 c2 = vec3(mod(floor(pk2 / 65536.0), 256.0), mod(floor(pk2 / 256.0), 256.0), mod(pk2, 256.0)) / 255.0;
         oColor = vec4(mix(c1, c2, p), 1.0) * tex.a;
+        return;
+    }
+    if (uMode == 15) {
+        // Offset (Alight Motion's offset, its recovered shader): the layer wrap-shifted by
+        // offset / 1000 of its size, composited over itself; near the wrap seam the original
+        // fades back in (the feather), and with mask on, the shifted copy shows only inside
+        // the layer's own silhouette. uP[0] / uP[1] are the offset x / y (AM units),
+        // uP[2] the feather %, uP[3] the mask. fxOffsetAmMap / fxOffsetFeather in fx_plan.cpp
+        // are the CPU twins — keep the two in step.
+        vec4 S = textureLod(uTex, vUv, 0.0);
+        vec2 sc = vec2(mod(vUv.x - uP[0] / 1000.0, 1.0), mod(vUv.y + uP[1] / 1000.0, 1.0));
+        float feather = clamp(uP[2], 0.0, 100.0) / 100.0;
+        float fa = 1.0;
+        if (feather >= 0.0001) {
+            vec2 fo = vec2(mod(uP[0] / 1000.0, 1.0), mod(uP[1] / 1000.0, 1.0));
+            vec2 fd = (0.5 - abs(fo - 0.5)) * 2.0 * feather;
+            vec2 m = min(sc, vec2(1.0) - sc);
+            fa = amSstep(0.0, fd.x, m.x) * amSstep(0.0, fd.y, m.y);
+        }
+        vec4 F = textureLod(uTex, sc, 0.0);
+        float maskFactor = uP[3] > 0.5 ? S.a : 1.0;
+        vec4 over = S * (1.0 - fa);
+        oColor = over + F * maskFactor * (1.0 - over.a);
+        return;
+    }
+    if (uMode == 16) {
+        // Radial wipe (Alight Motion's radialwipe, its recovered shader): an angular matte
+        // around the centre — the layer is multiplied by the visibility pp. uP[0] is the
+        // progress (degrees), uP[1] the feather (degrees), uP[2] the direction (0 CW,
+        // 1 CCW, 2 both), uP[3] the repeat count, uP[4] the centre point packed (AM units,
+        // /1200 in the shader), uP[5] the offset (degrees, the start angle). fxRadialWipeAmPp
+        // in fx_plan.cpp is the CPU twin — keep the two in step.
+        float pk = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
+        vec2 cp = vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+        vec2 st = vec2(vUv.x, 1.0 - vUv.y) - 0.5;
+        st.x *= uAspect;
+        st -= cp / 1200.0;
+        float progress = uP[0];
+        float feather = uP[1];
+        int direction = int(uP[2] + 0.5);
+        float repeat = max(uP[3], 1.0);
+        float adjProgress = direction == 1 ? 360.0 - progress : progress;
+        float end = adjProgress;
+        end -= 180.0;
+        end *= (360.0 + feather) / 360.0;
+        end += 180.0;
+        float offsetRad = (uP[5] - 90.0 + (direction == 2 ? end / 2.0 / repeat : 0.0)) * 0.0174533;
+        mat2 offsetRot = mat2(cos(offsetRad), -sin(offsetRad), sin(offsetRad), cos(offsetRad));
+        st = st * offsetRot;
+        float adjFeather = max(0.01, feather * 0.0174533);
+        float halfFeather = adjFeather / 2.0;
+        float endRad = end * 0.0174533;
+        float a = atan(st.y, st.x) + 3.14159;
+        a = mod(a * repeat, 6.2831853072);
+        float p0 = amSstep(adjFeather, 0.0, a);
+        float p1 = amSstep(endRad - halfFeather, endRad + halfFeather, a);
+        float p2 = amSstep(endRad - 6.2831853072 + halfFeather, endRad - 6.2831853072 - halfFeather, a);
+        float pp = adjProgress <= 0.0001 ? 1.0 : adjProgress >= 359.999 ? 0.0 : min(1.0, p1 + p0 - p2);
+        if (direction == 1) pp = 1.0 - pp;
+        oColor = textureLod(uTex, vUv, 0.0) * pp;
+        return;
+    }
+    if (uMode == 17) {
+        // Hex shift (Alight Motion's hexshift, its recovered shader): every cell of a
+        // hexagonal grid displaces the sampling by the cell's own fixed random vector.
+        // uP[0] is the strength (AM raw), uP[1] the size, uP[2] / uP[3] the stretch x / y %,
+        // uP[4] the angle (degrees), uP[5] the seed, uP[6] the screen-space flag; uQ[0] is
+        // mask-to-layer and uQ[1] the position point packed (AM units). AM anchors the grid
+        // to the screen in screen space; here it is anchored to the layer, like Turbulent
+        // Displace's. fxHexShiftAmUv in fx_plan.cpp is the CPU twin — keep the two in step.
+        vec4 tex = textureLod(uTex, vUv, 0.0);
+        vec2 st = vUv - 0.5;
+        st.x *= uAspect;
+        vec2 scale = (uP[1] / 100.0) * (vec2(uP[2], uP[3]) / 100.0);
+        float pk = floor(clamp(uQ[1], 0.0, 16777215.0) + 0.5);
+        vec2 pos = vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0) / 500.0 * vec2(1.0, -1.0);
+        st /= scale;
+        float rad = uP[4] * 0.0174533;
+        mat2 rot = mat2(cos(rad), -sin(rad), sin(rad), cos(rad));
+        st = st * rot;
+        pos = pos * mat2(cos(-rad), -sin(-rad), sin(-rad), cos(-rad));
+        vec2 modPos = mod(pos, vec2(2.0, 3.46));
+        vec2 stepPos = pos - modPos;
+        st -= modPos;
+        vec2 grid = mod(st, vec2(1.0, 1.73)) - vec2(0.5, 0.865);
+        vec2 ogrid = mod(st - vec2(0.5, 0.865), vec2(1.0, 1.73)) - vec2(0.5, 0.865);
+        vec2 cell = length(grid) < length(ogrid) ? grid : ogrid;
+        vec2 id = st - cell - stepPos + 1000.0;
+        float dx = amHexRand(vec2(id.x, id.y + 3937.7249 * (uP[5] + 0.01)));
+        float dy = amHexRand(vec2(id.x + 328.7319 + 432.7249 * (uP[5] + 0.01), id.y - 971.382));
+        vec2 dv = (vec2(dx, dy) - 0.5) * 2.0;
+        dv.x *= uAspect;
+        vec4 samp = pic(vUv + dv * uP[0]);
+        if (uQ[0] > 0.5) {
+            samp *= tex.a;
+            oColor = tex * (1.0 - samp.a) + samp;
+        } else {
+            oColor = samp;
+        }
         return;
     }
     vec2 p = toP(vUv);
@@ -1189,6 +1385,29 @@ void main() {
         leak = clamp(leak * inten * 1.2, 0.0, 1.0);
         vec3 o = 1.0 - (1.0 - unpm(c0)) * (1.0 - leak);
         oColor = vec4(o * c0.a, c0.a);
+    } else if (uMode == 14) {
+        // Find edges (Alight Motion's findedges, its recovered shader): a Scharr gradient of
+        // the premultiplied luma over the 8 neighbours; inverted, the picture is multiplied
+        // by the grey edge value, otherwise the picture's alpha is scaled by (1 - g).
+        // uP[0] is the smoothing (a texel multiplier), uP[1] the threshold %, uP[2] the
+        // invert flag. fxFindEdgesAmG in fx_plan.cpp is the CPU twin of the gradient.
+        vec2 fs = uTexel * uP[0];
+        float w = luma(tap(vUv + vec2(-fs.x, 0.0)).rgb);
+        float e = luma(tap(vUv + vec2(fs.x, 0.0)).rgb);
+        float n = luma(tap(vUv + vec2(0.0, fs.y)).rgb);
+        float s = luma(tap(vUv + vec2(0.0, -fs.y)).rgb);
+        float nw = luma(tap(vUv + vec2(-fs.x, fs.y)).rgb);
+        float ne = luma(tap(vUv + vec2(fs.x, fs.y)).rgb);
+        float sw = luma(tap(vUv + vec2(-fs.x, -fs.y)).rgb);
+        float se = luma(tap(vUv + vec2(fs.x, -fs.y)).rgb);
+        float v = nw * 3.0 + n * 10.0 + ne * 3.0 + sw * -3.0 + s * -10.0 + se * -3.0;
+        float h = nw * -3.0 + w * -10.0 + sw * -3.0 + ne * 3.0 + e * 10.0 + se * 3.0;
+        float g = clamp(sqrt(h * h + v * v) - clamp(uP[1], 0.0, 100.0) / 100.0, 0.0, 1.0);
+        if (uP[2] > 0.5) {
+            oColor = vec4(vec3(g), 1.0) * c0;
+        } else {
+            oColor = vec4(vec3(1.0 - g), 1.0) * c0.a;
+        }
     } else {
         // Lens flare: a bright core, halo, horizontal streak and ghost discs along the line through the picture's centre.
         vec2 cen = vec2(uP[0] / 100.0, 1.0 - uP[1] / 100.0);

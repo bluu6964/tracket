@@ -176,6 +176,57 @@ object ClipFxLibrary {
     // [1] the new colour packed, [2] threshold %, [3] feather %, [4] alpha %,
     // [5] lock luminance.
     const val REPLACE_COLOR = "replace_color"
+    // v164: Alight Motion's parked tier, hunt round 2 (defs-batch3 — every definition recovered
+    // from the same public APK asset dump). CHROMA_KEY_AM (native 75) is NOT the app's own
+    // CHROMA_KEY: AM measures the YUV distance (luma x0.25) to the key colour on the
+    // unpremultiplied pixel. Dedicated pass. Values [0] the key colour packed 0xRRGGBB,
+    // [1] threshold %, [2] feather %, [3] defringe, [4] invert. Keyframed threshold / feather
+    // ride the tail from index 7.
+    const val CHROMA_KEY_AM = "chroma_key_am"
+    // COLOR_BALANCE_AM (native 76 + EXT 77, kFxColor mode 18): NOT the app's own
+    // COLOR_BALANCE (hue discs). Values [0..6] crLow, mgLow, ybLow, crMid, mgMid, ybMid,
+    // crHigh (AM units -100..100); EXT [7] mgHigh, [8] ybHigh, [9] fix luminance. Every band
+    // value may ride a tail from index 14.
+    const val COLOR_BALANCE_AM = "color_balance_am"
+    // COLOR_TEMP_AM (native 78, kFxColor mode 19): values [0] temperature (AM units:
+    // Kelvin / 1000), [1] strength %. Both may ride tails from index 7.
+    const val COLOR_TEMP_AM = "color_temp_am"
+    // COLOR_TINT_AM (native 79, kFxColor mode 20): values [0] tint hue deg (AM raw),
+    // [1] strength %. Both may ride tails from index 7.
+    const val COLOR_TINT_AM = "color_tint_am"
+    // SPIN_BLUR_AM (native 80, kFxBlur2 mode 8): NOT the app's RADIAL_BLUR (fixed 48 taps) —
+    // AM's tap count follows the arc length at each radius. Values [0] angle deg (AM raw),
+    // [1..2] the centre point (AM units). A keyframed angle rides the tail from index 7.
+    const val SPIN_BLUR_AM = "spin_blur_am"
+    // OFFSET_AM (native 81, kFxWarp mode 15): values [0..1] offset x/y (AM units),
+    // [2] feather %, [3] mask. A keyframed offset rides two tails (x, then y) from index 7.
+    const val OFFSET_AM = "offset_am"
+    // RADIAL_WIPE_AM (native 82, kFxWarp mode 16): values [0] progress deg, [1] feather deg,
+    // [2] direction, [3] repeat count, [4] the centre point packed, [5] offset deg.
+    // A keyframed progress rides the tail from index 7.
+    const val RADIAL_WIPE_AM = "radial_wipe_am"
+    // FIND_EDGES_AM (native 83, kFxStyle mode 14): NOT the app's own FIND_EDGES style.
+    // Values [0] smoothing (AM raw), [1] threshold %, [2] invert.
+    const val FIND_EDGES_AM = "find_edges_am"
+    // HEX_SHIFT_AM (native 84 + EXT 85, kFxWarp mode 17): values [0] strength (AM raw),
+    // [1] size (AM units), [2..3] stretch x/y %, [4] angle deg (AM raw), [5] seed,
+    // [6] screen space; EXT [7] mask to layer, [8] the position point packed. Keyframed
+    // strength / angle ride tails from index 14.
+    const val HEX_SHIFT_AM = "hex_shift_am"
+    // SOFT_GLOW_AM (native 86 + EXT 87): dedicated two-texture pass like GLOW_SCAN. Values
+    // [0] strength %, [1] brightness %, [2] contrast %, [3] highlights %, [4] the colour
+    // packed 0xRRGGBB, [5] blend %, [6] alpha %; EXT [7] outside alpha % (the backdrop
+    // branch is not reproduced: the importer warns when it is not 0). A keyframed strength
+    // rides the tail from index 14.
+    const val SOFT_GLOW_AM = "soft_glow_am"
+    // FILL_BEHIND_AM (native 88 + EXT 89): dedicated two-texture pass. Values [0] strength %,
+    // [1] feather %, [2] gamma (x100), [3] tint strength %, [4] the tint colour packed
+    // 0xRRGGBB, [5] edge strength %, [6] scan lines %; EXT [7] scan line count, [8] bg
+    // scale %, [9] the edge colour packed, [10..11] bg offset x/y (AM units), [12] alpha %,
+    // [13] saturation %. A keyframed bg offset rides two tails from index 14 (values 10/11);
+    // AM's brightness / fgAlpha / fgScale / fgOffset have no slot (importer warns when one
+    // is not at its default).
+    const val FILL_BEHIND_AM = "fill_behind_am"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -471,6 +522,132 @@ object ClipFxLibrary {
                 FxParamDef("Feather", 0f, 200f, 25f, "%"),
                 FxParamDef("Alpha", 0f, 100f, 100f, "%"),
                 FxParamDef("Lock luminance", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        // Chroma Key (Alight): values [0] the key colour packed 0xRRGGBB, [1] threshold %,
+        // [2] feather %, [3] defringe, [4] invert.
+        FxDef(
+            CHROMA_KEY_AM, 75, "Chroma Key (Alight)", "Keying", "Keys out a colour by YUV distance (Alight Motion's Chroma Key)",
+            listOf(
+                FxParamDef("Key colour", 0f, 16777215f, 0x000000.toFloat(), "", step = 1f),
+                FxParamDef("Threshold", 0f, 100f, 10f, "%"),
+                FxParamDef("Feather", 0f, 100f, 5f, "%"),
+                FxParamDef("Defringe", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Invert", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        // Colour Balance (Alight): values [0..6] the low / mid / crHigh band values; the EXT
+        // values [7..9] hold mgHigh / ybHigh / fix luminance (see [create]).
+        FxDef(
+            COLOR_BALANCE_AM, 76, "Color Balance (Alight)", "Color", "Per-band channel gains by luminance (Alight Motion's Color Balance)",
+            listOf(
+                FxParamDef("Cyan/red low", -100f, 100f, 0f),
+                FxParamDef("Magenta/green low", -100f, 100f, 0f),
+                FxParamDef("Yellow/blue low", -100f, 100f, 0f),
+                FxParamDef("Cyan/red mid", -100f, 100f, 0f),
+                FxParamDef("Magenta/green mid", -100f, 100f, 0f),
+                FxParamDef("Yellow/blue mid", -100f, 100f, 0f),
+                FxParamDef("Cyan/red high", -100f, 100f, 0f)
+            )
+        ),
+        // Colour Temperature (Alight): values [0] temperature (Kelvin / 1000), [1] strength %.
+        FxDef(
+            COLOR_TEMP_AM, 78, "Color Temperature (Alight)", "Color", "Warms or cools by Kelvin temperature (Alight Motion)",
+            listOf(
+                FxParamDef("Temperature", 1f, 40f, 6.5f, " kK", step = 0.01f),
+                FxParamDef("Strength", 0f, 100f, 100f, "%")
+            )
+        ),
+        // Colour Tint (Alight): values [0] tint hue deg, [1] strength %.
+        FxDef(
+            COLOR_TINT_AM, 79, "Color Tint (Alight)", "Color", "Pushes the chroma toward one hue (Alight Motion's Color Tint)",
+            listOf(
+                FxParamDef("Hue", -360f, 360f, 0f, "°", step = 1f),
+                FxParamDef("Strength", 0f, 100f, 5f, "%")
+            )
+        ),
+        // Spin Blur (Alight): values [0] angle deg, [1..2] the centre point (AM units).
+        FxDef(
+            SPIN_BLUR_AM, 80, "Spin Blur (Alight)", "Blur", "Rotational blur, AM's arc-length taps (Alight Motion's Spin Blur)",
+            listOf(
+                FxParamDef("Angle", 0f, 360f, 10f, "°", step = 0.1f),
+                FxParamDef("Centre X", -1000f, 1000f, 0f),
+                FxParamDef("Centre Y", -1000f, 1000f, 0f)
+            )
+        ),
+        // Offset (Alight): values [0..1] offset x/y (AM units), [2] feather %, [3] mask.
+        FxDef(
+            OFFSET_AM, 81, "Offset (Alight)", "Distort", "Wrap-around shift of the layer over itself (Alight Motion's Offset)",
+            listOf(
+                FxParamDef("Offset X", -10000f, 10000f, 0f, step = 1f),
+                FxParamDef("Offset Y", -10000f, 10000f, 0f, step = 1f),
+                FxParamDef("Feather", 0f, 100f, 0f, "%"),
+                FxParamDef("Mask", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        // Radial Wipe (Alight): values [0] progress deg, [1] feather deg, [2] direction,
+        // [3] repeat count, [4] the centre packed, [5] offset deg.
+        FxDef(
+            RADIAL_WIPE_AM, 82, "Radial Wipe (Alight)", "Stylize", "An angular wipe around a centre (Alight Motion's Radial Wipe)",
+            listOf(
+                FxParamDef("Progress", 0f, 360f, 360f, "°", step = 1f),
+                FxParamDef("Feather", 0f, 360f, 0f, "°", step = 1f),
+                FxParamDef("Direction", 0f, 2f, 0f, "", step = 1f),
+                FxParamDef("Repeat", 1f, 36f, 1f, "", step = 1f),
+                FxParamDef("Centre (packed)", 0f, 16777215f, 0x800800.toFloat(), "", step = 1f),
+                FxParamDef("Offset", 0f, 360f, 0f, "°", step = 1f)
+            )
+        ),
+        // Find Edges (Alight): values [0] smoothing, [1] threshold %, [2] invert.
+        FxDef(
+            FIND_EDGES_AM, 83, "Find Edges (Alight)", "Stylize", "Scharr edge gradient (Alight Motion's Find Edges)",
+            listOf(
+                FxParamDef("Smoothing", 0f, 10f, 1f, step = 0.1f),
+                FxParamDef("Threshold", 0f, 100f, 0f, "%"),
+                FxParamDef("Invert", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        // Hex Shift (Alight): values [0] strength (AM raw), [1] size, [2..3] stretch %,
+        // [4] angle deg, [5] seed, [6] screen space; EXT [7] mask to layer, [8] position packed.
+        FxDef(
+            HEX_SHIFT_AM, 84, "Hex Shift (Alight)", "Distort", "Hexagonal cells shift the picture randomly (Alight Motion's Hex Shift)",
+            listOf(
+                FxParamDef("Strength", 0f, 0.2f, 0.01f, step = 0.001f),
+                FxParamDef("Size", 1f, 500f, 100f, step = 1f),
+                FxParamDef("Stretch X", 1f, 1000f, 100f, "%"),
+                FxParamDef("Stretch Y", 1f, 1000f, 100f, "%"),
+                FxParamDef("Angle", 0f, 3600f, 0f, "°", step = 1f),
+                FxParamDef("Seed", 0f, 5f, 0f, step = 0.01f),
+                FxParamDef("Screen space", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        // Soft Glow (Alight): values [0] strength %, [1] brightness %, [2] contrast %,
+        // [3] highlights %, [4] the colour packed, [5] blend %, [6] alpha %; EXT [7] outside %.
+        FxDef(
+            SOFT_GLOW_AM, 86, "Soft Glow (Alight)", "Light", "A soft screen-blended glow from the blurred layer (Alight Motion)",
+            listOf(
+                FxParamDef("Strength", 0f, 100f, 50f, "%"),
+                FxParamDef("Brightness", 0f, 200f, 100f, "%"),
+                FxParamDef("Contrast", 0f, 100f, 70f, "%"),
+                FxParamDef("Highlights", 0f, 100f, 100f, "%"),
+                FxParamDef("Colour", 0f, 16777215f, 0xFF5566.toFloat(), "", step = 1f),
+                FxParamDef("Blend", 0f, 100f, 25f, "%"),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%")
+            )
+        ),
+        // Fill Behind (Alight): values [0] strength %, [1] feather %, [2] gamma x100,
+        // [3] tint strength %, [4] tint colour packed, [5] edge strength %, [6] scan lines %;
+        // EXT [7..13] as on the const.
+        FxDef(
+            FILL_BEHIND_AM, 88, "Fill Behind (Alight)", "Backdrop", "The blurred layer fills behind itself (Alight Motion's Fill Behind)",
+            listOf(
+                FxParamDef("Strength", 0f, 100f, 8f, "%"),
+                FxParamDef("Feather", 0f, 100f, 5f, "%"),
+                FxParamDef("Gamma", 10f, 400f, 100f, "%"),
+                FxParamDef("Tint strength", 0f, 100f, 0f, "%"),
+                FxParamDef("Tint colour", 0f, 16777215f, 0xFF5566.toFloat(), "", step = 1f),
+                FxParamDef("Edge strength", 0f, 100f, 0f, "%"),
+                FxParamDef("Scan lines", 0f, 100f, 0f, "%")
             )
         ),
         FxDef(
@@ -937,6 +1114,10 @@ object ClipFxLibrary {
             0f, 0f, 0f
         )
         TURBULENT_DISPLACE_AM, PIXELATE_AM -> List(7) { 0f }
+        COLOR_BALANCE_AM -> listOf(0f, 0f, 1f, 0f, 0f, 0f, 0f)
+        HEX_SHIFT_AM -> listOf(0f, packPoint(0f, 0f), 0f, 0f, 0f, 0f, 0f)
+        SOFT_GLOW_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
+        FILL_BEHIND_AM -> listOf(0f, 100f, 0f, 0f, 0f, 100f, 0f)
         else -> emptyList()
     }
 
@@ -945,6 +1126,10 @@ object ClipFxLibrary {
         FOUR_COLOR_GRADIENT -> 66
         TURBULENT_DISPLACE_AM -> 68
         PIXELATE_AM -> 73
+        COLOR_BALANCE_AM -> 77
+        HEX_SHIFT_AM -> 85
+        SOFT_GLOW_AM -> 87
+        FILL_BEHIND_AM -> 89
         else -> null
     }
 

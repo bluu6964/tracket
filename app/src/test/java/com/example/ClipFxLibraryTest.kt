@@ -30,8 +30,16 @@ class ClipFxLibraryTest {
         // FX_LUMA_KEY (64), FX_FOUR_COLOR_GRADIENT (65), FX_TURBULENT_DISPLACE_AM (67),
         // FX_SWIRL_AM (69), FX_STRETCH_SEGMENT (70), FX_HALFTONE_DOTS (71), FX_PIXELATE_AM (72)
         // and FX_REPLACE_COLOR (74); 66 / 68 / 73 are their EXT groups, which have no tile —
-        // fxParseOps folds them into their owner's q[] instead.
-        assertEquals(((1..65) + 67 + (69..72) + 74).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+        // fxParseOps folds them into their owner's q[] instead. The v164 tier adds
+        // FX_CHROMA_KEY_AM (75), FX_COLOR_BALANCE_AM (76), FX_COLOR_TEMP_AM (78),
+        // FX_COLOR_TINT_AM (79), FX_SPIN_BLUR_AM (80), FX_OFFSET_AM (81),
+        // FX_RADIAL_WIPE_AM (82), FX_FIND_EDGES_AM (83), FX_HEX_SHIFT_AM (84),
+        // FX_SOFT_GLOW_AM (86) and FX_FILL_BEHIND_AM (88); 77 / 85 / 87 / 89 are their EXT
+        // groups, folded the same way.
+        assertEquals(
+            ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88).toList(),
+            ClipFxLibrary.all.map { it.nativeType }.sorted()
+        )
     }
 
     @Test fun extendedEffectsEmitTwoGroups() {

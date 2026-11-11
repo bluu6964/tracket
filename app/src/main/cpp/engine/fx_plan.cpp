@@ -18,6 +18,10 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
         const int extOwner = t == FX_FOUR_COLOR_GRADIENT_EXT ? FX_FOUR_COLOR_GRADIENT
                            : t == FX_TURBULENT_DISPLACE_AM_EXT ? FX_TURBULENT_DISPLACE_AM
                            : t == FX_PIXELATE_AM_EXT ? FX_PIXELATE_AM
+                           : t == FX_COLOR_BALANCE_AM_EXT ? FX_COLOR_BALANCE_AM
+                           : t == FX_HEX_SHIFT_AM_EXT ? FX_HEX_SHIFT_AM
+                           : t == FX_SOFT_GLOW_AM_EXT ? FX_SOFT_GLOW_AM
+                           : t == FX_FILL_BEHIND_AM_EXT ? FX_FILL_BEHIND_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -32,7 +36,11 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
         if ((t < FX_BLUR || t > FX_MAX) && t != FX_LONG_SHADOW && t != FX_COLOR_TUNE && t != FX_SOLID_COLOR &&
             t != FX_AM_MIRROR && t != FX_GLOW_SCAN && t != FX_LUMA_KEY && t != FX_FOUR_COLOR_GRADIENT &&
             t != FX_TURBULENT_DISPLACE_AM && t != FX_SWIRL_AM && t != FX_STRETCH_SEGMENT &&
-            t != FX_HALFTONE_DOTS && t != FX_PIXELATE_AM && t != FX_REPLACE_COLOR) {
+            t != FX_HALFTONE_DOTS && t != FX_PIXELATE_AM && t != FX_REPLACE_COLOR &&
+            t != FX_CHROMA_KEY_AM && t != FX_COLOR_BALANCE_AM && t != FX_COLOR_TEMP_AM &&
+            t != FX_COLOR_TINT_AM && t != FX_SPIN_BLUR_AM && t != FX_OFFSET_AM &&
+            t != FX_RADIAL_WIPE_AM && t != FX_FIND_EDGES_AM && t != FX_HEX_SHIFT_AM &&
+            t != FX_SOFT_GLOW_AM && t != FX_FILL_BEHIND_AM) {
             owner = -1;
             continue;
         }
@@ -250,6 +258,15 @@ FxShaderRef fxShaderOf(int type) {
         case FX_SWIRL_AM: r = {FXG_WARP, 13}; break;
         case FX_HALFTONE_DOTS: r = {FXG_WARP, 14}; break;
         case FX_REPLACE_COLOR: r = {FXG_COLOR, 17}; break;
+        // v164: the parked tier (the dedicated passes stay FXG_NONE like FX_GLOW_SCAN).
+        case FX_COLOR_BALANCE_AM: r = {FXG_COLOR, 18}; break;
+        case FX_COLOR_TEMP_AM: r = {FXG_COLOR, 19}; break;
+        case FX_COLOR_TINT_AM: r = {FXG_COLOR, 20}; break;
+        case FX_SPIN_BLUR_AM: r = {FXG_BLUR2, 8}; break;
+        case FX_OFFSET_AM: r = {FXG_WARP, 15}; break;
+        case FX_RADIAL_WIPE_AM: r = {FXG_WARP, 16}; break;
+        case FX_FIND_EDGES_AM: r = {FXG_STYLE, 14}; break;
+        case FX_HEX_SHIFT_AM: r = {FXG_WARP, 17}; break;
         default: break;
     }
     return r;
@@ -323,6 +340,23 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_HALFTONE_DOTS: return false;   // always a two-colour posterize, even at strength 0
         case FX_PIXELATE_AM: return p[0] <= 1.f && p[4] < 0.5f && p[6] < 0.5f;   // 1 px blocks, no vignette / threshold
         case FX_REPLACE_COLOR: return p[4] < 0.5f;   // alpha 0: the mix keeps the pixel
+        // v164 tier:
+        case FX_CHROMA_KEY_AM: return false;   // a key always does something (no neutral state)
+        case FX_COLOR_BALANCE_AM: {
+            // every band 0 -> conv = (0 + 100) / 100 = 1 per channel
+            bool zero = true;
+            for (int i = 0; i < 7; ++i) zero = zero && std::fabs(p[i]) < 0.005f;
+            return zero && std::fabs(o.q[0]) < 0.005f && std::fabs(o.q[1]) < 0.005f;
+        }
+        case FX_COLOR_TEMP_AM: return p[1] < 0.5f;   // strength 0: the mix keeps the pixel
+        case FX_COLOR_TINT_AM: return p[1] < 0.5f;   // strength 0: the chroma mix is a no-op
+        case FX_SPIN_BLUR_AM: return std::fabs(p[0]) < 0.005f;   // angle 0: every tap is the pixel
+        case FX_OFFSET_AM: return std::fabs(p[0]) < 0.005f && std::fabs(p[1]) < 0.005f;   // no shift
+        case FX_RADIAL_WIPE_AM: return p[0] <= 0.f;   // progress <= 0: fully visible, every direction
+        case FX_FIND_EDGES_AM: return false;   // always a posterize of the gradient
+        case FX_HEX_SHIFT_AM: return std::fabs(p[0]) < 0.00005f;   // strength 0: the sample is the pixel
+        case FX_SOFT_GLOW_AM: return p[6] < 0.5f;   // alpha 0: blendInside is 0, the screen keeps the pixel
+        case FX_FILL_BEHIND_AM: return false;   // the edge / feather terms can bite even at strength 0
         default: return false;
     }
 }
@@ -803,5 +837,293 @@ float fxGrainCell(float size, float unit) {
 }
 
 int fxGrainFrame(int64_t timeMs) { return (int)(timeMs * 24 / 1000); }
+
+// ---- v164: Alight's parked tier (CPU references of the recovered definitions) ----
+
+namespace {
+// AM's rgb2yuv, applied the way its shaders apply it: yuv = rgb * M with M built column-major
+// from (0.299, 0.587, 0.114 | -0.14713, -0.28886, 0.436 | 0.615, -0.51499, -0.10001), i.e.
+// y = .299r + .587g + .114b, u = -.14713r - .28886g + .436b, v = .615r - .51499g - .10001b.
+void fxAmToYuv(float r, float g, float b, float* y, float* u, float* v) {
+    *y = 0.299f * r + 0.587f * g + 0.114f * b;
+    *u = -0.14713f * r - 0.28886f * g + 0.436f * b;
+    *v = 0.615f * r - 0.51499f * g - 0.10001f * b;
+}
+// AM's yuv2rgb (the matching inverse, same convention).
+void fxAmToRgb(float y, float u, float v, float* r, float* g, float* b) {
+    *r = y + 1.13983f * v;
+    *g = y - 0.39465f * u - 0.58060f * v;
+    *b = y + 2.03211f * u;
+}
+float fxClamp(float v, float lo, float hi) { return std::min(hi, std::max(lo, v)); }
+}  // namespace
+
+void fxChromaKeyAmMap(float pr, float pg, float pb, float pa, float kr, float kg, float kb,
+                      float threshold, float feather, bool defringe, bool invert, bool border,
+                      float* outR, float* outG, float* outB, float* outA) {
+    // AM's chromakey shader (defs-batch3), line by line. The distance is measured on the
+    // UNpremultiplied pixel against the key colour, luma counted a quarter.
+    float ky, ku, kv, ty, tu, tv;
+    fxAmToYuv(kr, kg, kb, &ky, &ku, &kv);
+    if (pa <= 0.f) { ty = tu = tv = 0.f; } else { fxAmToYuv(pr / pa, pg / pa, pb / pa, &ty, &tu, &tv); }
+    const float dy = (ky - ty) * 0.25f, du = ku - tu, dv = kv - tv;
+    const float dist = std::sqrt(dy * dy + du * du + dv * dv);
+    float alpha = fxSstep(threshold - feather * 0.5f, threshold + feather * 0.5f, dist);
+    if (invert) alpha = 1.f - alpha;
+    float r = pr, g = pg, b = pb, a = pa;
+    if (defringe) {   // texColor -= keyColor * (1 - alpha), on the premultiplied pixel AND its alpha
+        const float s = 1.f - alpha;
+        r -= kr * s; g -= kg * s; b -= kb * s; a -= 1.f * s;
+    }
+    if (border) alpha = 0.f;
+    *outR = r * alpha * a;
+    *outG = g * alpha * a;
+    *outB = b * alpha * a;
+    *outA = alpha * a;
+}
+
+void fxColorBalanceAmMap(float r, float g, float b, const float bands[9], bool fixLum,
+                         float* outR, float* outG, float* outB) {
+    // AM's colorbalance shader, line by line: YUV band weights on the luma, the filter clamped
+    // to +-100, a per-channel gain of (filter + 100) / 100, and fixLum restoring the input Y.
+    float y, u, v;
+    fxAmToYuv(r, g, b, &y, &u, &v);
+    const float low = 1.f - fxSstep(0.222f, 0.444f, y);
+    const float midLow = fxSstep(0.222f, 0.444f, y) * (y <= 0.555f ? 1.f : 0.f);
+    const float midHigh = (1.f - fxSstep(0.555f, 0.777f, y)) * (y >= 0.555f ? 1.f : 0.f) * (y <= 0.777f ? 1.f : 0.f);
+    const float high = fxSstep(0.555f, 0.777f, y);
+    const float mid = midLow + midHigh;
+    float conv[3];
+    for (int i = 0; i < 3; ++i) {
+        float f = bands[i] * low + bands[3 + i] * mid + bands[6 + i] * high;
+        f = fxClamp(f, -100.f, 100.f);
+        conv[i] = (f + 100.f) / 100.f;
+    }
+    float cy, cu, cv;
+    fxAmToYuv(r * conv[0], g * conv[1], b * conv[2], &cy, &cu, &cv);
+    if (fixLum) cy = y;
+    fxAmToRgb(cy, cu, cv, outR, outG, outB);
+}
+
+void fxColorTempAmGain(float kelvin, float* outR, float* outG, float* outB) {
+    // AM's colortemperature fit, line by line: two 3x3 rational fits split at 6500 K, mixed
+    // back to white below 1000 K. The matrix is column-major in the def; m[col] / (T + m[col+3])
+    // + m[col+6] per channel.
+    static const float kLo[9] = {0.f, -2902.1955373783176f, -8257.7997278925690f,
+                                 0.f, 1669.5803561666639f, 2575.2827530017594f,
+                                 1.f, 1.3302673723350029f, 1.8993753891711275f};
+    static const float kHi[9] = {1745.0425298314172f, 1216.6168361476490f, -8257.7997278925690f,
+                                 -2666.3474220535695f, -2173.1012343082230f, 2575.2827530017594f,
+                                 0.55995389139931482f, 0.70381203140554553f, 1.8993753891711275f};
+    const float* m = kelvin <= 6500.f ? kLo : kHi;
+    const float t = fxClamp(kelvin, 1000.f, 40000.f);
+    float gain[3];
+    for (int i = 0; i < 3; ++i) gain[i] = fxClamp(m[i] / (t + m[i + 3]) + m[i + 6], 0.f, 1.f);
+    const float w = fxSstep(1000.f, 0.f, kelvin);   // AM's smoothstep(1000, 0, T): 1 at/below 1000 K
+    *outR = gain[0] + (1.f - gain[0]) * w;
+    *outG = gain[1] + (1.f - gain[1]) * w;
+    *outB = gain[2] + (1.f - gain[2]) * w;
+}
+
+void fxColorTintAmMap(float pr, float pg, float pb, float pa, float hueDeg, float strength,
+                      float* outR, float* outG, float* outB, float* outA) {
+    // AM's colortint shader, line by line: the tint colour is hsv(hue, 1, 0.5); the pixel's
+    // chroma (premultiplied, like AM samples) mixes toward the tint's chroma by strength * a.
+    float hr, hg, hb;
+    fxHsvToRgb(hueDeg, 1.f, &hr, &hg, &hb);
+    hr *= 0.5f; hg *= 0.5f; hb *= 0.5f;
+    float ty, tu, tv, y, u, v;
+    fxAmToYuv(hr, hg, hb, &ty, &tu, &tv);
+    fxAmToYuv(pr, pg, pb, &y, &u, &v);
+    const float f = strength * pa;
+    u += (tu - u) * f;
+    v += (tv - v) * f;
+    fxAmToRgb(y, u, v, outR, outG, outB);
+    *outA = pa;
+}
+
+float fxOffsetFeather(float uvX, float uvY, float offX, float offY, float feather) {
+    // AM's offset seam factor: how far the wrapped sample coordinate sits from the seam,
+    // per axis, against the feather width the offset's own fractional part sets.
+    if (feather < 0.0001f) return 1.f;
+    auto axis = [](float uv, float off, float f) {
+        const float sc = uv + off / 1000.f;
+        const float wrapped = sc - std::floor(sc);
+        float fo = (off / 1000.f) - std::floor(off / 1000.f);
+        const float dist = (0.5f - std::fabs(fo - 0.5f)) * 2.f * f;
+        const float m = std::min(wrapped, 1.f - wrapped);
+        return fxSstep(0.f, dist, m);
+    };
+    // AM: sampleCoord = layerNorm + offset * (-1, +1) / 1000 (x negated), feather from offset/1000.
+    return axis(uvX, -offX, feather) * axis(uvY, offY, feather);
+}
+
+void fxOffsetAmMap(float sr, float sg, float sb, float sa, float fr, float fg, float fb, float fa,
+                   float featherAmt, float maskFactor,
+                   float* outR, float* outG, float* outB, float* outA) {
+    // AM's offset composite: the original, faded by the seam factor, under the shifted sample.
+    const float k = 1.f - featherAmt;
+    const float orr = sr * k, og = sg * k, ob = sb * k, oa = sa * k;
+    const float s = maskFactor * (1.f - oa);
+    *outR = orr + fr * s;
+    *outG = og + fg * s;
+    *outB = ob + fb * s;
+    *outA = oa + fa * s;
+}
+
+float fxRadialWipeAmPp(float stX, float stY, float progress, float feather, int direction,
+                       float repeat, float offsetDeg) {
+    // AM's radialwipe shader, line by line (its smoothstep calls include reversed edges, so
+    // the formula form fxSstep is used throughout, like AM's own implementation-defined GLSL).
+    const float adjProgress = direction == 1 ? 360.f - progress : progress;
+    float end = adjProgress;
+    end -= 180.f;
+    end *= (360.f + feather) / 360.f;
+    end += 180.f;
+    const float offsetRad = (offsetDeg - 90.f + (direction == 2 ? end * 0.5f / repeat : 0.f)) * 0.0174533f;
+    const float co = std::cos(offsetRad), si = std::sin(offsetRad);
+    const float rx = stX * co - stY * si, ry = stX * si + stY * co;   // st * offsetRot (v * mat2(c, -s, s, c))
+    const float adjFeather = std::max(0.01f, feather * 0.0174533f);
+    const float halfFeather = adjFeather * 0.5f;
+    const float endRad = end * 0.0174533f;
+    float a = std::atan2(ry, rx) + 3.14159f;
+    a = std::fmod(a * repeat, 6.2831853072f);
+    if (a < 0.f) a += 6.2831853072f;
+    const float p0 = fxSstep(adjFeather, 0.f, a);
+    const float p1 = fxSstep(endRad - halfFeather, endRad + halfFeather, a);
+    const float p2 = fxSstep(endRad - 6.2831853072f + halfFeather, endRad - 6.2831853072f - halfFeather, a);
+    float pp = adjProgress <= 0.0001f ? 1.f : adjProgress >= 359.999f ? 0.f
+               : std::min(1.f, p1 + p0 - p2);
+    if (direction == 1) pp = 1.f - pp;
+    return pp;
+}
+
+float fxFindEdgesAmG(const float luma8[8], float threshold) {
+    // AM's findedges Scharr sum (order: nw, n, ne, w, e, sw, s, se), line by line.
+    const float nw = luma8[0], n = luma8[1], ne = luma8[2], w = luma8[3], e = luma8[4];
+    const float sw = luma8[5], s = luma8[6], se = luma8[7];
+    const float v = nw * 3.f + n * 10.f + ne * 3.f + sw * -3.f + s * -10.f + se * -3.f;
+    const float h = nw * -3.f + w * -10.f + sw * -3.f + ne * 3.f + e * 10.f + se * 3.f;
+    return fxClamp(std::sqrt(h * h + v * v) - threshold, 0.f, 1.f);
+}
+
+namespace {
+// AM's hexshift cell hash, line by line (its constants pinned by the def).
+float fxHexRand(float x, float y) {
+    const float dt = x * 719.310f + y * 178.233f;
+    const float sn = dt - 3.14f * std::floor(dt / 3.14f);   // GLSL mod() (floor-based), not fmod
+    const float s = std::sin(sn) * 33758.5453f;
+    return s - std::floor(s);
+}
+void fxHexTile(float stX, float stY, float* idX, float* idY) {
+    // Only the cell id survives into main(); the uv / huv outputs are unused there.
+    const float hrx = 1.f, hry = 1.73f;
+    auto mod2 = [](float v, float m) { return v - m * std::floor(v / m); };
+    const float gx = mod2(stX, hrx) - hrx * 0.5f, gy = mod2(stY, hry) - hry * 0.5f;
+    const float ox = mod2(stX - hrx * 0.5f, hrx) - hrx * 0.5f, oy = mod2(stY - hry * 0.5f, hry) - hry * 0.5f;
+    const bool first = (gx * gx + gy * gy) < (ox * ox + oy * oy);
+    const float uvx = first ? gx : ox, uvy = first ? gy : oy;
+    *idX = stX - uvx;
+    *idY = stY - uvy;
+}
+}  // namespace
+
+void fxHexShiftAmUv(float uvX, float uvY, float size, float stretchX, float stretchY,
+                    float angleDeg, float seed, float strength, float posX, float posY,
+                    float aspect, float* outX, float* outY) {
+    // AM's hexshift main(), line by line, in layer space (see the fx_plan.h note).
+    float stX = uvX - 0.5f, stY = uvY - 0.5f;
+    stX *= aspect;
+    const float scX = size / 100.f * stretchX, scY = size / 100.f * stretchY;
+    stX /= scX; stY /= scY;
+    const float rad = angleDeg * 0.0174533f;
+    const float co = std::cos(rad), si = std::sin(rad);
+    {   // st *= rot(angle): v * mat2(c, -s, s, c) = (c x - s y, s x + c y)
+        const float x = stX * co - stY * si, y = stX * si + stY * co;
+        stX = x; stY = y;
+    }
+    float px = (posX / 500.f) * 1.f, py = (posY / 500.f) * -1.f;
+    {   // pos *= rot(-angle)
+        const float c2 = std::cos(-rad), s2 = std::sin(-rad);
+        const float x = px * c2 - py * s2, y = px * s2 + py * c2;
+        px = x; py = y;
+    }
+    auto mod2 = [](float v, float m) { return v - m * std::floor(v / m); };
+    const float modPosX = mod2(px, 2.f), modPosY = mod2(py, 2.f * 1.73f);
+    const float stepPosX = px - modPosX, stepPosY = py - modPosY;
+    stX -= modPosX; stY -= modPosY;
+    float idX, idY;
+    fxHexTile(stX, stY, &idX, &idY);
+    idX -= stepPosX; idY -= stepPosY;
+    idX += 1000.f; idY += 1000.f;
+    const float dx = fxHexRand(idX, idY + 3937.7249f * (seed + 0.01f));
+    const float dy = fxHexRand(idX + 328.7319f + 432.7249f * (seed + 0.01f), idY - 971.382f);
+    float dvx = (dx - 0.5f) * 2.f, dvy = (dy - 0.5f) * 2.f;
+    dvx *= aspect;
+    float sx = uvX + dvx * strength, sy = uvY + dvy * strength;
+    auto mirror = [](float u) {
+        float m = u - 2.f * std::floor(u / 2.f);
+        return 1.f - std::fabs(1.f - m);
+    };
+    *outX = mirror(sx);
+    *outY = mirror(sy);
+}
+
+void fxSoftGlowAmMap(float tr, float tg, float tb, float ta, float br, float bg, float bb, float ba,
+                     float brightness, float contrast, float highlights,
+                     float colR, float colG, float colB, float blend, float alpha,
+                     float* outR, float* outG, float* outB, float* outA) {
+    // AM's softglow main(), the layer-local branch, line by line.
+    if (ta <= 0.f) { *outR = *outG = *outB = *outA = 0.f; return; }
+    float ar = std::min(br * brightness, 1.f), ag = std::min(bg * brightness, 1.f), ab = std::min(bb * brightness, 1.f);
+    const float aa = ba;
+    float luminance = std::min(1.f, (0.2126f * ar + 0.7152f * ag + 0.0722f * ab) * brightness);
+    float cr = ar + (luminance * colR - ar) * blend;
+    float cg = ag + (luminance * colG - ag) * blend;
+    float cb = ab + (luminance * colB - ab) * blend;
+    float ca = aa + (luminance * 1.f - aa) * blend;
+    const float grey = luminance * highlights;
+    cr += (luminance - cr) * grey;
+    cg += (luminance - cg) * grey;
+    cb += (luminance - cb) * grey;
+    cr *= 1.f + (cr - 1.f) * contrast;
+    cg *= 1.f + (cg - 1.f) * contrast;
+    cb *= 1.f + (cb - 1.f) * contrast;
+    ca *= 1.f;   // AM scales only .rgb by the contrast mix; blendInside's alpha is ca * alpha below
+    const float ir = cr * alpha, ig = cg * alpha, ib = cb * alpha;
+    float sr = tr / ta, sg = tg / ta, sb = tb / ta;
+    float rr = 1.f - (1.f - sr) * (1.f - ir);
+    float rg = 1.f - (1.f - sg) * (1.f - ig);
+    float rb = 1.f - (1.f - sb) * (1.f - ib);
+    *outA = fxClamp(ta, 0.f, 1.f);
+    *outR = fxClamp(rr * ta, 0.f, 1.f);
+    *outG = fxClamp(rg * ta, 0.f, 1.f);
+    *outB = fxClamp(rb * ta, 0.f, 1.f);
+    (void)ca;
+}
+
+void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturation,
+                      float tintR, float tintG, float tintB, float tintStrength, float gamma,
+                      float* outR, float* outG, float* outB, float* outA) {
+    // AM's fillbehind background pipeline, line by line (brightness is 0: no slot, see fx_plan.h).
+    float r = 0.f, g = 0.f, b = 0.f;
+    if (blurA > 0.f) { r = br / blurA; g = bg / blurA; b = bb / blurA; }
+    float y, u, v, ty, tu, tv;
+    fxAmToYuv(r, g, b, &y, &u, &v);
+    fxAmToYuv(tintR, tintG, tintB, &ty, &tu, &tv);
+    u *= (saturation + 1.f);
+    v *= (saturation + 1.f);
+    u += (tu - u) * tintStrength;
+    v += (tv - v) * tintStrength;
+    fxAmToRgb(y, u, v, &r, &g, &b);
+    const float inv = 1.f / gamma;
+    r = fxClamp(std::pow(std::max(r, 0.f), inv), 0.f, 1.f);
+    g = fxClamp(std::pow(std::max(g, 0.f), inv), 0.f, 1.f);
+    b = fxClamp(std::pow(std::max(b, 0.f), inv), 0.f, 1.f);
+    *outR = r * blurA;
+    *outG = g * blurA;
+    *outB = b * blurA;
+    *outA = blurA;
+}
 
 }  // namespace am

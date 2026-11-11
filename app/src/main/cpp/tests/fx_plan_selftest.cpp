@@ -571,6 +571,111 @@ int main() {
             CHECK(std::fabs(ux - 0.5125f) < 1e-5f && std::fabs(uy - 0.5125f) < 1e-5f, "pixelate block centre near middle");
         }
     }
+    // v164: the parked tier (75..89). Shaded: colour modes 18/19/20, blur2 mode 8, warp
+    // modes 15/16/17, style mode 14; chroma key / soft glow / fill behind are dedicated
+    // passes (FXG_NONE). EXT types (77 / 85 / 87 / 89) fold into their owner's q[].
+    {
+        for (int t : {FX_CHROMA_KEY_AM, FX_COLOR_BALANCE_AM, FX_COLOR_TEMP_AM, FX_COLOR_TINT_AM,
+                      FX_SPIN_BLUR_AM, FX_OFFSET_AM, FX_RADIAL_WIPE_AM, FX_FIND_EDGES_AM,
+                      FX_HEX_SHIFT_AM, FX_SOFT_GLOW_AM, FX_FILL_BEHIND_AM}) {
+            float one[8] = {(float)t, 0, 0, 0, 0, 0, 0, 0};
+            CHECK(fxParseOps(one, 8, ops) == 1 && ops[0].type == t, "v164 type %d parsed", t);
+        }
+        CHECK(fxShaderOf(FX_COLOR_BALANCE_AM).group == FXG_COLOR && fxShaderOf(FX_COLOR_BALANCE_AM).mode == 18, "colour balance shader");
+        CHECK(fxShaderOf(FX_COLOR_TEMP_AM).group == FXG_COLOR && fxShaderOf(FX_COLOR_TEMP_AM).mode == 19, "colour temperature shader");
+        CHECK(fxShaderOf(FX_COLOR_TINT_AM).group == FXG_COLOR && fxShaderOf(FX_COLOR_TINT_AM).mode == 20, "colour tint shader");
+        CHECK(fxShaderOf(FX_SPIN_BLUR_AM).group == FXG_BLUR2 && fxShaderOf(FX_SPIN_BLUR_AM).mode == 8, "spin blur shader");
+        CHECK(fxShaderOf(FX_OFFSET_AM).group == FXG_WARP && fxShaderOf(FX_OFFSET_AM).mode == 15, "offset shader");
+        CHECK(fxShaderOf(FX_RADIAL_WIPE_AM).group == FXG_WARP && fxShaderOf(FX_RADIAL_WIPE_AM).mode == 16, "radial wipe shader");
+        CHECK(fxShaderOf(FX_FIND_EDGES_AM).group == FXG_STYLE && fxShaderOf(FX_FIND_EDGES_AM).mode == 14, "find edges shader");
+        CHECK(fxShaderOf(FX_HEX_SHIFT_AM).group == FXG_WARP && fxShaderOf(FX_HEX_SHIFT_AM).mode == 17, "hex shift shader");
+        for (int t : {FX_CHROMA_KEY_AM, FX_SOFT_GLOW_AM, FX_FILL_BEHIND_AM}) {
+            CHECK(fxShaderOf(t).group == FXG_NONE, "v164 type %d is a dedicated pass", t);
+        }
+        for (int t = FX_DIR_BLUR; t <= FX_LAST; ++t) {
+            CHECK(!(fxShaderOf(t).group == FXG_WARP && fxShaderOf(t).mode >= 15 && fxShaderOf(t).mode <= 17), "type %d collides with a v164 warp mode", t);
+            CHECK(!(fxShaderOf(t).group == FXG_COLOR && fxShaderOf(t).mode >= 18 && fxShaderOf(t).mode <= 20), "type %d collides with a v164 colour mode", t);
+            CHECK(!(fxShaderOf(t).group == FXG_BLUR2 && fxShaderOf(t).mode == 8), "type %d collides with spin blur", t);
+            CHECK(!(fxShaderOf(t).group == FXG_STYLE && fxShaderOf(t).mode == 14), "type %d collides with find edges", t);
+        }
+        // EXT folding for the new owners.
+        {
+            float cb[16] = {(float)FX_COLOR_BALANCE_AM, 100, -100, 100, 0, 0, 0, 0,
+                            (float)FX_COLOR_BALANCE_AM_EXT, 0, 0, 1, 0, 0, 0, 0};
+            CHECK(fxParseOps(cb, 16, ops) == 1 && ops[0].q[2] == 1.f, "colour balance ext folded");
+            float hex[16] = {(float)FX_HEX_SHIFT_AM, 1, 127, 9, 100, 3508, 0.1f, 1,
+                             (float)FX_HEX_SHIFT_AM_EXT, 0, 8390656, 0, 0, 0, 0, 0};
+            CHECK(fxParseOps(hex, 16, ops) == 1 && ops[0].q[1] == 8390656.f, "hex shift ext folded");
+            float orphan[8] = {(float)FX_SOFT_GLOW_AM_EXT, 0, 0, 0, 0, 0, 0, 0};
+            CHECK(fxParseOps(orphan, 8, ops) == 0, "soft glow ext alone dropped");
+        }
+        // Identity rules.
+        FxOp cb0{FX_COLOR_BALANCE_AM, {0, 0, 0, 0, 0, 0, 0}, {0, 0, 1, 0, 0, 0, 0}};
+        CHECK(fxIsIdentity(cb0), "colour balance zero bands identity");
+        cb0.p[0] = 100;
+        CHECK(!fxIsIdentity(cb0), "colour balance band runs");
+        FxOp ct0{FX_COLOR_TEMP_AM, {6.5f, 0, 0, 0, 0, 0, 0}};
+        CHECK(fxIsIdentity(ct0), "colour temperature strength 0 identity");
+        FxOp rw0{FX_RADIAL_WIPE_AM, {0, 0, 0, 1, 8390656, 0, 0}};
+        CHECK(fxIsIdentity(rw0), "radial wipe progress 0 identity");
+        rw0.p[0] = 360;
+        CHECK(!fxIsIdentity(rw0), "radial wipe progress 360 runs");
+        FxOp off0{FX_OFFSET_AM, {0, 0, 50, 1, 0, 0, 0}};
+        CHECK(fxIsIdentity(off0), "offset zero identity");
+        FxOp hs0{FX_HEX_SHIFT_AM, {0, 127, 9, 100, 3508, 0.1f, 1}};
+        CHECK(fxIsIdentity(hs0), "hex shift strength 0 identity");
+        FxOp sg0{FX_SOFT_GLOW_AM, {50, 100, 70, 100, 16777215, 100, 0}};
+        CHECK(fxIsIdentity(sg0), "soft glow alpha 0 identity");
+        // Chroma key: an exact key-colour pixel keys out; white against a black key stays.
+        float oR, oG, oB, oA;
+        fxChromaKeyAmMap(0, 0, 0, 1, 0, 0, 0, 0.1f, 0.05f, false, false, false, &oR, &oG, &oB, &oA);
+        CHECK(oA == 0.f, "chroma key removes the key colour");
+        fxChromaKeyAmMap(1, 1, 1, 1, 0, 0, 0, 0.1f, 0.05f, false, false, false, &oR, &oG, &oB, &oA);
+        CHECK(oA == 1.f && oR == 1.f, "chroma key keeps a far colour");
+        fxChromaKeyAmMap(1, 1, 1, 1, 0, 0, 0, 0.1f, 0.05f, false, true, false, &oR, &oG, &oB, &oA);
+        CHECK(oA == 0.f, "chroma key invert flips the far colour out");
+        // Colour temperature: 6500 K is nearly white (the fit's pivot); 1000 K is deep orange.
+        float gR, gG, gB;
+        fxColorTempAmGain(6500.f, &gR, &gG, &gB);
+        CHECK(std::fabs(gR - 1.f) < 1e-6f && std::fabs(gG - 0.975f) < 0.002f && std::fabs(gB - 0.9894f) < 0.002f, "kelvin 6500 gain near white");
+        fxColorTempAmGain(1000.f, &gR, &gG, &gB);
+        CHECK(std::fabs(gR - 1.f) < 0.002f && std::fabs(gG - 0.2431f) < 0.002f && gB == 0.f, "kelvin 1000 gain");
+        // Colour balance: zero bands = identity (up to the YUV roundtrip).
+        float zeroBands[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+        fxColorBalanceAmMap(0.3f, 0.5f, 0.7f, zeroBands, true, &oR, &oG, &oB);
+        CHECK(std::fabs(oR - 0.3f) < 0.002f && std::fabs(oG - 0.5f) < 0.002f && std::fabs(oB - 0.7f) < 0.002f, "colour balance zero is identity");
+        // Colour tint: grey + full red tint (hue 0, strength 1) -> the def's numbers.
+        fxColorTintAmMap(0.5f, 0.5f, 0.5f, 1, 0, 1, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.8505f) < 0.002f && std::fabs(oG - 0.3505f) < 0.002f && std::fabs(oB - 0.3504f) < 0.002f, "colour tint red on grey");
+        // Offset feather: zero at the seam when feathered, partial a quarter into a segment.
+        CHECK(fxOffsetFeather(0.5f, 0.5f, 500, 0, 1) == 0.f, "offset feather seam");
+        CHECK(std::fabs(fxOffsetFeather(0.75f, 0.5f, 500, 0, 1) - 0.15625f) < 1e-5f, "offset feather quarter in");
+        // Offset composite: featherAmt 1 shows only the shifted sample; 0 mixes it over S.
+        fxOffsetAmMap(0.2f, 0.2f, 0.2f, 0.5f, 0.6f, 0.6f, 0.6f, 1, 1, 1, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.6f) < 1e-5f && oA == 1.f, "offset feathered composite");
+        fxOffsetAmMap(0.2f, 0.2f, 0.2f, 0.5f, 0.6f, 0.6f, 0.6f, 1, 0, 1, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.5f) < 1e-5f && oA == 1.f, "offset unfeathered composite");
+        // Radial wipe at 180 degrees, offset 0: one side of the sweep is kept, the other cut.
+        CHECK(fxRadialWipeAmPp(-1, 0, 180, 0, 0, 1, 0) == 1.f, "radial wipe keeps one side at 180");
+        CHECK(fxRadialWipeAmPp(1, 0, 180, 0, 0, 1, 0) == 0.f, "radial wipe cuts the other side at 180");
+        CHECK(fxRadialWipeAmPp(0.3f, 0.7f, 0, 0, 0, 1, 0) == 1.f, "radial wipe progress 0 keeps all");
+        CHECK(fxRadialWipeAmPp(0.3f, 0.7f, 360, 0, 0, 1, 0) == 0.f, "radial wipe progress 360 cuts all");
+        // Find edges: a flat field has no gradient; a hard step saturates it.
+        float flat8[8] = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+        CHECK(fxFindEdgesAmG(flat8, 0) == 0.f, "find edges flat field");
+        float step8[8] = {0, 0, 1, 0, 1, 0, 0, 1};
+        CHECK(fxFindEdgesAmG(step8, 0) == 1.f, "find edges hard step");
+        // Hex shift: strength 0 samples the pixel itself.
+        float mX, mY;
+        fxHexShiftAmUv(0.3f, 0.7f, 127, 0.09f, 1, 3508.5f, 0.1f, 0, 0, 0, 1.f, &mX, &mY);
+        CHECK(std::fabs(mX - 0.3f) < 1e-5f && std::fabs(mY - 0.7f) < 1e-5f, "hex shift strength 0 identity");
+        // Soft glow: grey over grey at blend 0 screens to 0.75.
+        fxSoftGlowAmMap(0.5f, 0.5f, 0.5f, 1, 0.5f, 0.5f, 0.5f, 1, 1, 0, 0, 1, 1, 1, 0, 1, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.75f) < 1e-4f && oA == 1.f, "soft glow screen blend");
+        // Fill behind: a straight-grey blur at gamma 1 / no tint keeps its colour.
+        fxFillBehindAmBg(0.25f, 0.25f, 0.25f, 0.5f, 0, 0, 0, 0, 0, 1, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.25f) < 0.002f && std::fabs(oA - 0.5f) < 1e-5f, "fill behind bg passthrough");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

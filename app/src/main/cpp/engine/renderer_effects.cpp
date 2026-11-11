@@ -30,7 +30,8 @@ namespace {
 
 enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, EF_GRAIN, EF_VIG, EF_MASK, EF_MASK_APPLY, EF_CHROMA,
              EF_BLUR2, EF_COLOR, EF_WARP, EF_STYLE, EF_COPYBG, EF_GLOW_SCAN,
-             EF_LUMA_KEY, EF_FOUR_GRADIENT, EF_TURBULENT_AM, EF_PIXELATE_AM, EF_COUNT };  // eff_[] in renderer.h has room for 24
+             EF_LUMA_KEY, EF_FOUR_GRADIENT, EF_TURBULENT_AM, EF_PIXELATE_AM,
+             EF_CHROMA_KEY_AM, EF_SOFT_GLOW, EF_FILL_BEHIND, EF_COUNT };  // eff_[] in renderer.h has room for 24
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -702,9 +703,116 @@ void main() {
 }
 )";
 
+// Chroma Key (Alight Motion's `chromakey`, its recovered shader; fx_plan.cpp fxChromaKeyAmMap is
+// the CPU twin): NOT the app's own FX_CHROMA above — AM measures the distance to the key colour
+// in its YUV space (luma counted a quarter) on the UNpremultiplied pixel, defringes the
+// premultiplied pixel by the key colour, and forces the half-texel border transparent.
+// uKey is the key colour (straight), uParams = (threshold, feather, defringe, invert) in 0..1.
+const char* kChromaKeyAm = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec3 uKey;
+uniform vec4 uParams;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+    vec3 keyYUV = uKey * rgb2yuv;
+    vec4 texColor = texture(uTex, vUv);
+    vec3 texYUV = (texColor.a <= 0.0 ? vec3(0.0) : texColor.rgb / texColor.a) * rgb2yuv;
+    float dist = length((keyYUV - texYUV) * vec3(0.25, 1.0, 1.0));
+    float alpha = smoothstep(uParams.x - uParams.y / 2.0, uParams.x + uParams.y / 2.0, dist);
+    if (uParams.w > 0.5) alpha = 1.0 - alpha;
+    if (uParams.z > 0.5) texColor -= vec4(uKey, 1.0) * (1.0 - alpha);
+    vec2 halfFrag = 0.5 * vec2(dFdx(vUv.x), dFdy(vUv.y));
+    if (vUv.x <= halfFrag.x || vUv.x >= 1.0 - halfFrag.x || vUv.y <= halfFrag.y || vUv.y >= 1.0 - halfFrag.y) {
+        alpha = 0.0;
+    }
+    oColor = vec4(texColor.rgb, 1.0) * alpha * texColor.a;
+}
+)";
+
+// Soft Glow (Alight Motion's `softglow`, its recovered shader; fx_plan.cpp fxSoftGlowAmMap is
+// the CPU twin): uTex = the layer, uBlur = its blurred copy. The blurred copy, brightened and
+// pushed toward the tint colour by its own luminance, is SCREEN-blended over the layer.
+// uAdj = (brightness, contrast, highlights, blend), uMisc = (colour packed, alpha); the
+// backdrop branch (AM's `comp` texture, outsideAlpha > 0) is not reproduced — the importer
+// warns when an instance uses it. A fully transparent pixel stays transparent (AM divides by
+// its alpha there; the result is invisible either way).
+const char* kSoftGlow = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec4 uAdj;
+uniform vec3 uColor;
+uniform float uAlpha;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 texColor = texture(uTex, vUv);
+    if (texColor.a <= 0.0005) { oColor = vec4(0.0); return; }
+    vec4 blurTexColor = texture(uBlur, vUv);
+    vec4 adjBlur = blurTexColor;
+    adjBlur.rgb = min(adjBlur.rgb * uAdj.x, vec3(1.0));
+    float luminance = min(1.0, dot(adjBlur.rgb, vec3(0.2126, 0.7152, 0.0722)) * uAdj.x);
+    vec4 blendColor = mix(adjBlur, luminance * vec4(uColor, 1.0), uAdj.w);
+    blendColor.rgb = mix(blendColor.rgb, vec3(luminance), luminance * uAdj.z);
+    blendColor.rgb = blendColor.rgb * mix(vec3(1.0), blendColor.rgb, uAdj.y);
+    vec4 blendInside = blendColor * uAlpha;
+    vec3 straight = texColor.rgb / texColor.a;
+    vec3 res = 1.0 - (1.0 - straight) * (1.0 - blendInside.rgb);
+    oColor = vec4(clamp(res, 0.0, 1.0) * texColor.a, texColor.a);
+}
+)";
+
+// Fill Behind (Alight Motion's `fillbehind`, its recovered shader; fx_plan.cpp
+// fxFillBehindAmBg is the CPU twin of the background colour pipeline): the blurred copy,
+// colour-adjusted, fills behind the layer's own (feathered) foreground, with an edge-colour
+// rim where the blurred alpha sits between. The layer-to-screen scale of AM's background
+// sampling reduces to (1 + strength) for a layer at its own size (its transform is applied
+// outside this pass, like every effect here). uBgP = (tint strength, saturation, gamma,
+// background scale), uFgP = (scan lines, scan line count, edge strength, alpha),
+// uFeaP = (feather, strength) for the foreground alpha curve, uBgOff the background offset.
+const char* kFillBehind = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec2 uBgOff;
+uniform vec3 uTint;
+uniform vec4 uBgP;
+uniform vec4 uFgP;
+uniform vec3 uEdge;
+uniform vec2 uFeaP;
+in vec2 vUv;
+out vec4 oColor;
+vec4 composite(vec4 a, vec4 b) { return a * (1.0 - b.a) + b; }
+void main() {
+    mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+    mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+    vec2 stBG = (vUv - 0.5) / uBgP.w + 0.5 - uBgOff / 500.0 * vec2(1.0, -1.0);
+    vec2 bgSample = (stBG - 0.5) / (1.0 + uFeaP.y) + 0.5;
+    vec4 texColor = texture(uTex, vUv);
+    float blurAlpha = texture(uBlur, vUv).a;
+    vec4 blurTexColor = texture(uBlur, bgSample);
+    vec3 tintYuv = uTint * rgb2yuv;
+    vec3 rgb = blurTexColor.a > 0.0 ? blurTexColor.rgb / blurTexColor.a : vec3(0.0);
+    vec3 yuv = rgb * rgb2yuv;
+    yuv.yz = yuv.yz * (uBgP.y + 1.0);
+    yuv.yz = mix(yuv.yz, tintYuv.yz, uBgP.x);
+    rgb = yuv * yuv2rgb;
+    rgb = clamp(pow(max(rgb, vec3(0.0)), vec3(1.0 / uBgP.z)), 0.0, 1.0);
+    vec4 adjBlurColor = vec4(rgb, 1.0) * blurTexColor.a;
+    adjBlurColor.rgb *= 1.0 - (uFgP.x * cos(vUv.y * uFgP.y));
+    float fa = uFeaP.x < 0.0005 ? 1.0
+               : smoothstep(0.4999, 0.5 + min(0.999, uFeaP.x / max(uFeaP.y, 1e-6)) * 0.5, blurAlpha);
+    vec4 fg = composite(vec4(uEdge, 1.0) * (blurAlpha * 2.0 * uFgP.z), texColor * fa);
+    oColor = composite(adjBlurColor * uFgP.w, fg);
+}
+)";
+
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
-                                  kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm};
+                                  kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind};
 static_assert(EF_COUNT <= 24, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
@@ -875,6 +983,9 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_FOUR_COLOR_GRADIENT: ok = fxFourColorGradient(op, W, H, cur); break;
             case FX_TURBULENT_DISPLACE_AM: ok = fxTurbulentAm(op, W, H, cur); break;
             case FX_PIXELATE_AM: ok = fxPixelateAm(op, W, H, cur); break;
+            case FX_CHROMA_KEY_AM: ok = fxChromaKeyAm(op, W, H, cur); break;
+            case FX_SOFT_GLOW_AM: ok = fxSoftGlowAm(op, W, H, cur); break;
+            case FX_FILL_BEHIND_AM: ok = fxFillBehindAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -1175,6 +1286,103 @@ bool Renderer::fxPixelateAm(const FxOp& op, int W, int H, int* cur) {
     return true;
 }
 
+// Chroma Key (Alight): a single pass scaling the layer's alpha by the YUV distance to the key
+// colour, with AM's defringe and border rules.
+bool Renderer::fxChromaKeyAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_CHROMA_KEY_AM);
+    if (!prog) return false;
+    const int packed = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[0])));
+    auto cl01 = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform3f(loc(prog, "uKey"), ((packed >> 16) & 0xFF) / 255.f, ((packed >> 8) & 0xFF) / 255.f,
+                (packed & 0xFF) / 255.f);
+    glUniform4f(loc(prog, "uParams"), cl01(op.p[1]), cl01(op.p[2]), op.p[3] > 0.5f ? 1.f : 0.f,
+                op.p[4] > 0.5f ? 1.f : 0.f);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Soft Glow (Alight): the Glow Scan two-texture shape — keep the layer, blur a copy, composite.
+bool Renderer::fxSoftGlowAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_SOFT_GLOW), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    FxOp blurOp;
+    blurOp.type = FX_BLUR;
+    blurOp.p[0] = fxGlowScanBlurriness(op.p[0]);   // AM strength -> the app blur, the Glow Scan calibration
+    if (!fxBlur(blurOp, W, H, cur)) return false;
+    auto cl = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
+    const int packed = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[4])));
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform4f(loc(prog, "uAdj"), cl(op.p[1]), cl(op.p[2]), cl(op.p[3]), cl(op.p[5]));
+    glUniform3f(loc(prog, "uColor"), ((packed >> 16) & 0xFF) / 255.f, ((packed >> 8) & 0xFF) / 255.f,
+                (packed & 0xFF) / 255.f);
+    glUniform1f(loc(prog, "uAlpha"), cl(op.p[6]));
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Fill Behind (Alight): the Soft Glow shape — keep the layer, blur a copy, composite the
+// adjusted blurred copy behind the feathered foreground.
+bool Renderer::fxFillBehindAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_FILL_BEHIND), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    FxOp blurOp;
+    blurOp.type = FX_BLUR;
+    blurOp.p[0] = fxGlowScanBlurriness(op.p[0]);
+    if (!fxBlur(blurOp, W, H, cur)) return false;
+    auto cl = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
+    auto unpack = [](float packedF, float* r, float* g, float* b) {
+        const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
+        *r = ((pk >> 16) & 0xFF) / 255.f;
+        *g = ((pk >> 8) & 0xFF) / 255.f;
+        *b = (pk & 0xFF) / 255.f;
+    };
+    float tr, tg, tb, er, eg, eb;
+    unpack(op.p[4], &tr, &tg, &tb);
+    unpack(op.q[2], &er, &eg, &eb);
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform2f(loc(prog, "uBgOff"), op.q[3], op.q[4]);
+    glUniform3f(loc(prog, "uTint"), tr, tg, tb);
+    glUniform4f(loc(prog, "uBgP"), cl(op.p[3]), cl(op.q[6]), std::max(0.01f, op.p[2] / 100.f),
+                std::max(0.01f, cl(op.q[1]) <= 0.f ? 1.f : op.q[1] / 100.f));
+    glUniform4f(loc(prog, "uFgP"), cl(op.p[6]), std::max(0.f, op.q[0]), cl(op.p[5]), cl(op.q[5]));
+    glUniform3f(loc(prog, "uEdge"), er, eg, eb);
+    glUniform2f(loc(prog, "uFeaP"), cl(op.p[1]), cl(op.p[0]));
+    draw();
+    *cur = dst;
+    return true;
+}
+
 bool Renderer::fxSplit(const FxOp& op, int W, int H, int* cur) {
     const float px = fxSplitPixels(op.p[0], (float)H / 1080.f);
     if (px < 0.05f) return true;
@@ -1299,6 +1507,7 @@ bool Renderer::fxShaded(const FxOp& op, int W, int H, int* cur, int frame) {
     glUniform1i(loc(prog, "uFrame"), frame);
     glUniform1i(loc(prog, "uMode"), ref.mode);
     glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);   // only the v164 colour / warp modes read it; -1 elsewhere
     draw();
     *cur = dst;
     return true;

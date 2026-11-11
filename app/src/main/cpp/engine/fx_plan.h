@@ -128,6 +128,57 @@ enum FxType : int {
     FX_REPLACE_COLOR = 74,  // p0 old colour packed 0xRRGGBB, p1 new colour packed, p2 threshold
                             // 0..400 (%), p3 feather 0..200 (%), p4 alpha 0..100, p5 lock luminance 0/1.
                             // kFxColor mode 17 (the program's straight-space maths is AM's own).
+    // v164: the parked tier of Alight's own effects, hunt round 2 — every definition recovered
+    // from the same public APK asset dump (hunt-staging/defs-batch3, see its SOURCES.md). Two of
+    // the tier stay parked with the precise missing evidence in the ROADMAP: lightglow (its
+    // downsample pass names no shader — the kernel is a host built-in) and the displacemap
+    // family incl. displacemaprad (they sample the running composite; no def states whether
+    // that is backdrop-only or backdrop+self).
+    FX_CHROMA_KEY_AM = 75,  // p0 key colour packed 0xRRGGBB, p1 threshold 0..100 (% of AM's raw),
+                            // p2 feather 0..100 (%), p3 defringe 0/1, p4 invert 0/1. Dedicated
+                            // pass (it scales alpha and defringes in premultiplied space).
+    FX_COLOR_BALANCE_AM = 76,  // p0..p6 crLow, mgLow, ybLow, crMid, mgMid, ybMid, crHigh (AM raw
+                               // -100..100); q0 mgHigh, q1 ybHigh, q2 fix luminance 0/1.
+                               // kFxColor mode 18.
+    FX_COLOR_BALANCE_AM_EXT = 77,
+    FX_COLOR_TEMP_AM = 78,  // p0 temperature (AM units: Kelvin / 1000, 1..40), p1 strength 0..100
+                            // (%). kFxColor mode 19.
+    FX_COLOR_TINT_AM = 79,  // p0 tint hue (degrees, AM raw), p1 strength 0..100 (%).
+                            // kFxColor mode 20.
+    FX_SPIN_BLUR_AM = 80,   // p0 angle (degrees, AM raw; KEYFRAMED instances ride the tail,
+                            // slot 0), p1/p2 centre point (AM units, /500 in the shader).
+                            // kFxBlur2 mode 8.
+    FX_OFFSET_AM = 81,      // p0/p1 offset x/y (AM units, /1000 of the layer; keyframed instances
+                            // ride two tails, slots 0 and 1), p2 feather 0..100 (%), p3 mask 0/1.
+                            // kFxWarp mode 15.
+    FX_RADIAL_WIPE_AM = 82,  // p0 progress (degrees 0..360; keyframed instances ride the tail,
+                             // slot 0), p1 feather (degrees), p2 direction (0 CW, 1 CCW, 2 both),
+                             // p3 repeat count, p4 centre point packed (AM units, /1200),
+                             // p5 offset (degrees, the start angle). kFxWarp mode 16.
+    FX_FIND_EDGES_AM = 83,  // p0 smoothing (AM raw), p1 threshold 0..100 (%), p2 invert 0/1.
+                            // kFxStyle mode 14. NOT FX_FIND_EDGES (the app's own edge look).
+    FX_HEX_SHIFT_AM = 84,   // p0 strength (AM raw; keyframed instances ride the tail, slot 0),
+                            // p1 size (AM units), p2/p3 stretch x/y (%), p4 angle (degrees, AM
+                            // raw; keyframed instances ride the tail, slot 4), p5 seed,
+                            // p6 screen space 0/1; q0 mask to layer 0/1, q1 position point
+                            // packed (AM units). kFxWarp mode 17.
+    FX_HEX_SHIFT_AM_EXT = 85,
+    FX_SOFT_GLOW_AM = 86,   // p0 strength 0..100 (%: the pre-blur, AM raw x100), p1 brightness
+                            // (%), p2 contrast (%), p3 highlights (%), p4 colour packed
+                            // 0xRRGGBB, p5 blend (%), p6 alpha (%); q0 outside alpha (%) — the
+                            // backdrop branch is NOT reproduced (the importer warns when > 0).
+                            // Dedicated pass (it needs the layer AND its blurred copy).
+    FX_SOFT_GLOW_AM_EXT = 87,
+    FX_FILL_BEHIND_AM = 88,  // p0 strength (%), p1 feather (%), p2 gamma (x100), p3 tint strength
+                             // (%), p4 tint colour packed 0xRRGGBB, p5 edge strength (%),
+                             // p6 scan lines (%); q0 scan line count (AM raw), q1 background
+                             // scale (%), q2 edge colour packed 0xRRGGBB, q3/q4 background
+                             // offset x/y (AM units; keyframed instances ride two tails at
+                             // values 10/11), q5 alpha (%), q6 saturation (%). Dedicated pass
+                             // (blurred copy + composite). AM's brightness / fgAlpha / fgScale /
+                             // fgOffset have no slot: the importer warns when one is not at its
+                             // default (all are, in the corpus instance).
+    FX_FILL_BEHIND_AM_EXT = 89,
     FX_MAX = FX_COPY_BG
 };
 
@@ -294,6 +345,70 @@ void fxHalftoneDotsMap(float sampR, float sampG, float sampB, float sampA, float
 void fxPixelateCentre(float uvX, float uvY, float size, float stretchX, float stretchY, float angleDeg,
                       bool screenSpace, float offX, float offY, float picW, float picH,
                       float* outX, float* outY, float* distCenter);
+// ---- v164: Alight's parked tier (hunt round 2; the GLSL twins live in fx_shaders.h modes
+// 18..20 / blur2 8 / warp 15..17 / style 14 and in renderer_effects.cpp's dedicated passes) ----
+// CPU reference of Chroma Key (AM's chromakey): the pixel is PREMULTIPLIED (pr..pa), the key
+// colour straight (kr..kb, its alpha is 1); threshold / feather are AM raw (0..1). [border] is
+// AM's half-texel edge rule (the fragment sits within half a texel of the layer edge). The
+// defringe subtraction happens on the premultiplied pixel BEFORE the alpha is applied, like AM.
+void fxChromaKeyAmMap(float pr, float pg, float pb, float pa, float kr, float kg, float kb,
+                      float threshold, float feather, bool defringe, bool invert, bool border,
+                      float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Color Balance (AM's colorbalance): the pixel is PREMULTIPLIED in and out
+// (AM computes on the sampled colour; the colour program's twin computes on c.rgb too and
+// un-divides by the alpha at the end, so the two agree for every alpha). The nine band values
+// are AM raw (-100..100, clamped there), fixLum restores the input Y afterwards.
+void fxColorBalanceAmMap(float r, float g, float b, const float bands[9], bool fixLum,
+                         float* outR, float* outG, float* outB);
+// CPU reference of Color Temperature (AM's colortemperature): the Kelvin->RGB gain of
+// [kelvin] (1000..40000), AM's own polynomial fit, line by line.
+void fxColorTempAmGain(float kelvin, float* outR, float* outG, float* outB);
+// CPU reference of Color Tint (AM's colortint): the pixel is PREMULTIPLIED (pr..pa, like AM
+// samples it); hueDeg / strength are AM raw — the chroma mix factor is strength * pa, like AM.
+// out is premultiplied too.
+void fxColorTintAmMap(float pr, float pg, float pb, float pa, float hueDeg, float strength,
+                      float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Offset (AM's offset): S is the pixel, F the wrap-shifted sample (both
+// premultiplied); featherAmount is AM's seam factor (featherAmtX * featherAmtY, precomputed by
+// fxOffsetFeather below), maskFactor is the pixel's own alpha (mask) or 1 inside the layer.
+void fxOffsetAmMap(float sr, float sg, float sb, float sa, float fr, float fg, float fb, float fa,
+                   float featherAmt, float maskFactor,
+                   float* outR, float* outG, float* outB, float* outA);
+// AM's offset seam factor at layer-norm (uvX, uvY) for an offset (offX, offY) (AM units) and a
+// feather (0..1): 1 away from the wrap seam, dipping toward 0 at it.
+float fxOffsetFeather(float uvX, float uvY, float offX, float offY, float feather);
+// CPU reference of Radial Wipe (AM's radialwipe): the visibility multiplier (0..1) of the
+// fragment whose aspect-corrected, centre-relative position is (stX, stY) (y DOWN, like AM's
+// flipped space). progress / feather / offset are degrees, direction 0/1/2, repeat >= 1.
+float fxRadialWipeAmPp(float stX, float stY, float progress, float feather, int direction,
+                       float repeat, float offsetDeg);
+// CPU reference of Find Edges (AM's findedges): g is the Scharr gradient magnitude over the
+// eight neighbours' luma (premultiplied, like AM samples), threshold AM raw (0..1).
+float fxFindEdgesAmG(const float luma8[8], float threshold);
+// CPU reference of Hex Shift (AM's hexshift): the sample position for a fragment at (uvX, uvY);
+// size / stretch / angleDeg / seed are AM units, aspect = picture width / height (the layer's;
+// AM's screen-space grid anchoring is the layer's own here, like Turbulent's). strength scales
+// the per-cell random displacement; the sample wraps mirrored, like AM.
+void fxHexShiftAmUv(float uvX, float uvY, float size, float stretchX, float stretchY,
+                    float angleDeg, float seed, float strength, float posX, float posY,
+                    float aspect, float* outX, float* outY);
+// CPU reference of Soft Glow (AM's softglow), the layer-local branch (outsideAlpha = 0): tex is
+// the pixel, blur its blurred copy (both premultiplied); brightness / contrast / highlights /
+// blend / alpha are AM raw (0..1-ish), the colour is straight r / g / b. A fully transparent
+// pixel stays transparent (AM divides by the alpha there; the result is invisible either way).
+void fxSoftGlowAmMap(float tr, float tg, float tb, float ta, float br, float bg, float bb, float ba,
+                     float brightness, float contrast, float highlights,
+                     float colR, float colG, float colB, float blend, float alpha,
+                     float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Fill Behind (AM's fillbehind), the colour pipeline of the background: the
+// blurred copy's straight colour adjusted (saturation / tint / gamma; AM's brightness is 0 in
+// the only corpus instance and has no slot). blurA is the blurred copy's alpha.
+void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturation,
+                      float tintR, float tintG, float tintB, float tintStrength, float gamma,
+                      float* outR, float* outG, float* outB, float* outA);
+// Spin Blur (AM's spinblur2) has no scalar CPU reference: its tap count depends on the pixel's
+// radius, so the host test pins fxShaderOf / fxIsIdentity and the importer pins only.
+
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);
 // Units of the animated effects: phase of the Wave Warp / Turbulent Displace at a pattern frame (24 / s), in turns.

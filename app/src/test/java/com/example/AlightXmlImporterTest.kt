@@ -12,6 +12,7 @@ import com.example.model.effectiveScalePercent
 import com.example.model.packColor
 import com.example.model.TimelineClip
 import com.example.model.renderAt
+import com.example.model.valueAt
 import com.example.model.shapeCornerRadii
 import com.example.model.shapeDrawScaleX
 import com.example.model.shapeDrawScaleY
@@ -22,6 +23,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.hypot
 
 class AlightXmlImporterTest {
 
@@ -635,7 +637,9 @@ $layers
     fun laterPassEffectsStayWarningsOnTheRealFile() {
         val r = threeResult()
         assertTrue(r.warnings.any { it.contains("solidcolor") })
-        assertTrue(r.warnings.any { it.contains("movealongpath3") })
+        // The file's one movealongpath3 (Circle 1 on Circle 2's ring, in Group 2) is baked into
+        // POSITION keyframes since build 99, so no movealongpath3 warning is left either.
+        assertTrue(r.warnings.none { it.contains("movealongpath3") })
         // Both mask layers of the file sit on a shape / text layer, so since build 94 they are applied
         // (linked to the layer below, see LayerMaskImportTest) and no mask warning is left. Before build
         // 94 they were imported hidden with an "is a mask in Alight" warning.
@@ -1786,5 +1790,175 @@ $layers
         val inner = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }.first { it.name == "Inner" }
         assertEquals(1000L, inner.durationMs)
         assertEquals(listOf(0L, 1000L), inner.masks[0].keys.map { it.timeMs })
+    }
+
+    // ---- movealongpath3 -------------------------------------------------------------------------------------------------
+
+    @Test
+    fun moveAlongPathBakesTheCorpusRingRide() {
+        // Verbatim from the file "3" (Group 2): Circle 1 carries movealongpath3 and rides the outline
+        // of Circle 2, the layer directly below it — an invisible ring (opacity 0) of radius
+        // 100 x 1.34 = 134 whose drawing.progress keys are exactly Circle 1's progress keys x 100
+        // (the author synced the dot to the ring's drawing tip). Inset 5 rides inside the outline,
+        // so every baked position sits at radius 134 - 5 = 129 around the ring's centre (stored 0,0).
+        val xml = """<?xml version='1.0' encoding='UTF-8' ?><scene title="3" width="1920" height="1080" bgcolor="#ff000000" totalTime="5833" fps="30">
+<embedScene id="634615" label="Group 2" startTime="2166" endTime="5833" fillType="intrinsic" hidden="false" outTime="3666">
+<scene width="1920" height="1080" totalTime="5833" fps="30" bgcolor="#00000000">
+<shape id="634612" label="Circle 2" startTime="1666" endTime="3199" fillType="none" mediaFillMode="stretch" s=".circle"><transform><location value="960.000000,540.000000,0.000000" /><scale value="1.340000,1.340000" /><opacity value="0.000000" /></transform><fillColor value="#fffae965" /><effect id="com.alightcreative.effects.drawing.progress" locallyApplied="false"><property name="start" type="float"><kf t="0.010437" v="100.000000" /><kf t="0.988911" v="0.000000" e="cubicBezier 1.0 0.0 0.64 1.0" /></property><property name="end" type="float" value="100.000000" /></effect><path-stroke direction="centered" end-size="1.500000"><color value="#ffffffff" /><size value="29.500000" /></path-stroke><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+<shape id="634613" label="Circle 1" startTime="1466" endTime="3199" fillType="color" mediaFillMode="stretch" s=".circle"><transform><location value="819.000000,564.500000,0.000000" /><scale><kf t="0.990190" v="0.365000,0.365000" e="cubicBezier 0.61 0.0 0.64 1.0" /><kf t="0.009810" v="0.000000,0.000000" /><kf t="0.124639" v="0.245000,0.245000" e="cubicBezier 0.4 0.0 0.26333332 1.0" /></scale></transform><fillColor value="#fffef6fa" /><effect id="com.alightcreative.effect.movealongpath3" locallyApplied="false"><property name="progress" type="float"><kf t="0.124639" v="1.000000" /><kf t="0.990190" v="0.000000" e="cubicBezier 1.0 0.0 0.64 1.0" /></property><property name="angle" type="float" value="0.000000" /><property name="tangent" type="bool" value="true" /><property name="inset" type="float" value="5.000000" /></effect><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+</scene>
+</embedScene>
+</scene>"""
+        val r = AlightXmlImporter.parse(xml, 1920f)
+        assertFalse(r.warnings.any { it.contains("movealongpath3") })
+        val dot = r.snapshot.tracks.flatMap { it.clips }.first { it.name == "Circle 1" }
+        val pos = dot.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos.size >= 10)
+        // Every key on the ring at the inset radius — the authored location (819, 564.5) is NOT added.
+        assertTrue(pos.all { abs(hypot(it.a, it.b) - 129f) < 2f })
+        // Progress holds 1.0 before its first key, so the ride starts at fraction 0: the +x point.
+        assertEquals(129f, pos.first().a, 1.5f)
+        assertEquals(0f, pos.first().b, 1.5f)
+        // Mid-travel (eased progress 0.5) the dot is on the far side of the ring.
+        assertTrue(pos.any { it.a < -120f && abs(it.b) < 20f })
+        // Tangent on: rotation aligns with the path's tangent — heading +y (90 deg) at the +x point.
+        // Progress runs 1 -> 0, so the alignment angle sweeps one full turn in reverse, unwrapped
+        // (last - first = -360, not 0).
+        val rot = dot.keyframes[AnimProp.ROTATION]!!
+        assertEquals(90f, rot.first().a, 1.5f)
+        assertEquals(-360f, rot.last().a - rot.first().a, 3f)
+    }
+
+    @Test
+    fun moveAlongPathRectCornerAndNoRotationWithoutTangent() {
+        // A rectangle 200 x 100 (half extents 100 x 50) at the scene centre, progress pinned at 0.25:
+        // perimeter 600, a quarter is 150 along the outline from the top-left corner -> (50, -50).
+        val xml = scene(
+            """<shape id="1" label="Track" startTime="0" endTime="2000" fillType="color" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <property name="size" type="vec2" value="100,50" /></shape>
+<shape id="2" label="Dot" startTime="0" endTime="2000" fillType="color" s=".circle">
+  <transform><location value="100,100,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effect.movealongpath3" locallyApplied="false"><property name="progress" type="float" value="0.25" /><property name="angle" type="float" value="0" /><property name="inset" type="float" value="0" /><property name="tangent" type="bool" value="false" /></effect>
+  <property name="size" type="vec2" value="20,20" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertFalse(r.warnings.any { it.contains("movealongpath3") })
+        val dot = r.snapshot.tracks.flatMap { it.clips }.first { it.name == "Dot" }
+        val pos = dot.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos.all { abs(it.a - 50f) < 0.6f && abs(it.b - (-50f)) < 0.6f })
+        assertEquals(50f, dot.transformX, 0.6f)
+        assertEquals(-50f, dot.transformY, 0.6f)
+        // No tangent and a zero angle: no rotation is baked.
+        assertEquals(null, dot.keyframes[AnimProp.ROTATION])
+    }
+
+    @Test
+    fun moveAlongPathLineWithTangentAndClamping() {
+        // A line from local (-100, 0) to (100, 100) at the scene centre: the open outline clamps
+        // the fraction instead of wrapping, and the tangent heading is atan2(100, 200) = 26.57 deg.
+        fun fixture(progress: String) = scene(
+            """<shape id="1" label="Rail" startTime="0" endTime="2000" fillType="color" s=".line">
+  <transform><location value="540,960,0" /></transform>
+  <property name="p1" type="vec2" value="-100,0" />
+  <property name="p2" type="vec2" value="100,100" /></shape>
+<shape id="2" label="Dot" startTime="0" endTime="2000" fillType="color" s=".circle">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effect.movealongpath3" locallyApplied="false">$progress<property name="angle" type="float" value="0" /><property name="inset" type="float" value="0" /><property name="tangent" type="bool" value="true" /></effect>
+  <property name="size" type="vec2" value="20,20" /></shape>"""
+        )
+        val ride = AlightXmlImporter.parse(
+            fixture("""<property name="progress" type="float"><kf t="0" v="0" /><kf t="1" v="1" /></property>"""), 1080f
+        )
+        assertFalse(ride.warnings.any { it.contains("movealongpath3") })
+        val dot = ride.snapshot.tracks.flatMap { it.clips }.first { it.name == "Dot" }
+        val pos = dot.keyframes[AnimProp.POSITION]!!
+        assertEquals(-100f, pos.first().a, 0.6f)
+        assertEquals(0f, pos.first().b, 0.6f)
+        assertEquals(100f, pos.last().a, 0.6f)
+        assertEquals(100f, pos.last().b, 0.6f)
+        val mid = pos.valueAt(1000L)
+        assertEquals(0f, mid.first, 1.5f)
+        assertEquals(50f, mid.second, 1.5f)
+        val rot = dot.keyframes[AnimProp.ROTATION]!!
+        assertTrue(rot.all { abs(it.a - 26.565f) < 0.75f })
+
+        // Progress past the end of an open path clamps to the end point.
+        val clamped = AlightXmlImporter.parse(
+            fixture("""<property name="progress" type="float" value="2" />"""), 1080f
+        )
+        val dot2 = clamped.snapshot.tracks.flatMap { it.clips }.first { it.name == "Dot" }
+        val pos2 = dot2.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos2.all { abs(it.a - 100f) < 0.6f && abs(it.b - 100f) < 0.6f })
+    }
+
+    @Test
+    fun moveAlongPathHonoursTheProgressEasing() {
+        // cubicBezier(1, 0, 0.64, 1) reaches eased progress 0.5 only at segment fraction 0.74, so at
+        // 1480 ms of 2000 the dot is halfway around the ring (-100, 0); a linear reading of the same
+        // keys would put it near (0, -100) instead.
+        val xml = scene(
+            """<shape id="1" label="Ring" startTime="0" endTime="2000" fillType="color" s=".circle">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <property name="size" type="vec2" value="100,100" /></shape>
+<shape id="2" label="Dot" startTime="0" endTime="2000" fillType="color" s=".circle">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <effect id="com.alightcreative.effect.movealongpath3" locallyApplied="false"><property name="progress" type="float"><kf t="0" v="0" /><kf t="1" v="1" e="cubicBezier 1.0 0.0 0.64 1.0" /></property><property name="angle" type="float" value="0" /><property name="inset" type="float" value="0" /><property name="tangent" type="bool" value="false" /></effect>
+  <property name="size" type="vec2" value="20,20" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertFalse(r.warnings.any { it.contains("movealongpath3") })
+        val dot = r.snapshot.tracks.flatMap { it.clips }.first { it.name == "Dot" }
+        val pos = dot.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos.all { abs(hypot(it.a, it.b) - 100f) < 1.5f })
+        val start = pos.valueAt(0L)
+        assertEquals(100f, start.first, 1.5f)
+        assertEquals(0f, start.second, 1.5f)
+        val mid = pos.valueAt(1480L)
+        assertEquals(-100f, mid.first, 3f)
+        assertEquals(0f, mid.second, 3f)
+    }
+
+    @Test
+    fun moveAlongPathWarnsWhenThereIsNothingToFollow() {
+        val fx = """<effect id="com.alightcreative.effect.movealongpath3" locallyApplied="false"><property name="progress" type="float" value="0.5" /><property name="angle" type="float" value="0" /><property name="inset" type="float" value="0" /><property name="tangent" type="bool" value="true" /></effect>"""
+        val dotShape = """<shape id="2" label="Dot" startTime="0" endTime="2000" fillType="color" s=".circle">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  $fx
+  <property name="size" type="vec2" value="20,20" /></shape>"""
+
+        // The follower is the only layer: nothing below it.
+        val solo = AlightXmlImporter.parse(scene(dotShape), 1080f)
+        assertTrue(solo.warnings.any { it.contains("movealongpath3") && it.contains("no imported layer below") })
+        assertEquals(null, solo.snapshot.tracks.flatMap { it.clips }[0].keyframes[AnimProp.POSITION])
+
+        // The layer below is a text: it has no vector outline.
+        val overText = AlightXmlImporter.parse(
+            scene(
+                """<text id="1" label="Cap" startTime="0" endTime="2000" fillType="color" size="30" font="googlefonts?name=Roboto" wrapWidth="900" align="center"><transform><location value="540,960,0" /></transform><content>HI</content></text>
+""" + dotShape
+            ), 1080f
+        )
+        assertTrue(overText.warnings.any { it.contains("movealongpath3") && it.contains("no vector outline") })
+
+        // A parented follower would follow its parent's outline in Alight — not imported.
+        val parented = AlightXmlImporter.parse(
+            scene(
+                """<shape id="1" label="Ring" startTime="0" endTime="2000" fillType="color" s=".circle">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ffffffff" />
+  <property name="size" type="vec2" value="100,100" /></shape>
+""" + dotShape.replace("<shape id=\"2\"", "<shape id=\"2\" parent=\"999\"")
+            ), 1080f
+        )
+        assertTrue(parented.warnings.any { it.contains("movealongpath3") && it.contains("parent") })
+        val pDot = parented.snapshot.tracks.flatMap { it.clips }.first { it.name == "Dot" }
+        assertEquals(null, pDot.keyframes[AnimProp.POSITION])
     }
 }

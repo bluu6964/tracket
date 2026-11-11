@@ -91,12 +91,13 @@ import kotlin.math.sin
  *    shake works in unrelated units); `flip3` -> the layer's 3D rotation tracks; `fade` -> the clip's fade
  *    in / out; `blink` / `blink2` and `pulsate2` are baked into the OPACITY / SCALE keyframes; the
  *    `transform` effect composes onto the layer's own tracks like `scaleassist`; a keyframed `hueshift` on
- *    a solid-filled layer is baked into its colour keyframes; `counter` is stored as a [TextAnimator]
+ *    a solid-filled layer is baked into its colour keyframes; `movealongpath3` is baked into the
+ *    POSITION / ROTATION keyframes (see [bakeMoveAlongPath]); `counter` is stored as a [TextAnimator]
  *    like the other text effects and drawn by [CounterEval] (Alight's "Count Up/Down": every number
  *    in the text × its `scale` + its `offset`, both evaluated at the frame's time); the plain `repeat`
  *    is stored as the app's Repeat effect and drawn by [RepeatEval] (its radial / scatter variants
- *    have no counterpart yet). Effects with no counterpart in the app (motion blur is resolved, path
- *    following, …) stay named warnings — nothing is silently dropped.
+ *    too). Effects with no counterpart in the app (the path following beyond the baked form,
+ *    per-corner roundness, …) stay named warnings — nothing is silently dropped.
  *  - everything else (other layer types, other effects) is skipped and listed in [ImportResult.warnings]
  *
  * Rules that were read from the sample files (NOT from the Alight documentation, so check them on a real export):
@@ -257,6 +258,12 @@ object AlightXmlImporter {
 
         fun posX(v: List<Float>) = ((v.getOrNull(0) ?: sceneW / 2f) - sceneW / 2f) * k
         fun posY(v: List<Float>) = ((v.getOrNull(1) ?: sceneH / 2f) - sceneH / 2f) * k
+
+        /** Outlines of this scene's shape layers by clip id, lent to `movealongpath3` (see [PathSpec]). */
+        val outlineSpecs = HashMap<String, PathSpec>()
+
+        /** `movealongpath3` requests of this scene, in layer order; resolved once every layer is read. */
+        val pendingPaths = ArrayList<PendingPath>()
     }
 
     /** [flat] = every clip of the scene (groups flattened in, document order); [direct] = the clips whose own element is a direct child of the scene (for an embedScene: its Group layer). */
@@ -286,6 +293,7 @@ object AlightXmlImporter {
             }
         }
         resolveMaskLinks(directSlots, flat, ctx)
+        resolveMoveAlongPaths(directSlots, flat, ctx)
         return SceneBlock(flat, directSlots.filterNotNull())
     }
 
@@ -569,6 +577,7 @@ object AlightXmlImporter {
         // that smaller half extent, so the renderers can rebuild the frame-space radius
         // (rho x the smaller rendered half extent) at any keyframed size: rho = 1 is a stadium.
         var shapeCornerRadius = -1f
+        var cornerLocal = 0f   // the clamped radius in the shape's own units (a path outline needs it raw)
         val cornerT = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "cornerRadius" }
             ?.let { readTrack(it) }
         if (cornerT != null && pattern == "ROUNDED_RECT") {
@@ -582,6 +591,7 @@ object AlightXmlImporter {
             val smaller = minOf(sizeW, sizeH)
             if (rLocal != null && smaller > 0f) {
                 val rEff = minOf(rLocal, smaller).coerceAtLeast(0f)
+                cornerLocal = rEff
                 shapeCornerRadius = (APP_SHAPE_BOX_DP / 2f * rEff / smaller).coerceIn(0f, APP_SHAPE_BOX_DP / 2f)
             }
         }
@@ -644,6 +654,12 @@ object AlightXmlImporter {
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             keyframes = keyframes
+        )
+        // The layer's vector outline, lent to a `movealongpath3` on the layer above it (see PathSpec).
+        ctx.outlineSpecs[built.id] = PathSpec(
+            kind = pattern, startMs = built.startMs, durMs = built.durationMs,
+            loc = tr.loc ?: Track(listOf(ctx.sceneW / 2f, ctx.sceneH / 2f), emptyList()),
+            scl = tr.scl, rot = tr.rot, size = sizeT, corner = cornerLocal
         )
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
     }
@@ -750,6 +766,12 @@ object AlightXmlImporter {
             rotationDeg = angle,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             keyframes = keyframes
+        )
+        // A line's outline is its segment (see PathSpec); the points are the raw local ones.
+        ctx.outlineSpecs[built.id] = PathSpec(
+            kind = "LINE", startMs = built.startMs, durMs = built.durationMs,
+            loc = tr.loc ?: Track(listOf(ctx.sceneW / 2f, ctx.sceneH / 2f), emptyList()),
+            scl = tr.scl, rot = tr.rot, p1 = p1, p2 = p2, pivot = pivV
         )
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
     }
@@ -930,6 +952,32 @@ object AlightXmlImporter {
 
     private fun Track.scalarAt(t: Float): Float = valueAt(t).firstOrNull() ?: 0f
 
+    /**
+     * The value at normalized time [t] with Alight's easing applied: the easing of a segment sits on
+     * the keyframe it ENDS at (see the class comment), so the blend factor is shaped by the second
+     * keyframe's easing. [Track.valueAt] blends linearly; the procedural bakes that sample a track
+     * whose easing carries the motion (a `movealongpath3` progress, a path layer's own move) use this.
+     */
+    private fun Track.valueAtEased(t: Float): List<Float> {
+        if (keys.isEmpty()) return constant
+        if (t <= keys.first().t) return keys.first().v
+        if (t >= keys.last().t) return keys.last().v
+        var i = 0
+        while (i < keys.size - 2 && keys[i + 1].t <= t) i++
+        val a = keys[i]
+        val b = keys[i + 1]
+        val span = (b.t - a.t).coerceAtLeast(1e-6f)
+        var f = ((t - a.t) / span).coerceIn(0f, 1f)
+        b.easing?.let { f = it.apply(f) }
+        return List(maxOf(a.v.size, b.v.size)) { j ->
+            val va = a.v.getOrElse(j) { a.v.lastOrNull() ?: 0f }
+            val vb = b.v.getOrElse(j) { b.v.lastOrNull() ?: 0f }
+            va + (vb - va) * f
+        }
+    }
+
+    private fun Track.scalarAtEased(t: Float): Float = valueAtEased(t).firstOrNull() ?: 0f
+
     /** A packed colour value (see [parseValue]) back to an ARGB Long. */
     private fun unpacked(v: List<Float>): Long = unpackColor(v.getOrNull(0) ?: 0f, v.getOrNull(1) ?: 0f)
 
@@ -978,10 +1026,7 @@ object AlightXmlImporter {
                 REPEAT -> applyRepeat(fx, clip, ctx)
                 REPEAT_RADIAL -> applyRepeatRadial(fx, clip, ctx)
                 REPEAT_SCATTER -> applyRepeatScatter(fx, clip, ctx)
-                MOVEALONGPATH -> {
-                    ctx.warnings += "Effect movealongpath3 is not supported yet: the app cannot follow a path: skipped"
-                    clip
-                }
+                MOVEALONGPATH -> applyMoveAlongPath(fx, el, clip, ctx)
                 else -> {
                     ctx.warnings += "Effect " + id.substringAfterLast('.') + " is not supported yet: skipped"
                     clip
@@ -2385,6 +2430,357 @@ object AlightXmlImporter {
             ctx.warnings += "Effect lift is not supported yet: skipped"
         }
         return clip0
+    }
+
+    // ---- move along path ------------------------------------------------------------------------------------------
+
+    /**
+     * The vector outline of one shape layer of a scene, in raw Alight values (scene pixels), kept so a
+     * `movealongpath3` on the layer above can follow it. [kind] is the shape reader's pattern
+     * ("CIRCLE" / "RECT" / "ROUNDED_RECT") or "LINE" (an `.line` / `.arrow`: the outline is its
+     * segment, [p1] -> [p2]). The transform / size tracks are the layer's own, evaluated with
+     * Alight's easing at the follower's time; a line's scale / rotation / pivot enter as first
+     * values and a shape's pivot not at all — exactly how the layer's own reader renders it, so the
+     * follower stays glued to the outline as the app itself draws that layer.
+     */
+    private class PathSpec(
+        val kind: String,
+        val startMs: Long, val durMs: Long,
+        val loc: Track?, val scl: Track?, val rot: Track?,
+        val size: Track? = null, val corner: Float = 0f,
+        val p1: List<Float>? = null, val p2: List<Float>? = null, val pivot: List<Float> = emptyList()
+    )
+
+    /** A recorded `movealongpath3`, resolved by [resolveMoveAlongPaths] once the scene is fully read. */
+    private class PendingPath(
+        val followerId: String, val parented: Boolean,
+        val progress: Track, val angle: Track?, val tangent: Boolean, val inset: Track?
+    )
+
+    /** A point of an outline in scene pixels, with its (unit) direction of travel. */
+    private class PathPoint(val x: Float, val y: Float, val tanX: Float, val tanY: Float)
+
+    /**
+     * A dense walk of an outline: its points joined by straight segments with cumulative lengths, so
+     * a fraction of the total length lands on the outline. The chord error of the sampling (720
+     * steps around an ellipse, 16 per rounded corner) is far below a pixel at scene sizes.
+     */
+    private class OutlineWalk(pts: List<Pair<Float, Float>>, private val closed: Boolean) {
+        private val segA = ArrayList<Pair<Float, Float>>()
+        private val segB = ArrayList<Pair<Float, Float>>()
+        private val segStart = ArrayList<Float>()
+        val total: Float
+
+        init {
+            var acc = 0f
+            val n = if (closed) pts.size else pts.size - 1
+            for (i in 0 until n) {
+                val a = pts[i]
+                val b = pts[(i + 1) % pts.size]
+                val len = hypot(b.first - a.first, b.second - a.second)
+                if (len < 1e-9f) continue
+                segA += a
+                segB += b
+                segStart += acc
+                acc += len
+            }
+            total = acc
+        }
+
+        fun pointAt(frac: Float): PathPoint {
+            if (segA.isEmpty() || total <= 1e-6f) return PathPoint(0f, 0f, 1f, 0f)
+            val f = if (closed) {
+                val m = frac % 1f
+                if (m < 0f) m + 1f else m
+            } else frac.coerceIn(0f, 1f)
+            val d = (f * total).coerceAtMost(total)
+            var lo = 0
+            var hi = segStart.size - 1
+            while (lo < hi) {
+                val mid = (lo + hi + 1) / 2
+                if (segStart[mid] <= d) lo = mid else hi = mid - 1
+            }
+            val a = segA[lo]
+            val b = segB[lo]
+            val len = hypot(b.first - a.first, b.second - a.second)
+            val u = if (len > 1e-9f) ((d - segStart[lo]) / len).coerceIn(0f, 1f) else 0f
+            return PathPoint(
+                a.first + (b.first - a.first) * u, a.second + (b.second - a.second) * u,
+                (b.first - a.first) / len, (b.second - a.second) / len
+            )
+        }
+    }
+
+    /**
+     * The outline points of a shape in its own (unrotated, centre-relative) frame, half extents
+     * [a] / [b] and world corner radii [rx] / [ry]. The traversal starts and runs as the stroke
+     * trim's outline does (see the C++ shape engine): a circle at the +x axis, a rectangle at the
+     * top-left corner along the top edge, always clockwise in screen space (y down) — so a follower
+     * synced to a `drawing.progress` on the path layer (the corpus case) rides its drawing tip.
+     */
+    private fun outlinePoints(kind: String, a: Float, b: Float, rx: Float, ry: Float): List<Pair<Float, Float>> {
+        return when (kind) {
+            "CIRCLE" -> {
+                val steps = 720
+                (0 until steps).map { i ->
+                    val th = 2.0 * Math.PI * i / steps
+                    (a * cos(th).toFloat()) to (b * sin(th).toFloat())
+                }
+            }
+            "RECT" -> listOf(-a to -b, a to -b, a to b, -a to b)
+            else -> {   // ROUNDED_RECT
+                val crx = minOf(rx, a).coerceAtLeast(0f)
+                val cry = minOf(ry, b).coerceAtLeast(0f)
+                if (crx < 0.01f || cry < 0.01f) return listOf(-a to -b, a to -b, a to b, -a to b)
+                val ex = a - crx
+                val ey = b - cry
+                val pts = ArrayList<Pair<Float, Float>>()
+                pts += (-ex to -b)
+                pts += (ex to -b)
+                // Corner arcs, centres (+-ex, +-ey), walked angle-proportionally like the trim's.
+                fun arc(cx: Float, cy: Float, fromDeg: Double, toDeg: Double, skipLast: Boolean) {
+                    val steps = 16
+                    for (i in 1..steps) {
+                        if (skipLast && i == steps) break
+                        val th = Math.toRadians(fromDeg + (toDeg - fromDeg) * i / steps)
+                        pts += (cx + crx * cos(th).toFloat()) to (cy + cry * sin(th).toFloat())
+                    }
+                }
+                arc(ex, -ey, -90.0, 0.0, skipLast = false)
+                pts += (a to ey)
+                arc(ex, ey, 0.0, 90.0, skipLast = false)
+                pts += (-ex to b)
+                arc(-ex, ey, 90.0, 180.0, skipLast = false)
+                pts += (-a to -ey)
+                arc(-ex, -ey, 180.0, 270.0, skipLast = true)   // its end is the start point again
+                pts
+            }
+        }
+    }
+
+    /** The outline walk of a shape layer at its normalized time [n] (shape kinds only). */
+    private fun PathSpec.shapeWalk(n: Float): OutlineWalk {
+        val scl = scl?.valueAtEased(n) ?: listOf(1f, 1f)
+        val size = size?.valueAtEased(n) ?: listOf(100f, 100f)
+        val sx = scl.getOrNull(0) ?: 1f
+        val sy = scl.getOrNull(1) ?: sx
+        val a = (size.getOrNull(0) ?: 100f) * sx
+        val b = (size.getOrNull(1) ?: size.getOrNull(0) ?: 100f) * sy
+        return OutlineWalk(outlinePoints(kind, a, b, corner * sx, corner * sy), closed = true)
+    }
+
+    /** A line point in scene pixels, placed exactly as [readLineShape] places it. */
+    private fun PathSpec.linePoint(p: List<Float>, loc: List<Float>): Pair<Float, Float> {
+        val sclV = scl?.first() ?: listOf(1f, 1f)
+        val rotV = rot?.first()?.firstOrNull() ?: 0f
+        val px = (p[0] - (pivot.getOrNull(0) ?: 0f)) * (sclV.getOrNull(0) ?: 1f)
+        val py = (p[1] - (pivot.getOrNull(1) ?: 0f)) * (sclV.getOrNull(1) ?: sclV.getOrNull(0) ?: 1f)
+        val rad = Math.toRadians(rotV.toDouble())
+        val c = cos(rad).toFloat()
+        val s = sin(rad).toFloat()
+        return ((loc.getOrNull(0) ?: 0f) + px * c - py * s) to
+            ((loc.getOrNull(1) ?: 0f) + px * s + py * c)
+    }
+
+    /** The outline's total length (scene pixels) at scene time [sceneMs]. */
+    private fun PathSpec.lengthAt(sceneMs: Long): Float {
+        val n = if (durMs > 0L) ((sceneMs - startMs).toFloat() / durMs).coerceIn(0f, 1f) else 0f
+        if (kind == "LINE") {
+            val loc = loc?.valueAtEased(n) ?: listOf(0f, 0f)
+            val a = linePoint(p1 ?: return 0f, loc)
+            val b = linePoint(p2 ?: return 0f, loc)
+            return hypot(b.first - a.first, b.second - a.second)
+        }
+        return shapeWalk(n).total
+    }
+
+    /**
+     * The outline point at arc-length fraction [frac] at scene time [sceneMs], offset by [inset]
+     * along the path's left normal — for the clockwise outlines that normal points at the shape's
+     * interior, so a positive inset rides inside the outline (a circle's radius shrinks by it).
+     * The path layer's transform is applied around the point, so a moving / turning outline
+     * carries the follower with it.
+     */
+    private fun PathSpec.pointAt(sceneMs: Long, frac: Float, inset: Float): PathPoint {
+        val n = if (durMs > 0L) ((sceneMs - startMs).toFloat() / durMs).coerceIn(0f, 1f) else 0f
+        if (kind == "LINE") {
+            val loc = loc?.valueAtEased(n) ?: listOf(0f, 0f)
+            val a = linePoint(p1 ?: listOf(0f, 0f), loc)
+            val b = linePoint(p2 ?: listOf(0f, 0f), loc)
+            val walk = OutlineWalk(listOf(a, b), closed = false)
+            val p = walk.pointAt(frac)
+            return PathPoint(p.x - p.tanY * inset, p.y + p.tanX * inset, p.tanX, p.tanY)
+        }
+        val p = shapeWalk(n).pointAt(frac)
+        val ox = p.x - p.tanY * inset
+        val oy = p.y + p.tanX * inset
+        val loc = loc?.valueAtEased(n) ?: listOf(0f, 0f)
+        val rotDeg = rot?.valueAtEased(n)?.firstOrNull() ?: 0f
+        if (abs(rotDeg) < 1e-6f) {
+            return PathPoint((loc.getOrNull(0) ?: 0f) + ox, (loc.getOrNull(1) ?: 0f) + oy, p.tanX, p.tanY)
+        }
+        val rad = Math.toRadians(rotDeg.toDouble())
+        val c = cos(rad).toFloat()
+        val s = sin(rad).toFloat()
+        return PathPoint(
+            (loc.getOrNull(0) ?: 0f) + ox * c - oy * s, (loc.getOrNull(1) ?: 0f) + ox * s + oy * c,
+            p.tanX * c - p.tanY * s, p.tanX * s + p.tanY * c
+        )
+    }
+
+    /**
+     * `movealongpath3`: Alight's own rule (its Layer Parenting tutorial) — the layer moves along the
+     * vector outline of the layer just below it on the timeline; a layer with a parent would follow
+     * the parent's outline instead. The path belongs to another layer, so the request is only
+     * recorded here; [resolveMoveAlongPaths] bakes it once the whole scene is read.
+     */
+    private fun applyMoveAlongPath(fx: Element, el: Element, clip: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val progress = props["progress"]
+        if (progress == null) {
+            w += "Effect movealongpath3 on \"" + clip.name + "\" has no progress property: skipped"
+            return clip
+        }
+        if (ctx.pendingPaths.any { it.followerId == clip.id }) {
+            w += "Effect movealongpath3: layer \"" + clip.name + "\" already follows a path: the second one is skipped"
+            return clip
+        }
+        ctx.pendingPaths += PendingPath(
+            followerId = clip.id,
+            parented = el.getAttribute("parent").isNotEmpty(),
+            progress = progress,
+            angle = props["angle"],
+            tangent = (props["tangent"]?.scalarAt(0f) ?: 0f) >= 0.5f,
+            inset = props["inset"]
+        )
+        return clip
+    }
+
+    /**
+     * Pairs every recorded `movealongpath3` with the layer directly below its follower in the same
+     * scene (per-element slots, like [resolveMaskLinks]: a skipped element in between is a gap, not
+     * a path). The covered form is baked by [bakeMoveAlongPath]; the rest is reported, not guessed:
+     * a parented follower (Alight would follow the parent's outline, and layer parenting is not
+     * imported), a group follower (its stored pose is an anchor, not a plain position), a follower
+     * with no imported layer below it, and a layer below without a vector outline (text, group,
+     * audio — only shape layers register one).
+     */
+    private fun resolveMoveAlongPaths(directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx) {
+        if (ctx.pendingPaths.isEmpty()) return
+        val w = ctx.warnings
+        for (p in ctx.pendingPaths) {
+            val i = directSlots.indexOfFirst { it?.id == p.followerId }
+            val follower = if (i >= 0) directSlots[i] else null
+            if (follower == null) continue   // cannot happen: the follower was read in this scene
+            val below = if (i >= 1) directSlots[i - 1] else null
+            val spec = below?.let { ctx.outlineSpecs[it.id] }
+            when {
+                p.parented -> w += "Effect movealongpath3 on \"" + follower.name +
+                    "\": the layer is parented in Alight, so it would follow its parent's outline: not supported yet, skipped"
+                follower.type == LayerType.GROUP -> w += "Effect movealongpath3 on a group layer (\"" +
+                    follower.name + "\") is not supported yet: skipped"
+                below == null -> w += "Effect movealongpath3 on \"" + follower.name +
+                    "\": there is no imported layer below it to take the path from: skipped"
+                spec == null -> w += "Effect movealongpath3 on \"" + follower.name +
+                    "\": the layer below it (\"" + below.name + "\") has no vector outline to follow: skipped"
+                else -> {
+                    val baked = bakeMoveAlongPath(follower, spec, p, ctx)
+                    if (baked == null) {
+                        w += "Effect movealongpath3 on \"" + follower.name +
+                            "\": the outline of the layer below it has no length: skipped"
+                    } else {
+                        directSlots[i] = baked
+                        val fi = flat.indexOfFirst { it.id == follower.id }
+                        if (fi >= 0) flat[fi] = baked
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Bakes one `movealongpath3` into the follower's POSITION keyframes (and ROTATION when the
+     * effect turns the layer): samples sit on the scene's frames plus every keyframe of the
+     * progress / angle / inset tracks and of the path layer's own transform, so the corners stay
+     * exact; redundant keys are simplified away. Unlike the procedural bakes, the path REPLACES
+     * the layer's own position — Alight puts the layer ON the outline, its authored location is
+     * not added (the corpus layer's location sits ~9 px off its ring, an author's by-eye
+     * placement; adding it would throw the dot off the ring entirely). `progress` is the
+     * arc-length fraction along the outline, eased as Alight eases it; past the ends it wraps on
+     * a closed outline and clamps on a line. With `tangent` on, the layer's rotation follows the
+     * path's direction (plus the effect's `angle`, which also applies on its own); the composed
+     * rotation is unwrapped so a full turn stays a full turn instead of spinning back at the
+     * 180-degree seam. A follower that also carries a positional bake (oscillate / shake) loses
+     * it to the replacement — no corpus layer combines them.
+     */
+    private fun bakeMoveAlongPath(
+        follower: TimelineClip, spec: PathSpec, p: PendingPath, ctx: Ctx
+    ): TimelineClip? {
+        val durMs = follower.durationMs
+        if (durMs <= 0L) return null
+        val startMs = follower.startMs
+        if (spec.lengthAt(startMs + durMs / 2) < 1e-3f) return null
+        val extras = ArrayList<Long>()
+        for (t in listOf(p.progress, p.angle, p.inset)) {
+            t?.keys?.forEach { extras += (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }
+        }
+        for (t in listOf(spec.loc, spec.scl, spec.rot, spec.size)) {
+            t?.keys?.forEach { k ->
+                val local = spec.startMs + (k.t.coerceIn(0f, 1f) * spec.durMs).roundToLong() - startMs
+                if (local in 0..durMs) extras += local
+            }
+        }
+        val baseRot = follower.keyframes[AnimProp.ROTATION]
+        baseRot?.forEach { extras += it.timeMs }
+        val times = sampleTimes(durMs, ctx.fps, 0f, extras)
+        val closed = spec.kind != "LINE"
+        fun pointAt(t: Long): PathPoint {
+            val norm = t.toFloat() / durMs
+            val prog = p.progress.scalarAtEased(norm)
+            val frac = if (closed) {
+                val m = prog % 1f
+                if (m < 0f) m + 1f else m
+            } else prog.coerceIn(0f, 1f)
+            return spec.pointAt(startMs + t, frac, p.inset?.scalarAtEased(norm) ?: 0f)
+        }
+        val raw = times.map { t ->
+            val pt = pointAt(t)
+            Keyframe(t, ctx.posX(listOf(pt.x, pt.y)), ctx.posY(listOf(pt.x, pt.y)), Easing.LINEAR)
+        }
+        val keys = simplifyKeys(raw, 0.05f, 0.05f)
+        if (keys.size < 2) return null
+        var clip = follower.copy(keyframes = follower.keyframes + (AnimProp.POSITION to keys))
+        keys.firstOrNull()?.let { clip = clip.withProp(AnimProp.POSITION, it.a, it.b) }
+
+        val angleConst = p.angle?.scalarAtEased(0f) ?: 0f
+        val angleKeyframed = (p.angle?.keys?.size ?: 0) >= 2
+        if (p.tangent || angleKeyframed || abs(angleConst) > 1e-4f) {
+            var prev = Double.NaN
+            val rawRot = times.map { t ->
+                val norm = t.toFloat() / durMs
+                var total = (baseRot?.valueAt(t)?.first ?: follower.rotationDeg) +
+                    (p.angle?.scalarAtEased(norm) ?: 0f)
+                if (p.tangent) {
+                    val pt = pointAt(t)
+                    total += Math.toDegrees(atan2(pt.tanY.toDouble(), pt.tanX.toDouble())).toFloat()
+                }
+                if (!prev.isNaN()) {
+                    var adj = total.toDouble()
+                    while (adj - prev > 180.0) adj -= 360.0
+                    while (prev - adj > 180.0) adj += 360.0
+                    total = adj.toFloat()
+                }
+                prev = total.toDouble()
+                Keyframe(t, total, 0f, Easing.LINEAR)
+            }
+            val rotKeys = simplifyKeys(rawRot, 0.02f, 0.02f)
+            if (rotKeys.size >= 2) {
+                clip = clip.copy(keyframes = clip.keyframes + (AnimProp.ROTATION to rotKeys))
+                rotKeys.firstOrNull()?.let { clip = clip.withProp(AnimProp.ROTATION, it.a, 0f) }
+            }
+        }
+        return clip
     }
 
     // ---- transform + values -------------------------------------------------------------------------------------

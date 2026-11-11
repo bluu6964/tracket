@@ -234,7 +234,7 @@ fun CanvasArea(
                         tracks
                             .asReversed()
                             .flatMap { it.clips }
-                            .filter { it.isVisible && (it.type == LayerType.SHAPE || it.type == LayerType.NULL || it.type == LayerType.GROUP || it.type == LayerType.STICKER || it.text != null) && it.isActiveAt(t) }
+                            .filter { it.isVisible && !it.isMask && (it.type == LayerType.SHAPE || it.type == LayerType.NULL || it.type == LayerType.GROUP || it.type == LayerType.STICKER || it.text != null) && it.isActiveAt(t) }
                             .map { com.example.engine.NativeRenderAt.renderAt(it, t, t) }
                             .filter { !it.isBehindCamera }
                             .sortedBy { it.transformZ }

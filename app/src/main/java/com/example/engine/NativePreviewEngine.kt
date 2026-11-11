@@ -77,8 +77,9 @@ class NativePreviewEngine(context: Context) {
 
     // Text / shape / sticker layers: drawn by the C++ engines into frame-sized bitmaps, shown as textures on top of the pictures.
     // Layers that follow each other share one picture; a layer with a blend mode gets its own (same grouping as the export).
-    private class OverlayGroup(val ids: List<String>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false) {
+    private class OverlayGroup(val ids: List<String>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false, val masked: Boolean = false) {
         // fx = a layer with effects (Effects panel): always its own picture, the C++ effects run on it before it is drawn.
+        // masked = the layer is cut by a mask layer (Alight style): always its own picture, cut before upload.
         // pose = a layer turned in 3D / with its own pivot (OverlayPose.kt): drawn upright into its own picture, the
         // renderer places it. boxW / boxH = the layer's box at scale 1 (its pivot is a fraction of it).
         var boxW = 0f
@@ -546,7 +547,7 @@ class NativePreviewEngine(context: Context) {
         fun drawScope(scopeId: String?, depth: Int) {
             val clips = GroupOps.scopeTracks(liveTracks, scopeId).asReversed().flatMap { it.clips }
             val active = clips.filter {
-                it.isVisible && it.isActiveAt(t) &&
+                it.isVisible && !it.isMask && it.isActiveAt(t) &&
                     ((it.type == LayerType.VIDEO && it.uri != null) || it.type == LayerType.GROUP)
             }
             // Depth: nearer (bigger Z) layers later; equal Z keeps the lane order.
@@ -587,7 +588,7 @@ class NativePreviewEngine(context: Context) {
         val cacheKey = scopeId ?: ""
         var groups: List<OverlayGroup> = overlayCaches[cacheKey] ?: emptyList()
         val overlays = scopeClips
-            .filter { it.isVisible && (nativeTextEligible(it) || nativeShapeEligible(it)) }
+            .filter { it.isVisible && !it.isMask && (nativeTextEligible(it) || nativeShapeEligible(it)) }
         if (overlays.isEmpty()) {
             if (groups.isNotEmpty()) {
                 closeGroupList(r, groups)
@@ -595,12 +596,14 @@ class NativePreviewEngine(context: Context) {
             }
             return
         }
+        // Mask layers of this level (never drawn themselves): target id -> the mask that cuts it.
+        val maskByTarget = LayerMaskLinks.masksByTarget(scopeClips)
         // A layer with effects always gets its own picture, so the effects touch only that layer (text / shape / sticker).
         val rig = parentRig()
         val cam = CameraRig(liveTracks, rig)  // 3D camera: layers under a camera lane are placed by it (own upright picture)
         // Stacking key of a text / shape / sticker layer: its distance from the camera when one looks at it, else its own Z.
         fun overlayKey(c: TimelineClip): Float = cam.stackKey(c, t) ?: c.transformZ
-        class Slot(val clips: MutableList<TimelineClip>, val blendId: Int, val pose: Boolean, val fx: Boolean)
+        class Slot(val clips: MutableList<TimelineClip>, val blendId: Int, val pose: Boolean, val fx: Boolean, val masked: Boolean = false)
         val layout = ArrayList<Slot>()
         val lane = laneIndex()
         // Lane positions of the picture layers: overlays on both sides of one cannot share a picture (it would be between them).
@@ -617,11 +620,15 @@ class NativePreviewEngine(context: Context) {
             val hasFx = ClipFxLibrary.hasEffects(c.effects)
             if (overlayNeedsPose(c) || cam.affects(c)) {
                 layout.add(Slot(mutableListOf(c), spec.shaderId, true, hasFx))  // 3D / own pivot: always its own picture
+            } else if (maskByTarget.containsKey(c.id)) {
+                // Cut by a mask layer: the layer needs a picture of its own, or the cut would also take
+                // the layers it shares the picture with.
+                layout.add(Slot(mutableListOf(c), spec.shaderId, false, hasFx, masked = true))
             } else if (hasFx) {
                 layout.add(Slot(mutableListOf(c), spec.shaderId, false, true))
             } else if (spec.isNormal) {
                 val last = layout.lastOrNull()
-                if (last != null && last.blendId == 0 && !last.pose && !last.fx && !mediaBetween(last.clips.last(), c)) last.clips.add(c)
+                if (last != null && last.blendId == 0 && !last.pose && !last.fx && !last.masked && !mediaBetween(last.clips.last(), c)) last.clips.add(c)
                 else layout.add(Slot(mutableListOf(c), 0, false, false))
             } else {
                 layout.add(Slot(mutableListOf(c), spec.shaderId, false, false))
@@ -629,11 +636,12 @@ class NativePreviewEngine(context: Context) {
         }
         val same = groups.size == layout.size && layout.indices.all { i ->
             groups[i].blendId == layout[i].blendId && groups[i].pose == layout[i].pose && groups[i].fx == layout[i].fx &&
+                groups[i].masked == layout[i].masked &&
                 groups[i].ids == layout[i].clips.map { it.id }
         }
         if (!same) {
             closeGroupList(r, groups)
-            groups = layout.map { OverlayGroup(it.clips.map { c -> c.id }, it.blendId, it.pose, it.fx) }
+            groups = layout.map { OverlayGroup(it.clips.map { c -> c.id }, it.blendId, it.pose, it.fx, it.masked) }
             overlayCaches[cacheKey] = groups
         }
         val pw = PreviewFrameRef.widthPx
@@ -680,7 +688,16 @@ class NativePreviewEngine(context: Context) {
             } else texts.flatMap { RepeatEval.copiesOf(it) }
             // An imported text animator changes the picture with the time: the time is part of the key for those layers only.
             val animTimes = drawClips.map { if (it.textAnimators.isNotEmpty()) t else -1L }
-            val sig = listOf(drawClips, fonts, PreviewFrameRef.widthPx, w, h, pics.map { it != null }, stickerFrames, animTimes)
+            // The mask layer cutting this picture (a masked layer always has a picture of its own): the mask
+            // is evaluated like every layer and is part of the key, so the cut follows the mask's own
+            // animation. Outside the mask layer's own span there is no cut (the mask is not there then).
+            val maskAdj = if (g.masked && !g.pose) {
+                val mc = layout[i].clips.firstOrNull()?.id?.let { maskByTarget[it] }
+                if (mc != null && mc.isActiveAt(t)) {
+                    if (rig.hasLinks) rig.adjusted(mc, t) else NativeRenderAt.renderAt(mc, t)
+                } else null
+            } else null
+            val sig = listOf(drawClips, fonts, PreviewFrameRef.widthPx, w, h, pics.map { it != null }, stickerFrames, animTimes, maskAdj)
             if (sig != g.sig) {
                 bmp.eraseColor(0)
                 // A blended layer's opacity is applied by the blend shader, not in the picture.
@@ -698,6 +715,11 @@ class NativePreviewEngine(context: Context) {
                     } else if (!textPainter.draw(bmp, c, w, h, k, applyOpacity, cropFractionsOfClip(c), t)) {
                         Log.w(TAG, "native text: layer '${c.name}' was not drawn")
                     }
+                }
+                // The layer mask cuts the finished picture (before any effects, which run on the cut
+                // picture like on any other): the mask layer's own rendering, alpha only.
+                if (maskAdj != null && !applyLayerMask(bmp, maskAdj, w, h, k, dens, t)) {
+                    Log.w(TAG, "layer mask '${maskAdj.name}' was not drawn, its layer is shown uncut")
                 }
                 if (g.pose) {
                     val c0 = drawClips[0]
@@ -774,6 +796,35 @@ class NativePreviewEngine(context: Context) {
             fillRetryPosted = true
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ fillRetryPosted = false; requestFrame() }, 300L)
         }
+    }
+
+    /** Scratch picture a mask layer is drawn into before it cuts a masked layer's picture (see [applyLayerMask]). */
+    private var maskScratch: Bitmap? = null
+
+    /**
+     * Cuts [bmp] (a masked layer's own picture) by the mask layer's alpha: the mask layer is drawn into a
+     * scratch picture with the same painters and multiplied over the picture (DST_IN: the picture keeps
+     * only where the mask is). [mask] is the mask layer evaluated at the frame's time, so the cut follows
+     * its animation. False = the mask could not be drawn (the picture is left uncut).
+     */
+    private fun applyLayerMask(
+        bmp: Bitmap, mask: TimelineClip, w: Int, h: Int, k: Float, dens: Float, t: Long
+    ): Boolean {
+        var scratch = maskScratch
+        if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
+            scratch?.recycle()
+            scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            maskScratch = scratch
+        }
+        scratch.eraseColor(0)
+        val drawn = when (mask.type) {
+            LayerType.SHAPE -> shapePainter.drawShape(scratch, mask, w, h, k, dens, true, cropFractionsOfClip(mask))
+            LayerType.TEXT -> textPainter.draw(scratch, mask, w, h, k, true, cropFractionsOfClip(mask), t)
+            else -> false
+        }
+        if (!drawn) return false
+        android.graphics.Canvas(bmp).drawBitmap(scratch, 0f, 0f, MASK_DST_IN_PAINT)
+        return true
     }
 
     private fun logPoolStats() {
@@ -862,5 +913,10 @@ class NativePreviewEngine(context: Context) {
             0f, 0f, 1f, 0f,
             0f, 1f, 0f, 1f
         )
+
+        /** Alpha multiply of a layer mask (DST_IN): the picture keeps only where the mask layer is. */
+        val MASK_DST_IN_PAINT = android.graphics.Paint().apply {
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
+        }
     }
 }

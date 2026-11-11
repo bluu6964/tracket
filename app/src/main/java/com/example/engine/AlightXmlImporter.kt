@@ -262,17 +262,73 @@ object AlightXmlImporter {
 
     private fun readSceneContent(sceneEl: Element, ctx: Ctx): SceneBlock {
         val flat = ArrayList<TimelineClip>()
-        val direct = ArrayList<TimelineClip>()
+        // One slot per child element (null = the element produced no layer of this scene): a mask layer
+        // cuts the layer of the element directly before it, so the pairing must see the gaps too.
+        val directSlots = ArrayList<TimelineClip?>()
         for (el in elementChildren(sceneEl)) {
             when (el.tagName) {
-                "text" -> readText(el, ctx).let { flat += it; direct += it }
-                "shape" -> readShape(el, ctx)?.let { flat += it; direct += it }
-                "audio" -> readAudio(el, ctx).let { flat += it; direct += it }
-                "embedScene" -> readGroup(el, ctx)?.let { (block, group) -> flat += block; direct += group }
-                else -> ctx.warnings += "Layer <" + el.tagName + ">" + labelOf(el) + " is not supported yet: skipped"
+                "text" -> readText(el, ctx).let { flat += it; directSlots += it }
+                "shape" -> {
+                    val c = readShape(el, ctx)
+                    if (c != null) { flat += c; directSlots += c } else directSlots += null
+                }
+                "audio" -> readAudio(el, ctx).let { flat += it; directSlots += it }
+                "embedScene" -> {
+                    val g = readGroup(el, ctx)
+                    if (g != null) { flat += g.first; directSlots += g.second } else directSlots += null
+                }
+                else -> {
+                    ctx.warnings += "Layer <" + el.tagName + ">" + labelOf(el) + " is not supported yet: skipped"
+                    directSlots += null
+                }
             }
         }
-        return SceneBlock(flat, direct)
+        resolveMaskLinks(directSlots, flat, ctx)
+        return SceneBlock(flat, directSlots.filterNotNull())
+    }
+
+    /**
+     * Alight layer masks (`blending="mask"`): a mask layer is never drawn in Alight — it cuts the layer
+     * directly below it in the same scene, following its own animation. The imported mask clip stays in
+     * the model flagged [TimelineClip.isMask] (hidden, and the renderers never draw it); here it is
+     * linked to the layer below ([TimelineClip.maskTargetId]) and the renderers apply the cut. Only
+     * shape / text layers can be cut or serve as the mask in this pass — a mask over a group or a media
+     * layer, a mask over another mask, and a mask with no imported layer below it stay unlinked and are
+     * reported instead of being guessed at.
+     */
+    private fun resolveMaskLinks(directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx) {
+        val w = ctx.warnings
+        for (i in directSlots.indices) {
+            val m = directSlots[i] ?: continue
+            if (!m.isMask) continue
+            val below = directSlots.getOrNull(i - 1)
+            val linked = when {
+                below == null -> {
+                    w += "Mask layer \"" + m.name + "\" has no imported layer below it: imported hidden, it cuts nothing"
+                    false
+                }
+                below.isMask -> {
+                    w += "Mask layer \"" + m.name + "\" sits on another mask: imported hidden (stacked masks are not applied yet)"
+                    false
+                }
+                below.type != LayerType.SHAPE && below.type != LayerType.TEXT -> {
+                    w += "Mask layer \"" + m.name + "\" masks a " + below.type.displayName.lowercase() +
+                        " layer: imported hidden (a mask is applied to shape and text layers so far)"
+                    false
+                }
+                m.type != LayerType.SHAPE && m.type != LayerType.TEXT -> {
+                    w += "Mask layer \"" + m.name + "\" is not a shape or text layer: imported hidden, it cuts nothing"
+                    false
+                }
+                else -> true
+            }
+            if (linked && below != null) {
+                val copy = m.copy(maskTargetId = below.id)
+                directSlots[i] = copy
+                val fi = flat.indexOfFirst { it.id == m.id }
+                if (fi >= 0) flat[fi] = copy
+            }
+        }
     }
 
     // ---- audio --------------------------------------------------------------------------------------------------
@@ -403,6 +459,8 @@ object AlightXmlImporter {
             id = UUID.randomUUID().toString(),
             name = el.getAttribute("label").ifBlank { "Text" },
             type = LayerType.TEXT,
+            isVisible = !isMaskLayer(el),
+            isMask = isMaskLayer(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = 0xFF3992CE,
@@ -554,6 +612,7 @@ object AlightXmlImporter {
             name = el.getAttribute("label").ifBlank { "Shape" },
             type = LayerType.SHAPE,
             isVisible = !isMaskLayer(el),
+            isMask = isMaskLayer(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = SHAPE_COLOR,
@@ -662,6 +721,7 @@ object AlightXmlImporter {
             name = el.getAttribute("label").ifBlank { if (isArrow) "Arrow" else "Line" },
             type = LayerType.SHAPE,
             isVisible = !isMaskLayer(el),
+            isMask = isMaskLayer(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = SHAPE_COLOR,
@@ -715,15 +775,10 @@ object AlightXmlImporter {
 
     private fun warnBlending(el: Element, w: MutableList<String>) {
         val b = el.getAttribute("blending")
-        if (b.isEmpty()) return
-        if (b == "mask") {
-            // A mask layer is never drawn in Alight — it cuts the layer below it. The app cannot apply
-            // that cut yet, so the layer is imported hidden instead of as a normal filled layer (which
-            // painted e.g. ST Intro's yellow "Mask" circle over the end card in build 91).
-            w += "Layer" + labelOf(el) + " is a mask in Alight: imported hidden (applying the mask to the layer below is not supported yet)"
-        } else {
-            w += "Layer blending \"" + b + "\"" + labelOf(el) + " is not supported yet: imported as a normal layer"
-        }
+        // `blending="mask"` is not warned here: whether the mask can be applied is only known once the
+        // scene's layers are read (it cuts the layer below it) — resolveMaskLinks reports the outcome.
+        if (b.isEmpty() || b == "mask") return
+        w += "Layer blending \"" + b + "\"" + labelOf(el) + " is not supported yet: imported as a normal layer"
     }
 
     /** True when the layer is an Alight mask (`blending="mask"`): it must not be drawn itself. */

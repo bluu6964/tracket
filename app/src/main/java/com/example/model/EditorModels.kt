@@ -239,6 +239,14 @@ data class TimelineClip(
      * inside are cut at its ends) instead of always covering its layers, see [GroupOps.fitGroups].
      */
     val groupFreeLength: Boolean = false,
+    /**
+     * Alight Motion layer mask (`blending="mask"`): this layer is never drawn itself — it cuts the layer it
+     * sits on (see [maskTargetId]). Only the importer sets this. The renderers skip mask layers outright, so
+     * a mask can never be un-hidden into a normal (wrongly painted) layer.
+     */
+    val isMask: Boolean = false,
+    /** On a mask layer ([isMask]): the id of the layer it cuts — the layer directly below it in its Alight scene. Null = the mask cuts nothing. */
+    val maskTargetId: String? = null,
     /** Text animators imported from an Alight Motion XML (stored; drawn by the C++ text engine in a later step), see [TextAnimator]. */
     val textAnimators: List<TextAnimator> = emptyList()
 ) {

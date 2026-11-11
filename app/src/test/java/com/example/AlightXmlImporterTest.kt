@@ -461,6 +461,10 @@ $layers
         // x 0.380216 (the group's) x the 693 px app box = 246 px, Alight's 647 x 0.380216.
         val mask = clips.first { it.name == "Mask" }
         assertFalse(mask.isVisible)
+        // Build 94: the mask is flagged as a mask and linked to the layer below it (images.png), whose
+        // picture the renderers cut with it — it is no longer just a hidden layer.
+        assertTrue(mask.isMask)
+        assertEquals(clips.first { it.name == "images.png" }.id, mask.maskTargetId)
         val atCard = rig.adjusted(mask, 5500L)!!
         assertEquals(0f, atCard.transformX, 6f)
         assertEquals(0f, atCard.transformY, 6f)
@@ -587,8 +591,10 @@ $layers
         val r = threeResult()
         assertTrue(r.warnings.any { it.contains("solidcolor") })
         assertTrue(r.warnings.any { it.contains("movealongpath3") })
-        // Mask layers get their own warning since build 93 (they are imported hidden, not as normal layers).
-        assertTrue(r.warnings.any { it.contains("is a mask in Alight") })
+        // Both mask layers of the file sit on a shape / text layer, so since build 94 they are applied
+        // (linked to the layer below, see LayerMaskImportTest) and no mask warning is left. Before build
+        // 94 they were imported hidden with an "is a mask in Alight" warning.
+        assertTrue(r.warnings.none { it.contains("Mask layer") })
         assertTrue(r.warnings.any { it.contains("plain line") })
     }
 

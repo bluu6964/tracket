@@ -84,6 +84,16 @@ enum FxType : int {
     // v161: Solid Color (Alight Motion's `solidcolor`): the picture's colours are replaced by one
     // colour, its alpha silhouette kept — kFxColor mode 16. Accepted explicitly like 59 / 60.
     FX_SOLID_COLOR = 61,    // p0/p1/p2 the colour 0..255, p3 strength 0..100 (100 = fully flat)
+    // v162: Alight Motion's own Mirror and Glow Scan (AM's effect definitions were recovered).
+    // Mirror is shaded (kFxWarp mode 11): the WHOLE layer's sampling flipped — it is NOT
+    // FX_MIRROR above (a centre/angle reflect-half). Accepted explicitly like 59..61.
+    FX_AM_MIRROR = 62,      // p0 type (0 = horizontal flip, 1 = vertical), p1 blend mode (0 Normal, 1 Multiply,
+                            // 2 Screen, 3 Over, 4 Under), p2 alpha 0..100, p3 offset -200..200 (% of the layer)
+    // Glow Scan is a dedicated two-texture pass like FX_GLOW (the shader needs the layer AND its
+    // blurred copy), so it is not in fxShaderOf: runEffects dispatches it to Renderer::fxGlowScan.
+    FX_GLOW_SCAN = 63,      // p0 threshold 0..100, p1 radius 0..100, p2 power 0..4, p3 smoothing 0..200 (%:
+                            // AM's strength, the pre-blur), p4 fill 0..100, p5 alpha 0..100,
+                            // p6 fill colour packed 0xRRGGBB
     FX_MAX = FX_COPY_BG
 };
 
@@ -182,6 +192,26 @@ void fxColorTuneMap(float r, float g, float b, float liftHue, float liftStrength
 // is not touched by the effect, so it is not a parameter here.
 void fxSolidColorMap(float r, float g, float b, float cr, float cg, float cb, float strength,
                      float* outR, float* outG, float* outB);
+// CPU reference of Alight's Mirror blend (the same maths as kFxWarp mode 11): S is the pixel and F the
+// flipped pixel, both PREMULTIPLIED (r / g / b / a, 0..1); the blend mode is AM's (0 Normal, 1 Multiply,
+// 2 Screen, 3 Over, 4 Under) and the result is mixed over S by alpha (0..1). AM unpremultiplies S for
+// Multiply / Screen (texColor.rgb / texColor.a); the division is floored at 1e-5 so a fully transparent
+// pixel stays 0 instead of NaN — invisible, since the result is scaled by S.a there anyway.
+void fxMirrorMap(float sr, float sg, float sb, float sa, float fr, float fg, float fb, float fa,
+                 int blendMode, float alpha, float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Alight's Glow Scan (the same maths as Renderer::fxGlowScan's shader): `in` is the
+// layer pixel and `base` its blurred copy, both PREMULTIPLIED (0..1). threshold / radius / fill / alpha
+// are 0..1, power 0..4, the fill colour is straight r / g / b (0..1), blend 0..1 (AM multiplies it by
+// 0.99 in the glow mix). Outside the band the output is the input scaled by fill; inside, it mixes
+// toward base + glow by alpha. The rgb is clamped to the alpha at the end (the engine's premultiplied
+// invariant, the kGlowComp precedent) — a no-op on opaque layers.
+void fxGlowScanMap(float inR, float inG, float inB, float inA, float baseR, float baseG, float baseB, float baseA,
+                   float threshold, float radius, float power, float fillR, float fillG, float fillB,
+                   float blend, float fill, float alpha, float* outR, float* outG, float* outB, float* outA);
+// The FX_BLUR blurriness (p0) a Glow Scan smoothing value (%, AM strength x 100) produces: the
+// importer's applyGaussianBlur calibration (AM strength x 50), so the scan's pre-blur matches the
+// blur the same strength gives as a standalone effect.
+float fxGlowScanBlurriness(float smoothingPct);
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);
 // Units of the animated effects: phase of the Wave Warp / Turbulent Displace at a pattern frame (24 / s), in turns.

@@ -12,8 +12,9 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
     for (int i = 0; i + kFxStride <= n && count < kFxMaxOps; i += kFxStride) {
         const int t = (int)std::lround(flat[i]);
         // 55..58 are resolved by Kotlin before the engine (see FxType) and must never reach the shaders;
-        // 59 / 60 / 61 are shaded effects and are accepted explicitly.
-        if ((t < FX_BLUR || t > FX_MAX) && t != FX_LONG_SHADOW && t != FX_COLOR_TUNE && t != FX_SOLID_COLOR) continue;
+        // 59..63 are shaded / dedicated effects and are accepted explicitly.
+        if ((t < FX_BLUR || t > FX_MAX) && t != FX_LONG_SHADOW && t != FX_COLOR_TUNE && t != FX_SOLID_COLOR &&
+            t != FX_AM_MIRROR && t != FX_GLOW_SCAN) continue;
         FxOp& o = out[count++];
         o.type = t;
         for (int k = 0; k < 7; ++k) o.p[k] = flat[i + 1 + k];
@@ -217,6 +218,7 @@ FxShaderRef fxShaderOf(int type) {
         case FX_LONG_SHADOW: r = {FXG_BLUR2, 7}; break;
         case FX_COLOR_TUNE: r = {FXG_COLOR, 15}; break;
         case FX_SOLID_COLOR: r = {FXG_COLOR, 16}; break;
+        case FX_AM_MIRROR: r = {FXG_WARP, 11}; break;
         default: break;
     }
     return r;
@@ -279,6 +281,8 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_COLOR_TUNE:
             return std::fabs(p[1]) < 0.5f && std::fabs(p[2]) < 0.5f && std::fabs(p[4]) < 0.5f && std::fabs(p[5]) < 0.5f;
         case FX_SOLID_COLOR: return p[3] < 0.5f;   // strength 0 changes nothing
+        case FX_AM_MIRROR: return p[2] < 0.5f;   // alpha 0: the mix keeps the original everywhere
+        case FX_GLOW_SCAN: return p[5] < 0.5f && std::fabs(p[4] - 100.f) < 0.5f;   // no glow mix, input unscaled
         default: return false;
     }
 }
@@ -342,6 +346,74 @@ void fxSolidColorMap(float r, float g, float b, float cr, float cg, float cb, fl
     *outR = cl(r + (ch(cr) - r) * s);
     *outG = cl(g + (ch(cg) - g) * s);
     *outB = cl(b + (ch(cb) - b) * s);
+}
+
+void fxMirrorMap(float sr, float sg, float sb, float sa, float fr, float fg, float fb, float fa,
+                 int blendMode, float alpha, float* outR, float* outG, float* outB, float* outA) {
+    // The same maths as kFxWarp mode 11 (keep the two in step): AM's five blend branches over the
+    // premultiplied picture, then mix(original, result, alpha).
+    float rr, rg, rb, ra;
+    const float inv = 1.f / std::max(sa, 1e-5f);   // AM divides by texColor.a (see fx_plan.h)
+    switch (blendMode) {
+        case 1:   // Multiply: vec4((texColor.rgb / texColor.a) * color.rgb, 1) * texColor.a
+            rr = sr * fr; rg = sg * fg; rb = sb * fb; ra = sa;
+            break;
+        case 2:   // Screen: vec4(1 - (1 - texColor.rgb / texColor.a) * (1 - color.rgb), 1) * texColor.a
+            rr = (1.f - (1.f - sr * inv) * (1.f - fr)) * sa;
+            rg = (1.f - (1.f - sg * inv) * (1.f - fg)) * sa;
+            rb = (1.f - (1.f - sb * inv) * (1.f - fb)) * sa;
+            ra = sa;
+            break;
+        case 3:   // Over: the flipped picture composited over the original
+            rr = sr * (1.f - fa) + fr; rg = sg * (1.f - fa) + fg; rb = sb * (1.f - fa) + fb; ra = sa * (1.f - fa) + fa;
+            break;
+        case 4:   // Under: the original composited over the flipped picture
+            rr = fr * (1.f - sa) + sr; rg = fg * (1.f - sa) + sg; rb = fb * (1.f - sa) + sb; ra = fa * (1.f - sa) + sa;
+            break;
+        default:  // Normal: the flipped picture as it is
+            rr = fr; rg = fg; rb = fb; ra = fa;
+            break;
+    }
+    const float a = std::min(1.f, std::max(0.f, alpha));
+    *outR = sr + (rr - sr) * a;
+    *outG = sg + (rg - sg) * a;
+    *outB = sb + (rb - sb) * a;
+    *outA = sa + (ra - sa) * a;
+}
+
+void fxGlowScanMap(float inR, float inG, float inB, float inA, float baseR, float baseG, float baseB, float baseA,
+                   float threshold, float radius, float power, float fillR, float fillG, float fillB,
+                   float blend, float fill, float alpha, float* outR, float* outG, float* outB, float* outA) {
+    // The same maths as the fxGlowScan shader (keep the two in step): AM's recovered formula.
+    float mr = inR * fill, mg = inG * fill, mb = inB * fill, ma = inA * fill;
+    const float luma = 0.2126f * baseR + 0.7152f * baseG + 0.0722f * baseB;
+    const float adjT = threshold * (1.f + radius) - radius;
+    if (luma >= adjT && luma <= adjT + radius && radius > 1e-6f) {
+        const float halfR = radius * 0.5f;
+        const float lin = std::fabs((luma - adjT - halfR) / halfR);
+        const float ex = power * lin * lin;
+        const float bm = std::min(1.f, std::max(0.f, blend)) * 0.99f;
+        auto pw = [](float v, float e) { return std::pow(std::max(v, 0.f), e); };
+        const float gr = pw(baseR + (fillR * luma - baseR) * bm, ex);
+        const float gg = pw(baseG + (fillG * luma - baseG) * bm, ex);
+        const float gb = pw(baseB + (fillB * luma - baseB) * bm, ex);
+        const float ga = pw(baseA + (1.f * luma - baseA) * bm, ex);   // AM's fillColor alpha is 1
+        const float a = std::min(1.f, std::max(0.f, alpha));
+        mr += (baseR + gr - mr) * a;
+        mg += (baseG + gg - mg) * a;
+        mb += (baseB + gb - mb) * a;
+        ma += (baseA + ga - ma) * a;
+    }
+    *outA = std::min(1.f, std::max(0.f, ma));
+    auto cl = [&](float v) { return std::min(*outA, std::max(0.f, v)); };   // premultiplied invariant
+    *outR = cl(mr);
+    *outG = cl(mg);
+    *outB = cl(mb);
+}
+
+float fxGlowScanBlurriness(float smoothingPct) {
+    // AM strength x 50, the product clamped to the app's blur range (the applyGaussianBlur rule).
+    return std::min(100.f, std::max(0.f, smoothingPct * 0.5f));
 }
 
 float fxAutoPhase(int frame, float speed) { return (float)frame / 24.f * (speed / 100.f); }

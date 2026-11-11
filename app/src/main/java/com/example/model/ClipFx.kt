@@ -120,6 +120,24 @@ object ClipFxLibrary {
     // the colour is keyframed there — SolidColorEval then resolves [0..2] per frame from the clip's
     // FILL_COLOR track (which the importer stores for exactly that colour animation).
     const val SOLID_COLOR = "solid_color"
+    // v162: Alight Motion's own `mirror` and `glowscan`, from AM's recovered effect definitions
+    // (after-motion-dev/hunt-staging/def_mirror.xml / def_glowscan.xml). AM_MIRROR is NOT the app's
+    // MIRROR above (a centre/angle reflect-half): AM flips the WHOLE layer's sampling (type 0 =
+    // Horizontal, 1 = Vertical), blends the flipped picture over the original per blendMode
+    // (0 Normal, 1 Multiply, 2 Screen, 3 Over, 4 Under) and mixes by alpha. It is shaded
+    // (kFxWarp mode 11, native type 62). Values [0] type, [1] blendMode, [2] alpha %, [3] offset %.
+    // A keyframed alpha (15 of the 51 corpus instances: 0<->1 flip-flash pulses) rides the values
+    // tail from index 7 as a keyframe track — AmFxEval resolves [2] per frame.
+    const val AM_MIRROR = "am_mirror"
+    // GLOW_SCAN is a dedicated two-texture pass in the engine (native type 63, like Glow at 2):
+    // a gaussian-blurred copy of the layer (strength -> the blur, the applyGaussianBlur
+    // calibration) is scanned by luma; inside the [threshold, threshold+radius] band the blurred
+    // picture gains a pow() glow tinted toward fillColor. Values [0] threshold %, [1] radius %,
+    // [2] power, [3] smoothing (AM strength) %, [4] fill %, [5] alpha %, [6] the fill colour
+    // packed 0xRRGGBB (importer only, the Long Shadow pattern). AM's `blend` has no slot: the
+    // importer reports it when it is not 0 (it is 0 in all 8 corpus instances). A keyframed
+    // threshold (ALL 8 corpus instances — the sweep IS the effect) rides the tail like Mirror's.
+    const val GLOW_SCAN = "glow_scan"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -279,6 +297,35 @@ object ClipFxLibrary {
                 FxParamDef("Green", 0f, 255f, 255f),
                 FxParamDef("Blue", 0f, 255f, 255f),
                 FxParamDef("Strength", 0f, 100f, 100f, "%")
+            )
+        ),
+        // Alight Mirror: values [0] the flip (0 = horizontal, 1 = vertical), [1] the blend mode
+        // (0..4, AM's order: Normal / Multiply / Screen / Over / Under), [2] the alpha %,
+        // [3] the offset % added to the flipped coordinate. A keyframed alpha track may ride
+        // from index 7 (the importer's; AmFxEval resolves [2] per frame).
+        FxDef(
+            AM_MIRROR, 62, "Mirror (Alight)", "Distort", "The whole layer flipped and blended over itself (Alight Motion's Mirror)",
+            listOf(
+                FxParamDef("Flip", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Blend mode", 0f, 4f, 0f, "", step = 1f),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%"),
+                FxParamDef("Offset", -200f, 200f, 0f, "%")
+            )
+        ),
+        // Glow Scan: values [0] threshold %, [1] radius %, [2] power (AM's "Feather"),
+        // [3] smoothing % (AM's strength, the pre-blur), [4] fill %, [5] alpha %. Value [6]
+        // (the glow colour, packed 0xRRGGBB) is written by the Alight importer — and by
+        // [create] below with AM's default #0088FF — and survives panel edits like every
+        // value past the declared params. A keyframed threshold track may ride from index 7.
+        FxDef(
+            GLOW_SCAN, 63, "Glow Scan", "Light", "A glowing band sweeps the layer's brightness (Alight Motion's Glow Scan)",
+            listOf(
+                FxParamDef("Threshold", 0f, 100f, 50f, "%"),
+                FxParamDef("Radius", 0f, 100f, 10f, "%"),
+                FxParamDef("Power", 0f, 4f, 2f, "", step = 0.05f),
+                FxParamDef("Smoothing", 0f, 200f, 5f, "%"),
+                FxParamDef("Fill", 0f, 100f, 100f, "%"),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%")
             )
         ),
         FxDef(
@@ -729,7 +776,10 @@ object ClipFxLibrary {
 
     fun create(type: String): ClipFx? {
         val d = def(type) ?: return null
-        return ClipFx(type = type, values = d.params.map { it.default })
+        // Glow Scan's glow colour rides past the declared params (see its def): a panel-made
+        // one starts from Alight's own default, #0088FF.
+        val extra = if (type == GLOW_SCAN) listOf(0x0088FF.toFloat()) else emptyList()
+        return ClipFx(type = type, values = d.params.map { it.default } + extra)
     }
 
     /**

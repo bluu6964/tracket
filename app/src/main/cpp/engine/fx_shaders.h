@@ -4,7 +4,8 @@
 //   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
 //               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize,
 //               15 colour tune, 16 solid colour
-//   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake
+//   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake,
+//               11 Alight mirror (whole-layer flip + blend)
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare
 // All of them work on the premultiplied picture the layer shader uses (top of the picture at v = 1), take the raw slider
 // values in uP[0..6] (documented at FxType in fx_plan.h) and write a premultiplied picture. Texture reads inside loops
@@ -536,6 +537,34 @@ float fbm(vec3 p, int oct) {
 }
 
 void main() {
+    if (uMode == 11) {
+        // Alight Motion's Mirror (AM's own recovered shader, fx_plan.cpp fxMirrorMap is the CPU
+        // twin): the whole layer flipped — type 0 flips x, type 1 flips y, the offset is added to
+        // the flipped coordinate — blended over the original per blendMode, mixed by alpha. The
+        // flipped sample is read directly (NOT through pic(): outside the layer Alight samples
+        // transparency, not a mirrored wrap). Both pictures are premultiplied here.
+        vec4 S = textureLod(uTex, vUv, 0.0);
+        vec2 fuv = vUv;
+        float off = clamp(uP[3], -200.0, 200.0) / 100.0;
+        if (uP[0] > 0.5) fuv.y = 1.0 - vUv.y + off; else fuv.x = 1.0 - vUv.x + off;
+        vec4 F = vec4(0.0);
+        if (all(greaterThanEqual(fuv, vec2(0.0))) && all(lessThanEqual(fuv, vec2(1.0)))) F = textureLod(uTex, fuv, 0.0);
+        vec4 R;
+        int bm = int(uP[1] + 0.5);
+        if (bm == 1) {
+            R = vec4((S.rgb / max(S.a, 1e-5)) * F.rgb, 1.0) * S.a;
+        } else if (bm == 2) {
+            R = vec4(1.0 - (1.0 - S.rgb / max(S.a, 1e-5)) * (1.0 - F.rgb), 1.0) * S.a;
+        } else if (bm == 3) {
+            R = S * (1.0 - F.a) + F;
+        } else if (bm == 4) {
+            R = F * (1.0 - S.a) + S;
+        } else {
+            R = F;
+        }
+        oColor = mix(S, R, clamp(uP[2], 0.0, 100.0) / 100.0);
+        return;
+    }
     vec2 p = toP(vUv);
     vec2 q = p;
     vec2 qr = q, qb = q;  // the red / blue sample positions of the lens distortion colour fringes

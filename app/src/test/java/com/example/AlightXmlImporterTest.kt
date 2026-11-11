@@ -1,6 +1,7 @@
 package com.example
 
 import com.example.engine.AlightXmlImporter
+import com.example.engine.AmFxEval
 import com.example.engine.CounterEval
 import com.example.engine.ParentRig
 import com.example.engine.RepeatEval
@@ -2200,20 +2201,85 @@ $layers
     }
 
     @Test
-    fun glowScanAndMirrorStayWarned() {
-        // Every glowscan in the corpus is the same copied preset (identical radius / power / strength),
-        // so its transfer function cannot be separated; mirror's single instance carries a `type` enum
-        // whose meaning no reachable Alight doc pins down. Both stay skipped, honestly.
-        val g = AlightXmlImporter.parse(shapeWith(
-            """<effect id="com.alightcreative.effects.glowscan" locallyApplied="false"><property name="threshold" type="float"><kf t="0.016508" v="0.080000" /><kf t="0.983492" v="1.000000" /></property><property name="radius" type="float" value="0.100000" /><property name="power" type="float" value="2.000000" /><property name="strength" type="float" value="0.050000" /><property name="fillColor" type="color" value="#ff0088ff" /><property name="blend" type="float" value="0.000000" /><property name="fill" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /></effect>"""
-        ), 1080f)
-        assertTrue(g.warnings.any { it.contains("glowscan is not supported yet: skipped") })
-        assertTrue(g.snapshot.tracks.flatMap { it.clips }.all { it.effects.isEmpty() })
-        val m = AlightXmlImporter.parse(shapeWith(
+    fun mirrorImportsAsTheAlightMirrorFx() {
+        // Verbatim from edit-winkoko-preset.xml (the static-alpha majority: 36 of 51 instances).
+        // AM's mirror is the whole-layer flip (type 0 = Horizontal), NOT the app's centre/angle
+        // Mirror: it lands as its own fx with no warning.
+        val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.mirror" locallyApplied="false"><property name="type" type="int" value="0" /><property name="blendMode" type="int" value="0" /><property name="alpha" type="float" value="1.000000" /><property name="offset" type="float" value="0.000000" /></effect>"""
         ), 1080f)
-        assertTrue(m.warnings.any { it.contains("mirror is not supported yet: skipped") })
-        assertTrue(m.snapshot.tracks.flatMap { it.clips }.all { it.effects.isEmpty() })
+        assertTrue(r.warnings.none { it.contains("mirror is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.AM_MIRROR }
+        assertEquals(listOf(0f, 0f, 100f, 0f, 0f, 0f, 0f), fx.values)   // no tail: a static alpha
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(62f, arr[0], 0.001f)   // native type 62 (kFxWarp mode 11)
+        assertEquals(100f, arr[3], 0.001f)   // alpha rides at values[2]
+    }
+
+    @Test
+    fun keyframedMirrorAlphaRidesTheTailAndResolves() {
+        // Verbatim from winkoko-preset-may24.xml: alpha pulses 0 -> 1 over keys at t = 0.032407
+        // and t = 1.875 (outside the layer span — Alight clamps / interpolates across it), the
+        // end key eased (0.42, 0, 0.58, 1). The track rides the values tail; AmFxEval resolves
+        // values[2] per frame.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.mirror" locallyApplied="false"><property name="type" type="int" value="0" /><property name="blendMode" type="int" value="0" /><property name="alpha" type="float"><kf t="1.875000" v="1.000000" e="cubicBezier 0.42 0.0 0.58 1.0" /><kf t="0.032407" v="0.000000" /></property><property name="offset" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("mirror is not supported") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.AM_MIRROR }
+        assertEquals(0f, fx.values[2], 0.001f)          // the value at the layer's start
+        assertEquals(2f, fx.values[7], 0.001f)          // tail: two keys
+        assertEquals(0.032407f, fx.values[8], 0.0001f)  // key 0: t, v, linear easing
+        assertEquals(0f, fx.values[9], 0.001f)
+        assertEquals(1.875f, fx.values[14], 0.0001f)    // key 1: t past the span, eased
+        assertEquals(1f, fx.values[15], 0.001f)
+        assertEquals(0.42f, fx.values[16], 0.001f)
+        assertEquals(0.58f, fx.values[18], 0.001f)
+        // Half-way through the 2000 ms layer the eased pulse is at ~13.3 %.
+        val mid = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs / 2).single()
+        assertEquals(13.318f, mid.values[2], 0.05f)
+        // The tail survives resolution (resolving twice changes nothing).
+        assertEquals(mid.values, AmFxEval.resolve(listOf(mid), clip, clip.startMs + clip.durationMs / 2).single().values)
+    }
+
+    @Test
+    fun glowScanImportsWithItsKeyframedThresholdTail() {
+        // Verbatim from text-motion-graphics-preset.xml (the visible instance; two more in that
+        // file are hidden="true" and stay skipped as hidden). Threshold sweeps 0.08 -> 1.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.glowscan" locallyApplied="false"><property name="threshold" type="float"><kf t="0.016508" v="0.080000" /><kf t="0.983492" v="1.000000" /></property><property name="radius" type="float" value="0.100000" /><property name="power" type="float" value="2.000000" /><property name="strength" type="float" value="0.050000" /><property name="fillColor" type="color" value="#ff0088ff" /><property name="blend" type="float" value="0.000000" /><property name="fill" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("glowscan is not supported") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.GLOW_SCAN }
+        assertEquals(
+            listOf(8f, 10f, 2f, 5f, 100f, 100f, 0x0088FF.toFloat()),
+            fx.values.subList(0, 7)
+        )
+        assertEquals(2f, fx.values[7], 0.001f)   // the threshold tail: two keys
+        val start = AmFxEval.resolve(listOf(fx), clip, clip.startMs).single()
+        assertEquals(8f, start.values[0], 0.001f)
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(100f, end.values[0], 0.001f)
+        val arr = ClipFxLibrary.toNative(listOf(end))!!
+        assertEquals(63f, arr[0], 0.001f)        // native type 63
+        assertEquals(100f, arr[1], 0.001f)       // the resolved threshold rides at values[0]
+    }
+
+    @Test
+    fun glowScanYuraProfileDiffersInPowerAndStrength() {
+        // Verbatim from yura-preset-9x16.xml: the second-value evidence that un-parked the
+        // effect — power 4 (not 2), strength 0.10 (not 0.05), threshold sweeping 0 -> 1.
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.glowscan" locallyApplied="false"><property name="threshold" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="1.000000" /></property><property name="radius" type="float" value="0.100000" /><property name="power" type="float" value="4.000000" /><property name="strength" type="float" value="0.100000" /><property name="fillColor" type="color" value="#ff0088ff" /><property name="blend" type="float" value="0.000000" /><property name="fill" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /></effect>"""
+        ))
+        val fx = c.effects.single { it.type == ClipFxLibrary.GLOW_SCAN }
+        assertEquals(0f, fx.values[0], 0.001f)
+        assertEquals(4f, fx.values[2], 0.001f)
+        assertEquals(10f, fx.values[3], 0.001f)
+        val quarter = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs / 4).single()
+        assertEquals(25f, quarter.values[0], 0.001f)   // linear sweep: a quarter in, a quarter up
     }
 
     @Test

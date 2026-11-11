@@ -207,8 +207,10 @@ class NativeProjectExporter(private val context: Context) {
                 val cam = CameraRig(tracks, rig)
                 val camK = if (previewW > 0f) w / previewW else 1f
                 // Effects as the renderer runs them this frame: Motion Blur is resolved from the
-                // layer's own motion over one export frame, and a keyframed Solid Color takes its
-                // colour from the layer's colour track. [sample] is the clip the motion is
+                // layer's own motion over one export frame, a keyframed Solid Color takes its
+                // colour from the layer's colour track, and the Alight Mirror / Glow Scan take
+                // their keyframed alpha / threshold from their values tails (AmFxEval). [sample]
+                // is the clip the motion is
                 // sampled from — the original, not the rendered copy, so a rig adjustment can never
                 // hide the keyframes.
                 val frameMs = 1000L / fps
@@ -216,7 +218,7 @@ class NativeProjectExporter(private val context: Context) {
                 fun fxOpsOf(c: TimelineClip, timeMs: Long, sample: TimelineClip = c): FloatArray? =
                     ClipFxLibrary.toNative(
                         SolidColorEval.resolve(
-                            MotionBlurEval.resolve(c.effects, { ms ->
+                            MotionBlurEval.resolve(AmFxEval.resolve(c.effects, c, timeMs), { ms ->
                                 NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
                             }, timeMs, frameMs, canvasH),
                             c, timeMs

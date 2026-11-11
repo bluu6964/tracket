@@ -187,6 +187,8 @@ object AlightXmlImporter {
     const val LONGSHADOW2 = "com.alightcreative.effects.longshadow2"
     const val RAYS = "com.alightcreative.effects.rays"
     const val COLORTUNE2 = "com.alightcreative.effects.colortune2"
+    const val MIRROR = "com.alightcreative.effects.mirror"
+    const val GLOWSCAN = "com.alightcreative.effects.glowscan"
     const val MOTIONBLUR = "com.alightcreative.effects.motionblur"
     const val MOTIONBLUR2 = "com.alightcreative.effects.motionblur2"
     const val MOTIONBLUR4 = "com.alightcreative.effects.motionblur4"
@@ -1474,6 +1476,8 @@ object AlightXmlImporter {
                 LONGSHADOW, LONGSHADOW2 -> applyLongShadow(fx, clip, ctx, id)
                 RAYS -> applyRays(fx, clip, ctx)
                 COLORTUNE2 -> applyColorTune(fx, clip, ctx)
+                MIRROR -> applyMirror(fx, clip, ctx)
+                GLOWSCAN -> applyGlowScan(fx, clip, ctx)
                 else -> {
                     ctx.warnings += "Effect " + id.substringAfterLast('.') + " is not supported yet: skipped"
                     clip
@@ -2210,6 +2214,77 @@ object AlightXmlImporter {
             listOf(lift[0], lift[1], lift[2], gain[0], gain[1], gain[2]),
             "colortune2"
         )
+    }
+
+    /** A scalar track as an [AmFxEval] values tail, or empty when the track is not animated. */
+    private fun trackTail(t: Track?): List<Float> {
+        if (t == null || t.keys.size < 2) return emptyList()
+        return AmFxEval.encodeTrack(t.keys.map { k -> Triple(k.t, k.v.firstOrNull() ?: 0f, k.easing) })
+    }
+
+    /**
+     * `mirror` -> the app's Mirror (Alight) — NOT the app's own centre/angle Mirror: Alight flips
+     * the WHOLE layer's sampling (type 0 = Horizontal, 1 = Vertical, from AM's own effect
+     * definition), blends the flipped picture over the original per blendMode (0 Normal,
+     * 1 Multiply, 2 Screen, 3 Over, 4 Under) and mixes by alpha; `offset` is added to the
+     * flipped coordinate. Corpus: 51 instances, all type / blendMode / offset at the defaults;
+     * alpha is static 1 in 36 and KEYFRAMED (0<->1 flip-flash pulses) in 15 — the keyframed
+     * alpha rides the values tail and [AmFxEval] resolves it per frame.
+     */
+    private fun applyMirror(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val type = (props["type"]?.firstValue(w, "mirror", "type") ?: 0f).toInt().coerceIn(0, 1)
+        val blend = (props["blendMode"]?.firstValue(w, "mirror", "blendMode") ?: 0f).toInt().coerceIn(0, 4)
+        val offset = (props["offset"]?.firstValue(w, "mirror", "offset") ?: 0f) * 100f
+        val alphaT = props["alpha"]
+        val alpha = (alphaT?.valueAtEased(0f)?.firstOrNull() ?: 1f) * 100f
+        val values = listOf(
+            type.toFloat(), blend.toFloat(),
+            alpha.coerceIn(0f, 100f), offset.coerceIn(-200f, 200f),
+            0f, 0f, 0f
+        ) + trackTail(alphaT)
+        return addFx(clip0, ctx, ClipFxLibrary.AM_MIRROR, values, "mirror")
+    }
+
+    /**
+     * `glowscan` -> the app's Glow Scan, Alight's own formula (its effect definition was
+     * recovered): a gaussian-blurred copy of the layer (strength feeds the blur — the
+     * [applyGaussianBlur] calibration) is scanned by luma; inside the band
+     * [threshold*(1+radius)-radius, +radius] the blurred picture gains a pow() glow tinted
+     * toward fillColor. Corpus: 8 instances — radius 0.1, fillColor #FF0088FF, blend 0,
+     * fill / alpha 1 everywhere; power 2 (4 in yura-preset-9x16), strength 0.05 (0.10 there);
+     * threshold is KEYFRAMED in all 8 (the sweep IS the effect), so it rides the values tail
+     * and [AmFxEval] resolves it per frame. AM's `blend` has no native slot and is reported
+     * when it is not 0.
+     */
+    private fun applyGlowScan(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val thrT = props["threshold"]
+        val threshold = (thrT?.valueAtEased(0f)?.firstOrNull() ?: 0.5f) * 100f
+        val radius = (props["radius"]?.firstValue(w, "glowscan", "radius") ?: 0.1f) * 100f
+        val power = props["power"]?.firstValue(w, "glowscan", "power") ?: 2f
+        val strength = (props["strength"]?.firstValue(w, "glowscan", "strength") ?: 0.05f) * 100f
+        val fillT = props["fillColor"]
+        if (fillT != null && fillT.keys.size >= 2) {
+            w += "Effect glowscan: keyframed fillColor is not supported yet: the first value is used"
+        }
+        val packed = if (fillT != null) (unpacked(fillT.valueAt(0f)) and 0xFFFFFFL).toFloat() else 0x0088FF.toFloat()
+        val blend = props["blend"]?.scalarAt(0f) ?: 0f
+        if (abs(blend) > 1e-4f) w += "Effect glowscan: its blend setting is not reproduced"
+        val fill = (props["fill"]?.firstValue(w, "glowscan", "fill") ?: 1f) * 100f
+        val alpha = (props["alpha"]?.firstValue(w, "glowscan", "alpha") ?: 1f) * 100f
+        val values = listOf(
+            threshold.coerceIn(0f, 100f),
+            radius.coerceIn(0f, 100f),
+            power.coerceIn(0f, 4f),
+            strength.coerceIn(0f, 200f),
+            fill.coerceIn(0f, 100f),
+            alpha.coerceIn(0f, 100f),
+            packed
+        ) + trackTail(thrT)
+        return addFx(clip0, ctx, ClipFxLibrary.GLOW_SCAN, values, "glowscan")
     }
 
     /** `exposure` -> the app's Exposure: stops as-is, offset 0..1 -> -100..100, gamma as a percent. */

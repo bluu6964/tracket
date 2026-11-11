@@ -29,7 +29,7 @@ namespace am {
 namespace {
 
 enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, EF_GRAIN, EF_VIG, EF_MASK, EF_MASK_APPLY, EF_CHROMA,
-             EF_BLUR2, EF_COLOR, EF_WARP, EF_STYLE, EF_COPYBG, EF_COUNT };  // eff_[] in renderer.h has room for 16
+             EF_BLUR2, EF_COLOR, EF_WARP, EF_STYLE, EF_COPYBG, EF_GLOW_SCAN, EF_COUNT };  // eff_[] in renderer.h has room for 20
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -182,6 +182,39 @@ void main() {
     float a = c.a + ga * (1.0 - c.a);
     rgb += amDither();
     oColor = vec4(clamp(rgb, 0.0, a), a);
+}
+)";
+
+// Glow Scan (Alight Motion's `glowscan`, its recovered shader; fx_plan.cpp fxGlowScanMap is the CPU
+// twin): uTex = the layer, uBlur = its blurred copy. uBand = (threshold, radius, power, blend) in
+// Alight units, uFillColor the glow colour (straight), uMix = (fill, alpha). Inside the luma band the
+// blurred picture gains pow(mix(base, fillColor * luma, blend * 0.99), power * lin^2); the result is
+// clamped to the premultiplied invariant like kGlowComp. uBand.w (blend) is always 0 for now: the
+// parameter has no native slot — the importer reports a non-zero blend instead of faking it.
+const char* kGlowScan = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec4 uBand;
+uniform vec3 uFillColor;
+uniform vec2 uMix;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 base = texture(uBlur, vUv);
+    vec4 mainC = texture(uTex, vUv) * uMix.x;
+    float luma = dot(base.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float adjT = uBand.x * (1.0 + uBand.y) - uBand.y;
+    vec4 outC = mainC;
+    if (uBand.y > 1e-6 && luma >= adjT && luma <= adjT + uBand.y) {
+        float halfR = uBand.y * 0.5;
+        float lin = abs((luma - adjT - halfR) / halfR);
+        vec4 glow = pow(max(mix(base, vec4(uFillColor, 1.0) * luma, uBand.w * 0.99), vec4(0.0)), vec4(uBand.z * lin * lin));
+        outC = mix(mainC, base + glow, uMix.y);
+    }
+    outC.a = clamp(outC.a, 0.0, 1.0);
+    outC.rgb = clamp(outC.rgb, 0.0, outC.a);
+    oColor = outC;
 }
 )";
 
@@ -438,8 +471,8 @@ void main() {
 )";
 
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
-                                  fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg};
-static_assert(EF_COUNT <= 16, "eff_[] in renderer.h is too small");
+                                  fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan};
+static_assert(EF_COUNT <= 20, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -604,9 +637,10 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_VIGNETTE: ok = fxVignette(op, W, H, cur); break;
             case FX_CHROMA: ok = fxChroma(op, W, H, cur); break;
             case FX_COPY_BG: ok = fxCopyBg(op, W, H, cur); break;
+            case FX_GLOW_SCAN: ok = fxGlowScan(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
-                // v160, the long shadow / colour tune at 59 / 60); anything else here is not for the engine.
+                // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
                 if (fxShaderOf(op.type).group != FXG_NONE) ok = fxShaded(op, W, H, cur, fx.grainFrame);
                 break;
         }
@@ -783,6 +817,42 @@ bool Renderer::fxGlow(const FxOp& op, int W, int H, int* cur) {
     glUniform1i(loc(comp, "uTex"), 0);
     glUniform1i(loc(comp, "uGlow"), 1);
     glUniform1f(loc(comp, "uGain"), gp.intensity * 2.f);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Glow Scan (Alight): the layer's own blurred copy is made with the standalone blur machinery, then
+// the scan shader mixes it with the preserved original by the luma band. The original is preserved
+// in the TOP pyramid level: fxBlur's pyramid uses levels 0..4 at most (its shift caps at 5), and a
+// Glow running earlier in the same chain has finished with the levels by the time this runs.
+bool Renderer::fxGlowScan(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_GLOW_SCAN), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    FxOp blurOp;
+    blurOp.type = FX_BLUR;
+    blurOp.p[0] = fxGlowScanBlurriness(op.p[3]);
+    if (!fxBlur(blurOp, W, H, cur)) return false;   // the blurred copy, back in `cur` (a no-op under sigma 0.25)
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    auto cl01 = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
+    glUniform4f(loc(prog, "uBand"), cl01(op.p[0]), cl01(op.p[1]),
+                std::min(4.f, std::max(0.f, op.p[2])), 0.f);   // blend: no native slot yet (see kGlowScan)
+    const int packed = (int)std::lround(op.p[6]);
+    glUniform3f(loc(prog, "uFillColor"), ((packed >> 16) & 0xFF) / 255.f, ((packed >> 8) & 0xFF) / 255.f,
+                (packed & 0xFF) / 255.f);
+    glUniform2f(loc(prog, "uMix"), cl01(op.p[4]), cl01(op.p[5]));
     draw();
     *cur = dst;
     return true;

@@ -324,6 +324,80 @@ int main() {
             CHECK(std::fabs(r - g) < 1e-5f && std::fabs(g - b) < 1e-5f && r > 0.4f && r < 0.6f, "lift luminance lifts a dark grey evenly");
         }
     }
+    // 13. Alight Mirror (62) + Glow Scan (63): parsing, dispatch, identity, and the CPU twins of
+    // the two shaders (AM's recovered formulas).
+    {
+        float flat[16] = {62, 0, 0, 100, 0, 0, 0, 0, 63, 50, 10, 2, 5, 100, 100, 35071};
+        FxOp ops[kFxMaxOps];
+        CHECK(fxParseOps(flat, 16, ops) == 2 && ops[0].type == FX_AM_MIRROR && ops[1].type == FX_GLOW_SCAN &&
+              ops[1].p[6] == 35071.f, "mirror + glow scan parsed");
+        CHECK(fxShaderOf(FX_AM_MIRROR).group == FXG_WARP && fxShaderOf(FX_AM_MIRROR).mode == 11, "mirror is warp mode 11");
+        CHECK(fxShaderOf(FX_GLOW_SCAN).group == FXG_NONE, "glow scan is a dedicated pass, not a shaded mode");
+        for (int t = FX_DIR_BLUR; t <= FX_LAST; ++t)
+            CHECK(!(fxShaderOf(t).group == FXG_WARP && fxShaderOf(t).mode == 11), "type %d collides with AM mirror", t);
+        CHECK(!(fxShaderOf(FX_LONG_SHADOW).group == FXG_WARP && fxShaderOf(FX_LONG_SHADOW).mode == 11), "long shadow collides");
+        CHECK(!(fxShaderOf(FX_COLOR_TUNE).group == FXG_WARP && fxShaderOf(FX_COLOR_TUNE).mode == 11), "colour tune collides");
+        CHECK(!(fxShaderOf(FX_SOLID_COLOR).group == FXG_WARP && fxShaderOf(FX_SOLID_COLOR).mode == 11), "solid colour collides");
+        FxOp m0{FX_AM_MIRROR, {0, 0, 0, 0, 0, 0, 0}};
+        CHECK(fxIsIdentity(m0), "mirror alpha 0 is neutral");
+        m0.p[2] = 100;
+        CHECK(!fxIsIdentity(m0), "mirror alpha 100 runs");
+        FxOp s0{FX_GLOW_SCAN, {50, 10, 2, 5, 100, 0, 35071}};
+        CHECK(fxIsIdentity(s0), "glow scan alpha 0 at fill 100 is neutral");
+        s0.p[5] = 100;
+        CHECK(!fxIsIdentity(s0), "glow scan runs");
+        s0.p[5] = 0;
+        s0.p[4] = 50;
+        CHECK(!fxIsIdentity(s0), "glow scan fill 50 still scales the input");
+
+        float r, g, b, a;
+        // Mirror blends (S and F premultiplied): Normal is the flipped pixel, mixed by alpha.
+        fxMirrorMap(0.2f, 0.4f, 0.6f, 1.f, 0.9f, 0.8f, 0.7f, 1.f, 0, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.9f) < 1e-6f && std::fabs(g - 0.8f) < 1e-6f && std::fabs(a - 1.f) < 1e-6f, "mirror normal = flipped");
+        fxMirrorMap(0.2f, 0.4f, 0.6f, 1.f, 0.9f, 0.8f, 0.7f, 1.f, 0, 0.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.2f) < 1e-6f && std::fabs(b - 0.6f) < 1e-6f, "mirror alpha 0 = original");
+        fxMirrorMap(0.2f, 0.4f, 0.6f, 1.f, 0.9f, 0.8f, 0.7f, 1.f, 0, 0.5f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.55f) < 1e-6f, "mirror alpha 50 = midpoint");
+        // Multiply: (S.rgb / S.a) * F.rgb, re-scaled by S.a — with S.a = 0.5 that is S.rgb * F.rgb.
+        fxMirrorMap(0.5f, 0.25f, 0.f, 0.5f, 0.2f, 0.2f, 0.2f, 1.f, 1, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.1f) < 1e-6f && std::fabs(g - 0.05f) < 1e-6f && std::fabs(a - 0.5f) < 1e-6f, "mirror multiply");
+        // Screen on a straight 0.5 grey: (1 - (1 - 0.5)(1 - 0.5)) * 0.5 = 0.375.
+        fxMirrorMap(0.25f, 0.25f, 0.25f, 0.5f, 0.5f, 0.5f, 0.5f, 1.f, 2, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.375f) < 1e-6f && std::fabs(a - 0.5f) < 1e-6f, "mirror screen");
+        // Over / Under are the two premultiplied composites.
+        fxMirrorMap(0.2f, 0.f, 0.f, 0.5f, 0.f, 0.4f, 0.f, 0.5f, 3, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.1f) < 1e-6f && std::fabs(g - 0.4f) < 1e-6f && std::fabs(a - 0.75f) < 1e-6f, "mirror over");
+        fxMirrorMap(0.2f, 0.f, 0.f, 0.5f, 0.f, 0.4f, 0.f, 0.5f, 4, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.2f) < 1e-6f && std::fabs(g - 0.2f) < 1e-6f && std::fabs(a - 0.75f) < 1e-6f, "mirror under");
+        // A transparent original must not NaN through the unpremultiply.
+        fxMirrorMap(0.f, 0.f, 0.f, 0.f, 0.5f, 0.5f, 0.5f, 1.f, 1, 1.f, &r, &g, &b, &a);
+        CHECK(r == 0.f && g == 0.f && b == 0.f && a == 0.f, "mirror multiply on transparency stays 0");
+
+        // Glow Scan: outside the band the output is the input scaled by fill.
+        fxGlowScanMap(0.1f, 0.2f, 0.3f, 1.f, 0.1f, 0.2f, 0.3f, 1.f, 0.9f, 0.1f, 2.f, 0.f, 0.f, 0.f, 0.f, 1.f, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.1f) < 1e-6f && std::fabs(g - 0.2f) < 1e-6f && std::fabs(a - 1.f) < 1e-6f, "glow scan outside the band");
+        fxGlowScanMap(0.1f, 0.2f, 0.3f, 1.f, 0.1f, 0.2f, 0.3f, 1.f, 0.9f, 0.1f, 2.f, 0.f, 0.f, 0.f, 0.f, 0.5f, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.05f) < 1e-6f && std::fabs(a - 0.5f) < 1e-6f, "glow scan fill scales the input");
+        // Band centre (luma 0.5, threshold 0.5, radius 0.1): lin = 0, the glow is pow(x, 0) = 1
+        // per channel, so base + glow saturates to white at alpha 1.
+        fxGlowScanMap(0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.1f, 2.f, 0.f, 0.f, 0.f, 0.f, 1.f, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 1.f) < 1e-6f && std::fabs(g - 1.f) < 1e-6f && std::fabs(a - 1.f) < 1e-6f, "glow scan band centre saturates");
+        // Inside the band near its edge (adjT 0.49, luma 0.5, radius 0.1): lin = 0.8, the glow
+        // exponent is power * lin^2 = 1.28, glow = pow(0.5, 1.28) = 0.4118: out = 0.9118.
+        fxGlowScanMap(0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.5f, 0.5f, 1.f, 0.536364f, 0.1f, 2.f, 0.f, 0.f, 0.f, 0.f, 1.f, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.9118f) < 2e-3f && std::fabs(g - 0.9118f) < 2e-3f, "glow scan inside the band");
+        // Blend 1 toward a red fill colour at the same spot: the glow's red is unchanged
+        // (mix(0.5, 1 * luma, 0.99) = 0.5) but its green collapses to pow(0.005, 1.28) ~ 0.001.
+        fxGlowScanMap(0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.5f, 0.5f, 1.f, 0.536364f, 0.1f, 2.f, 1.f, 0.f, 0.f, 1.f, 1.f, 1.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.9118f) < 2e-3f && std::fabs(g - 0.5011f) < 2e-3f && std::fabs(b - 0.5011f) < 2e-3f, "glow scan blend tints the glow");
+        // Alpha 0 inside the band: the input (times fill) is kept.
+        fxGlowScanMap(0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.1f, 2.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, &r, &g, &b, &a);
+        CHECK(std::fabs(r - 0.5f) < 1e-6f, "glow scan alpha 0 keeps the input");
+        // The pre-blur calibration: AM strength x 50 (0.05 -> 2.5, 0.10 -> 5, capped at 100).
+        CHECK(std::fabs(fxGlowScanBlurriness(5.f) - 2.5f) < 1e-6f, "glow scan blurriness 0.05");
+        CHECK(std::fabs(fxGlowScanBlurriness(10.f) - 5.f) < 1e-6f, "glow scan blurriness 0.10");
+        CHECK(std::fabs(fxGlowScanBlurriness(400.f) - 100.f) < 1e-6f, "glow scan blurriness capped");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

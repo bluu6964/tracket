@@ -108,6 +108,13 @@ float burnCh(float b, float s) {
     if (s <= 0.0) { return 0.0; }
     return 1.0 - min(1.0, (1.0 - b) / s);
 }
+// Alight Motion's Soft Overlay, from its recovered blend shader: an Overlay-style step on the
+// BACKDROP picks between the two Soft Light branches. (AM writes smoothstep(0.5, 0.5, bot),
+// whose edges are equal; that is a hard step at 0.5 in practice.)
+float softOverlayCh(float b, float s) {
+    float t = step(0.5, b);
+    return t * (1.0 - (1.0 - b) * (1.0 - (s - 0.5))) + (1.0 - t) * (b * (s + 0.5));
+}
 float dodgeCh(float b, float s) {
     if (b <= 0.0) { return 0.0; }
     if (s >= 1.0) { return 1.0; }
@@ -130,8 +137,10 @@ vec3 blendFn(int m, vec3 b, vec3 s) {
     if (m == 30) { return overlayV(b, s); }
     if (m == 31) { return softV(b, s); }
     if (m == 32) { return overlayV(s, b); }
+    if (m == 33) { return vec3(softOverlayCh(b.r, s.r), softOverlayCh(b.g, s.g), softOverlayCh(b.b, s.b)); }
     if (m == 40) { return abs(b - s); }
     if (m == 41) { return b + s - 2.0 * b * s; }
+    if (m == 42) { return max(b - s, vec3(0.0)); }
     if (m == 50) { return setLum(setSat(s, sat(b)), lum(b)); }
     if (m == 51) { return setLum(setSat(b, sat(s)), lum(b)); }
     if (m == 52) { return setLum(s, lum(b)); }

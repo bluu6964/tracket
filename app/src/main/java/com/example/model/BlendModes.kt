@@ -52,9 +52,15 @@ object BlendModes {
         BlendSpec("Overlay", "Contrast", 30, BlendKind.COLOR),
         BlendSpec("Soft Light", "Contrast", 31, BlendKind.COLOR),
         BlendSpec("Hard Light", "Contrast", 32, BlendKind.COLOR),
+        // Alight Motion's own mode (its recovered blend shader tests the BACKDROP like Overlay
+        // but blends with the Soft Light branches): no Compose equivalent, the editor canvas
+        // falls back to SrcOver; the native preview / export shader implements it exactly.
+        BlendSpec("Soft Overlay", "Contrast", 33, BlendKind.COLOR),
         // Difference
         BlendSpec("Difference", "Difference", 40, BlendKind.COLOR),
         BlendSpec("Exclusion", "Difference", 41, BlendKind.COLOR),
+        // Alight Motion's Subtract (recovered shader: backdrop − source, clamped at 0).
+        BlendSpec("Subtract", "Difference", 42, BlendKind.COLOR),
         // Color
         BlendSpec("Hue", "Color", 50, BlendKind.COLOR),
         BlendSpec("Saturation", "Color", 51, BlendKind.COLOR),

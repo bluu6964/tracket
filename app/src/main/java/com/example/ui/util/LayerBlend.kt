@@ -18,7 +18,10 @@ private const val LUMA_R = 0.2126f
 private const val LUMA_G = 0.7152f
 private const val LUMA_B = 0.0722f
 
-/** Compose blend mode of a colour blend (matte modes use [matteFilter] instead). */
+/** Compose blend mode of a colour blend (matte modes use [matteFilter] instead).
+ *  "Subtract" and "Soft Overlay" (Alight Motion modes) have no Compose equivalent and fall
+ *  back to SrcOver here: the editor canvas shows them unblended, while the native preview
+ *  and the export (cpp/engine/renderer.cpp blendFn) apply them exactly. */
 fun composeBlendMode(spec: BlendSpec): BlendMode = when (spec.name) {
     "Darken" -> BlendMode.Darken
     "Multiply" -> BlendMode.Multiply

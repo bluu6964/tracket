@@ -59,6 +59,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 import kotlin.math.sin
+import kotlin.math.tan
 
 /**
  * Alight Motion XML (`<scene> ... </scene>`) -> a new After Motion project. Pure Kotlin (no Android classes).
@@ -315,6 +316,14 @@ object AlightXmlImporter {
                     if (c != null) { flat += c; directSlots += c } else directSlots += null
                 }
                 "audio" -> readAudio(el, ctx).let { flat += it; directSlots += it }
+                "drawing" -> {
+                    val g = readDrawing(el, ctx)
+                    if (g != null) { flat += g.first; directSlots += g.second } else directSlots += null
+                }
+                "camera" -> {
+                    val c = readCamera(el, ctx)
+                    if (c != null) { flat += c; directSlots += c } else directSlots += null
+                }
                 "embedScene" -> {
                     val g = readGroup(el, ctx)
                     if (g != null) { flat += g.first; directSlots += g.second } else directSlots += null
@@ -526,6 +535,7 @@ object AlightXmlImporter {
             rotationDeg = rotV?.firstOrNull() ?: 0f,
             opacity = ((opaV?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             keyframes = keyframes,
+            blendMode = amBlendMode(el, w),
             textAnimators = animators
         )
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.TEXT)
@@ -551,6 +561,7 @@ object AlightXmlImporter {
         if (kind == ".line" || kind == ".arrow") return readLineShape(el, ctx, kind)
         // No `s` kind but a <path> child: a freehand vector layer (whole presets are built from them).
         if (kind.isEmpty() && child(el, "path") != null) return readPathShape(el, ctx)
+        if (kind == ".multifoil") return readMultifoilShape(el, ctx)
         val pattern = when (kind) {
             ".rect" -> "RECT"
             ".circle" -> "CIRCLE"
@@ -608,7 +619,7 @@ object AlightXmlImporter {
         val fillSpeed = if (fillMode == FILL_VIDEO && el.getAttribute("mediaFillMode") == "stretch" &&
             fillOutMs > fillInMs && (fillOutMs - fillInMs) != durMs
         ) (fillOutMs - fillInMs).toFloat() / durMs else 1f
-        warnBlending(el, w)
+        val blendMode = amBlendMode(el, w)
 
         // Stroke: <path-stroke><color/><size/></path-stroke>; a disabled one draws nothing. The size is kept
         // raw here and converted once the rendered width is known (the app scales a stroke with its layer,
@@ -711,6 +722,7 @@ object AlightXmlImporter {
             scalePercent = rendW / box * 100f,
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+            blendMode = blendMode,
             keyframes = keyframes
         )
         // The layer's vector outline, lent to a `movealongpath3` on the layer above it (see PathSpec).
@@ -720,6 +732,103 @@ object AlightXmlImporter {
             scl = tr.scl, rot = tr.rot, size = sizeT, corner = cornerLocal
         )
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
+    }
+
+    /**
+     * A `.multifoil` shape: Alight's foil star — [pointCount] lobes whose tips lie on the outer
+     * radius and whose valleys lie on the inner radius. The outline is NOT a plain star polygon:
+     * AM's own shape definition (recovered from the public decompiled AM assets,
+     * assets/shapes/multifoil.xml) builds each tip as a SMOOTH bezier point whose handles sit
+     * perpendicular to the radius, half the inner circumference per point (pw = pi * inner / count)
+     * to either side, so the lobes come out as rounded petals and the valleys as sharp corners.
+     * This is a line-by-line port of that script's getPath into [PathSeg]s, finished by the shared
+     * path-shape tail ([finishPathShape]). The four parameters are plain properties; a keyframed
+     * one keeps its first value with a warning, like a shape's corner radius.
+     */
+    private fun readMultifoilShape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        fun prop(name: String, def: Float): Float {
+            val t = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == name }
+                ?.let { readTrack(it) } ?: return def
+            if (t.keys.size >= 2) w += "Keyframed \"" + name + "\" of a multifoil is not supported yet: the first value is used"
+            return t.first().firstOrNull() ?: def
+        }
+        val count = prop("pointCount", 5f).roundToInt().coerceIn(3, 32)
+        val outerR = prop("outerRadius", 100f)
+        val innerR = prop("innerRadius", 50f)
+        val offsetRad = Math.toRadians(prop("offsetAngle", 0f).toDouble())
+        if (outerR < 1e-6f) {
+            w += "Layer <shape>" + labelOf(el) + ": its outer radius is 0: skipped"
+            return null
+        }
+        val per = 2.0 * Math.PI / count
+        val pw = Math.PI * innerR / count
+        // AM's points, in order: a smooth outer tip (in / out handles), then a sharp inner valley,
+        // per point; the path closes from the last valley back to the first tip.
+        class Tip(val ix: Float, val iy: Float, val x: Float, val y: Float, val ox: Float, val oy: Float)
+        val tips = ArrayList<Tip>()
+        val valleys = ArrayList<Pair<Float, Float>>()
+        for (i in 0 until count) {
+            val a = per * i + Math.PI / 2.0 + offsetRad
+            val x = (outerR * cos(a)).toFloat()
+            val y = (-outerR * sin(a)).toFloat()
+            val px = y / outerR
+            val py = -x / outerR
+            tips += Tip(
+                x - (px * pw).toFloat(), y - (py * pw).toFloat(), x, y,
+                x + (px * pw).toFloat(), y + (py * pw).toFloat()
+            )
+            val a2 = a + per / 2.0
+            valleys += (innerR * cos(a2)).toFloat() to (-innerR * sin(a2)).toFloat()
+        }
+        val segs = ArrayList<PathSeg>()
+        val t0 = tips[0]
+        segs += PathSeg(PATH_OP_MOVE, listOf(t0.x, t0.y))
+        for (i in 0 until count) {
+            val tip = tips[i]
+            val v = valleys[i]
+            val next = tips[(i + 1) % count]
+            // Tip -> valley (the tip's out handle leads, the valley is a corner), then
+            // valley -> next tip (the tip's in handle lands it smoothly).
+            segs += PathSeg(PATH_OP_CUBIC, listOf(tip.ox, tip.oy, v.first, v.second, v.first, v.second))
+            segs += PathSeg(PATH_OP_CUBIC, listOf(v.first, v.second, next.ix, next.iy, next.x, next.y))
+        }
+        segs += PathSeg(PATH_OP_CLOSE, emptyList())
+        return finishPathShape(el, ctx, segs)
+    }
+
+    /** A raw outline normalised for storage (see [normalisePathSegs]): the stored segments, the bounding box's centre and larger half extent, and the flattened outline points. */
+    private class PathNorm(
+        val segments: List<PathSeg>, val half: Float, val cx: Float, val cy: Float,
+        val flat: List<Pair<Float, Float>>
+    )
+
+    /**
+     * Normalises a raw outline (absolute points in a layer's own frame) for storage as
+     * [TimelineClip.pathSegments]: the segments are centred on the outline's bounding box and
+     * divided by its larger half extent — a UNIFORM divisor, so a flat outline's stroke is not
+     * squashed (see [readPathShape]). Null when the outline has no drawable extent (no points,
+     * or a single point).
+     */
+    private fun normalisePathSegs(raw: List<PathSeg>): PathNorm? {
+        val flat = flattenPathSegments(raw)
+        if (flat.isEmpty()) return null
+        var minX = Float.POSITIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY
+        var maxX = Float.NEGATIVE_INFINITY
+        var maxY = Float.NEGATIVE_INFINITY
+        for ((x, y) in flat) {
+            minX = minOf(minX, x); minY = minOf(minY, y)
+            maxX = maxOf(maxX, x); maxY = maxOf(maxY, y)
+        }
+        val cx = (minX + maxX) / 2f
+        val cy = (minY + maxY) / 2f
+        val half = maxOf((maxX - minX) / 2f, (maxY - minY) / 2f)
+        if (half < 1e-6f) return null
+        val segments = raw.map { seg ->
+            PathSeg(seg.op, seg.pts.mapIndexed { i, v -> if (i % 2 == 0) (v - cx) / half else (v - cy) / half })
+        }
+        return PathNorm(segments, half, cx, cy, flat)
     }
 
     /**
@@ -745,29 +854,29 @@ object AlightXmlImporter {
             return null
         }
         val raw = parsePathData(d, w, el) ?: return null
-        val flat = flattenPathSegments(raw)
-        if (flat.isEmpty()) {
-            w += "Layer <shape>" + labelOf(el) + ": its path has no points: skipped"
+        return finishPathShape(el, ctx, raw)
+    }
+
+    /**
+     * The shared tail of every path-outline shape (a freehand `<path>` shape, a `.multifoil` star,
+     * and — with its own paint — a `<drawing>` stroke): the outline [raw] (absolute points in the
+     * layer's own frame) is normalised onto its bounding box and built into a PATH clip with the
+     * element's fill / stroke / transform, exactly as [readPathShape] documents.
+     */
+    private fun finishPathShape(el: Element, ctx: Ctx, raw: List<PathSeg>): TimelineClip? {
+        val w = ctx.warnings
+        val norm = normalisePathSegs(raw)
+        if (norm == null) {
+            w += "Layer <shape>" + labelOf(el) +
+                if (flattenPathSegments(raw).isEmpty()) ": its path has no points: skipped"
+                else ": its path is a single point: skipped"
             return null
         }
-        var minX = Float.POSITIVE_INFINITY
-        var minY = Float.POSITIVE_INFINITY
-        var maxX = Float.NEGATIVE_INFINITY
-        var maxY = Float.NEGATIVE_INFINITY
-        for ((x, y) in flat) {
-            minX = minOf(minX, x); minY = minOf(minY, y)
-            maxX = maxOf(maxX, x); maxY = maxOf(maxY, y)
-        }
-        val cx = (minX + maxX) / 2f
-        val cy = (minY + maxY) / 2f
-        val half = maxOf((maxX - minX) / 2f, (maxY - minY) / 2f)
-        if (half < 1e-6f) {
-            w += "Layer <shape>" + labelOf(el) + ": its path is a single point: skipped"
-            return null
-        }
-        val segments = raw.map { seg ->
-            PathSeg(seg.op, seg.pts.mapIndexed { i, v -> if (i % 2 == 0) (v - cx) / half else (v - cy) / half })
-        }
+        val flat = norm.flat
+        val cx = norm.cx
+        val cy = norm.cy
+        val half = norm.half
+        val segments = norm.segments
 
         val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
         val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
@@ -809,7 +918,7 @@ object AlightXmlImporter {
         val fillSpeed = if (fillMode == FILL_VIDEO && el.getAttribute("mediaFillMode") == "stretch" &&
             fillOutMs > fillInMs && (fillOutMs - fillInMs) != durMs
         ) (fillOutMs - fillInMs).toFloat() / durMs else 1f
-        warnBlending(el, w)
+        val blendMode = amBlendMode(el, w)
 
         var strokeColor = 0xFFFFFFFFL
         var strokeSz = 0f
@@ -907,6 +1016,7 @@ object AlightXmlImporter {
             scalePercent = rendW / box * 100f,
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+            blendMode = blendMode,
             keyframes = keyframes
         )
         // The layer's own outline, lent to a `movealongpath3` on the layer above it (see PathSpec):
@@ -1167,7 +1277,7 @@ object AlightXmlImporter {
             strokeEl?.let { child(it, "color") }?.let { parseColor(it.getAttribute("value")) }
                 ?: child(el, "fillColor")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
         }
-        warnBlending(el, w)
+        val blendMode = amBlendMode(el, w)
         w += if (isArrow) "Arrow" + labelOf(el) + " is imported as a plain line: its head is not drawn yet"
         else "Line" + labelOf(el) + " is imported as a thin rectangle"
 
@@ -1207,6 +1317,7 @@ object AlightXmlImporter {
             scalePercent = length / box * 100f,
             rotationDeg = angle,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+            blendMode = blendMode,
             keyframes = keyframes
         )
         // A line's outline is its segment (see PathSpec); the points are the raw local ones.
@@ -1247,12 +1358,44 @@ object AlightXmlImporter {
         }.distinctBy { it.timeMs }
     }
 
-    private fun warnBlending(el: Element, w: MutableList<String>) {
+    /**
+     * The app blend mode an Alight layer's `blending` attribute maps to (the clip's `blendMode` name).
+     * Every value the renderers can honour is mapped — the standard W3C family (AM's own recovered
+     * blend shaders agree with the W3C formulas for those) plus AM's two own modes, Subtract and
+     * Soft Overlay, whose shaders were recovered from the public decompiled AM assets and are now
+     * implemented in the native blend pass. `blending="mask"` is not a blend: whether the mask can
+     * be applied is only known once the scene's layers are read (it cuts the layer below it) —
+     * resolveMaskLinks reports the outcome, so it maps to Normal here without a warning. A value
+     * with no counterpart (divide, linear-burn, vivid-light, ...) keeps the old warning verbatim.
+     */
+    private fun amBlendMode(el: Element, w: MutableList<String>): String {
         val b = el.getAttribute("blending")
-        // `blending="mask"` is not warned here: whether the mask can be applied is only known once the
-        // scene's layers are read (it cuts the layer below it) — resolveMaskLinks reports the outcome.
-        if (b.isEmpty() || b == "mask") return
-        w += "Layer blending \"" + b + "\"" + labelOf(el) + " is not supported yet: imported as a normal layer"
+        if (b.isEmpty() || b == "mask") return "Normal"
+        return when (b) {
+            "normal" -> "Normal"
+            "darken" -> "Darken"
+            "multiply" -> "Multiply"
+            "color-burn" -> "Color Burn"
+            "lighten" -> "Lighten"
+            "screen" -> "Screen"
+            "color-dodge" -> "Color Dodge"
+            "linear-dodge", "add" -> "Add"
+            "overlay" -> "Overlay"
+            "soft-light" -> "Soft Light"
+            "hard-light" -> "Hard Light"
+            "soft-overlay" -> "Soft Overlay"
+            "difference" -> "Difference"
+            "exclude", "exclusion" -> "Exclusion"
+            "subtract" -> "Subtract"
+            "hue" -> "Hue"
+            "saturation" -> "Saturation"
+            "color" -> "Color"
+            "luminosity", "luminance" -> "Luminosity"
+            else -> {
+                w += "Layer blending \"" + b + "\"" + labelOf(el) + " is not supported yet: imported as a normal layer"
+                "Normal"
+            }
+        }
     }
 
     /** True when the layer is an Alight mask (`blending="mask"`): it must not be drawn itself. */
@@ -1352,10 +1495,210 @@ object AlightXmlImporter {
             scalePercent = scalePct(tr.scl?.first() ?: listOf(1f, 1f)),
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+            blendMode = amBlendMode(el, w),
             keyframes = keyframes
         )
         val groupFx = applyLayerEffects(el, group, ctx, durMs, FxTarget.GROUP)
         return (remapped + groupFx) to groupFx
+    }
+
+    /**
+     * A `<drawing>` layer: Alight's freehand vector drawing — a list of `<stroke>` children, each a
+     * sampled polyline (`points` = "x, y, pressure" triples in the layer's own frame, offsets from
+     * its location) with its own colour / width / type. It imports as a GROUP layer (carrying the
+     * drawing's own transform, span, blending and effects) holding one PATH-shape child per stroke,
+     * in stroke order: a `pen` / `brush` stroke is an open stroked polyline, a `fill` stroke is its
+     * outline filled (closed). A brush's width follows the points' pressure in Alight; the app draws
+     * a constant width — every corpus point has pressure 1.00 (where constant IS exact), and a
+     * varying pressure is reported rather than faked. The children live in the drawing's local frame
+     * (offsets from its anchor), tied to the group by a zero pivot, so the group carries them
+     * exactly; each child's stored position is its outline's box centre in that frame (the shared
+     * path normalisation, [normalisePathSegs]).
+     */
+    private fun readDrawing(el: Element, ctx: Ctx): Pair<List<TimelineClip>, TimelineClip>? {
+        val w = ctx.warnings
+        val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
+        val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
+        val durMs = (endMs - startMs).coerceAtLeast(100L)
+        val label = el.getAttribute("label").ifBlank { "Drawing" }
+
+        var pressureVaries = false
+        val children = ArrayList<TimelineClip>()
+        val strokeEls = elementChildren(el).filter { it.tagName == "stroke" }
+        for ((index, st) in strokeEls.withIndex()) {
+            val pts = ArrayList<Pair<Float, Float>>()
+            for (p in st.getAttribute("points").split(';')) {
+                val f = p.split(',').map { it.trim().toFloatOrNull() }
+                val x = f.getOrNull(0)
+                val y = f.getOrNull(1)
+                if (x == null || y == null) continue
+                val pr = f.getOrNull(2)
+                if (pr != null && abs(pr - 1f) > 1e-6f) pressureVaries = true
+                pts += x to y
+            }
+            if (pts.size < 2) continue
+            val type = st.getAttribute("type")
+            if (type != "pen" && type != "brush" && type != "fill") {
+                w += "Drawing" + labelOf(el) + ": stroke type \"" + type + "\" is not supported yet: drawn as a pen stroke"
+            }
+            val filled = type == "fill"
+            val segs = ArrayList<PathSeg>()
+            segs += PathSeg(PATH_OP_MOVE, listOf(pts[0].first, pts[0].second))
+            for (i in 1 until pts.size) segs += PathSeg(PATH_OP_LINE, listOf(pts[i].first, pts[i].second))
+            if (filled) segs += PathSeg(PATH_OP_CLOSE, emptyList())
+            val norm = normalisePathSegs(segs) ?: continue
+            val color = parseColor(st.getAttribute("color")) ?: 0xFFFFFFFFL
+            val width = st.getAttribute("width").toFloatOrNull() ?: 0f
+            val box = ctx.shapeBoxPx
+            val rendW = 2f * norm.half
+            // Same stroke rule as the path shapes: the stored dp is the width's share of the
+            // outline's rendered width (the app scales a stroke with its layer).
+            val strokeWidth = if (!filled && width > 0f && rendW > 0f) APP_SHAPE_BOX_DP * width / rendW else 0f
+            children += TimelineClip(
+                id = UUID.randomUUID().toString(),
+                name = if (strokeEls.size > 1) label + " " + (index + 1) else label,
+                type = LayerType.SHAPE,
+                startMs = startMs.coerceAtLeast(0L),
+                durationMs = durMs,
+                color = SHAPE_COLOR,
+                textColor = color,
+                fillMode = if (filled) FILL_SOLID else FILL_NONE,
+                shapePattern = "PATH",
+                pathSegments = norm.segments,
+                shapeScaleX = rendW / box,
+                shapeScaleY = rendW / box,
+                strokeWidth = strokeWidth,
+                strokeColor = color,
+                transformX = norm.cx * ctx.k,
+                transformY = norm.cy * ctx.k,
+                shapeOffsetX = norm.cx * ctx.k,
+                shapeOffsetY = norm.cy * ctx.k,
+                scalePercent = rendW / box * 100f,
+                opacity = 100f
+            )
+        }
+        if (children.isEmpty()) {
+            w += "Layer <drawing>" + labelOf(el) + ": it has no drawable strokes: skipped"
+            return null
+        }
+        if (pressureVaries) {
+            w += "Drawing" + labelOf(el) + ": its brush pressure is not reproduced (a constant width is drawn)"
+        }
+
+        val tr = readTransform(el, w, pivotUsed = false)
+        val groupId = UUID.randomUUID().toString()
+        val link = ParentLink(groupId, 0f, 0f, 100f, 0f)
+        val linked = children.map { it.copy(groupId = groupId, parent = link) }
+
+        fun scalePct(v: List<Float>): Float {
+            if (v.size >= 2 && abs(v[0] - v[1]) > 1e-3f) w += "Non-uniform scale: only the horizontal scale is used"
+            return (v.firstOrNull() ?: 1f) * 100f
+        }
+        val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
+        fun keys(prop: AnimProp, t: Track?, map: (List<Float>) -> Pair<Float, Float>) {
+            val l = trackKeys(t, durMs, map)
+            if (l.isNotEmpty()) keyframes[prop] = l
+        }
+        keys(AnimProp.POSITION, tr.loc) { ctx.posX(it) to ctx.posY(it) }
+        keys(AnimProp.SCALE, tr.scl) { scalePct(it) to 0f }
+        keys(AnimProp.ROTATION, tr.rot) { (it.firstOrNull() ?: 0f) to 0f }
+        keys(AnimProp.OPACITY, tr.opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
+
+        val group = TimelineClip(
+            id = groupId,
+            name = label,
+            type = LayerType.GROUP,
+            startMs = startMs.coerceAtLeast(0L),
+            durationMs = durMs,
+            color = GROUP_COLOR,
+            transformX = ctx.posX(tr.loc?.first() ?: emptyList()),
+            transformY = ctx.posY(tr.loc?.first() ?: emptyList()),
+            scalePercent = scalePct(tr.scl?.first() ?: listOf(1f, 1f)),
+            rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
+            opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+            blendMode = amBlendMode(el, w),
+            keyframes = keyframes
+        )
+        val groupFx = applyLayerEffects(el, group, ctx, durMs, FxTarget.GROUP)
+        return (linked + groupFx) to groupFx
+    }
+
+    /**
+     * A `<camera>` layer: Alight's scene camera. While it is active, the layers below it in the
+     * stack are seen through it — which is exactly the app's own Camera layer (see CameraRig: an
+     * invisible layer; the layers in the lanes below it are seen through it, the nearest active
+     * camera above a layer wins), so the import is a pose conversion, not a new renderer path.
+     * AM's camera centres on (location.x, location.y) in scene pixels, sits at distance
+     * |location.z| from the scene plane, and has a vertical fov: the visible height at the z=0
+     * plane is 2 * |z| * tan(fov/2), so the app zoom is (sceneH/2) / (|z| * tan(fov/2)) — the
+     * corpus cameras check out exactly (fov 60 at z = -779.42 on a 900-tall scene is zoom 1, and
+     * the parked camera of proyek-baru-273 is a pure pan at zoom 1). The zoom is keyframed from
+     * the location / fov / scale tracks at the union of their key times; the camera's own
+     * rotation becomes the roll. Only perspective cameras import (all corpus instances); an
+     * orthographic camera is skipped, and a focus blur / fog switched on is reported instead of
+     * being approximated.
+     */
+    private fun readCamera(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val type = el.getAttribute("type")
+        if (type.isNotEmpty() && type != "perspective") {
+            w += "Camera" + labelOf(el) + ": type \"" + type + "\" is not supported yet: skipped"
+            return null
+        }
+        if (child(el, "focus-blur")?.getAttribute("enabled") == "true") {
+            w += "Camera" + labelOf(el) + ": its focus blur is not reproduced"
+        }
+        if (child(el, "fog")?.getAttribute("enabled") == "true") {
+            w += "Camera" + labelOf(el) + ": its fog is not reproduced"
+        }
+        if (elementChildren(el).any { it.tagName == "effect" }) {
+            w += "Camera" + labelOf(el) + ": effects on a camera layer are not supported yet: skipped"
+        }
+        val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
+        val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
+        val durMs = (endMs - startMs).coerceAtLeast(1L)
+        val tr = readTransform(el, w, pivotUsed = false)
+        val locT = tr.loc
+        val fovT = child(el, "fov")?.let { readTrack(it) }
+        // AM's default camera distance (fov 60 framing the scene's height) when a location has no z.
+        val defZ = -(ctx.sceneH / 2f) / tan(Math.toRadians(30.0)).toFloat()
+        fun zoomAt(t: Float): Float {
+            val z = locT?.valueAt(t)?.getOrNull(2) ?: defZ
+            val fov = fovT?.valueAt(t)?.firstOrNull() ?: 60f
+            val scl = tr.scl?.valueAt(t)?.firstOrNull() ?: 1f
+            val halfH = abs(z).coerceAtLeast(1f) * tan(Math.toRadians((fov / 2f).toDouble())).toFloat()
+            return (ctx.sceneH / 2f) / halfH.coerceAtLeast(1e-3f) * scl * 100f
+        }
+        val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
+        val posKeys = trackKeys(locT, durMs) { ctx.posX(it) to ctx.posY(it) }
+        if (posKeys.isNotEmpty()) keyframes[AnimProp.POSITION] = posKeys
+        val rotKeys = trackKeys(tr.rot, durMs) { (it.firstOrNull() ?: 0f) to 0f }
+        if (rotKeys.isNotEmpty()) keyframes[AnimProp.ROTATION] = rotKeys
+        val times = ((locT?.keys ?: emptyList()) + (fovT?.keys ?: emptyList()) + (tr.scl?.keys ?: emptyList()))
+            .map { it.t }.distinct().sorted()
+        if (times.size >= 2) {
+            val keys = times.mapIndexed { i, t ->
+                val next = times.getOrNull(i + 1)
+                val e = if (next == null) Easing.LINEAR
+                else locT?.keyAt(next)?.easing ?: fovT?.keyAt(next)?.easing
+                    ?: tr.scl?.keyAt(next)?.easing ?: Easing.LINEAR
+                Keyframe((t.coerceIn(0f, 1f) * durMs).roundToLong(), zoomAt(t), 0f, e)
+            }.distinctBy { it.timeMs }
+            if (keys.size >= 2) keyframes[AnimProp.SCALE] = keys
+        }
+        return TimelineClip(
+            id = UUID.randomUUID().toString(),
+            name = el.getAttribute("label").ifBlank { "Camera" },
+            type = LayerType.CAMERA,
+            startMs = startMs.coerceAtLeast(0L),
+            durationMs = durMs,
+            color = 0xFF8E6BF2,
+            transformX = ctx.posX(locT?.first() ?: emptyList()),
+            transformY = ctx.posY(locT?.first() ?: emptyList()),
+            scalePercent = zoomAt(0f),
+            rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
+            keyframes = keyframes
+        )
     }
 
     /** A clip of a nested scene, in the parent timeline: [inT] .. [outT] of the nested time is stretched onto [startMs] .. [endMs], and the clip is cut at the group's ends. */

@@ -2963,4 +2963,221 @@ $layers
         ))
         assertTrue(still.keyframes[AnimProp.ROTATION].isNullOrEmpty())
     }
+
+    // ---- Layer-level parity (build 115): .multifoil shapes, <drawing> layers, <camera> layers, layer blending ----
+
+    @Test
+    fun multifoilImportsAsPathShape() {
+        // Verbatim from proyek-baru-15.xml: a 5-point foil, outer 100 / inner 50, sage fill.
+        val r = AlightXmlImporter.parse(scene("""<shape id="2999482906" label="Multifoil 1" startTime="0" endTime="2032" fillType="color" mediaFillMode="fill" parent="2999482908" s=".multifoil">
+    <transform>
+      <location>
+        <kf t="0.336122" v="5.500000,-89.000000,0.000000" />
+        <kf t="0.483760" v="-38.500000,-121.000000,0.000000" />
+      </location>
+    </transform>
+    <fillColor value="#ff9d9e60" />
+    <property name="pointCount" type="float" value="5.000000" />
+    <property name="outerRadius" type="float" value="100.000000" />
+    <property name="innerRadius" type="float" value="50.000000" />
+    <property name="offsetAngle" type="float" value="0.000000" />
+  </shape>""", 720, 900), 720f)
+        assertTrue(r.warnings.none { it.contains("multifoil") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(0xFF9D9E60L, c.textColor)
+        // MOVE + two cubics per point x 5 + CLOSE (AM's smooth-tip / sharp-valley outline).
+        assertEquals(12, c.pathSegments.size)
+        assertEquals(com.example.model.PATH_OP_MOVE, c.pathSegments.first().op)
+        assertEquals(10, c.pathSegments.count { it.op == com.example.model.PATH_OP_CUBIC })
+        assertEquals(com.example.model.PATH_OP_CLOSE, c.pathSegments.last().op)
+        // The outline's box comes from AM's bezier outline itself: the five tips span 190.2 px in
+        // x (none points straight down), and the rounded petal curves bulge to ~192.4 px across;
+        // the shape box at 720 wide is 260 px.
+        assertEquals(0.740f, c.shapeScaleX, 0.01f)
+    }
+
+    @Test
+    fun multifoilKeyframedPropertyKeepsFirstValue() {
+        val r = AlightXmlImporter.parse(scene("""<shape id="9" label="Foil" startTime="0" endTime="2000" fillType="color" s=".multifoil">
+    <transform><location value="540.000000,960.000000,0.000000" /></transform>
+    <fillColor value="#ffff0000" />
+    <property name="pointCount" type="float"><kf t="0.000000" v="5.000000" /><kf t="1.000000" v="8.000000" /></property>
+    <property name="outerRadius" type="float" value="100.000000" />
+    <property name="innerRadius" type="float" value="50.000000" />
+  </shape>"""), 1080f)
+        assertTrue(r.warnings.any { it.contains("pointCount") && it.contains("first value is used") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals(12, c.pathSegments.size)   // still the 5-point outline
+    }
+
+    @Test
+    fun drawingImportsAsGroupOfStrokePaths() {
+        // Verbatim from proyek-baru-15.xml: "Gambar 2", one fill stroke of 144 points.
+        val r = AlightXmlImporter.parse(scene("""<drawing id="2999482913" label="Gambar 2" startTime="1433" endTime="1699" fillType="intrinsic" mediaFillMode="fill">
+    <transform>
+      <location value="360.000000,450.000000,0.000000" />
+    </transform>
+    <stroke color="#ffffffff" width="90.000000" type="fill" points="-107.00,297.00,1.00;-110.00,302.00,1.00;-112.00,307.00,1.00;-112.74,311.46,1.00;-113.00,313.00,1.00;-115.00,319.00,1.00;-115.74,323.41,1.00;-116.00,325.00,1.00;-118.00,331.00,1.00;-118.00,334.02,1.00;-118.00,335.00,1.00;-118.00,340.00,1.00;-118.00,342.26,1.00;-118.00,343.00,1.00;-118.00,346.00,1.00;-118.00,347.50,1.00;-118.00,348.00,1.00;-117.00,351.00,1.00;-116.25,351.75,1.00;-116.00,352.00,1.00;-114.00,354.00,1.00;-113.24,354.00,1.00;-113.00,354.00,1.00;-111.00,355.00,1.00;-107.99,355.00,1.00;-107.00,355.00,1.00;-104.00,355.00,1.00;-101.72,354.24,1.00;-101.00,354.00,1.00;-97.00,354.00,1.00;-92.87,354.00,1.00;-92.00,354.00,1.00;-88.00,354.00,1.00;-84.64,354.00,1.00;-84.00,354.00,1.00;-80.00,354.00,1.00;-76.87,354.78,1.00;-76.00,355.00,1.00;-73.00,355.00,1.00;-70.73,355.76,1.00;-70.00,356.00,1.00;-68.00,357.00,1.00;-66.49,358.51,1.00;-66.00,359.00,1.00;-64.00,361.00,1.00;-63.00,363.00,1.00;-62.00,364.00,1.00;-61.24,365.52,1.00;-61.00,366.00,1.00;-60.00,368.00,1.00;-59.21,368.79,1.00;-59.00,369.00,1.00;-59.00,371.00,1.00;-58.21,371.79,1.00;-58.00,372.00,1.00;-57.00,373.00,1.00;-55.00,373.00,1.00;-53.00,373.00,1.00;-51.41,371.41,1.00;-51.00,371.00,1.00;-49.00,370.00,1.00;-45.00,367.00,1.00;-41.00,363.00,1.00;-38.00,360.00,1.00;-34.00,356.00,1.00;-30.51,353.38,1.00;-30.00,353.00,1.00;-27.00,351.00,1.00;-24.00,349.00,1.00;-21.00,347.00,1.00;-19.26,347.00,1.00;-19.00,347.00,1.00;-16.00,346.00,1.00;-14.00,347.00,1.00;-11.00,347.00,1.00;-9.00,348.00,1.00;-8.00,349.00,1.00;-6.48,349.76,1.00;-6.00,350.00,1.00;-4.00,351.00,1.00;-3.00,351.00,1.00;-1.00,351.00,1.00;0.00,351.00,1.00;1.00,351.00,1.00;3.27,347.97,1.00;4.00,347.00,1.00;6.00,344.00,1.00;11.00,335.00,1.00;16.00,325.00,1.00;22.00,312.00,1.00;28.00,299.00,1.00;31.69,289.42,1.00;33.00,286.00,1.00;37.00,273.00,1.00;40.00,266.00,1.00;42.00,258.00,1.00;42.00,255.81,1.00;42.00,255.00,1.00;43.00,251.00,1.00;43.00,250.00,1.00;44.00,250.00,1.00;44.00,249.29,1.00;44.00,249.00,1.00;44.00,250.00,1.00;43.12,251.76,1.00;43.00,252.00,1.00;41.00,254.00,1.00;38.00,262.00,1.00;35.00,269.00,1.00;30.07,279.68,1.00;29.00,282.00,1.00;23.00,296.00,1.00;17.67,307.42,1.00;16.00,311.00,1.00;9.00,327.00,1.00;4.55,336.65,1.00;3.00,340.00,1.00;-4.00,354.00,1.00;-8.11,361.41,1.00;-9.00,363.00,1.00;-14.00,373.00,1.00;-18.26,379.82,1.00;-19.00,381.00,1.00;-24.00,388.00,1.00;-27.94,392.73,1.00;-29.00,394.00,1.00;-33.00,399.00,1.00;-35.29,402.81,1.00;-36.00,404.00,1.00;-40.00,409.00,1.00;-43.00,412.00,1.00;-47.00,415.00,1.00;-48.52,416.52,1.00;-49.00,417.00,1.00;-52.00,419.00,1.00;-53.52,419.76,1.00;-54.00,420.00,1.00;-57.00,420.00,1.00;-57.00,420.75,1.00;-57.00,421.00,1.00;-58.00,422.00,1.00;-58.00,423.55,1.00;-58.00,424.00,1.00;-59.00,425.00,1.00" />
+  </drawing>""", 720, 900), 720f)
+        assertTrue(r.warnings.none { it.contains("<drawing>") })
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val group = clips.single { it.type == LayerType.GROUP }
+        assertEquals("Gambar 2", group.name)
+        assertEquals(1433L, group.startMs)
+        assertEquals(266L, group.durationMs)
+        val kids = clips.filter { it.groupId == group.id }
+        assertEquals(1, kids.size)
+        val kid = kids.single()
+        assertEquals(group.id, kid.parent?.id)
+        assertEquals("PATH", kid.shapePattern)
+        assertEquals(com.example.model.FILL_SOLID, kid.fillMode)   // a "fill" stroke: outline filled
+        assertEquals(0xFFFFFFFFL, kid.textColor)
+        assertEquals(com.example.model.PATH_OP_CLOSE, kid.pathSegments.last().op)
+        assertEquals(group.startMs, kid.startMs)                     // born in root time, like a group's children
+        assertEquals(group.durationMs, kid.durationMs)
+    }
+
+    @Test
+    fun drawingStrokesKeepPaintAndPressureIsReported() {
+        val r = AlightXmlImporter.parse(scene("""<drawing id="5" label="Sketch" startTime="0" endTime="2000" fillType="intrinsic">
+    <transform><location value="540.000000,960.000000,0.000000" /></transform>
+    <stroke color="#ffff0000" width="10.000000" type="pen" points="0.00,0.00,1.00;100.00,0.00,1.00" />
+    <stroke color="#ff00ff00" width="20.000000" type="brush" points="0.00,50.00,1.00;0.00,150.00,0.50" />
+  </drawing>"""), 1080f)
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val group = clips.single { it.type == LayerType.GROUP }
+        val kids = clips.filter { it.groupId == group.id }
+        assertEquals(2, kids.size)
+        val pen = kids.first { it.strokeColor == 0xFFFF0000L }
+        assertEquals(com.example.model.FILL_NONE, pen.fillMode)     // an open stroked polyline
+        assertTrue(pen.strokeWidth > 0f)
+        assertTrue(r.warnings.any { it.contains("pressure") })       // the 0.50 point varies
+        // The pen stroke runs (0,0)->(100,0) in the drawing's local frame and the drawing sits at
+        // the scene centre, so in the world the child's box centre lands 50 px right of centre.
+        val rig = ParentRig(clips) { c, t -> c.renderAt(t) }
+        val adj = rig.adjusted(pen, pen.startMs)!!
+        assertEquals(50f, adj.transformX, 0.5f)
+        assertEquals(0f, adj.transformY, 0.5f)
+    }
+
+    @Test
+    fun cameraStaticImportsAsPose() {
+        // Verbatim from proyek-baru-273-copy.xml: a parked perspective camera, fov 60 at
+        // z = -623.54 on a 720-tall scene — zoom exactly 1, a pure pan down to y = 621.29.
+        val r = AlightXmlImporter.parse(scene("""<camera id="2999482900" label="Kamera 1" startTime="0" endTime="27799" mediaFillMode="fill" type="perspective">
+    <transform>
+      <location value="360.000000,621.286743,-623.538330" />
+    </transform>
+    <fov value="60.000000" />
+    <focus-blur enabled="false">
+      <strength value="0.500000" />
+      <depth-of-field value="62.353832" />
+      <distance value="623.538330" />
+    </focus-blur>
+    <fog enabled="false">
+      <near-z value="623.538330" />
+      <far-z value="1247.076660" />
+    </fog>
+  </camera>""", 720, 720), 720f)
+        assertTrue(r.warnings.none { it.contains("Kamera 1") })
+        val cam = r.snapshot.tracks.flatMap { it.clips }.single { it.type == LayerType.CAMERA }
+        assertEquals(100f, cam.scalePercent, 1f)
+        assertEquals(0f, cam.transformX, 0.5f)
+        assertEquals(261.29f, cam.transformY, 0.5f)
+    }
+
+    @Test
+    fun cameraKeyframedMoveImports() {
+        // Verbatim from proyek-baru-15.xml: "Kamera 1" glides through three locations at a
+        // constant fov 40.56 / z -779.42 on a 900-tall scene — zoom 1.561 throughout.
+        val r = AlightXmlImporter.parse(scene("""<camera id="2999482909" label="Kamera 1" startTime="333" endTime="1000" mediaFillMode="fill" type="perspective">
+    <transform>
+      <location>
+        <kf t="-0.025487" v="451.500000,521.500000,-779.422852" />
+        <kf t="0.475262" v="428.000000,390.000000,-779.422852" />
+        <kf t="0.874063" v="125.500000,543.500000,-779.422852" />
+      </location>
+    </transform>
+    <fov value="40.558975" />
+    <focus-blur enabled="false">
+      <strength value="0.500000" />
+      <depth-of-field value="77.942284" />
+      <distance value="779.422852" />
+    </focus-blur>
+    <fog enabled="false">
+      <near-z value="779.422852" />
+      <far-z value="1558.845703" />
+    </fog>
+  </camera>""", 720, 900), 720f)
+        val cam = r.snapshot.tracks.flatMap { it.clips }
+            .single { it.type == LayerType.CAMERA && it.name == "Kamera 1" }
+        val pos = cam.keyframes[AnimProp.POSITION]
+        assertTrue(pos != null && pos.size == 3)
+        val scl = cam.keyframes[AnimProp.SCALE]
+        assertTrue(scl != null && scl.size == 3)
+        assertEquals(156.1f, scl!!.first().a, 0.6f)
+        assertEquals(156.1f, scl.last().a, 0.6f)
+    }
+
+    @Test
+    fun orthographicCameraIsSkippedWithWarning() {
+        val r = AlightXmlImporter.parse(scene("""<camera id="7" label="Ortho" startTime="0" endTime="2000" type="orthographic">
+    <transform><location value="540.000000,960.000000,-1000.000000" /></transform>
+    <fov value="60.000000" />
+  </camera>"""), 1080f)
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }.none { it.type == LayerType.CAMERA })
+        assertTrue(r.warnings.any { it.contains("orthographic") })
+    }
+
+    private fun blendShape(blending: String) = scene(
+        """<shape id="3" label="B" startTime="0" endTime="2000" fillType="color" s=".rect" blending="$blending">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <fillColor value="#ff336699" />
+  <property name="size" type="vec2" value="100,100" /></shape>"""
+    )
+
+    @Test
+    fun layerBlendModesMapToCompositor() {
+        val cases = mapOf(
+            "multiply" to "Multiply", "screen" to "Screen", "linear-dodge" to "Add",
+            "exclude" to "Exclusion", "overlay" to "Overlay", "darken" to "Darken",
+            "subtract" to "Subtract", "soft-overlay" to "Soft Overlay",
+            "color-burn" to "Color Burn", "soft-light" to "Soft Light",
+            "difference" to "Difference", "luminosity" to "Luminosity", "add" to "Add"
+        )
+        for ((am, app) in cases) {
+            val r = AlightXmlImporter.parse(blendShape(am), 1080f)
+            val c = r.snapshot.tracks.flatMap { it.clips }.single()
+            assertEquals(app, c.blendMode)
+            assertTrue("no fallback warning for $am", r.warnings.none { it.contains("normal layer") })
+        }
+        // An unknown mode still imports, as normal, with the honest warning.
+        val r = AlightXmlImporter.parse(blendShape("vivid-light"), 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("Normal", c.blendMode)
+        assertTrue(r.warnings.any { it.contains("vivid-light") })
+    }
+
+    @Test
+    fun blendCatalogueHasNativeShaders() {
+        // Subtract and Soft Overlay joined the catalogue with native shader ids (renderer.cpp).
+        assertEquals(42, com.example.model.BlendModes.find("Subtract").shaderId)
+        assertEquals(33, com.example.model.BlendModes.find("Soft Overlay").shaderId)
+        assertEquals(
+            com.example.model.BlendKind.COLOR,
+            com.example.model.BlendModes.find("Subtract").kind
+        )
+    }
+
+    @Test
+    fun embedSceneBlendingLandsOnGroup() {
+        val r = AlightXmlImporter.parse(scene("""<embedScene id="4" label="Grp" startTime="0" endTime="2000" blending="screen" fillType="intrinsic"><transform><location value="540,960,0" /></transform><fillColor value="#ff000000" />
+<scene title="" width="1080" height="1920" totalTime="2000">
+<shape id="5" label="In" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="540,960,0" /></transform><fillColor value="#ff00ff00" /><property name="size" type="vec2" value="50,50" /></shape>
+</scene>
+</embedScene>"""), 1080f)
+        val group = r.snapshot.tracks.flatMap { it.clips }.single { it.type == LayerType.GROUP }
+        assertEquals("Screen", group.blendMode)
+    }
 }

@@ -478,6 +478,16 @@ class NativePreviewEngine(context: Context) {
                 ?: animFor(c)?.let { a -> a.clipAt(t, t)[2] } ?: 0f
         // drawScope (below) draws one level; a group needs it for its own level, so it is reached through this variable.
         var drawScopeRef: (String?, Int) -> Unit = { _, _ -> }
+        // The mask layers cutting a layer of one level (a Group or a picture layer, Alight style),
+        // evaluated at [t] like every layer — empty when no mask sits on it, or none of its masks is
+        // there at [t] (outside a mask layer's own span there is no cut from it). A stack of masks
+        // over the layer comes back as several entries: the layer is cut by each in turn.
+        fun scopeMasksFor(c: TimelineClip, t: Long): List<TimelineClip> {
+            val scopeClips = GroupOps.scopeTracks(liveTracks, c.groupId).asReversed().flatMap { it.clips }
+            val mcs = LayerMaskLinks.masksByTarget(scopeClips)[c.id] ?: return emptyList()
+            return mcs.filter { it.isActiveAt(t) }
+                .map { if (rig.hasLinks) rig.adjusted(it, t) else NativeRenderAt.renderAt(it, t) }
+        }
         // One picture layer (video / photo); returns early when the layer is not drawn.
         fun drawMediaLayer(c: TimelineClip, depth: Int) {
             val anim = animFor(c) ?: return
@@ -618,16 +628,6 @@ class NativePreviewEngine(context: Context) {
             val lp = LayerParams()
             if (blendId == 0) r.drawLayer(tex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp)
             else r.drawLayerBlended(tex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp, blendId, canvasRgb)
-        }
-        // The mask layers cutting a layer of one level (a Group or a picture layer, Alight style),
-        // evaluated at [t] like every layer — empty when no mask sits on it, or none of its masks is
-        // there at [t] (outside a mask layer's own span there is no cut from it). A stack of masks
-        // over the layer comes back as several entries: the layer is cut by each in turn.
-        fun scopeMasksFor(c: TimelineClip, t: Long): List<TimelineClip> {
-            val scopeClips = GroupOps.scopeTracks(liveTracks, c.groupId).asReversed().flatMap { it.clips }
-            val mcs = LayerMaskLinks.masksByTarget(scopeClips)[c.id] ?: return emptyList()
-            return mcs.filter { it.isActiveAt(t) }
-                .map { if (rig.hasLinks) rig.adjusted(it, t) else NativeRenderAt.renderAt(it, t) }
         }
         // A Group layer is ONE layer: the layers inside are drawn into their own picture (the renderer's group pass), and that
         // picture gets the group's opacity, blend mode, effects and masks like a photo would. The group's move / scale / turn

@@ -381,6 +381,51 @@ class NativeProjectExporter(private val context: Context) {
                     val tStart = System.nanoTime()
                     val audioDec0 = encoder.profNs(0)
                     val audioEnc0 = encoder.profNs(1)
+                    // The mask layers cutting a layer of one level (a Group or a picture layer, Alight
+                    // style), evaluated at [timeMs] like every layer — empty when no mask sits on it,
+                    // or none of its masks is there then (outside a mask layer's own span there is no
+                    // cut from it). A stack of masks over the layer comes back as several entries: the
+                    // layer is cut by each in turn.
+                    fun scopeMasksFor(clip: TimelineClip, timeMs: Long): List<TimelineClip> {
+                        val scopeClips = GroupOps.scopeTracks(tracks, clip.groupId).asReversed().flatMap { it.clips }
+                        val mcs = LayerMaskLinks.masksByTarget(scopeClips)[clip.id] ?: return emptyList()
+                        return mcs.filter { it.isActiveAt(timeMs) }
+                            .map { if (rig.hasLinks) rig.adjusted(it, timeMs) else it.renderAt(timeMs) }
+                    }
+                    // Draws one mask layer (already evaluated at [timeMs]) into the shared scratch
+                    // picture with the same painter as every overlay and returns the scratch.
+                    fun drawMaskIntoScratch(maskAdj: TimelineClip, timeMs: Long): Bitmap {
+                        val p = painter ?: error("No layer painter available to draw mask '${maskAdj.name}'.")
+                        var scratch = maskScratchBmp
+                        if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
+                            scratch?.recycle()
+                            scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            maskScratchBmp = scratch
+                        }
+                        scratch.eraseColor(0)
+                        p.nativeTarget = scratch
+                        p.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
+                        return scratch
+                    }
+                    // Cuts a frame-sized renderer texture (a Group layer's composed picture, or a
+                    // picture layer captured into its own picture for a mask) by one mask layer: the
+                    // mask is drawn into the scratch picture, uploaded, and the renderer multiplies
+                    // the texture by its alpha (DST_IN). Returns the cut texture.
+                    fun cutPictureByMask(tex: Int, maskAdj: TimelineClip, timeMs: Long, ownerName: String): Int {
+                        val scratch = drawMaskIntoScratch(maskAdj, timeMs)
+                        if (groupMaskTex == 0) groupMaskTex = renderer.createTexture2d()
+                        if (groupMaskTex == 0) error("Could not create the mask texture for '$ownerName'.")
+                        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
+                        if (!groupMaskTexUploaded) {
+                            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, scratch, 0)
+                            groupMaskTexUploaded = true
+                        } else {
+                            GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
+                        }
+                        val cutTex = renderer.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
+                        if (cutTex == 0) error("Native layer mask '${maskAdj.name}' failed on '$ownerName'.")
+                        return cutTex
+                    }
                     // One picture layer of the frame (video / photo): returns early when the layer is not drawn.
                     fun drawMediaLayer(layerIdx: Int, clip: TimelineClip, timeMs: Long, depth: Int) {
                             if (timeMs < clip.startMs || timeMs >= clip.endMs) return
@@ -534,51 +579,6 @@ class NativeProjectExporter(private val context: Context) {
                     // picture gets the group's opacity, blend mode, effects and masks like a photo would. The group's move / scale /
                     // turn already reached the layers inside through their parent link (ParentRig), so it is placed at 0 / 0 / 1.
                     var drawScopeRef: (String?, Int, Long) -> Unit = { _, _, _ -> }
-                    // The mask layers cutting a layer of one level (a Group or a picture layer, Alight
-                    // style), evaluated at [timeMs] like every layer — empty when no mask sits on it,
-                    // or none of its masks is there then (outside a mask layer's own span there is no
-                    // cut from it). A stack of masks over the layer comes back as several entries: the
-                    // layer is cut by each in turn.
-                    fun scopeMasksFor(clip: TimelineClip, timeMs: Long): List<TimelineClip> {
-                        val scopeClips = GroupOps.scopeTracks(tracks, clip.groupId).asReversed().flatMap { it.clips }
-                        val mcs = LayerMaskLinks.masksByTarget(scopeClips)[clip.id] ?: return emptyList()
-                        return mcs.filter { it.isActiveAt(timeMs) }
-                            .map { if (rig.hasLinks) rig.adjusted(it, timeMs) else it.renderAt(timeMs) }
-                    }
-                    // Draws one mask layer (already evaluated at [timeMs]) into the shared scratch
-                    // picture with the same painter as every overlay and returns the scratch.
-                    fun drawMaskIntoScratch(maskAdj: TimelineClip, timeMs: Long): Bitmap {
-                        val p = painter ?: error("No layer painter available to draw mask '${maskAdj.name}'.")
-                        var scratch = maskScratchBmp
-                        if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
-                            scratch?.recycle()
-                            scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                            maskScratchBmp = scratch
-                        }
-                        scratch.eraseColor(0)
-                        p.nativeTarget = scratch
-                        p.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
-                        return scratch
-                    }
-                    // Cuts a frame-sized renderer texture (a Group layer's composed picture, or a
-                    // picture layer captured into its own picture for a mask) by one mask layer: the
-                    // mask is drawn into the scratch picture, uploaded, and the renderer multiplies
-                    // the texture by its alpha (DST_IN). Returns the cut texture.
-                    fun cutPictureByMask(tex: Int, maskAdj: TimelineClip, timeMs: Long, ownerName: String): Int {
-                        val scratch = drawMaskIntoScratch(maskAdj, timeMs)
-                        if (groupMaskTex == 0) groupMaskTex = renderer.createTexture2d()
-                        if (groupMaskTex == 0) error("Could not create the mask texture for '$ownerName'.")
-                        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
-                        if (!groupMaskTexUploaded) {
-                            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, scratch, 0)
-                            groupMaskTexUploaded = true
-                        } else {
-                            GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
-                        }
-                        val cutTex = renderer.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
-                        if (cutTex == 0) error("Native layer mask '${maskAdj.name}' failed on '$ownerName'.")
-                        return cutTex
-                    }
                     fun drawGroupLayer(clip: TimelineClip, timeMs: Long, depth: Int) {
                         if (timeMs < clip.startMs || timeMs >= clip.endMs) return
                         val g = if (rig.hasLinks) rig.adjusted(clip, timeMs) else clip.renderAt(timeMs)

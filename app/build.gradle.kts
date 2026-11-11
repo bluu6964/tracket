@@ -52,7 +52,8 @@ android {
 
   buildTypes {
     release {
-      isCrunchPngs = false
+      // Lossless PNG recompression (the AGP default) — shrinks res/ a little, no visual change.
+      isCrunchPngs = true
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Always sign release builds so the APK is installable from CI.
@@ -62,6 +63,17 @@ android {
       } else {
         signingConfigs.getByName("debug")
       }
+    }
+  }
+
+  // APK size (build 107): the x86 / x86_64 folders carry ONLY third-party dependency libraries
+  // (MediaPipe, ONNX Runtime, xeno) for PC emulators — the app's own native code
+  // (libam_engine.so, libwhisper_jni.so) is arm64-v8a only and every real phone is ARM.
+  // Excluding the two x86 ABIs from packaging removes ~81 MB of dead weight while the APK
+  // stays a single universal file for ARM phones (arm64-v8a + armeabi-v7a, unchanged).
+  packaging {
+    jniLibs {
+      excludes += listOf("lib/x86/**", "lib/x86_64/**")
     }
   }
   compileOptions {

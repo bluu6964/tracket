@@ -532,8 +532,13 @@ class NativeProjectExporter(private val context: Context) {
                                 if (rendered.isEmpty()) continue
                                 drawMediaUpTo(overlayKey(rendered.first()), laneIdx[rendered.first().id] ?: 0)  // pictures behind this group go first
                                 // A layer placed by the renderer (pose) is drawn upright: only what changes the picture is in
-                                // the key, so a layer that just turns or moves is not redrawn.
-                                val drawn = if (g.pose) rendered.map { if (cam.activeFor(it, timeMs)) uprightForCamera(it) else uprightForPose(it) } else rendered
+                                // the key, so a layer that just turns or moves is not redrawn. A layer with the Repeat effect is
+                                // drawn once per copy (RepeatEval.copiesOf): in its own upright picture the copies are placed by
+                                // undoing the layer's own turn, so the picture's turn puts each copy back on the scene-space grid.
+                                val drawn = if (g.pose) rendered.flatMap { c ->
+                                    val upright = if (cam.activeFor(c, timeMs)) uprightForCamera(c) else uprightForPose(c)
+                                    RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg)
+                                } else rendered.flatMap { RepeatEval.copiesOf(it) }
                                 // A sticker's animation frame depends on the time, so it is part of the key.
                                 val signature = drawn.map { r ->
                                     if (r.type == LayerType.STICKER) r to r.sourceOffsetMs(timeMs - r.startMs) else r

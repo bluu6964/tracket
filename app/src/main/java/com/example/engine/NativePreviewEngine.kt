@@ -671,8 +671,13 @@ class NativePreviewEngine(context: Context) {
                 if (c.type == LayerType.STICKER) c.sourceOffsetMs(t - c.startMs) else -1L
             }
             // A layer placed by the renderer (pose) is drawn upright: only what changes the picture is in the key, so a
-            // layer that just turns or moves is not redrawn.
-            val drawClips = if (g.pose) texts.map { if (cam.activeFor(it, t)) uprightForCamera(it) else uprightForPose(it) } else texts
+            // layer that just turns or moves is not redrawn. A layer with the Repeat effect is drawn once per copy
+            // (RepeatEval.copiesOf): in its own upright picture the copies are placed by undoing the layer's own
+            // turn, so the picture's turn puts each copy back on the scene-space grid (see RepeatEval).
+            val drawClips = if (g.pose) texts.flatMap { c ->
+                val upright = if (cam.activeFor(c, t)) uprightForCamera(c) else uprightForPose(c)
+                RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg)
+            } else texts.flatMap { RepeatEval.copiesOf(it) }
             // An imported text animator changes the picture with the time: the time is part of the key for those layers only.
             val animTimes = drawClips.map { if (it.textAnimators.isNotEmpty()) t else -1L }
             val sig = listOf(drawClips, fonts, PreviewFrameRef.widthPx, w, h, pics.map { it != null }, stickerFrames, animTimes)

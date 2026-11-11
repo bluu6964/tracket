@@ -71,6 +71,9 @@ enum FxType : int {
     // v158: Motion Blur. Not a shaded effect either: Kotlin resolves it per frame to FX_DIR_BLUR (see MotionBlurEval),
     // so it must never reach the shaders. It sits above FX_MAX on purpose: fxParseOps skips it, runEffects no-ops it.
     FX_MOTION_BLUR = 55,    // p0 strength 0..100 % (the tune); the angle / length are computed per frame, never stored
+    // v159: Repeat. Not a shaded effect either: Kotlin draws the layer once per copy in the overlay loops
+    // (see RepeatEval), so it must never reach the shaders. Same rule as Motion Blur above.
+    FX_REPEAT = 56,         // p0 count, p1/p2 offset x/y (preview px), p3 angle deg, p4 scale %, p5 alpha % — per copy
     FX_MAX = FX_COPY_BG
 };
 

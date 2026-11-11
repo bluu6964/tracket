@@ -48,6 +48,7 @@ import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 import kotlin.math.sin
 
@@ -90,9 +91,10 @@ import kotlin.math.sin
  *    `transform` effect composes onto the layer's own tracks like `scaleassist`; a keyframed `hueshift` on
  *    a solid-filled layer is baked into its colour keyframes; `counter` is stored as a [TextAnimator]
  *    like the other text effects and drawn by [CounterEval] (Alight's "Count Up/Down": every number
- *    in the text × its `scale` + its `offset`, both evaluated at the frame's time). Effects with no counterpart in the app (repeat, motion
- *    blur, path following, …) stay
- *    named warnings — nothing is silently dropped.
+ *    in the text × its `scale` + its `offset`, both evaluated at the frame's time); the plain `repeat`
+ *    is stored as the app's Repeat effect and drawn by [RepeatEval] (its radial / scatter variants
+ *    have no counterpart yet). Effects with no counterpart in the app (motion blur is resolved, path
+ *    following, …) stay named warnings — nothing is silently dropped.
  *  - everything else (other layer types, other effects) is skipped and listed in [ImportResult.warnings]
  *
  * Rules that were read from the sample files (NOT from the Alight documentation, so check them on a real export):
@@ -869,11 +871,12 @@ object AlightXmlImporter {
                 PULSATE -> applyPulsate(fx, clip, ctx, durMs)
                 TRANSFORMFX -> applyTransformFx(fx, clip, ctx, durMs)
                 LIFT -> applyLift(fx, clip, ctx)
-                REPEAT, REPEAT_RADIAL, REPEAT_SCATTER -> {
-                    // The app has no layer-repeat model (its Motion Tile repeats the picture inside the
-                    // frame, which is a different thing), so there is nothing honest to map to.
-                    ctx.warnings += "Effect " + id.substringAfterLast('.') +
-                        " is not supported yet: the app cannot repeat a layer: skipped"
+                REPEAT -> applyRepeat(fx, clip, ctx)
+                REPEAT_RADIAL, REPEAT_SCATTER -> {
+                    // A circle of copies / a scattered field: a different arrangement from the plain
+                    // repeat, with no counterpart yet — named, not silently dropped.
+                    ctx.warnings += "Effect " + id.substringAfter("effects.") +
+                        " is not supported yet: the app cannot repeat a layer in a circle / scattered: skipped"
                     clip
                 }
                 MOVEALONGPATH -> {
@@ -1884,6 +1887,47 @@ object AlightXmlImporter {
             clip0, ctx, ClipFxLibrary.DIR_BLUR,
             listOf(angle, (strength * 100f).coerceIn(0f, 100f), 0f),
             "dblur"
+        )
+    }
+
+    /**
+     * `repeat` -> the app's Repeat effect (see [RepeatEval]): count copies, each shifted by `offset`
+     * (scene px -> preview px, like every position), turned by `angle`, scaled by `scale`, faded by
+     * `alpha`. The corpus only pins count + offset (every instance has angle 0, scale 1, alpha 1,
+     * time 0); a non-zero `time` (a per-copy time shift) has no counterpart in the draw loops and
+     * is reported, not guessed. Keyframed parameters take their first value (the pass-2 rule).
+     * A repeat on a video / photo / group layer is stored but not drawn repeated yet: the overlay
+     * loops expand shape / text / sticker layers only, so that case is named too.
+     */
+    private fun applyRepeat(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val count = (props["count"]?.firstValue(w, "repeat", "count") ?: 1f).roundToInt()
+            .coerceIn(1, RepeatEval.MAX_COUNT).toFloat()
+        val offset = props["offset"]?.let {
+            if (it.keys.size >= 2) w += "Effect repeat: keyframed offset is not supported yet: the first value is used"
+            it.first()
+        } ?: listOf(0f, 0f)
+        val angle = props["angle"]?.firstValue(w, "repeat", "angle") ?: 0f
+        val scale = props["scale"]?.firstValue(w, "repeat", "scale") ?: 1f
+        val alpha = props["alpha"]?.firstValue(w, "repeat", "alpha") ?: 1f
+        if ((props["time"]?.scalarAt(0f) ?: 0f) != 0f) {
+            w += "Effect repeat is mapped approximately: its time offset is not reproduced"
+        }
+        if (clip0.type == LayerType.VIDEO || clip0.type == LayerType.GROUP) {
+            w += "Effect repeat on a video / group layer is stored but not drawn repeated yet"
+        }
+        return addFx(
+            clip0, ctx, ClipFxLibrary.REPEAT,
+            listOf(
+                count,
+                (offset.getOrNull(0) ?: 0f) * ctx.k,
+                (offset.getOrNull(1) ?: 0f) * ctx.k,
+                angle,
+                (scale * 100f).coerceIn(0f, 200f),
+                (alpha * 100f).coerceIn(0f, 100f)
+            ),
+            "repeat"
         )
     }
 

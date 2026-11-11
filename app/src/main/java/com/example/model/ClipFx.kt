@@ -97,6 +97,10 @@ object ClipFxLibrary {
     // Motion Blur: resolved per frame by MotionBlurEval into a directional blur (see engine/MotionBlurEval.kt);
     // its native type (55) never reaches the shaders (fxParseOps skips it: it is above FX_MAX).
     const val MOTION_BLUR = "motion_blur"
+    // Repeat: resolved in the overlay draw loops by RepeatEval (see engine/RepeatEval.kt) — the layer is
+    // drawn once per copy with a shifted / turned / scaled pose. Its native type (56) never reaches the
+    // shaders either (fxParseOps skips it: it is above FX_MAX), and toNative skips it like Motion Blur.
+    const val REPEAT = "repeat"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -169,6 +173,20 @@ object ClipFxLibrary {
         FxDef(
             MOTION_BLUR, 55, "Motion Blur", "Blur", "Smears the layer along its own motion, like a camera shutter (position, scale and rotation)",
             listOf(FxParamDef("Strength", 0f, 100f, 100f, "%"))
+        ),
+        // Repeat is resolved in the draw loop, not a shader: values[0] is the copy count, [1..2] the
+        // offset in preview px between copies, [3] the turn per copy, [4] the scale per copy (%),
+        // [5] the opacity per copy (%). A Repeat made in the panel starts as two identical copies.
+        FxDef(
+            REPEAT, 56, "Repeat", "Distort", "Copies the layer in a row, each shifted, turned and scaled",
+            listOf(
+                FxParamDef("Count", 1f, 50f, 2f),
+                FxParamDef("Offset X", -500f, 500f, 0f, "px", step = 5f),
+                FxParamDef("Offset Y", -500f, 500f, 0f, "px", step = 5f),
+                FxParamDef("Angle", -360f, 360f, 0f, "°", step = 3f),
+                FxParamDef("Scale", 0f, 200f, 100f, "%", step = 5f),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%", step = 5f)
+            )
         ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
@@ -625,10 +643,12 @@ object ClipFxLibrary {
      * The enabled effects as the flat array the C++ engine reads (groups of 8 floats: type, p0..p6), or null when there
      * is nothing to run. Max [MAX_EFFECTS] effects. Motion Blur is NOT emitted here: it needs the layer's motion at
      * the frame time, so [com.example.engine.MotionBlurEval.resolve] rewrites it to directional / radial blurs first
-     * (use that at every per-frame call site); a layer with only Motion Blur still counts in [hasEffects].
+     * (use that at every per-frame call site); Repeat is NOT emitted either: [com.example.engine.RepeatEval.copiesOf]
+     * draws the layer once per copy in the overlay loops. A layer with only Motion Blur or only Repeat still counts
+     * in [hasEffects].
      */
     fun toNative(effects: List<ClipFx>): FloatArray? {
-        val on = effects.filter { it.enabled && def(it.type) != null && it.type != MOTION_BLUR }.take(MAX_EFFECTS)
+        val on = effects.filter { it.enabled && def(it.type) != null && it.type != MOTION_BLUR && it.type != REPEAT }.take(MAX_EFFECTS)
         if (on.isEmpty()) return null
         val out = FloatArray(on.size * 8)
         on.forEachIndexed { i, fx ->
@@ -639,7 +659,7 @@ object ClipFxLibrary {
         return out
     }
 
-    /** True when the layer has any enabled effect, Motion Blur included (it needs a time to resolve, so [toNative] skips it). */
+    /** True when the layer has any enabled effect, Motion Blur and Repeat included (they are resolved elsewhere, so [toNative] skips them). */
     fun hasEffects(effects: List<ClipFx>): Boolean = effects.any { it.enabled && def(it.type) != null }
 
     /**

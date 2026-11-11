@@ -190,6 +190,10 @@ int main() {
         // parser must skip it too (it sits above FX_MAX on purpose, like the unknown type above).
         float mb[8] = {(float)FX_MOTION_BLUR, 100, 0, 0, 0, 0, 0, 0};
         CHECK(fxParseOps(mb, 8, ops) == 0, "motion blur skipped by the parser");
+        // Repeat is Kotlin-resolved to extra layer draws before it reaches the engine, so the parser
+        // must skip it too (same rule as Motion Blur).
+        float rp[8] = {(float)FX_REPEAT, 3, 0, 93, 0, 100, 100, 0};
+        CHECK(fxParseOps(rp, 8, ops) == 0, "repeat skipped by the parser");
         // neutral sliders = no pass
         FxOp ex{FX_EXPOSURE, {0, 0, 100, 0}};
         CHECK(fxIsIdentity(ex), "exposure neutral");

@@ -517,6 +517,116 @@ $layers
     }
 
     @Test
+    fun repeatBecomesRepeatWithOffsetInPreviewPx() {
+        // The corpus case: 5 copies of a horizontal line, 93 scene px apart, vertically.
+        val xml = scene(
+            """<shape id="9" label="Horizontal Lines" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.repeat" locallyApplied="true">
+    <property name="count" type="float" value="5.000000" />
+    <property name="time" type="float" value="0.000000" />
+    <property name="offset" type="vec2" value="0.000000,93.000000" />
+    <property name="angle" type="float" value="0.000000" />
+    <property name="scale" type="float" value="1.000000" />
+    <property name="alpha" type="float" value="1.000000" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(1, c.effects.size)
+        assertEquals(ClipFxLibrary.REPEAT, c.effects[0].type)
+        // 1080 px preview of a 1080 px wide scene: the offset stays 93.
+        assertEquals(listOf(5f, 0f, 93f, 0f, 100f, 100f), c.effects[0].values)
+        assertFalse(r.warnings.any { it.contains("repeat") && it.contains("skipped") })
+    }
+
+    @Test
+    fun repeatOffsetScalesWithTheScene() {
+        // A 1920 px wide scene on a 1080 px preview: 146 scene px become 82.125 preview px.
+        val xml = scene(
+            """<shape id="9" label="Vertical Lines" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location value="960,540,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.repeat" locallyApplied="true">
+    <property name="count" type="float" value="8.000000" />
+    <property name="time" type="float" value="0.000000" />
+    <property name="offset" type="vec2" value="146.000000,0.000000" />
+    <property name="angle" type="float" value="0.000000" />
+    <property name="scale" type="float" value="1.000000" />
+    <property name="alpha" type="float" value="1.000000" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>""", 1920, 1080
+        )
+        val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(listOf(8f, 82.125f, 0f, 0f, 100f, 100f), c.effects[0].values)
+    }
+
+    @Test
+    fun repeatWithTimeWarnsApproximately() {
+        val xml = scene(
+            """<shape id="9" label="Box" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.repeat" locallyApplied="true">
+    <property name="count" type="float" value="3.000000" />
+    <property name="time" type="float" value="0.500000" />
+    <property name="offset" type="vec2" value="10.000000,0.000000" />
+    <property name="angle" type="float" value="0.000000" />
+    <property name="scale" type="float" value="1.000000" />
+    <property name="alpha" type="float" value="1.000000" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(ClipFxLibrary.REPEAT, c.effects[0].type)
+        assertTrue(r.warnings.any { it.contains("repeat") && it.contains("time offset") })
+        assertFalse(r.warnings.any { it.contains("repeat") && it.contains("skipped") })
+    }
+
+    @Test
+    fun repeatKeyframedCountUsesFirstValue() {
+        val xml = scene(
+            """<shape id="9" label="Box" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.repeat" locallyApplied="true">
+    <property name="count" type="float"><kf t="0.000000" v="2.000000" /><kf t="1.000000" v="8.000000" /></property>
+    <property name="time" type="float" value="0.000000" />
+    <property name="offset" type="vec2" value="0.000000,50.000000" />
+    <property name="angle" type="float" value="0.000000" />
+    <property name="scale" type="float" value="1.000000" />
+    <property name="alpha" type="float" value="1.000000" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(2f, c.effects[0].values[0], 0f)
+        assertTrue(r.warnings.any { it.contains("keyframed count") })
+    }
+
+    @Test
+    fun repeatRadialAndScatterStillSkip() {
+        val xml = scene(
+            """<shape id="9" label="Circle 1" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".circle">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <effect id="com.alightcreative.effects.repeat.radial" locallyApplied="true">
+    <property name="count" type="float" value="4.000000" />
+    <property name="radius" type="float" value="223.000000" />
+  </effect>
+  <effect id="com.alightcreative.effects.repeat.scatter" locallyApplied="true">
+    <property name="count" type="float" value="10.000000" />
+    <property name="radius" type="float" value="1242.000000" />
+  </effect>
+  <property name="size" type="vec2" value="200,100" /></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.effects.isEmpty())
+        assertTrue(r.warnings.any { it.contains("repeat.radial") && it.contains("skipped") })
+        assertTrue(r.warnings.any { it.contains("repeat.scatter") && it.contains("skipped") })
+    }
+
+    @Test
     fun mediaFillShapeKeepsItsPictureUri() {
         val xml = scene(
             """<shape id="9" label="pic.png" startTime="0" endTime="1000" fillType="media" fillImage="content://media/external/images/media/53288" mediaFillMode="stretch" s=".rect">

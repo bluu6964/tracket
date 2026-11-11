@@ -12,8 +12,8 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
     for (int i = 0; i + kFxStride <= n && count < kFxMaxOps; i += kFxStride) {
         const int t = (int)std::lround(flat[i]);
         // 55..58 are resolved by Kotlin before the engine (see FxType) and must never reach the shaders;
-        // 59 / 60 are shaded effects and are accepted explicitly.
-        if ((t < FX_BLUR || t > FX_MAX) && t != FX_LONG_SHADOW && t != FX_COLOR_TUNE) continue;
+        // 59 / 60 / 61 are shaded effects and are accepted explicitly.
+        if ((t < FX_BLUR || t > FX_MAX) && t != FX_LONG_SHADOW && t != FX_COLOR_TUNE && t != FX_SOLID_COLOR) continue;
         FxOp& o = out[count++];
         o.type = t;
         for (int k = 0; k < 7; ++k) o.p[k] = flat[i + 1 + k];
@@ -216,6 +216,7 @@ FxShaderRef fxShaderOf(int type) {
         case FX_LENS_FLARE: r = {FXG_STYLE, 13}; break;
         case FX_LONG_SHADOW: r = {FXG_BLUR2, 7}; break;
         case FX_COLOR_TUNE: r = {FXG_COLOR, 15}; break;
+        case FX_SOLID_COLOR: r = {FXG_COLOR, 16}; break;
         default: break;
     }
     return r;
@@ -277,6 +278,7 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_LONG_SHADOW: return p[0] < 0.05f || p[2] < 0.5f;
         case FX_COLOR_TUNE:
             return std::fabs(p[1]) < 0.5f && std::fabs(p[2]) < 0.5f && std::fabs(p[4]) < 0.5f && std::fabs(p[5]) < 0.5f;
+        case FX_SOLID_COLOR: return p[3] < 0.5f;   // strength 0 changes nothing
         default: return false;
     }
 }
@@ -328,6 +330,18 @@ void fxColorTuneMap(float r, float g, float b, float liftHue, float liftStrength
     *outR = cl(r + ((hr - ll) * ls + (gr - gl) * gs) * 0.45f + dl);
     *outG = cl(g + ((hg - ll) * ls + (gg - gl) * gs) * 0.45f + dl);
     *outB = cl(b + ((hb - ll) * ls + (gb - gl) * gs) * 0.45f + dl);
+}
+
+void fxSolidColorMap(float r, float g, float b, float cr, float cg, float cb, float strength,
+                     float* outR, float* outG, float* outB) {
+    // The same maths as kFxColor mode 16 (keep the two in step): a plain mix in straight space; the
+    // shader premultiplies by the pixel's own alpha afterwards, so the silhouette is the picture's.
+    const float s = std::min(100.f, std::max(0.f, strength)) / 100.f;
+    auto cl = [](float v) { return std::min(1.f, std::max(0.f, v)); };
+    auto ch = [](float v) { return std::min(255.f, std::max(0.f, v)) / 255.f; };
+    *outR = cl(r + (ch(cr) - r) * s);
+    *outG = cl(g + (ch(cg) - g) * s);
+    *outB = cl(b + (ch(cb) - b) * s);
 }
 
 float fxAutoPhase(int frame, float speed) { return (float)frame / 24.f * (speed / 100.f); }

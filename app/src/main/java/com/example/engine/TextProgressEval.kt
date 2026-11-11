@@ -24,9 +24,10 @@ import kotlin.math.min
  * Semantics (read from that file + the effect's name, NOT from Alight documentation):
  *  - `start`, `end` — floats 0..1: the window of the text that is SHOWN, as fractions of the whole text
  *    counted in grapheme clusters. `end` keyframed 0 -> 1 types the text in; a `start` above 0 hides the
- *    leading characters again. A cluster is shown only when its whole slice of the text lies inside the
- *    window (characters pop in one by one, they do not fade), so the number shown is floor-like:
- *    window [0, 0.6] over 5 clusters shows exactly 3.
+ *    leading characters again. A cluster is shown when the window overlaps its slice AT ALL (characters
+ *    pop in one by one, they do not fade): frame-measured against Alight's ST Intro export (round 5,
+ *    2026-11-11) — with the pill text's real keyframes the window is 0.378 at 1.2 s and 0.963 at 2.0 s,
+ *    and Alight shows 5 and all 12 clusters there; the older whole-slice-inside rule showed 4 and 11.
  *  - `cursor` — int, a typing cursor drawn at the reveal edge. Only the corpus value 0 (= no cursor, the
  *    plain reading) is rendered; any other value keeps an importer warning ("cursor is not drawn yet"),
  *    because what the other values look like cannot be read from the corpus. [Result.blink] only matters
@@ -66,9 +67,10 @@ internal object TextProgressEval {
     }
 
     /**
-     * Is cluster [index] of [count] shown? Its slice [index/count, (index+1)/count] must lie fully inside
-     * the window (the window's own ends are order-free, like the texttransform `arrived` rule in the C++
-     * engine). The C++ side uses this very formula, so both paths show the same characters.
+     * Is cluster [index] of [count] shown? Its slice [index/count, (index+1)/count] must INTERSECT the
+     * window (the window's own ends are order-free, like the texttransform `arrived` rule in the C++
+     * engine): any overlap draws the whole cluster, a mere touch at a boundary does not. The C++ side
+     * uses this very formula, so both paths show the same characters.
      */
     fun isVisible(index: Int, count: Int, start: Float, end: Float): Boolean {
         if (count <= 0 || index < 0 || index >= count) return false
@@ -76,7 +78,7 @@ internal object TextProgressEval {
         val hi = max(start, end).coerceIn(0f, 1f)
         val a = max(index.toFloat() / count, lo)
         val b = min((index + 1).toFloat() / count, hi)
-        return (b - a) * count > 0.999f
+        return (b - a) > 0.0001f
     }
 
     /** The visible cluster indices as one range (the window is an interval, so the shown set is contiguous). */

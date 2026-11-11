@@ -81,6 +81,9 @@ enum FxType : int {
                             // p4 fade 0..100, p5 shadow colour packed 0xRRGGBB (importer only; 0 = black)
     FX_COLOR_TUNE = 60,     // p0 lift hue 0..360, p1 lift strength 0..100, p2 lift luminance -100..100,
                             // p3 gain hue 0..360, p4 gain strength 0..100, p5 gain luminance -100..100
+    // v161: Solid Color (Alight Motion's `solidcolor`): the picture's colours are replaced by one
+    // colour, its alpha silhouette kept — kFxColor mode 16. Accepted explicitly like 59 / 60.
+    FX_SOLID_COLOR = 61,    // p0/p1/p2 the colour 0..255, p3 strength 0..100 (100 = fully flat)
     FX_MAX = FX_COPY_BG
 };
 
@@ -174,6 +177,11 @@ float fxBrightContrast(float v, float brightness, float contrast);
 // luminance with Alight's published curves (Lift (1-y)^2, Gain y^2). r / g / b are 0..1, in and out.
 void fxColorTuneMap(float r, float g, float b, float liftHue, float liftStrength, float liftLum,
                     float gainHue, float gainStrength, float gainLum, float* outR, float* outG, float* outB);
+// CPU reference of the Solid Color effect (the same maths as kFxColor mode 16): the pixel's straight
+// r / g / b (0..1) mixed toward the solid colour (0..255) by the strength (0..100). The pixel's alpha
+// is not touched by the effect, so it is not a parameter here.
+void fxSolidColorMap(float r, float g, float b, float cr, float cg, float cb, float strength,
+                     float* outR, float* outG, float* outB);
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);
 // Units of the animated effects: phase of the Wave Warp / Turbulent Displace at a pattern frame (24 / s), in turns.

@@ -114,6 +114,12 @@ object ClipFxLibrary {
     // explicitly — see fx_plan.h.
     const val LONG_SHADOW = "long_shadow"
     const val COLOR_TUNE = "color_tune"
+    // v161: Solid Color (Alight Motion's `solidcolor`), also shaded (kFxColor mode 16, native type 61):
+    // the picture's colours are replaced by one colour, its alpha silhouette kept. Values [0..2] are
+    // the colour 0..255, [3] the strength %. Value [4] is written by the Alight importer only: 1 when
+    // the colour is keyframed there — SolidColorEval then resolves [0..2] per frame from the clip's
+    // FILL_COLOR track (which the importer stores for exactly that colour animation).
+    const val SOLID_COLOR = "solid_color"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -262,6 +268,17 @@ object ClipFxLibrary {
                 FxParamDef("Gain hue", 0f, 360f, 36f, "°", step = 3f),
                 FxParamDef("Gain strength", 0f, 100f, 0f, "%"),
                 FxParamDef("Gain luminance", -100f, 100f, 0f, "%")
+            )
+        ),
+        // Solid Color: values [0..2] the colour 0..255, [3] the strength %. Value [4] (the keyframed
+        // flag) is the importer's, like Long Shadow's colour slot.
+        FxDef(
+            SOLID_COLOR, 61, "Solid Color", "Color", "Replaces the layer's colours with one colour, keeping its shape",
+            listOf(
+                FxParamDef("Red", 0f, 255f, 255f),
+                FxParamDef("Green", 0f, 255f, 255f),
+                FxParamDef("Blue", 0f, 255f, 255f),
+                FxParamDef("Strength", 0f, 100f, 100f, "%")
             )
         ),
         FxDef(

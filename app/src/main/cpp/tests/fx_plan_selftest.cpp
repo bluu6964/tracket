@@ -272,6 +272,27 @@ int main() {
             CHECK(fxParseOps(rs, 8, ops) == 0, "repeat scatter still skipped by the parser");
             CHECK(fxShaderOf(FX_LONG_SHADOW).group == FXG_BLUR2 && fxShaderOf(FX_LONG_SHADOW).mode == 7, "long shadow shader");
             CHECK(fxShaderOf(FX_COLOR_TUNE).group == FXG_COLOR && fxShaderOf(FX_COLOR_TUNE).mode == 15, "colour tune shader");
+            // v161: solid colour — parsed like 59 / 60, mapped to kFxColor mode 16, with the CPU
+            // reference doing the same mix the shader does.
+            float sc[8] = {(float)FX_SOLID_COLOR, 184, 145, 255, 100, 0, 0, 0};
+            CHECK(fxParseOps(sc, 8, ops) == 1 && ops[0].type == FX_SOLID_COLOR, "solid colour parsed");
+            CHECK(fxShaderOf(FX_SOLID_COLOR).group == FXG_COLOR && fxShaderOf(FX_SOLID_COLOR).mode == 16, "solid colour shader");
+            for (int t = FX_DIR_BLUR; t <= FX_LAST; ++t) {
+                CHECK(!(fxShaderOf(t).group == FXG_COLOR && fxShaderOf(t).mode == 16), "type %d collides with solid colour", t);
+            }
+            {
+                float r, g, b;
+                fxSolidColorMap(0.2f, 0.4f, 0.6f, 184, 145, 255, 100, &r, &g, &b);
+                CHECK(std::fabs(r - 184.f / 255.f) < 1e-6f && std::fabs(g - 145.f / 255.f) < 1e-6f && std::fabs(b - 1.f) < 1e-6f, "solid colour at full strength is the colour");
+                fxSolidColorMap(0.2f, 0.4f, 0.6f, 184, 145, 255, 0, &r, &g, &b);
+                CHECK(std::fabs(r - 0.2f) < 1e-6f && std::fabs(g - 0.4f) < 1e-6f && std::fabs(b - 0.6f) < 1e-6f, "solid colour at strength 0 is the pixel");
+                fxSolidColorMap(0.f, 0.f, 0.f, 255, 255, 255, 50, &r, &g, &b);
+                CHECK(std::fabs(r - 0.5f) < 1e-6f && std::fabs(g - 0.5f) < 1e-6f && std::fabs(b - 0.5f) < 1e-6f, "solid colour at half strength is the midpoint");
+                FxOp s0{FX_SOLID_COLOR, {184, 145, 255, 0, 0, 0, 0}};
+                CHECK(fxIsIdentity(s0), "solid colour strength 0 is neutral");
+                s0.p[3] = 100;
+                CHECK(!fxIsIdentity(s0), "solid colour runs");
+            }
             for (int t = FX_DIR_BLUR; t <= FX_LAST; ++t) {
                 CHECK(!(fxShaderOf(t).group == FXG_BLUR2 && fxShaderOf(t).mode == 7), "type %d collides with long shadow", t);
                 CHECK(!(fxShaderOf(t).group == FXG_COLOR && fxShaderOf(t).mode == 15), "type %d collides with colour tune", t);

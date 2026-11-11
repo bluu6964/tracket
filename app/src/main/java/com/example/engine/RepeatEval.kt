@@ -55,18 +55,25 @@ import kotlin.math.sqrt
  * copy's rotation, so it follows automatically. Values: [count, radiusPx, startAngle, sweep,
  * orientation, baseScale %, alpha %, angle, scaleStep %, altColour...] (see [ClipFxLibrary]).
  *
- * `repeat.scatter` (the ST Intro "Circle 1" particles) puts [count] copies over a disc of `radius`
- * around the layer, shifted by `offset`. Alight places them from a pseudo-random field keyed by
- * `scatterSeed`; that generator is not public and the field cannot be read off the exported frames
- * (the copies wander smoothly, each on its own path, as `evolution` runs), so the field here is a
- * deterministic hash field of the same shape — uniform over the disc, per-copy scale spread between
- * the effect's `scale` floor and 1 (the measured dots span 0.18..0.88 of the base circle), the
- * evolution stored as a two-key track drifting each copy on its own slow orbit so the dots wander
- * instead of sitting still. Positions therefore differ from Alight's copy for copy; counts, sizes,
- * coverage and drift match, and the phone comparison can judge them. With `colorAltCopies` the odd
- * copies take the effect's fill colour (the measured dots alternate white / lavender exactly so).
- * Values: [count, radiusPx, offsetX, offsetY, seed, scaleFloor %, alpha %, fieldAngle,
- * evolution (t0, v0, t1, v1), altColour...].
+ * `repeat.scatter` (the ST Intro "Circle 1" particles) puts [count] copies over a disc around the
+ * layer. Alight places them from a pseudo-random field keyed by `scatterSeed`; that generator is
+ * not public and the field cannot be read off the exported frames (the copies wander smoothly,
+ * each on its own path, as `evolution` runs), so the field here is a deterministic hash field,
+ * uniform over the disc, with per-copy scale spread between the effect's `scale` floor and 1 (the
+ * measured dots span 0.16..0.86 of the base circle). What the field's SHAPE is was settled by
+ * frame measurement against Alight's export (round 5, 2026-11-11): the disc is centred on the
+ * LAYER — every copy stays within the written radius of the layer's position even with a large
+ * `offset` written, so the offset reads as a translation of Alight's field (a different pattern,
+ * not a moved centre) and is folded into the hash seed here — and the written radius is read in
+ * height units: every copy stays within radius x sceneH / sceneW of the layer (1242 -> 699 px on
+ * the 1920x1080 scene; the importer converts). The drift is measured too: each copy's angle turns
+ * ONE way as evolution grows (three tracked copies, all the same sign, 0.2 .. 0.4 of a turn per
+ * evolution unit) and its radius breathes between a tenth and the full disc radius (radii measured
+ * growing x3 and shrinking x0.25 over 1.5 s). Positions therefore still differ from Alight's copy
+ * for copy; counts, sizes, coverage and drift match, and the phone comparison can judge them. With
+ * `colorAltCopies` the odd copies take the effect's fill colour (the measured dots alternate
+ * white / lavender exactly so). Values: [count, radiusPx, offsetX, offsetY, seed, scaleFloor %,
+ * alpha %, fieldAngle, evolution (t0, v0, t1, v1), altColour...].
  *
  * [undoRotationDeg] is for a layer drawn into its own upright picture (a pose / camera layer): the
  * renderer turns that picture by the layer's own rotation when it places it, so the copies are
@@ -261,7 +268,9 @@ internal object RepeatEval {
         val fieldAngle = (fx.values.getOrNull(7) ?: 0f) * PI.toFloat() / 180f
         val e = evolutionAt(fx, clip, timeMs)
         val alt = altColorOf(fx, 12)
-        val seedBits = (seed * 1000f).roundToInt()
+        // Alight's `offset` translates its field rather than moving the field's centre (see the
+        // class doc), so here it shifts the hash seed: a different offset, a different pattern.
+        val seedBits = (seed * 1000f).roundToInt() + (ox * 131f + oy * 57f).roundToInt()
         val rad = undoRotationDeg * PI.toFloat() / 180f
         val cosU = cos(rad)
         val sinU = sin(rad)
@@ -273,13 +282,15 @@ internal object RepeatEval {
             val u4 = hash01(seedBits, i, 4)
             val u5 = hash01(seedBits, i, 5)
             // Each copy keeps its hashed place in the disc but wanders with the evolution: its angle
-            // drifts at its own hashed rate (up to 3/4 turn per evolution unit, either way) and its
-            // radius breathes between 0.4 and 1.0 of its hashed radius, so a copy never leaves the
-            // disc. At evolution 0 the copies sit near their hashed places.
-            val theta = twoPi * u1 + fieldAngle + twoPi * (u4 - 0.5f) * 0.75f * e
-            val rho = radius * sqrt(u2) * (0.7f + 0.3f * sin(twoPi * (0.8f * e + u5)))
-            val ax = ox + rho * cos(theta)
-            val ay = oy + rho * sin(theta)
+            // turns ONE way at its own hashed rate (up to 0.375 of a turn per evolution unit — the
+            // tracked copies in Alight's export all turn the same way, 0.2 .. 0.4) and its radius
+            // breathes between 0.1 and 1.0 of its hashed radius (radii there grow x3 and shrink
+            // x0.25 over 1.5 s), so a copy never leaves the disc. At evolution 0 the copies sit
+            // near their hashed places.
+            val theta = twoPi * u1 + fieldAngle - twoPi * u4 * 0.375f * e
+            val rho = radius * sqrt(u2) * (0.55f + 0.45f * sin(twoPi * (0.8f * e + u5)))
+            val ax = rho * cos(theta)
+            val ay = rho * sin(theta)
             val ux = ax * cosU + ay * sinU
             val uy = -ax * sinU + ay * cosU
             var c = clip.copy(

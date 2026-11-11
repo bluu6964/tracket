@@ -79,8 +79,10 @@ class TextProgressEvalTest {
     }
 
     @Test
-    fun visibleRangeIsFloorLike() {
-        // 5 clusters: window [0, 0.6] shows exactly 3 (a cluster shows only when fully inside)
+    fun visibleRangeShowsTheClustersTheWindowOverlaps() {
+        // 5 clusters: window [0, 0.6] shows exactly 3 — the 4th cluster's slice only TOUCHES the
+        // window at 0.6, and a touch is not an overlap (build 110's intersection rule; the older
+        // whole-slice rule agreed at exact boundaries like these and differed mid-slice).
         assertEquals(0..2, TextProgressEval.visibleRange(5, 0f, 0.6f))
         assertEquals(0..4, TextProgressEval.visibleRange(5, 0f, 1f))
         assertEquals(2..4, TextProgressEval.visibleRange(5, 0.4f, 1f))
@@ -105,10 +107,13 @@ class TextProgressEvalTest {
 
     @Test
     fun visibleTextUsesTheRealFileNumbers() {
-        // "Channel Name" has 12 clusters (the space counts); at the layer's end keyframe value mid-flight,
-        // end = 0.619794 shows the 7 clusters whose slice ends by then: "Channel".
+        // "Channel Name" has 12 clusters (the space counts); at the layer's end keyframe value
+        // mid-flight, end = 0.619794, the window overlaps the 8 clusters whose slice starts by
+        // then: "Channel " (the trailing space is the 8th). The pre-110 whole-slice rule showed
+        // 7 ("Channel"); Alight's own export at the equivalent moment (2.0 s, end 0.963) shows
+        // all 12 where the old rule showed 11 — the intersection rule is the measured one.
         assertEquals(12, TextProgressEval.clustersOf("Channel Name").size)
-        assertEquals("Channel", TextProgressEval.visibleText("Channel Name", 0f, 0.619794f))
+        assertEquals("Channel ", TextProgressEval.visibleText("Channel Name", 0f, 0.619794f))
     }
 
     @Test

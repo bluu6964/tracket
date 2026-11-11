@@ -207,16 +207,20 @@ class NativeProjectExporter(private val context: Context) {
                 val cam = CameraRig(tracks, rig)
                 val camK = if (previewW > 0f) w / previewW else 1f
                 // Effects as the renderer runs them this frame: Motion Blur is resolved from the
-                // layer's own motion over one export frame. [sample] is the clip the motion is
+                // layer's own motion over one export frame, and a keyframed Solid Color takes its
+                // colour from the layer's colour track. [sample] is the clip the motion is
                 // sampled from — the original, not the rendered copy, so a rig adjustment can never
                 // hide the keyframes.
                 val frameMs = 1000L / fps
                 val canvasH = MotionBlurEval.canvasHeightPx(previewW, w, h)
                 fun fxOpsOf(c: TimelineClip, timeMs: Long, sample: TimelineClip = c): FloatArray? =
                     ClipFxLibrary.toNative(
-                        MotionBlurEval.resolve(c.effects, { ms ->
-                            NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
-                        }, timeMs, frameMs, canvasH)
+                        SolidColorEval.resolve(
+                            MotionBlurEval.resolve(c.effects, { ms ->
+                                NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
+                            }, timeMs, frameMs, canvasH),
+                            c, timeMs
+                        )
                     )
                 // Puts a picture layer on the corners its camera sees it at (corner pin path); false = behind the camera.
                 fun placeByCamera(clip: TimelineClip, t: Long, anim: NativeLayerAnim, fp: FloatArray, p: LayerParams, cw: Int, ch: Int): Boolean {

@@ -416,15 +416,19 @@ class NativePreviewEngine(context: Context) {
 
     /**
      * Effects as the renderer runs them at [timeMs]: Motion Blur is resolved from the layer's own
-     * motion over one 33 ms frame (the 30 fps default: the preview has no project fps). [sample] is
+     * motion over one 33 ms frame (the 30 fps default: the preview has no project fps), and a
+     * keyframed Solid Color takes its colour from the layer's colour track. [sample] is
      * the clip the motion is sampled from — the original, not the rendered copy, so a rig adjustment
      * can never hide the keyframes.
      */
     private fun fxOpsOf(c: TimelineClip, timeMs: Long, sample: TimelineClip = c): FloatArray? =
         ClipFxLibrary.toNative(
-            MotionBlurEval.resolve(c.effects, { ms ->
-                NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
-            }, timeMs, 33L, MotionBlurEval.canvasHeightPx(PreviewFrameRef.widthPx, outW, outH))
+            SolidColorEval.resolve(
+                MotionBlurEval.resolve(c.effects, { ms ->
+                    NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
+                }, timeMs, 33L, MotionBlurEval.canvasHeightPx(PreviewFrameRef.widthPx, outW, outH)),
+                c, timeMs
+            )
         )
 
     private fun drawFrame() {

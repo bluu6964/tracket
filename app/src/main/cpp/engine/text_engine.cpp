@@ -1299,7 +1299,9 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
         if (!progressing) return true;
         const float lo = (float)ord / (float)clusterCount, hi = (float)(ord + 1) / (float)clusterCount;
         const float a = std::max(lo, std::min(rq.progressStart, rq.progressEnd)), b = std::min(hi, std::max(rq.progressStart, rq.progressEnd));
-        return (b - a) * (float)clusterCount > 0.999f;
+        // Intersection, not containment (see text_engine.h): a cluster whose slice the window only
+        // touches is still hidden, one it overlaps by any amount is drawn whole.
+        return (b - a) > 0.0001f;
     };
     std::vector<uint8_t> tintMask;  // glyphs that are drawn (partly) in the animator colour
     if (animating && rq.animRecolor && wantFill) tintMask.assign((size_t)imgW * imgH, 0);

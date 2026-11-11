@@ -685,8 +685,10 @@ static void testProgress() {
         b.fontPath = bnFont; b.fontPx = 60; b.maxTextW = 600; b.padH = 15; b.padV = 7; b.cx = 350; b.cy = 200;
         Stats sb;
         CHECK(render(b, &x0, &x1, &y0, &y1, &a, &sb) && sb.clusters == 1 && a > 0);
+        // Intersection rule (build 110): the one cluster's slice [0, 1] overlaps the window
+        // [0, 0.5], so the conjunct pops in WHOLE — it is never half drawn, under either rule.
         b.progressOn = true; b.progressEnd = 0.5f;
-        CHECK(render(b, &x0, &x1, &y0, &y1, &a, nullptr) && a == 0);
+        CHECK(render(b, &x0, &x1, &y0, &y1, &a, nullptr) && a > 0);
         b.progressEnd = 1.f;
         CHECK(render(b, &x0, &x1, &y0, &y1, &a, nullptr) && a > 0);
     }

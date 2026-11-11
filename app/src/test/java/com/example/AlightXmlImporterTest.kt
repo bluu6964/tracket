@@ -4,6 +4,7 @@ import com.example.engine.AlightXmlImporter
 import com.example.engine.CounterEval
 import com.example.engine.ParentRig
 import com.example.engine.RepeatEval
+import com.example.engine.TextProgressEval
 import com.example.engine.textLayoutBoxWidth
 import com.example.model.AnimProp
 import com.example.model.at
@@ -76,10 +77,12 @@ $layers
     @Test
     fun sizeTimesScaleBecomesScalePercent() {
         val c = AlightXmlImporter.parse(riseUp, 1080f).snapshot.tracks.flatMap { it.clips }[0]
-        // 30 * 2 = 60 Alight text units; one unit is sceneWidth / 512 px, so the font renders
-        // 60 * 1080 / 512 = 126.6 scene px tall; the app's text is 0.11 * 1080 = 118.8 px at 100 %.
-        // (Until the ST Intro parity fix this read size x scale as plain scene px, ~3.75x too small.)
-        assertEquals(60f * 1080f / 512f / (0.11f * 1080f) * 100f, c.scalePercent, 0.01f)
+        // 30 * 2 = 60 Alight text units; one unit is sceneWidth / 640 px, so the font renders
+        // 60 * 1080 / 640 = 101.25 scene px tall; the app's text is 0.11 * 1080 = 118.8 px at 100 %.
+        // (Build 91 read / 512 off a text WIDTH; round 5's cap-height measurements — spacing-
+        // independent, two fonts — give / 640 exactly. Before build 91 this read size x scale as
+        // plain scene px, ~3.75x too small.)
+        assertEquals(60f * 1080f / 640f / (0.11f * 1080f) * 100f, c.scalePercent, 0.01f)
     }
 
     @Test
@@ -324,11 +327,14 @@ $layers
         val clips = AlightXmlImporter.parse(stIntro, 1920f).snapshot.tracks.flatMap { it.clips }
         val t = clips.first { it.type == LayerType.TEXT }
         assertEquals("Channel Name", t.text)
-        // Font height at render: 18 * 0.839844 * 1920 / 512 = 56.7 scene px (Alight's export measures
-        // about 57; the old reading gave 15.1, which is why the text was tiny and wrapped).
+        // Font height at render: 18 * 0.839844 * 1920 / 640 = 45.4 scene px. (Build 91's / 512
+        // reading gave 56.7, off a width measurement; round 5 measured the export's CAP HEIGHT —
+        // 32 px at 1920 wide for this text, Roboto's cap ratio 0.71 — which is 45.4 px of em, and
+        // the pill text in its own font confirms the same / 640. The old pre-91 reading gave 15.1,
+        // which is why the text was tiny and wrapped.)
         val emPx = t.scalePercent / 100f * 0.11f * 1920f
-        assertEquals(56.7f, emPx, 1.5f)
-        // wrapWidth 512 scene px of a 1920 scene; at a ~57 px em the 12 glyphs need roughly 340 px,
+        assertEquals(45.4f, emPx, 1.5f)
+        // wrapWidth 512 scene px of a 1920 scene; at a ~45 px em the 12 glyphs need roughly 270 px,
         // so the line fits its box on one line, as in Alight.
         assertEquals(512f / 1920f, t.textWrapFrac, 0.001f)
         assertTrue(t.textWrapFrac * 1920f > 400f)
@@ -525,9 +531,11 @@ $layers
         // The end-card "Channel Name" is a ROOT-level layer (not a group child): wrapWidth 512 of 1920.
         val text = clips.first { it.type == LayerType.TEXT && it.parent == null }
         assertEquals(512f / 1920f, text.textWrapFrac, 0.001f)
-        // Its layout box lives in unscaled layout units (font 211.2 px) and is scaled by ~0.268 when
-        // drawn, so the box must be ~512/0.268 wide there: "Channel Name" needs ~1400 layout px on one
+        // Its layout box lives in unscaled layout units (font 211.2 px) and is scaled by ~0.215 when
+        // drawn, so the box must be ~512/0.215 wide there: "Channel Name" needs ~1400 layout px on one
         // line. Build 91 used the raw fraction and got a ~110 px on-screen box (a 2-letter column).
+        // (The scale factor is the / 640 text reading since build 110; the on-screen width below is
+        // the wrap width itself, so it does not move with the text-unit rule.)
         val box = textLayoutBoxWidth(1920f, text.textWrapFrac, text.effectiveScalePercent / 100f, 52.8f)
         assertTrue(box > 1400f)
         assertEquals(483.6f, box * text.effectiveScalePercent / 100f, 20f)   // on screen: ~512 - padding
@@ -637,7 +645,9 @@ $layers
     @Test
     fun laterPassEffectsStayWarningsOnTheRealFile() {
         val r = threeResult()
-        assertTrue(r.warnings.any { it.contains("solidcolor") })
+        // solidcolor is drawn since build 110 (the Solid Color effect), so the file's one instance
+        // (on the stroke-only Outline) no longer warns at all.
+        assertTrue(r.warnings.none { it.contains("solidcolor") })
         // The file's one movealongpath3 (Circle 1 on Circle 2's ring, in Group 2) is baked into
         // POSITION keyframes since build 99, so no movealongpath3 warning is left either.
         assertTrue(r.warnings.none { it.contains("movealongpath3") })
@@ -881,8 +891,10 @@ $layers
         assertEquals(listOf(4f, 223f, 0f, 360f, 0f, 100f, 100f, 0f, 100f, 0f, 0f, 0f), c.effects[0].values)
         assertEquals(ClipFxLibrary.REPEAT_SCATTER, c.effects[1].type)
         // [count, radius, offsetX, offsetY, seed, scale %, alpha %, angle, evolution..., alt...]
+        // The radius is stored in height units (build 110): this scene is 1080x1920, so
+        // 1242 x 1920/1080 = 2208. The radial radius above is NOT converted (frame-proven as-is).
         assertEquals(
-            listOf(10f, 1242f, 0f, 0f, 0f, 0f, 100f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f),
+            listOf(10f, 2208f, 0f, 0f, 0f, 0f, 100f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f),
             c.effects[1].values
         )
         assertFalse(r.warnings.any { it.contains("repeat.radial") || it.contains("repeat.scatter") })
@@ -943,7 +955,9 @@ $layers
         val circle = clips.first { it.name == "Circle 1" }
         val scatter = circle.effects.single { it.type == ClipFxLibrary.REPEAT_SCATTER }
         assertEquals(10f, scatter.values[0], 0.001f)              // count
-        assertEquals(1242f, scatter.values[1], 0.001f)            // radius (preview px, k = 1)
+        // The written radius 1242 is read in height units (build 110, round-5 measurement):
+        // 1242 x 1080/1920 = 698.6 preview px on this 1920x1080 scene.
+        assertEquals(698.625f, scatter.values[1], 0.001f)         // radius (preview px, k = 1)
         assertEquals(-778f, scatter.values[2], 0.001f)            // offset x
         assertEquals(210f, scatter.values[3], 0.001f)             // offset y
         assertEquals(0.23f, scatter.values[4], 0.001f)            // scatter seed
@@ -960,20 +974,23 @@ $layers
             val diameter = dot.shapeDrawScaleX * box           // base circle is 51 px; copies 0.13..1 x
             assertTrue(diameter in 5f..52f)
             if (diameter > biggest) biggest = diameter
-            // Centres stay inside the effect's disc around the layer + offset (scene coords).
+            // Centres stay inside the effect's disc around the LAYER (scene coords): the written
+            // offset translates Alight's field rather than moving its centre (round 5), so the
+            // disc is the layer's own position with the height-unit radius.
             val cx = 960f + dot.transformX
             val cy = 540f + dot.transformY
-            val d = kotlin.math.hypot(cx - (960f - 778f), cy - (540f + 210f))
-            assertTrue(d <= 1242.5f)
+            val d = kotlin.math.hypot(cx - 960f, cy - 540f)
+            assertTrue(d <= 699.5f)
             if (cx in 0f..1920f && cy in 0f..1080f) inFrame++
             // colorAltCopies: odd copies take the effect's lavender, even ones keep the white fill.
             assertEquals(if (i % 2 == 1) 0xFFB891FFL else 0xFFFFFFFFL, dot.textColor)
         }
         // Alight's export at 2.0 s shows dots of 9..45 px; the field's copies span the same range.
-        // (How many land inside the frame depends on the field's exact draw, which is Alight's own
-        // generator — see RepeatEval's doc — so only a floor is asserted here.)
         assertTrue(biggest >= 28f)
-        assertTrue(inFrame >= 2)
+        // And Alight shows 5 clear dots in frame at 2.0 s (5..8 across 2.0/3.0/4.2 s): with the
+        // field centred on the layer at the height-unit radius, most copies land in frame — the
+        // pre-110 field (offset centre, full radius) put only 1..3 there.
+        assertTrue(inFrame >= 5)
         // The field drifts with the evolution track (1.79 -> 2.45): 0.5 s and 2.0 s differ.
         val at05 = RepeatEval.copiesOf(circle.renderAt(500L), timeMs = 500L)
         val moved = dots.indices.count { i ->
@@ -1212,7 +1229,7 @@ $layers
     // ---- Pass 2: fills, spacing, scale assist, baked oscillation -------------------------------------------------
 
     @Test
-    fun solidColorSetsTextColourAndMultipliesOpacity() {
+    fun solidColorBecomesTheFxAndMultipliesOpacity() {
         val xml = scene(
             """<text id="1" label="A" startTime="0" endTime="1000" size="30" font="googlefonts?name=Roboto&amp;weight=400">
   <transform><location value="540,960,0" /><scale value="1,1" /><opacity value="0.5" /></transform>
@@ -1220,7 +1237,12 @@ $layers
   <content>A</content></text>"""
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
-        assertEquals(0xFF112233L, c.textColor)
+        // Since build 110 the colour rides the Solid Color effect (the picture is flattened at
+        // render); the layer's own colour is NOT overwritten (before, textColor became the
+        // effect's colour and a media fill was replaced outright).
+        val fx = c.effects.single { it.type == ClipFxLibrary.SOLID_COLOR }
+        assertEquals(listOf(17f, 34f, 51f, 100f, 0f), fx.values)
+        assertEquals(0xFFFFFFFFL, c.textColor)
         assertEquals(25f, c.opacity, 0.001f)   // layer 50 % x the effect's alpha 0.5
     }
 
@@ -1239,16 +1261,24 @@ $layers
         assertEquals(listOf(0L, 2000L), keys.map { it.timeMs })
         assertEquals(packColor(0xFF000000L), keys[0].a to keys[0].b)
         assertEquals(packColor(0xFFFFFFFFL), keys[1].a to keys[1].b)
+        // And the Solid Color effect itself, flagged (values[4] = 1) to follow that track per
+        // frame (SolidColorEval) — its stored colour is the first keyframe's.
+        val fx = c.effects.single { it.type == ClipFxLibrary.SOLID_COLOR }
+        assertEquals(listOf(0f, 0f, 0f, 100f, 1f), fx.values)
     }
 
     @Test
     fun solidColorOnTheRealStrokeOnlyShapeKeepsTheStrokeColour() {
-        // The "Outline" of the real file "3": solidcolor flashes white -> green, but its only paint is the stroke.
+        // The "Outline" of the real file "3": solidcolor flashes white -> green, and its only paint
+        // is the stroke — the Solid Color effect flattens that stroke at render (build 110), so the
+        // importer keeps the stroke's own colour AND the colour track AND attaches the flagged fx.
         val outline = threeClips().first { it.name == "Outline" }
         assertEquals(0xFF009DFFL, outline.strokeColor)
         val keys = outline.keyframes[AnimProp.FILL_COLOR]!!
         assertEquals(packColor(0xFFFFFFFFL), keys[0].a to keys[0].b)
         assertEquals(packColor(0xFF14FD6AL), keys[1].a to keys[1].b)
+        val fx = outline.effects.single { it.type == ClipFxLibrary.SOLID_COLOR }
+        assertEquals(listOf(255f, 255f, 255f, 100f, 1f), fx.values)   // first keyframe's colour
     }
 
     @Test
@@ -1515,7 +1545,7 @@ $layers
   <content>A</content></text>"""
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
-        val base = 60f * 1080f / 512f / (0.11f * 1080f) * 100f   // text units of sceneWidth / 512 px (see sizeTimesScaleBecomesScalePercent)
+        val base = 60f * 1080f / 640f / (0.11f * 1080f) * 100f   // text units of sceneWidth / 640 px (see sizeTimesScaleBecomesScalePercent)
         val keys = c.keyframes[AnimProp.SCALE]!!
         assertEquals(listOf(0L, 500L, 1000L, 1500L, 2000L), keys.map { it.timeMs })
         assertEquals(base, keys[0].a, 0.01f)
@@ -1614,7 +1644,9 @@ $layers
     }
 
     @Test
-    fun solidColorOnAGroupStaysAWarning() {
+    fun solidColorOnAGroupBecomesTheFx() {
+        // A group is flattened as its composed picture by the same effect (ST Intro's "Shadow"
+        // pass is exactly this); before build 110 it was skipped with a warning.
         val xml = scene(
             """<embedScene id="2" label="G" startTime="0" endTime="1000" fillType="intrinsic" outTime="1000">
   <transform><location value="540,960,0" /></transform>
@@ -1625,7 +1657,69 @@ $layers
 </embedScene>"""
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
-        assertTrue(r.warnings.any { it.contains("solidcolor on a group") })
+        val g = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val fx = g.effects.single { it.type == ClipFxLibrary.SOLID_COLOR }
+        assertEquals(listOf(0f, 0f, 0f, 100f, 0f), fx.values)
+        assertFalse(r.warnings.any { it.contains("solidcolor") })
+    }
+
+    @Test
+    fun solidColorOnTheStIntroIconKeepsThePictureFill() {
+        // The proving instance of round 5: ST Intro's send-message.png carries solidcolor
+        // #ffb891ff. Alight flattens the ICON's silhouette to that colour (invisible against the
+        // white pill); the pre-110 importer replaced the fill with the colour and painted the
+        // shape's whole rectangle lavender. The fill must stay the picture now, with the colour
+        // on the Solid Color effect instead.
+        val clips = AlightXmlImporter.parse(stIntroGroups, 1920f).snapshot.tracks.flatMap { it.clips }
+        val icon = clips.first { it.name == "send-message.png" }
+        assertEquals(com.example.model.FILL_IMAGE, icon.fillMode)
+        assertEquals("content://media/external/images/media/53288", icon.fillImageUri)
+        val fx = icon.effects.single { it.type == ClipFxLibrary.SOLID_COLOR }
+        assertEquals(listOf(184f, 145f, 255f, 100f, 0f), fx.values)
+    }
+
+    @Test
+    fun pillTextProgressMatchesAlightAt1200And2000() {
+        // The other proving instance of round 5: text 633220 ("Channel Name", the pill text)
+        // starts at scene 666 ms inside its (factor-1) groups; its textprogress end runs
+        // 0 -> 1 over t = 0.007613..0.619794 of its 2233 ms. Alight's export shows "Chann" at
+        // 1.2 s (window 0.378) and the complete text at 2.0 s (window 0.963) — the intersection
+        // visibility rule (TextProgressEval) is what makes those counts come out; the timing
+        // chain itself (embedScene offsets, keyframe fractions) was already exact.
+        val clips = AlightXmlImporter.parse(stIntroGroups, 1920f).snapshot.tracks.flatMap { it.clips }
+        val pill = clips.first { c -> c.textAnimators.any { it.effectId == AlightXmlImporter.TEXTPROGRESS } }
+        assertEquals(666L, pill.startMs)
+        assertEquals(2233L, pill.durationMs)
+        fun shownAt(ms: Long): String {
+            val p = TextProgressEval.evaluate(pill, ms)!!
+            return TextProgressEval.visibleText(pill.text ?: "", p.start, p.end)
+        }
+        assertEquals("", shownAt(683L))            // the end keyframe has not left 0 yet
+        assertEquals("Chann", shownAt(1200L))      // window 0.378: 5 of 12 clusters
+        assertEquals("Channel Name", shownAt(2000L))   // window 0.963: all 12
+    }
+
+    @Test
+    fun unsetOutTimeSentinelMeansTheWholeNestedScene() {
+        // ST Intro's "Logo Here" embed carries outTime="-2147482782" — AM's unset marker (near
+        // Long.MIN_VALUE; the Graph file's "Week" has the sibling -2147483215). The window is
+        // the whole 3032 ms nested scene, stretched onto the embed's 3899 ms span; before build
+        // 110 the sentinel silently read as factor 1 and the logo ended at 7165 of 8032 ms.
+        val xml = """<?xml version='1.0' encoding='UTF-8' ?>
+<scene title="ST Intro" width="1920" height="1080" totalTime="8032" fps="30">
+<embedScene id="633205" label="Logo Here" startTime="4133" endTime="8032" fillType="intrinsic" outTime="-2147482782">
+  <transform><location value="960,540,0" /></transform>
+  <scene title="" width="1920" height="1080" totalTime="3032" fps="30">
+  <shape id="633203" label="images.png" startTime="0" endTime="3032" fillType="color" s=".rect"><transform><location value="960,540,0" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>
+</scene>"""
+        val r = AlightXmlImporter.parse(xml, 1920f)
+        val child = r.snapshot.tracks.flatMap { it.clips }.first { it.name == "images.png" }
+        assertEquals(4133L, child.startMs)
+        assertEquals(3899L, child.durationMs)   // 3032 stretched by 3899 / 3032
+        assertEquals(8032L, child.endMs)
+        assertTrue(r.warnings.any { it.contains("timing was stretched") })
     }
 
     // ---- Pass 3: native fx mappings, wipe masks, bakes, audio --------------------------------------------------
@@ -2326,7 +2420,7 @@ $layers
   <content>A</content></text>"""
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
-        val base = 30f * 1080f / 512f / (0.11f * 1080f) * 100f   // text units of sceneWidth / 512 px
+        val base = 30f * 1080f / 640f / (0.11f * 1080f) * 100f   // text units of sceneWidth / 640 px
         val keys = c.keyframes[AnimProp.SCALE]!!
         assertEquals(base * 1.1f, keys.first().a, base * 0.01f)        // mid + amp * sin(0)
         assertTrue(keys.maxOf { it.a } > base * 1.18f)                  // up to maxsize

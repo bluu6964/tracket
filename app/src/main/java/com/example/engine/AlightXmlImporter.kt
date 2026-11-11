@@ -77,8 +77,9 @@ import kotlin.math.sin
  *  - `<embedScene>`: a real Group layer (see GroupOps) holding the layers of the nested `<scene>`; the group's
  *    move / scale / turn / opacity and the pivot (as the children's parent link) come from its own transform,
  *    and the nested times are remapped from the [inTime, outTime] window onto the group's length.
- *  - effects (pass 2): `solidcolor` -> the clip's colour (keyframed: FILL_COLOR keyframes) and its alpha
- *    multiplied into the opacity; `gradientoverlay2` -> the app's gradient fill (colours, type, an approximate
+ *  - effects (pass 2): `solidcolor` -> the Solid Color effect (the picture flattened to one colour at
+ *    render; keyframed: the colour also stored as FILL_COLOR keyframes for per-frame resolution) and its
+ *    alpha multiplied into the opacity; `gradientoverlay2` -> the app's gradient fill (colours, type, an approximate
  *    angle / offset / scale); `textspacing` -> letter spacing / line height of a text layer; `scaleassist`
  *    (axis 3) composed into the SCALE track; `oscillate` / `oscillate3` / `swing` / `swing2` are procedural, so
  *    they are BAKED into the POSITION / ROTATION keyframes at the scene fps, composed over the layer's own
@@ -119,10 +120,14 @@ import kotlin.math.sin
  *    STARTS at, so every easing moves one keyframe back when a track is converted
  *  - `location` is in scene pixels from the top-left corner; the app stores the move from the canvas centre in PREVIEW
  *    pixels (see PreviewFrameRef), so it is scaled by previewWidthPx / sceneWidth
- *  - Alight text is measured in units of sceneWidth / 512 px: the rendered font height is
- *    `size` * `scale` * sceneWidth / 512 scene pixels (measured on the ST Intro export: size 18 at
- *    scale 0.84 on a 1920 scene renders about 57 px tall, not 15). The app's text is 0.11 * canvas
- *    width at 100 %. `wrapWidth` is in scene pixels and becomes the layer's max text width.
+ *  - Alight text is measured in units of sceneWidth / 640 px: the rendered font height is
+ *    `size` * `scale` * sceneWidth / 640 scene pixels. (Build 91 read / 512 off a width
+ *    measurement; round 5 (2026-11-11) measured CAP HEIGHTS on Alight's ST Intro export for two
+ *    texts in two fonts — Roboto 700 size 18 at scale 0.839844: 32 px at 1920 wide, and the pill
+ *    text at scale 0.792888: 30 px — and both give exactly sceneWidth / 640, a factor 3.0 at 1920:
+ *    cap height is spacing-independent, so it outranks the width reading.) The app's text is
+ *    0.11 * canvas width at 100 %. `wrapWidth` is in scene pixels and becomes the layer's max
+ *    text width.
  *  - a shape's `size` is a HALF extent (centre to edge): the rendered size is 2 * `size` * transform
  *    `scale` in scene pixels (a media shape sized 960x540 fills a 1920x1080 scene exactly; the ST
  *    Intro background rect, size 100 at scale 9.915, covers the frame). The app draws a shape in a
@@ -199,7 +204,7 @@ object AlightXmlImporter {
     private const val APP_FONT_FRACTION = 0.11f
 
     /** Alight text units: one unit is sceneWidth / [TEXT_REF_UNITS] px (see the header rules). */
-    private const val TEXT_REF_UNITS = 512f
+    private const val TEXT_REF_UNITS = 640f
 
     /** The app's shape box at 100 % (dp, see OverlayPose.shapeBoxPx) and the canvas width it is measured against. */
     private const val APP_SHAPE_BOX_DP = 130f
@@ -437,7 +442,7 @@ object AlightXmlImporter {
         val rot = tr.rot
         val opa = tr.opa ?: child(el, "opacity")?.let { readTrack(it) }
 
-        // Alight's font height in scene pixels: size x scale, in units of sceneWidth / 512 px.
+        // Alight's font height in scene pixels: size x scale, in units of sceneWidth / 640 px.
         val fontBase = APP_FONT_FRACTION * ctx.sceneW
         fun scalePct(v: List<Float>): Float {
             if (v.size >= 2 && abs(v[0] - v[1]) > 1e-3f) w += "Non-uniform scale: only the horizontal scale is used"
@@ -1279,8 +1284,15 @@ object AlightXmlImporter {
         val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
         val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
         val durMs = (endMs - startMs).coerceAtLeast(100L)
-        val inT = el.getAttribute("inTime").toLongOrNull() ?: 0L
-        val outT = el.getAttribute("outTime").toLongOrNull() ?: nTotal
+        // An unset outTime is written as a sentinel near Long.MIN_VALUE (ST Intro's "Logo Here":
+        // -2147482782, the Graph file's "Week": -2147483215 — the only two in the corpus; every
+        // other embed's window is sane). The window is then the whole nested scene, fitted to the
+        // embed's span like any other window — before this, the sentinel silently read as factor 1
+        // and the children ended early, leaving the group's tail empty (the ST Intro logo vanished
+        // at 7165 of its 8032 ms group).
+        val inT = (el.getAttribute("inTime").toLongOrNull() ?: 0L).coerceAtLeast(0L)
+        val outRaw = el.getAttribute("outTime").toLongOrNull()
+        val outT = if (outRaw == null || outRaw <= inT) nTotal else outRaw
         val factor = if (outT > inT) (endMs - startMs).toDouble() / (outT - inT).toDouble() else 1.0
         if (abs(factor - 1.0) > 1e-4) w += "Group" + labelOf(el) + ": its timing was stretched to fit its length in the timeline"
 
@@ -1526,46 +1538,39 @@ object AlightXmlImporter {
     }
 
     /**
-     * `com.alightcreative.solidcolor`: the layer's paint becomes one colour. Constant -> the clip colour,
-     * keyframed -> FILL_COLOR keyframes (the app's colour track). The effect's `alpha` multiplies the layer
-     * opacity. On a stroke-only shape the app cannot animate the stroke colour, so the colour is saved as the
-     * fill colour and the stroke keeps its own (in Alight the whole layer, stroke included, is tinted).
+     * `com.alightcreative.solidcolor`: the layer's PICTURE is flattened to one colour at render
+     * time — the Solid Color effect (kFxColor mode 16) replaces the picture's colours and keeps
+     * its alpha silhouette, so a media fill keeps its picture's shape (and a picture that is not
+     * in the project stays invisible, exactly as in Alight), a stroke-only layer's stroke is
+     * tinted, and a group flattens its composed picture (ST Intro's "Shadow" pass). Before build
+     * 110 the importer instead replaced the layer's fill with the colour, which painted a media
+     * shape's whole rectangle (the lavender square of round 5) and skipped groups outright.
+     * A constant colour rides the effect's values; a keyframed one (the file "3" Outline:
+     * white -> green) ALSO keeps the app's FILL_COLOR track, which [SolidColorEval] resolves per
+     * frame — the effect's values then hold the first colour and the follows-track flag. The
+     * effect's `alpha` multiplies the layer opacity.
      */
     private fun applySolidColor(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long, target: FxTarget): TimelineClip {
         val w = ctx.warnings
-        if (target == FxTarget.GROUP) {
-            w += "Effect solidcolor on a group is not supported yet: skipped"
-            return clip0
-        }
         var clip = clip0
         val props = fxProps(fx)
         val blend = props["blendMode"]?.scalarAt(0f)?.toInt() ?: 0
         if (blend != 0) w += "Effect solidcolor: blend mode " + blend + " is not supported yet: imported as normal"
         val colorT = props["color"]
         if (colorT != null) {
-            val strokeOnly = target == FxTarget.SHAPE && clip.fillMode == FILL_NONE && clip.strokeWidth > 0f
-            if (strokeOnly && colorT.keys.size >= 2) {
-                w += "Effect solidcolor on a stroke-only layer: its colour animation is saved as the fill colour, the stroke keeps its own colour"
-            } else if (strokeOnly) {
-                w += "Effect solidcolor on a stroke-only layer: the colour is saved as the fill colour, the stroke keeps its own colour"
-            }
-            if (target == FxTarget.SHAPE && clip.fillMode == FILL_IMAGE) {
-                w += "Effect solidcolor replaces the layer's picture fill"
-                clip = clip.copy(fillMode = FILL_SOLID)
-            }
+            val argb = unpacked(colorT.first())
+            val r = ((argb shr 16) and 0xFF).toFloat()
+            val g = ((argb shr 8) and 0xFF).toFloat()
+            val b = (argb and 0xFF).toFloat()
             if (colorT.keys.size >= 2) {
                 val keys = trackKeys(colorT, durMs) { (it.getOrNull(0) ?: 0f) to (it.getOrNull(1) ?: 0f) }
                 clip = clip.copy(
-                    textColor = unpacked(colorT.first()),
-                    fillMode = if (clip.fillMode == FILL_GRADIENT) FILL_SOLID else clip.fillMode,
-                    keyframes = clip.keyframes - AnimProp.GRAD_COLOR_1 - AnimProp.GRAD_COLOR_2 + (AnimProp.FILL_COLOR to keys)
+                    textColor = argb,
+                    keyframes = clip.keyframes + (AnimProp.FILL_COLOR to keys)
                 )
+                clip = addFx(clip, ctx, ClipFxLibrary.SOLID_COLOR, listOf(r, g, b, 100f, 1f), "solidcolor")
             } else {
-                clip = clip.copy(
-                    textColor = unpacked(colorT.first()),
-                    fillMode = if (clip.fillMode == FILL_GRADIENT) FILL_SOLID else clip.fillMode,
-                    keyframes = clip.keyframes - AnimProp.FILL_COLOR - AnimProp.GRAD_COLOR_1 - AnimProp.GRAD_COLOR_2
-                )
+                clip = addFx(clip, ctx, ClipFxLibrary.SOLID_COLOR, listOf(r, g, b, 100f, 0f), "solidcolor")
             }
         }
         props["alpha"]?.let { clip = composeAlpha(clip, it, durMs) }
@@ -2806,7 +2811,10 @@ object AlightXmlImporter {
             clip0, ctx, ClipFxLibrary.REPEAT_SCATTER,
             listOf(
                 count.toFloat(),
-                radius * ctx.k,
+                // The field's radius is stored scaled by the scene's height ratio: round 5's frame
+                // measurements put every one of Alight's copies within sceneH/sceneW of the written
+                // radius (1242 -> 699 on 1920x1080) of the layer — see RepeatEval.
+                radius * ctx.k * ctx.sceneH / ctx.sceneW,
                 (offset.getOrNull(0) ?: 0f) * ctx.k,
                 (offset.getOrNull(1) ?: 0f) * ctx.k,
                 seed,

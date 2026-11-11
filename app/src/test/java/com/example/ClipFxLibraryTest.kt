@@ -24,9 +24,10 @@ class ClipFxLibraryTest {
         // FX_BLUR (1) .. FX_COPY_BG (54), plus FX_MOTION_BLUR (55), FX_REPEAT (56), FX_REPEAT_RADIAL
         // (57) and FX_REPEAT_SCATTER (58): every type the engine knows has a tile, none outside that
         // range. 55..58 are the odd ones: Kotlin resolves them before they reach the engine, and
-        // fxParseOps skips them (they sit above FX_MAX). FX_LONG_SHADOW (59) and FX_COLOR_TUNE (60)
-        // sit above FX_MAX too, but they ARE shaded effects: fxParseOps accepts them explicitly.
-        assertEquals((1..60).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+        // fxParseOps skips them (they sit above FX_MAX). FX_LONG_SHADOW (59), FX_COLOR_TUNE (60)
+        // and FX_SOLID_COLOR (61) sit above FX_MAX too, but they ARE shaded effects: fxParseOps
+        // accepts them explicitly.
+        assertEquals((1..61).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
     }
 
     @Test fun longShadowAndColorTuneReachTheEngine() {

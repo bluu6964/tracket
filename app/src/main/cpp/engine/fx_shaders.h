@@ -3,7 +3,7 @@
 //               7 long shadow
 //   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
 //               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize,
-//               15 colour tune
+//               15 colour tune, 16 solid colour
 //   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare
 // All of them work on the premultiplied picture the layer shader uses (top of the picture at v = 1), take the raw slider
@@ -454,7 +454,7 @@ void main() {
         float th = clamp(uP[0], 0.0, 100.0) / 100.0;
         vec3 s = mix(rgb, 1.0 - rgb, smoothstep(vec3(th - 0.02), vec3(th + 0.02), rgb));
         o = mix(rgb, s, clamp(uP[1], 0.0, 100.0) / 100.0);
-    } else {
+    } else if (uMode == 15) {
         // Colour tune (Alight Motion's grading effect): a Lift and a Gain control, each a colour-disc
         // push plus a luminance shift, weighted by the pixel's luminance with Alight's published curves
         // (Lift (1 - y)^2, Gain y^2). As in Colour Balance (mode 4) the disc push carries no luminance of
@@ -467,6 +467,14 @@ void main() {
         vec3 add = cl * (clamp(uP[1], 0.0, 100.0) / 100.0) * wL + cg * (clamp(uP[4], 0.0, 100.0) / 100.0) * wG;
         float dl = clamp(uP[2], -100.0, 100.0) / 100.0 * wL + clamp(uP[5], -100.0, 100.0) / 100.0 * wG;
         o = rgb + add * 0.45 + dl;
+    } else if (uMode == 16) {
+        // Solid colour (Alight Motion's solidcolor): the picture's colours are replaced by one
+        // colour — uP[0..2] are the colour 0..255, uP[3] the strength 0..100 — while its alpha
+        // silhouette is kept (the tail below premultiplies by the pixel's own alpha, and fully
+        // transparent pixels returned early above, so a layer with no picture stays invisible).
+        // The same maths lives in fx_plan.cpp (fxSolidColorMap) — keep the two in step.
+        vec3 sc = vec3(clamp(uP[0], 0.0, 255.0), clamp(uP[1], 0.0, 255.0), clamp(uP[2], 0.0, 255.0)) / 255.0;
+        o = mix(rgb, sc, clamp(uP[3], 0.0, 100.0) / 100.0);
     }
     o = clamp(o + amDither(), 0.0, 1.0);
     oColor = vec4(o * c.a, c.a);

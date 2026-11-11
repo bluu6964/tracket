@@ -78,8 +78,10 @@ struct Request {
     uint32_t animArgb = 0xFF00FF00u;
 
     // Text progress (Alight Motion "textprogress", already evaluated for this frame by Kotlin:
-    // TextProgressEval.kt): only the clusters whose slice of the whole text (counted in shaped clusters,
-    // logical order) lies fully inside [progressStart, progressEnd] are drawn - a typewriter reveal.
+    // TextProgressEval.kt): a cluster is drawn when its slice of the whole text (counted in shaped
+    // clusters, logical order) INTERSECTS [progressStart, progressEnd] at all — frame-measured
+    // against Alight's ST Intro export (round 5): at end 0.378 five of twelve clusters show and at
+    // 0.963 all twelve do, which the older lies-fully-inside rule (4 and 11) missed both times.
     // The layout is computed from the full text, so revealed characters appear in place. The cut is by
     // shaped cluster, so a Bengali conjunct is never split. progressOn = false: everything is drawn.
     // The effect's typing cursor is not part of this yet (only the corpus value cursor = 0, no cursor,

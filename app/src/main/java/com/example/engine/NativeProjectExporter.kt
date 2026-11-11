@@ -136,9 +136,9 @@ class NativeProjectExporter(private val context: Context) {
     private class ImageLayer(val textureId: Int, val width: Int, val height: Int)
 
     /** Text / shape / sticker layers drawn into one picture; [blendId] != 0 = one layer with a blend mode. */
-    private class OverlayGroup(val clips: List<TimelineClip>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false, val mask: TimelineClip? = null, val mediaFill: Boolean = false) {
+    private class OverlayGroup(val clips: List<TimelineClip>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false, val mask: List<TimelineClip> = emptyList(), val mediaFill: Boolean = false) {
         // fx = a layer with effects (Effects panel): its own picture, the C++ effects run on it before it is drawn.
-        // mask = the mask layer cutting this layer (Alight style): the layer has a picture of its own, cut before upload.
+        // mask = the mask layers cutting this layer (Alight style; several when masks are stacked): the layer has a picture of its own, cut before upload.
         // mediaFill = one shape filled with a playing video (build 104): its own picture holds only the
         // shape's outline; the video is composited under it, cut by the silhouette in silBmp / silTex.
         // pose = a layer turned in 3D / with its own pivot (OverlayPose.kt): drawn upright into its own picture and
@@ -246,7 +246,7 @@ class NativeProjectExporter(private val context: Context) {
                     val overlays = scopeClips.filter {
                         it.isVisible && !it.isMask && (it.type == LayerType.SHAPE || it.type == LayerType.TEXT || it.type == LayerType.STICKER)
                     }
-                    // Mask layers of this level (never drawn themselves): target id -> the mask that cuts it.
+                    // Mask layers of this level (never drawn themselves): target id -> the masks that cut it.
                     val maskByTarget = LayerMaskLinks.masksByTarget(scopeClips)
                     // Lanes of the pictures and groups of this level: overlays on both sides of one cannot share one picture.
                     val mediaLanes = scopeClips
@@ -268,7 +268,7 @@ class NativeProjectExporter(private val context: Context) {
                             // own — the outline raster the video is composited under. Pose / camera
                             // layers keep the poster path below.
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
-                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id], mediaFill = true)
+                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id].orEmpty(), mediaFill = true)
                         } else if (overlayNeedsPose(c) || cam.affects(c)) {
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                             level += OverlayGroup(listOf(c), spec.shaderId, pose = true, fx = hasFx)
@@ -276,7 +276,7 @@ class NativeProjectExporter(private val context: Context) {
                             // Cut by a mask layer: a picture of its own, or the cut would also take the
                             // layers it shares the picture with.
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
-                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id])
+                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id].orEmpty())
                         } else if (hasFx) {
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                             level += OverlayGroup(listOf(c), spec.shaderId, fx = true)
@@ -294,11 +294,12 @@ class NativeProjectExporter(private val context: Context) {
                     m[""] = buildOverlayGroups(null)
                     for (id in groupIds) m[id] = buildOverlayGroups(id)
                 }
-                // A mask layer over a Group layer needs the painter too (it draws the mask that cuts the
-                // group's composed picture), even when the project has no overlay layers at all.
-                val groupMaskTargetIds = all.filter { it.isMask }.mapNotNull { it.maskTargetId }.toSet()
+                // A mask layer over a Group or Video layer needs the painter too (it draws the mask
+                // that cuts the group's composed picture / the video's placed picture), even when the
+                // project has no overlay layers at all.
+                val maskTargetIds = all.filter { it.isMask }.mapNotNull { it.maskTargetId }.toSet()
                 val painter = if (overlayGroups.values.any { it.isNotEmpty() } ||
-                    all.any { it.type == LayerType.GROUP && it.id in groupMaskTargetIds }
+                    all.any { (it.type == LayerType.GROUP || it.type == LayerType.VIDEO) && it.id in maskTargetIds }
                 ) LayerPainter(w, h) else null
                 // Text layers: C++ engine (chosen font, HarfBuzz shaping) when this build has it; Canvas otherwise.
                 if (painter != null && TextNative.isAvailable) {
@@ -406,15 +407,24 @@ class NativeProjectExporter(private val context: Context) {
                             // copy with its own pose (RepeatDraw) — one decoder, many draws, exactly
                             // like the preview. repeatDrawParams reads the placement as it stands
                             // when this runs, so the camera / corner-pin placement below is in it.
+                            // [effBlendId] is [blendId], except while the layer is captured into its
+                            // own picture for a layer mask (below): inside the capture the draws are
+                            // plain, the blend is applied when the cut picture is composited.
+                            var effBlendId = blendId
                             fun drawTex(tex: Int, oes: Boolean, mat: FloatArray, cw: Int, ch: Int, rot: Int) {
                                 for (pp in repeatDrawParams(p, clip, timeMs, if (previewW > 0f) w / previewW else 1f)) {
-                                    if (blendId == 0) renderer.drawLayer(tex, oes, mat, cw, ch, rot, pp)
-                                    else renderer.drawLayerBlended(tex, oes, mat, cw, ch, rot, pp, blendId, canvasRgb)
+                                    if (effBlendId == 0) renderer.drawLayer(tex, oes, mat, cw, ch, rot, pp)
+                                    else renderer.drawLayerBlended(tex, oes, mat, cw, ch, rot, pp, effBlendId, canvasRgb)
                                 }
                             }
+                            // The layer's own draws (photo and video branches), against whatever
+                            // target is current. True = something was drawn. Kept as one function so
+                            // a masked layer can run it inside its own picture (the renderer's group
+                            // pass) and be cut before compositing.
+                            fun drawContent(): Boolean {
                             val img = images[clip.id]
                             if (img != null) {
-                                if (!placeByCamera(clip, timeMs, anim, fp, p, img.width, img.height)) return
+                                if (!placeByCamera(clip, timeMs, anim, fp, p, img.width, img.height)) return false
                                 val imgOps = fxOpsOf(clip, timeMs)
                                 val imgMasks = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                                 if (imgOps != null || imgMasks != null) {
@@ -424,12 +434,12 @@ class NativeProjectExporter(private val context: Context) {
                                     )
                                     if (fxTex == 0) error("Native effects / masks failed on '${clip.name}'.")
                                     drawTex(fxTex, false, IDENTITY_TEX_MATRIX, img.width, img.height, 0)
-                                    return
+                                    return true
                                 }
                                 drawTex(img.textureId, false, FLIP_V, img.width, img.height, 0)
-                                return
+                                return true
                             }
-                            var src = videos[clip.id] ?: return
+                            var src = videos[clip.id] ?: return false
                             val sourceMs = anim.sourceMs(timeMs)
                             val us = sourceMs * 1000L
                             val tD0 = System.nanoTime()
@@ -441,8 +451,8 @@ class NativeProjectExporter(private val context: Context) {
                             prof[0] += System.nanoTime() - tD0
                             if (st == DecoderPool.OK || st == DecoderPool.SAME) shown.add(clip.id)
                             // END_OF_STREAM: the last frame stays on the surface, keep showing it.
-                            if (clip.id !in shown) return
-                            if (!placeByCamera(clip, timeMs, anim, fp, p, src.contentWidth, src.contentHeight)) return
+                            if (clip.id !in shown) return false
+                            if (!placeByCamera(clip, timeMs, anim, fp, p, src.contentWidth, src.contentHeight)) return false
                             val probed = probes[clip.id] ?: 0
                             if (probed < 3 && clip.id !in swRetried) {
                                 probes[clip.id] = probed + 1
@@ -485,25 +495,89 @@ class NativeProjectExporter(private val context: Context) {
                                 )
                                 if (fxTex == 0) error("Native face blur / cutout / effects / masks failed on '${clip.name}'.")
                                 drawTex(fxTex, false, IDENTITY_TEX_MATRIX, src.contentWidth, src.contentHeight, 0)
-                                RemoveRuntime.draw(renderer, removePatches, clip, p, timeMs, w, h, blendId, canvasRgb)
-                                return
+                                RemoveRuntime.draw(renderer, removePatches, clip, p, timeMs, w, h, effBlendId, canvasRgb)
+                                return true
                             }
                             drawTex(src.textureId, true, src.texMatrix, src.contentWidth, src.contentHeight, src.drawRotation)
                             // Remove: the clean patch on the moving surface, right after the layer's own picture.
-                            RemoveRuntime.draw(renderer, removePatches, clip, p, timeMs, w, h, blendId, canvasRgb)
+                            RemoveRuntime.draw(renderer, removePatches, clip, p, timeMs, w, h, effBlendId, canvasRgb)
+                            return true
+                            }
+                            // A mask layer sitting on this picture (Alight style): the layer is
+                            // captured into its own frame-sized picture (placement, camera, corner
+                            // pin and repeat copies all inside it), cut by each mask in turn — the
+                            // same group-pass machinery that cuts a Group layer's composed picture —
+                            // and only then composited, with its blend mode, onto the frame. The cut
+                            // is in frame space, so it holds for placed / turned / pinned pictures
+                            // too. With no group pass available the layer is drawn uncut, like a
+                            // group in the same fallback.
+                            val masks = scopeMasksFor(clip, timeMs)
+                            if (masks.isEmpty()) {
+                                drawContent()
+                                return
+                            }
+                            if (!renderer.beginGroup()) {
+                                drawContent()
+                                return
+                            }
+                            effBlendId = 0
+                            val drew = drawContent()
+                            effBlendId = blendId
+                            var tex = renderer.endGroup()
+                            if (!drew || tex == 0) return
+                            for (m in masks) tex = cutPictureByMask(tex, m, timeMs, clip.name)
+                            val lp = LayerParams()
+                            if (blendId == 0) renderer.drawLayer(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp)
+                            else renderer.drawLayerBlended(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, lp, blendId, canvasRgb)
                     }
                     // A Group layer is ONE layer: its layers are drawn into their own picture (the renderer's group pass), and that
                     // picture gets the group's opacity, blend mode, effects and masks like a photo would. The group's move / scale /
                     // turn already reached the layers inside through their parent link (ParentRig), so it is placed at 0 / 0 / 1.
                     var drawScopeRef: (String?, Int, Long) -> Unit = { _, _, _ -> }
-                    // The mask layer cutting a Group layer of one level (Alight style), evaluated at
-                    // [timeMs] like every layer — or null: no mask on the group, or the mask is not
-                    // there then (outside the mask layer's own span there is no cut).
-                    fun groupMaskFor(clip: TimelineClip, timeMs: Long): TimelineClip? {
-                        val scopeClips = GroupOps.scopeTracks(tracks, clip.groupId).flatMap { it.clips }
-                        val mc = LayerMaskLinks.masksByTarget(scopeClips)[clip.id] ?: return null
-                        if (!mc.isActiveAt(timeMs)) return null
-                        return if (rig.hasLinks) rig.adjusted(mc, timeMs) else mc.renderAt(timeMs)
+                    // The mask layers cutting a layer of one level (a Group or a picture layer, Alight
+                    // style), evaluated at [timeMs] like every layer — empty when no mask sits on it,
+                    // or none of its masks is there then (outside a mask layer's own span there is no
+                    // cut from it). A stack of masks over the layer comes back as several entries: the
+                    // layer is cut by each in turn.
+                    fun scopeMasksFor(clip: TimelineClip, timeMs: Long): List<TimelineClip> {
+                        val scopeClips = GroupOps.scopeTracks(tracks, clip.groupId).asReversed().flatMap { it.clips }
+                        val mcs = LayerMaskLinks.masksByTarget(scopeClips)[clip.id] ?: return emptyList()
+                        return mcs.filter { it.isActiveAt(timeMs) }
+                            .map { if (rig.hasLinks) rig.adjusted(it, timeMs) else it.renderAt(timeMs) }
+                    }
+                    // Draws one mask layer (already evaluated at [timeMs]) into the shared scratch
+                    // picture with the same painter as every overlay and returns the scratch.
+                    fun drawMaskIntoScratch(maskAdj: TimelineClip, timeMs: Long): Bitmap {
+                        val p = painter ?: error("No layer painter available to draw mask '${maskAdj.name}'.")
+                        var scratch = maskScratchBmp
+                        if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
+                            scratch?.recycle()
+                            scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            maskScratchBmp = scratch
+                        }
+                        scratch.eraseColor(0)
+                        p.nativeTarget = scratch
+                        p.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
+                        return scratch
+                    }
+                    // Cuts a frame-sized renderer texture (a Group layer's composed picture, or a
+                    // picture layer captured into its own picture for a mask) by one mask layer: the
+                    // mask is drawn into the scratch picture, uploaded, and the renderer multiplies
+                    // the texture by its alpha (DST_IN). Returns the cut texture.
+                    fun cutPictureByMask(tex: Int, maskAdj: TimelineClip, timeMs: Long, ownerName: String): Int {
+                        val scratch = drawMaskIntoScratch(maskAdj, timeMs)
+                        if (groupMaskTex == 0) groupMaskTex = renderer.createTexture2d()
+                        if (groupMaskTex == 0) error("Could not create the mask texture for '$ownerName'.")
+                        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
+                        if (!groupMaskTexUploaded) {
+                            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, scratch, 0)
+                            groupMaskTexUploaded = true
+                        } else {
+                            GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
+                        }
+                        val cutTex = renderer.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
+                        if (cutTex == 0) error("Native layer mask '${maskAdj.name}' failed on '$ownerName'.")
+                        return cutTex
                     }
                     fun drawGroupLayer(clip: TimelineClip, timeMs: Long, depth: Int) {
                         if (timeMs < clip.startMs || timeMs >= clip.endMs) return
@@ -523,35 +597,13 @@ class NativeProjectExporter(private val context: Context) {
                         var drawTex = tex
                         // A mask layer sitting on this group (Alight style) cuts the composed picture,
                         // before the group's own effects — the same order as a masked shape / text
-                        // layer's picture. The mask layer is drawn with the same painter as every
-                        // overlay (into the shared scratch picture), uploaded, and the renderer
-                        // multiplies the group picture by its alpha (DST_IN). Outside the mask layer's
-                        // own span there is no cut. (In the beginGroup fallback above there is no group
-                        // picture, so a mask on such a group cannot cut.)
-                        val maskAdj = groupMaskFor(clip, timeMs)
-                        if (maskAdj != null) {
-                            val p = painter ?: error("No layer painter available to draw the mask on group '${clip.name}'.")
-                            var scratch = maskScratchBmp
-                            if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
-                                scratch?.recycle()
-                                scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                                maskScratchBmp = scratch
-                            }
-                            scratch.eraseColor(0)
-                            p.nativeTarget = scratch
-                            p.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
-                            if (groupMaskTex == 0) groupMaskTex = renderer.createTexture2d()
-                            if (groupMaskTex == 0) error("Could not create the mask texture for group '${clip.name}'.")
-                            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
-                            if (!groupMaskTexUploaded) {
-                                GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, scratch, 0)
-                                groupMaskTexUploaded = true
-                            } else {
-                                GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
-                            }
-                            val cutTex = renderer.applyTexMask(drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
-                            if (cutTex == 0) error("Native layer mask failed on group '${clip.name}'.")
-                            drawTex = cutTex
+                        // layer's picture. Each mask is drawn with the same painter as every overlay
+                        // (into the shared scratch picture), uploaded, and the renderer multiplies the
+                        // group picture by its alpha (DST_IN); a stack of masks cuts in turn. Outside a
+                        // mask layer's own span there is no cut from it. (In the beginGroup fallback
+                        // above there is no group picture, so a mask on such a group cannot cut.)
+                        for (maskAdj in scopeMasksFor(clip, timeMs)) {
+                            drawTex = cutPictureByMask(drawTex, maskAdj, timeMs, clip.name)
                         }
                         if (fxOps != null || maskOps != null) {
                             val fxTex = renderer.applyFx(
@@ -707,21 +759,20 @@ class NativeProjectExporter(private val context: Context) {
                                     val upright = if (cam.activeFor(c, timeMs)) uprightForCamera(c) else uprightForPose(c)
                                     RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg, timeMs = timeMs)
                                 } else rendered.flatMap { RepeatEval.copiesOf(it, timeMs = timeMs) }
-                                // The mask layer cutting this picture (a masked layer always has a picture of
-                                // its own): evaluated like every layer and part of the key, so the cut follows
-                                // the mask's own animation. Outside the mask's span there is no cut.
-                                val maskAdj = if (g.mask != null && !g.pose) {
-                                    val mc = g.mask
-                                    if (mc.isActiveAt(timeMs)) {
-                                        if (rig.hasLinks) rig.adjusted(mc, timeMs) else mc.renderAt(timeMs)
-                                    } else null
-                                } else null
+                                // The mask layers cutting this picture (a masked layer always has a picture of
+                                // its own): each is evaluated like every layer and part of the key, so the
+                                // cuts follow the masks' own animation. Outside a mask's span there is no
+                                // cut from it.
+                                val maskAdjs = if (g.mask.isNotEmpty() && !g.pose) {
+                                    g.mask.filter { it.isActiveAt(timeMs) }
+                                        .map { if (rig.hasLinks) rig.adjusted(it, timeMs) else it.renderAt(timeMs) }
+                                } else emptyList()
                                 // A sticker's animation frame depends on the time, so it is part of the key.
                                 // The fill's raster mode is part of it too: live (outline only) and
                                 // poster (whole shape) are different pictures.
                                 val signature = drawn.map { r ->
                                     if (r.type == LayerType.STICKER) r to r.sourceOffsetMs(timeMs - r.startMs) else r
-                                } + listOf<Any>(maskAdj ?: "", useVideo)
+                                } + listOf<Any>(maskAdjs, useVideo)
                                 if (g.bmp == null) {
                                     g.bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                                     g.canvas = android.graphics.Canvas(g.bmp!!)
@@ -733,25 +784,18 @@ class NativeProjectExporter(private val context: Context) {
                                     // A blended layer's opacity is applied by the blend shader, not in the picture.
                                     painter.nativeTarget = g.bmp
                                     for (r in drawn) painter.draw(cv, r, applyOpacity = g.blendId == 0, timeMs = timeMs)
-                                    // The layer mask cuts the finished picture: the mask layer is drawn into
-                                    // a scratch picture and multiplied over this one (alpha only, DST_IN).
-                                    if (maskAdj != null) {
-                                        var scratch = maskScratchBmp
-                                        if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
-                                            scratch?.recycle()
-                                            scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                                            maskScratchBmp = scratch
-                                        }
-                                        scratch.eraseColor(0)
-                                        painter.nativeTarget = scratch
-                                        painter.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
+                                    // The layer masks cut the finished picture: each mask layer is drawn
+                                    // into the scratch picture and multiplied over this one (alpha only,
+                                    // DST_IN), in turn — the picture keeps only where every mask is.
+                                    for (maskAdj in maskAdjs) {
+                                        val scratch = drawMaskIntoScratch(maskAdj, timeMs)
                                         painter.nativeTarget = g.bmp
                                         cv.drawBitmap(scratch, 0f, 0f, maskDstInPaint)
                                     }
                                     // The video fill's window (build 104): the shape's silhouette,
                                     // rasterised with the same painter (white fill, no stroke, no
-                                    // opacity — the composite applies it), cut by the same mask layer
-                                    // when there is one, and uploaded as the texture the renderer
+                                    // opacity — the composite applies it), cut by the same mask layers
+                                    // when there are any, and uploaded as the texture the renderer
                                     // multiplies the placed video by.
                                     if (fillClip != null && useVideo) {
                                         if (g.silBmp == null) {
@@ -762,16 +806,8 @@ class NativeProjectExporter(private val context: Context) {
                                         sil.eraseColor(0)
                                         painter.nativeTarget = sil
                                         painter.draw(android.graphics.Canvas(sil), fillCopies!![0].silhouetteCopy(), applyOpacity = false, timeMs = timeMs)
-                                        if (maskAdj != null) {
-                                            var scratch = maskScratchBmp
-                                            if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
-                                                scratch?.recycle()
-                                                scratch = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                                                maskScratchBmp = scratch
-                                            }
-                                            scratch.eraseColor(0)
-                                            painter.nativeTarget = scratch
-                                            painter.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
+                                        for (maskAdj in maskAdjs) {
+                                            val scratch = drawMaskIntoScratch(maskAdj, timeMs)
                                             android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, maskDstInPaint)
                                         }
                                         painter.nativeTarget = g.bmp

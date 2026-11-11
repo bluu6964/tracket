@@ -4,6 +4,7 @@ import com.example.engine.AlightXmlImporter
 import com.example.engine.LayerMaskLinks
 import com.example.model.AnimProp
 import com.example.model.LayerType
+import com.example.model.TimelineClip
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -11,11 +12,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Alight Motion layer masks (`blending="mask"`, builds 94–95): a mask layer is never drawn — it cuts the
- * layer directly below it in the same scene. The importer flags the mask clip ([com.example.model.TimelineClip.isMask]),
- * keeps it hidden, and links it to that layer ([com.example.model.TimelineClip.maskTargetId]); the
- * renderers pair them up with [LayerMaskLinks] and cut the layer's picture with the mask's rendering.
- * A GROUP layer below the mask links too: its composed picture is what gets cut.
+ * Alight Motion layer masks (`blending="mask"`, builds 94–95, completed in build 108): a mask layer is
+ * never drawn — it cuts the layer directly below it in the same scene. The importer flags the mask clip
+ * ([com.example.model.TimelineClip.isMask]), keeps it hidden, and links it to that layer
+ * ([com.example.model.TimelineClip.maskTargetId]); the renderers pair them up with [LayerMaskLinks] and
+ * cut the layer's picture with the mask's rendering. A GROUP layer below the mask links too: its composed
+ * picture is what gets cut. A VIDEO layer below the mask links as well: its placed picture is what gets
+ * cut. A stack of masks over one layer links EVERY mask of the stack to that layer — the layer is cut by
+ * each in turn, so it keeps only the intersection of their shapes.
  */
 class LayerMaskImportTest {
 
@@ -55,7 +59,7 @@ $layers
         // The two live in the same group, and the renderer pairing resolves the link inside that scope.
         assertEquals(image.groupId, mask.groupId)
         val byTarget = LayerMaskLinks.masksByTarget(clips.filter { it.groupId == image.groupId })
-        assertEquals(mask.id, byTarget[image.id]?.id)
+        assertEquals(mask.id, byTarget[image.id]?.single()?.id)
         assertTrue(LayerMaskLinks.isMasked(image, byTarget))
         // An applied mask leaves no warning behind.
         assertTrue(r.warnings.none { it.contains("Mask layer") })
@@ -105,7 +109,7 @@ $layers
         // The renderer pairing resolves the link in the group's own scope (the top level here): the
         // group's composed picture is what gets cut.
         val byTarget = LayerMaskLinks.masksByTarget(clips.filter { it.groupId == grp.groupId })
-        assertEquals(mask.id, byTarget[grp.id]?.id)
+        assertEquals(mask.id, byTarget[grp.id]?.single()?.id)
         assertTrue(LayerMaskLinks.isMasked(grp, byTarget))
         // An applied mask leaves no warning behind.
         assertTrue(r.warnings.none { it.contains("Mask layer") })
@@ -127,7 +131,7 @@ $layers
         assertEquals(outerG.id, mask.groupId)
         assertEquals(innerG.groupId, mask.groupId)
         val byTarget = LayerMaskLinks.masksByTarget(clips.filter { it.groupId == outerG.id })
-        assertEquals(mask.id, byTarget[innerG.id]?.id)
+        assertEquals(mask.id, byTarget[innerG.id]?.single()?.id)
         assertTrue(r.warnings.none { it.contains("Mask layer") })
     }
 
@@ -161,15 +165,115 @@ $layers
     }
 
     @Test
-    fun stackedMasksLinkOnlyTheLowerOne() {
+    fun stackedMasksBothLinkToTheLayerBelowTheStack() {
         val r = AlightXmlImporter.parse(
             scene(shape("1", "Box") + maskShape("2", "Cut A") + maskShape("3", "Cut B")), 1920f
         )
         val clips = r.snapshot.tracks.flatMap { it.clips }
         val box = clips.first { it.name == "Box" }
+        // The upper mask's own below-neighbour is a mask, not a target: both masks of the stack link
+        // to the common layer under the stack (in Alight the layer is cut by every mask of the stack).
         assertEquals(box.id, clips.first { it.name == "Cut A" }.maskTargetId)
+        assertEquals(box.id, clips.first { it.name == "Cut B" }.maskTargetId)
+        // The renderer pairing hands the renderers both masks, in scene order (the scope's clips
+        // bottom-first, as the renderers pass them).
+        val byTarget = LayerMaskLinks.masksByTarget(clips.asReversed())
+        assertEquals(listOf("Cut A", "Cut B"), byTarget[box.id]?.map { it.name })
+        assertTrue(LayerMaskLinks.isMasked(box, byTarget))
+        assertTrue(r.warnings.none { it.contains("Mask layer") })
+    }
+
+    @Test
+    fun stackedMasksOverAGroupBothLinkToIt() {
+        val r = AlightXmlImporter.parse(
+            scene(group("9", "G", shape("8", "Inner")) + maskShape("2", "Cut A") + maskShape("3", "Cut B")), 1920f
+        )
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val grp = clips.first { it.type == LayerType.GROUP }
+        assertEquals(grp.id, clips.first { it.name == "Cut A" }.maskTargetId)
+        assertEquals(grp.id, clips.first { it.name == "Cut B" }.maskTargetId)
+        val byTarget = LayerMaskLinks.masksByTarget(clips.filter { it.groupId == grp.groupId }.asReversed())
+        assertEquals(listOf("Cut A", "Cut B"), byTarget[grp.id]?.map { it.name })
+        assertTrue(r.warnings.none { it.contains("Mask layer") })
+    }
+
+    @Test
+    fun stackedMaskCutIsTheIntersectionOfBothMasks() {
+        // Two circle masks over one full-frame layer, both growing to 600 px across; the second is
+        // centred 300 px right of the first. Cut by ONE mask the layer keeps pi * 300^2 of the frame
+        // (~13.6%); cut by BOTH (what the renderers now do — each mask multiplied over the picture in
+        // turn) it keeps only the circles' overlap: 2 r^2 acos(d / 2r) - (d / 2) sqrt(4 r^2 - d^2)
+        // with r = 300, d = 300 -> ~110.6k px (~5.3% of the frame).
+        fun circleMask(id: String, label: String, cx: Float) =
+            """<shape id="$id" label="$label" startTime="0" endTime="2000" fillType="color" blending="mask" s=".circle"><transform><location value="$cx,540.000000,0.000000" /><scale><kf t="0" v="1.000000,1.000000" /><kf t="1" v="3.000000,3.000000" /></scale></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape>"""
+        val fullFrame = """<shape id="1" label="Full" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="960.000000,540.000000,0.000000" /></transform><fillColor value="#ff00ff00" /><property name="size" type="vec2" value="960.000000,540.000000" /></shape>"""
+        val r = AlightXmlImporter.parse(
+            scene(fullFrame + circleMask("2", "Cut A", 960f) + circleMask("3", "Cut B", 1260f)), 1920f
+        )
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val full = clips.first { it.name == "Full" }
+        val a = clips.first { it.name == "Cut A" }
+        val b = clips.first { it.name == "Cut B" }
+        assertEquals(full.id, a.maskTargetId)
+        assertEquals(full.id, b.maskTargetId)
+        val box = 1920f * 130f / 360f
+        // Each mask's evaluated geometry at the end of its span (the same maths as the group test).
+        val diameterA = a.keyframes[AnimProp.SCALE]!!.maxOf { it.a } / 100f * box
+        val diameterB = b.keyframes[AnimProp.SCALE]!!.maxOf { it.a } / 100f * box
+        assertEquals(600f, diameterA, 15f)
+        assertEquals(600f, diameterB, 15f)
+        val d = kotlin.math.abs(b.transformX - a.transformX)
+        assertEquals(300f, d, 1f)
+        val rad = diameterA / 2.0
+        val single = (Math.PI * rad * rad / (1920.0 * 1080.0))
+        val both = (2 * rad * rad * kotlin.math.acos(d / (2 * rad)) -
+            (d / 2) * kotlin.math.sqrt(4 * rad * rad - d * d)) / (1920.0 * 1080.0)
+        assertEquals(0.136, single, 0.01)
+        assertEquals(0.053, both, 0.01)
+        assertTrue(both < single - 0.05)   // the second mask really removes more: an intersection, not a union
+    }
+
+    @Test
+    fun stackedMasksOverASkippedLayerCutNothing() {
+        // The stack's common below-layer was not imported: neither mask may jump the gap.
+        val skipped = """<shape id="1" label="Blob" startTime="0" endTime="2000" fillType="color" s=".blob"><transform><location value="960.000000,540.000000,0.000000" /></transform><fillColor value="#ff00ff00" /></shape>"""
+        val r = AlightXmlImporter.parse(
+            scene(shape("0", "Under") + skipped + maskShape("2", "Cut A") + maskShape("3", "Cut B")), 1920f
+        )
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        assertNull(clips.first { it.name == "Cut A" }.maskTargetId)
         assertNull(clips.first { it.name == "Cut B" }.maskTargetId)
-        assertTrue(r.warnings.any { it.contains("sits on another mask") })
+        assertTrue(r.warnings.any { it.contains("no imported layer below") })
+    }
+
+    @Test
+    fun videoTargetPairingAcceptsStackedMasksInSceneOrder() {
+        // The pairing rules the renderers consume (LayerMaskLinks), pinned at the model level for the
+        // target kind no Alight XML in the corpus produces: a VIDEO layer. The importer links a mask
+        // over a video layer like any other applied target, and a stack over it links every mask.
+        fun clip(id: String, type: LayerType, mask: Boolean = false, target: String? = null) =
+            TimelineClip(
+                id = id, name = id, type = type, startMs = 0, durationMs = 2000, color = 0,
+                isMask = mask, maskTargetId = target
+            )
+        val video = clip("v", LayerType.VIDEO)
+        val a = clip("a", LayerType.SHAPE, mask = true, target = "v")
+        val b = clip("b", LayerType.SHAPE, mask = true, target = "v")
+        val byTarget = LayerMaskLinks.masksByTarget(listOf(video, a, b))
+        assertEquals(listOf("a", "b"), byTarget["v"]?.map { it.id })
+        assertTrue(LayerMaskLinks.isMasked(video, byTarget))
+    }
+
+    @Test
+    fun maskOverAnAudioLayerStaysUnlinked() {
+        // A target kind masks are not applied to: the mask stays hidden and unlinked, and the warning
+        // names the kinds a mask IS applied to (shape, text, group and video since build 108).
+        val audio = """<audio id="1" label="Song" startTime="0" endTime="2000" src="content://media/external/audio/media/7" />"""
+        val r = AlightXmlImporter.parse(scene(audio + maskShape("2", "Cut")), 1920f)
+        val mask = r.snapshot.tracks.flatMap { it.clips }.first { it.name == "Cut" }
+        assertTrue(mask.isMask)
+        assertNull(mask.maskTargetId)
+        assertTrue(r.warnings.any { it.contains("masks a audio layer") && it.contains("video") })
     }
 
     @Test

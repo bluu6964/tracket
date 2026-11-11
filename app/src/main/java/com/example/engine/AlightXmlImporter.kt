@@ -318,29 +318,32 @@ object AlightXmlImporter {
      * directly below it in the same scene, following its own animation. The imported mask clip stays in
      * the model flagged [TimelineClip.isMask] (hidden, and the renderers never draw it); here it is
      * linked to the layer below ([TimelineClip.maskTargetId]) and the renderers apply the cut. Shape,
-     * text and group layers can be cut (a group is cut as its composed picture); only shape / text
-     * layers can serve as the mask in this pass — a mask over a media (video) layer, a mask over
-     * another mask, and a mask with no imported layer below it stay unlinked and are reported instead
-     * of being guessed at.
+     * text, group and video layers can be cut (a group is cut as its composed picture, a video as its
+     * placed picture); only shape / text layers can serve as the mask. A mask sitting on another mask
+     * (a stack) shares that mask's target: every mask of the stack links to the common layer below the
+     * stack, and the renderers cut it by each mask in turn (the intersection of their shapes). A mask
+     * with no imported layer below the stack, and a mask over a layer of any other type, stay unlinked
+     * and are reported instead of being guessed at.
      */
     private fun resolveMaskLinks(directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx) {
         val w = ctx.warnings
         for (i in directSlots.indices) {
             val m = directSlots[i] ?: continue
             if (!m.isMask) continue
-            val below = directSlots.getOrNull(i - 1)
+            // The layer this mask cuts: the first non-mask layer below it (a stack of masks over one
+            // layer all cut that same layer; a skipped element in between is a gap, not a target).
+            var j = i - 1
+            while (j >= 0 && directSlots[j]?.isMask == true) j--
+            val below = if (j >= 0) directSlots[j] else null
             val linked = when {
                 below == null -> {
                     w += "Mask layer \"" + m.name + "\" has no imported layer below it: imported hidden, it cuts nothing"
                     false
                 }
-                below.isMask -> {
-                    w += "Mask layer \"" + m.name + "\" sits on another mask: imported hidden (stacked masks are not applied yet)"
-                    false
-                }
-                below.type != LayerType.SHAPE && below.type != LayerType.TEXT && below.type != LayerType.GROUP -> {
+                below.type != LayerType.SHAPE && below.type != LayerType.TEXT && below.type != LayerType.GROUP &&
+                    below.type != LayerType.VIDEO -> {
                     w += "Mask layer \"" + m.name + "\" masks a " + below.type.displayName.lowercase() +
-                        " layer: imported hidden (a mask is applied to shape, text and group layers so far)"
+                        " layer: imported hidden (a mask is applied to shape, text, group and video layers so far)"
                     false
                 }
                 m.type != LayerType.SHAPE && m.type != LayerType.TEXT -> {

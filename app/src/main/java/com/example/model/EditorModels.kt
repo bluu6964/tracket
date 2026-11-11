@@ -343,7 +343,7 @@ data class TimelineClip(
      * a mask can never be un-hidden into a normal (wrongly painted) layer.
      */
     val isMask: Boolean = false,
-    /** On a mask layer ([isMask]): the id of the layer it cuts — the layer directly below it in its Alight scene. Null = the mask cuts nothing. */
+    /** On a mask layer ([isMask]): the id of the layer it cuts — the layer directly below it in its Alight scene (for a stack of masks, the common layer below the stack; every mask of the stack carries that same id). Null = the mask cuts nothing. */
     val maskTargetId: String? = null,
     /** Text animators imported from an Alight Motion XML (stored; drawn by the C++ text engine in a later step), see [TextAnimator]. */
     val textAnimators: List<TextAnimator> = emptyList()

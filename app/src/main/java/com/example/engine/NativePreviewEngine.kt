@@ -517,71 +517,117 @@ class NativePreviewEngine(context: Context) {
             // Effects panel): the same texture drawn once per copy, each copy with its own pose
             // (RepeatDraw) — one decoder, many draws. repeatDrawParams reads the placement as it
             // stands when this runs, so the camera / corner-pin placement below is already in it.
+            // A Repeat-family effect on the picture (an imported Alight repeat, or one added in the
+            // Effects panel): the same texture drawn once per copy, each copy with its own pose
+            // (RepeatDraw) — one decoder, many draws. repeatDrawParams reads the placement as it
+            // stands when this runs, so the camera / corner-pin placement below is already in it.
+            // [effBlendId] is [blendId], except while the layer is captured into its own picture for
+            // a layer mask (below): inside the capture the draws are plain, the blend is applied
+            // when the cut picture is composited onto the frame.
+            var effBlendId = blendId
             fun drawTex(tex: Int, oes: Boolean, mat: FloatArray, cw: Int, ch: Int, rot: Int) {
                 for (pp in repeatDrawParams(p, c, t, if (previewW > 0f) outW / previewW else 1f)) {
-                    if (blendId == 0) r.drawLayer(tex, oes, mat, cw, ch, rot, pp)
-                    else r.drawLayerBlended(tex, oes, mat, cw, ch, rot, pp, blendId, canvasRgb)
+                    if (effBlendId == 0) r.drawLayer(tex, oes, mat, cw, ch, rot, pp)
+                    else r.drawLayerBlended(tex, oes, mat, cw, ch, rot, pp, effBlendId, canvasRgb)
                 }
             }
-            val src = sources[c.id] ?: return
-            val img = src.image
-            if (img != null) {
-                if (!placeByCamera(cam, c, t, anim, fp, p, img.w, img.h, previewW)) return
-                // Effects of the Effects panel on a photo (before crop / transform, like on a video).
-                val imgOps = fxOpsOf(c, t)
-                val imgMasks = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
-                if (imgOps != null || imgMasks != null) {
+            // The layer's own draws (photo and video branches), against whatever target is current.
+            // True = something was drawn. Kept as one function so a masked layer can run it inside
+            // its own picture (the renderer's group pass) and be cut before compositing.
+            fun drawContent(): Boolean {
+                val src = sources[c.id] ?: return false
+                val img = src.image
+                if (img != null) {
+                    if (!placeByCamera(cam, c, t, anim, fp, p, img.w, img.h, previewW)) return false
+                    // Effects of the Effects panel on a photo (before crop / transform, like on a video).
+                    val imgOps = fxOpsOf(c, t)
+                    val imgMasks = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
+                    if (imgOps != null || imgMasks != null) {
+                        val fxTex = r.applyFx(
+                            img.tex, false, FLIP_V, img.w, img.h, 0,
+                            0, 0f, 0, false, canvasRgb, imgOps, ClipFxLibrary.grainFrame(t), imgMasks
+                        )
+                        if (fxTex != 0) {
+                            drawTex(fxTex, false, IDENTITY_TEX_MATRIX, img.w, img.h, 0)
+                            return true
+                        }
+                        Log.w(TAG, "native effects / masks failed on photo '${c.name}', drawn without them")
+                    }
+                    drawTex(img.tex, false, FLIP_V, img.w, img.h, 0)
+                    return true
+                }
+                val v = src.video ?: return false
+                advance(r, c, src, v, anim, t, p)
+                val now = sources[c.id] ?: return false  // advance() may have swapped in a software decoder
+                val cur = now.video ?: return false
+                if (!now.shown) return false
+                if (!placeByCamera(cam, c, t, anim, fp, p, cur.contentWidth, cur.contentHeight, previewW)) return false
+                // Face blur / cutout on the decoded picture first (before crop / transform), like the export.
+                val slot = media.indexOfFirst { it.id == c.id }
+                val srcMs = anim.sourceMs(t)
+                val faceMask = NativeFxMasks.face(r, c, slot, srcMs, strict = false)
+                val cutMask = NativeFxMasks.cutout(r, c, slot, srcMs, strict = false)
+                val fxOps = fxOpsOf(c, t)
+                val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
+                if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
                     val fxTex = r.applyFx(
-                        img.tex, false, FLIP_V, img.w, img.h, 0,
-                        0, 0f, 0, false, canvasRgb, imgOps, ClipFxLibrary.grainFrame(t), imgMasks
+                        cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation,
+                        faceMask, c.faceBlurStrength, cutMask, flatten = c === firstMedia && depth == 0, canvasRgb = canvasRgb,
+                        fxOps = fxOps, grainFrame = ClipFxLibrary.grainFrame(t), maskOps = maskOps
                     )
                     if (fxTex != 0) {
-                        drawTex(fxTex, false, IDENTITY_TEX_MATRIX, img.w, img.h, 0)
-                        return
+                        drawTex(fxTex, false, IDENTITY_TEX_MATRIX, cur.contentWidth, cur.contentHeight, 0)
+                        RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, effBlendId, canvasRgb)
+                        return true
                     }
-                    Log.w(TAG, "native effects / masks failed on photo '${c.name}', drawn without them")
+                    Log.w(TAG, "native face blur / cutout / effects / masks failed on '${c.name}', drawn without the effect")
                 }
-                drawTex(img.tex, false, FLIP_V, img.w, img.h, 0)
+                drawTex(cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation)
+                // Remove: the clean patch on the moving surface, right after the layer's own picture.
+                RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, effBlendId, canvasRgb)
+                return true
+            }
+            // A mask layer sitting on this picture (Alight style): the layer is captured into its own
+            // frame-sized picture (placement, camera, corner pin and repeat copies all inside it),
+            // cut by each mask in turn — the same group-pass machinery that cuts a Group layer's
+            // composed picture — and only then composited, with its blend mode, onto the frame. The
+            // cut is in frame space, so it holds for placed / turned / pinned pictures too. With no
+            // group pass available the layer is drawn uncut, like a group in the same fallback.
+            val masks = scopeMasksFor(c, t)
+            if (masks.isEmpty()) {
+                drawContent()
                 return
             }
-            val v = src.video ?: return
-            advance(r, c, src, v, anim, t, p)
-            val now = sources[c.id] ?: return  // advance() may have swapped in a software decoder
-            val cur = now.video ?: return
-            if (!now.shown) return
-            if (!placeByCamera(cam, c, t, anim, fp, p, cur.contentWidth, cur.contentHeight, previewW)) return
-            // Face blur / cutout on the decoded picture first (before crop / transform), like the export.
-            val slot = media.indexOfFirst { it.id == c.id }
-            val srcMs = anim.sourceMs(t)
-            val faceMask = NativeFxMasks.face(r, c, slot, srcMs, strict = false)
-            val cutMask = NativeFxMasks.cutout(r, c, slot, srcMs, strict = false)
-            val fxOps = fxOpsOf(c, t)
-            val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
-            if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
-                val fxTex = r.applyFx(
-                    cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation,
-                    faceMask, c.faceBlurStrength, cutMask, flatten = c === firstMedia && depth == 0, canvasRgb = canvasRgb,
-                    fxOps = fxOps, grainFrame = ClipFxLibrary.grainFrame(t), maskOps = maskOps
-                )
-                if (fxTex != 0) {
-                    drawTex(fxTex, false, IDENTITY_TEX_MATRIX, cur.contentWidth, cur.contentHeight, 0)
-                    RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, blendId, canvasRgb)
-                    return
-                }
-                Log.w(TAG, "native face blur / cutout / effects / masks failed on '${c.name}', drawn without the effect")
+            if (!r.beginGroup()) {
+                Log.w(TAG, "layer mask on '${c.name}' could not be applied (no group pass), drawn uncut")
+                drawContent()
+                return
             }
-            drawTex(cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation)
-            // Remove: the clean patch on the moving surface, right after the layer's own picture.
-            RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, blendId, canvasRgb)
+            effBlendId = 0
+            val drew = drawContent()
+            effBlendId = blendId
+            var tex = r.endGroup()
+            if (!drew || tex == 0) return
+            val kk = if (previewW > 0f) outW / previewW else 1f
+            val dens = appCtx.resources.displayMetrics.density
+            for (m in masks) {
+                val cut = cutGroupPicture(r, tex, m, outW, outH, kk, dens, t)
+                if (cut != 0) tex = cut
+                else Log.w(TAG, "layer mask '${m.name}' was not applied to '${c.name}', drawn uncut by it")
+            }
+            val lp = LayerParams()
+            if (blendId == 0) r.drawLayer(tex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp)
+            else r.drawLayerBlended(tex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp, blendId, canvasRgb)
         }
-        // The mask layer cutting a Group layer of one level (Alight style), evaluated at [t] like every
-        // layer — or null: no mask on the group, or the mask is not there at [t] (outside the mask
-        // layer's own span there is no cut).
-        fun groupMaskFor(c: TimelineClip, t: Long): TimelineClip? {
-            val scopeClips = GroupOps.scopeTracks(liveTracks, c.groupId).flatMap { it.clips }
-            val mc = LayerMaskLinks.masksByTarget(scopeClips)[c.id] ?: return null
-            if (!mc.isActiveAt(t)) return null
-            return if (rig.hasLinks) rig.adjusted(mc, t) else NativeRenderAt.renderAt(mc, t)
+        // The mask layers cutting a layer of one level (a Group or a picture layer, Alight style),
+        // evaluated at [t] like every layer — empty when no mask sits on it, or none of its masks is
+        // there at [t] (outside a mask layer's own span there is no cut from it). A stack of masks
+        // over the layer comes back as several entries: the layer is cut by each in turn.
+        fun scopeMasksFor(c: TimelineClip, t: Long): List<TimelineClip> {
+            val scopeClips = GroupOps.scopeTracks(liveTracks, c.groupId).asReversed().flatMap { it.clips }
+            val mcs = LayerMaskLinks.masksByTarget(scopeClips)[c.id] ?: return emptyList()
+            return mcs.filter { it.isActiveAt(t) }
+                .map { if (rig.hasLinks) rig.adjusted(it, t) else NativeRenderAt.renderAt(it, t) }
         }
         // A Group layer is ONE layer: the layers inside are drawn into their own picture (the renderer's group pass), and that
         // picture gets the group's opacity, blend mode, effects and masks like a photo would. The group's move / scale / turn
@@ -602,19 +648,20 @@ class NativePreviewEngine(context: Context) {
             val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
             var drawTex = tex
             // A mask layer sitting on this group (Alight style) cuts the composed picture, before the
-            // group's own effects — the same order as a masked shape / text layer's picture. The mask
-            // is evaluated like every layer, so the cut follows its own animation; outside the mask
-            // layer's own span there is no cut. (In the beginGroup fallback above there is no group
+            // group's own effects — the same order as a masked shape / text layer's picture. Each mask
+            // is evaluated like every layer, so the cut follows its own animation; outside a mask
+            // layer's own span there is no cut from it. (In the beginGroup fallback above there is no group
             // picture, so a mask on such a group cannot cut — the layers are already on the frame.)
-            val maskAdj = groupMaskFor(c, t)
-            if (maskAdj != null) {
+            val maskAdjs = scopeMasksFor(c, t)
+            if (maskAdjs.isNotEmpty()) {
                 val pw = PreviewFrameRef.widthPx
-                val cutTex = cutGroupPicture(
-                    r, drawTex, maskAdj, outW, outH,
-                    if (pw > 0f) outW / pw else 1f, appCtx.resources.displayMetrics.density, t
-                )
-                if (cutTex != 0) drawTex = cutTex
-                else Log.w(TAG, "layer mask '${maskAdj.name}' was not applied to group '${c.name}', drawn uncut")
+                val kk = if (pw > 0f) outW / pw else 1f
+                val dens = appCtx.resources.displayMetrics.density
+                for (maskAdj in maskAdjs) {
+                    val cutTex = cutGroupPicture(r, drawTex, maskAdj, outW, outH, kk, dens, t)
+                    if (cutTex != 0) drawTex = cutTex
+                    else Log.w(TAG, "layer mask '${maskAdj.name}' was not applied to group '${c.name}', drawn uncut by it")
+                }
             }
             if (fxOps != null || maskOps != null) {
                 val fxTex = r.applyFx(
@@ -816,18 +863,17 @@ class NativePreviewEngine(context: Context) {
             } else texts.flatMap { RepeatEval.copiesOf(it, timeMs = t) }
             // An imported text animator changes the picture with the time: the time is part of the key for those layers only.
             val animTimes = drawClips.map { if (it.textAnimators.isNotEmpty()) t else -1L }
-            // The mask layer cutting this picture (a masked layer always has a picture of its own): the mask
-            // is evaluated like every layer and is part of the key, so the cut follows the mask's own
-            // animation. Outside the mask layer's own span there is no cut (the mask is not there then).
-            val maskAdj = if (g.masked && !g.pose) {
-                val mc = layout[i].clips.firstOrNull()?.id?.let { maskByTarget[it] }
-                if (mc != null && mc.isActiveAt(t)) {
-                    if (rig.hasLinks) rig.adjusted(mc, t) else NativeRenderAt.renderAt(mc, t)
-                } else null
-            } else null
+            // The mask layers cutting this picture (a masked layer always has a picture of its own):
+            // each is evaluated like every layer and is part of the key, so the cuts follow the masks'
+            // own animation. Outside a mask layer's own span there is no cut from it.
+            val maskAdjs = if (g.masked && !g.pose) {
+                val mcs = layout[i].clips.firstOrNull()?.id?.let { maskByTarget[it] }.orEmpty()
+                mcs.filter { it.isActiveAt(t) }
+                    .map { if (rig.hasLinks) rig.adjusted(it, t) else NativeRenderAt.renderAt(it, t) }
+            } else emptyList()
             // The fill's raster mode is part of the key too: live (outline only) and poster (whole
             // shape) are different pictures, and the silhouette follows the same key.
-            val sig = listOf(drawClips, fonts, PreviewFrameRef.widthPx, w, h, pics.map { it != null }, stickerFrames, animTimes, maskAdj, useVideo)
+            val sig = listOf(drawClips, fonts, PreviewFrameRef.widthPx, w, h, pics.map { it != null }, stickerFrames, animTimes, maskAdjs, useVideo)
             if (sig != g.sig) {
                 bmp.eraseColor(0)
                 // A blended layer's opacity is applied by the blend shader, not in the picture.
@@ -853,14 +899,17 @@ class NativePreviewEngine(context: Context) {
                         Log.w(TAG, "native text: layer '${c.name}' was not drawn")
                     }
                 }
-                // The layer mask cuts the finished picture (before any effects, which run on the cut
-                // picture like on any other): the mask layer's own rendering, alpha only.
-                if (maskAdj != null && !applyLayerMask(bmp, maskAdj, w, h, k, dens, t)) {
-                    Log.w(TAG, "layer mask '${maskAdj.name}' was not drawn, its layer is shown uncut")
+                // The layer masks cut the finished picture (before any effects, which run on the cut
+                // picture like on any other): each mask layer's own rendering, alpha only, in turn —
+                // the picture keeps only where every mask is.
+                for (maskAdj in maskAdjs) {
+                    if (!applyLayerMask(bmp, maskAdj, w, h, k, dens, t)) {
+                        Log.w(TAG, "layer mask '${maskAdj.name}' was not drawn, its layer is shown uncut by it")
+                    }
                 }
                 // The video fill's window (build 104): the shape's silhouette (white fill, no stroke,
-                // no opacity — the composite applies it), cut by the same mask layer when there is
-                // one, uploaded as the texture the renderer multiplies the placed video by.
+                // no opacity — the composite applies it), cut by the same mask layers when there are
+                // any, uploaded as the texture the renderer multiplies the placed video by.
                 if (g.mediaFill && useVideo) {
                     var sil = g.silBmp
                     if (sil == null || sil.width != w || sil.height != h || sil.isRecycled) {
@@ -875,7 +924,7 @@ class NativePreviewEngine(context: Context) {
                     val fp = fillPainterFor(w, h, dens)
                     fp.nativeTarget = sil
                     fp.draw(android.graphics.Canvas(sil), fillCopies!![0].silhouetteCopy(), applyOpacity = false, timeMs = t)
-                    if (maskAdj != null) {
+                    for (maskAdj in maskAdjs) {
                         drawMaskScratch(maskAdj, w, h, k, dens, t)?.let { scratch ->
                             android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, MASK_DST_IN_PAINT)
                         }

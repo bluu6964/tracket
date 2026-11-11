@@ -9,7 +9,9 @@ import kotlin.math.pow
 
 /**
  * Evaluates an imported Alight Motion `counter` animator for one frame — Alight's "Count Up/Down"
- * effect — and produces the text the layer actually shows. Pure Kotlin (no Android classes) so it can
+ * effect — and produces the text the layer actually shows. The effect is text-only by
+ * construction (it rewrites the layer's characters); the importer notes a `counter` on a
+ * non-text layer as a no-op rather than an unsupported effect. Pure Kotlin (no Android classes) so it can
  * be unit tested. Both render paths substitute the string BEFORE drawing ([NativeTextPainter] hands
  * the counted string to the C++ text engine, [LayerPainter] cuts/draws it), so the engine lays out
  * the counted value itself; no C++ change was needed.

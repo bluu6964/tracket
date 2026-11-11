@@ -31,7 +31,8 @@ namespace {
 enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, EF_GRAIN, EF_VIG, EF_MASK, EF_MASK_APPLY, EF_CHROMA,
              EF_BLUR2, EF_COLOR, EF_WARP, EF_STYLE, EF_COPYBG, EF_GLOW_SCAN,
              EF_LUMA_KEY, EF_FOUR_GRADIENT, EF_TURBULENT_AM, EF_PIXELATE_AM,
-             EF_CHROMA_KEY_AM, EF_SOFT_GLOW, EF_FILL_BEHIND, EF_COUNT };  // eff_[] in renderer.h has room for 24
+             EF_CHROMA_KEY_AM, EF_SOFT_GLOW, EF_FILL_BEHIND,
+             EF_DISPLACE_MAP, EF_SMOOTH_BEVEL, EF_LIGHT_GLOW, EF_INNER_GLOW, EF_COUNT };  // eff_[] in renderer.h has room for 28
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -810,10 +811,338 @@ void main() {
 }
 )";
 
+// Displace Map (Alight Motion's displacemap3 = displacemap2, and displacemaprad; their
+// recovered shaders): the layer's own channels displace where the BACKDROP (the frame so
+// far, texBackdrop_ — the def's `comp`, srcType "comp", i.e. everything below the layer,
+// never the layer itself) is sampled. uRadial 0: p = [offs packed, typex, typey, edges,
+// fromctr, invert], the offset in screen norm. uRadial 1: p = [angle deg, radius, typex,
+// typey, edges, fromctr, invert], q = [centre packed, ...], a rotation + radial shift
+// around the centre point; acScreenSize is the canvas size (uScreen). The edges folds are
+// the def's own: 0 repeat = the raw sample, 1 mirror = 1 - abs(mod(s, 2) - 1), 2 = vec4(0)
+// outside [0,1]^2, 3 tile = mod(s, 1); every mode but 0 scales by the pixel's alpha.
+// fxDisplaceMapAmPick / fxDisplaceMapAmShape / fxDisplaceMapAmUv / fxDisplaceMapAmEdge /
+// fxDisplaceMapRadAmUv in fx_plan.cpp are the CPU twins.
+const char* kDisplaceMap = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBg;
+uniform vec4 uRect;
+uniform float uP[7];
+uniform float uQ[7];
+uniform int uRadial;
+uniform vec2 uScreen;
+uniform float uLayerAspect;
+in vec2 vUv;
+out vec4 oColor;
+vec2 amUnpackPoint(float pk) {
+    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
+    return vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+}
+float pickCh(vec4 t, float lum, float type) {
+    return type < 0.5 ? lum : type < 1.5 ? t.r : type < 2.5 ? t.g : t.b;
+}
+void main() {
+    vec4 tex = texture(uTex, vUv);
+    vec2 sn = uRect.xy + vUv * uRect.zw;
+    float lum = dot(tex.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float typex = uP[2];
+    float typey = uP[3];
+    float edges = uP[4];
+    float fromctr = uP[5];
+    float invert = uP[6];
+    float px = pickCh(tex, lum, typex);
+    float py = pickCh(tex, lum, typey);
+    if (fromctr > 0.5) { px = (px - 0.5) * 2.0; py = (py - 0.5) * 2.0; }
+    if (invert > 0.5) { px = 1.0 - px; py = 1.0 - py; }
+    vec2 spos;
+    if (uRadial == 1) {
+        vec2 lc = uRect.xy + 0.5 * uRect.zw;
+        vec2 cen = vec2(uQ[0], uQ[1]) / 1000.0 * vec2(-1.0, 1.0);
+        vec2 anchor = lc - cen;
+        vec2 uv = sn - anchor;
+        float asp = uScreen.x > 0.0 ? uScreen.y / uScreen.x : 1.0;
+        uv.y *= asp;
+        vec2 adj = vec2(uP[0] * px, uP[1] * py) * tex.a;
+        float ca = cos(adj.x * 0.0174533), sa = sin(adj.x * 0.0174533);
+        uv = vec2(ca * uv.x + sa * uv.y, -sa * uv.x + ca * uv.y);
+        float rl = length(uv);
+        vec2 rdir = rl > 0.000001 ? uv / rl : vec2(0.0);
+        uv += rdir * (adj.y / max(length(uScreen), 1.0));
+        uv.y /= asp;
+        spos = uv + anchor;
+    } else {
+        vec2 adj = vec2(uP[0], uP[1]) / 1000.0;
+        adj.x *= uLayerAspect * -1.0;
+        adj *= vec2(px, py) * tex.a;
+        spos = sn + adj;
+    }
+    if (edges < 0.5) {
+        oColor = texture(uBg, spos);
+    } else if (edges < 1.5) {
+        spos = vec2(1.0) - abs(mod(spos, vec2(2.0)) - vec2(1.0));
+        oColor = texture(uBg, spos) * tex.a;
+    } else if (edges < 2.5) {
+        if (spos.x < 0.0 || spos.x > 1.0 || spos.y < 0.0 || spos.y > 1.0) {
+            oColor = vec4(0.0);
+        } else {
+            oColor = texture(uBg, spos) * tex.a;
+        }
+    } else if (edges < 3.5) {
+        oColor = texture(uBg, mod(spos, vec2(1.0))) * tex.a;
+    } else {
+        oColor = texture(uBg, spos) * tex.a;
+    }
+}
+)";
+
+// Smooth Bevel (Alight Motion's smoothbevel, its recovered shader): pass 0 scans each
+// row for the nearest transparent pixel left / right and packs the distances into an
+// RGBA buffer (the def's encodeFloat of distance / MAX_RADIUS); pass 1 scans columns of
+// that buffer for the four corner distances, smoothsteps them by uRadius2 and shades
+// with the two lights. uP in pass 1: [angle_s deg, angle_d deg, elev_s, elev_d, spec,
+// intensity_s, intensity_d]; uColS / uColD are the two colours (straight; AM's colour
+// alpha is dropped like every packed colour in this engine). The geometry runs in the
+// layer's own norm here (AM uses its screen norm; the def's sizes come from the input
+// image, getTexSize(inputImg.size), as here). fxSmoothBevelAmEncode /
+// fxSmoothBevelAmDecode / fxSmoothBevelAmLights in fx_plan.cpp are the CPU twins.
+const char* kSmoothBevel = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBuf;
+uniform vec2 uTexel;
+uniform float uRadius2;
+uniform int uPass;
+uniform float uP[7];
+uniform vec3 uColS;
+uniform vec3 uColD;
+in vec2 vUv;
+out vec4 oColor;
+vec2 encodeFloat(float v) {
+    vec2 enc = fract(vec2(1.0, 255.0) * v);
+    enc.x -= enc.y / 255.0;
+    return enc;
+}
+float decodeFloat(vec2 v) { return dot(v, vec2(1.0, 1.0 / 255.0)); }
+void main() {
+    if (uPass == 0) {
+        int steps = max(1, int(min(uRadius2, 2048.0)));
+        float nearestLeft = 16383.0;
+        float nearestRight = 16383.0;
+        for (int i = -2048; i < 0; i++) {
+            if (i < -steps) continue;
+            float x = float(i);
+            vec4 s = texture(uTex, vec2(vUv.x + x * uTexel.x, vUv.y));
+            float dist = s.a < 0.003 ? abs(x) : uRadius2 * 2.0;
+            nearestLeft = min(nearestLeft, dist);
+        }
+        for (int i = 0; i < 2048; i++) {
+            if (i >= steps) break;
+            float x = float(i);
+            vec4 s = texture(uTex, vec2(vUv.x + x * uTexel.x, vUv.y));
+            float dist = s.a < 0.003 ? abs(x) : uRadius2 * 2.0;
+            nearestRight = min(nearestRight, dist);
+        }
+        oColor = vec4(encodeFloat(nearestLeft / 16383.0), encodeFloat(nearestRight / 16383.0));
+        return;
+    }
+    int steps = max(1, int(min(uRadius2, 2048.0)));
+    float nTL = 16383.0, nTR = 16383.0, nBL = 16383.0, nBR = 16383.0;
+    for (int i = -2048; i < 0; i++) {
+        if (i < -steps) continue;
+        float y = float(i);
+        vec4 s = texture(uBuf, vec2(vUv.x, vUv.y + y * uTexel.y));
+        float nl = decodeFloat(s.rg) * 16383.0;
+        float nr = decodeFloat(s.ba) * 16383.0;
+        float yd = abs(y);
+        nBL = min(nBL, length(vec2(nl, yd)));
+        nBR = min(nBR, length(vec2(nr, yd)));
+    }
+    for (int i = 0; i < 2048; i++) {
+        if (i >= steps) break;
+        float y = float(i);
+        vec4 s = texture(uBuf, vec2(vUv.x, vUv.y + y * uTexel.y));
+        float nl = decodeFloat(s.rg) * 16383.0;
+        float nr = decodeFloat(s.ba) * 16383.0;
+        float yd = abs(y);
+        nTL = min(nTL, length(vec2(nl, yd)));
+        nTR = min(nTR, length(vec2(nr, yd)));
+    }
+    float r2 = max(uRadius2, 0.0001);
+    float cTL = smoothstep(0.0, 1.0, nTL / r2);
+    float cTR = smoothstep(0.0, 1.0, nTR / r2);
+    float cBL = smoothstep(0.0, 1.0, nBL / r2);
+    float cBR = smoothstep(0.0, 1.0, nBR / r2);
+    vec3 v = (vec3(-1.0, -1.0, -1.0) * cBL + vec3(1.0, -1.0, -1.0) * cBR
+            + vec3(-1.0, 1.0, -1.0) * cTL + vec3(1.0, 1.0, -1.0) * cTR) / 4.0;
+    float vl = length(v);
+    vec3 nv = vl > 0.000001 ? v / vl : vec3(0.0, 0.0, -1.0);
+    float as = uP[0] * 0.0174533, ad = uP[1] * 0.0174533;
+    vec3 lightS = normalize(vec3(cos(as), -sin(as), -uP[2]));
+    vec3 lightD = normalize(vec3(cos(ad), -sin(ad), -uP[3]));
+    float lumS = pow(max(dot(nv, lightS), 0.0), uP[4]);
+    float lumD = dot(nv, lightD);
+    vec4 orig = texture(uTex, vUv);
+    vec4 litD = vec4(uColD, 1.0) * lumD * uP[6] * orig.a;
+    vec4 litS = vec4(uColS, 1.0) * lumS * uP[5] * orig.a;
+    vec4 result = orig;
+    result = litD + result * (1.0 - litD.a);
+    result = litS + result * (1.0 - litS.a);
+    oColor = result;
+}
+)";
+
+// Light Glow (Alight Motion's lightglow, its recovered shader — all four passes share
+// it there, branched on acPass, and do here): pass 0 keeps pixels over the luminance
+// threshold, mixed toward the tint colour, into a half-size buffer; passes 1 / 2 are
+// the def's incremental-Gaussian blurs (horizontal on the pick, vertical on that, the
+// second pass compositing the screen blend + halo over the base); pass 3 copies the
+// result out. uKernel is fxLightGlowAmKernel (strength and the CANVAS size — AM's
+// acPreviewSize), computed on the CPU. The def's loop steps pairs of taps to
+// numBlurPixelsPerSide; capped at 4096 here (a strength beyond ~78 at 1080p — the
+// corpus instances sit far below). fxLightGlowAmPick / fxLightGlowAmComposite in
+// fx_plan.cpp are the CPU twins.
+const char* kLightGlow = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec2 uTexel;
+uniform int uPass;
+uniform float uP[7];
+uniform vec3 uColor;
+in vec2 vUv;
+out vec4 oColor;
+vec4 composite(vec4 a, vec4 b) { return a * (1.0 - b.a) + b; }
+vec4 pick(vec4 c) {
+    float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+    return lum > uP[1] ? mix(c, vec4(uColor, 1.0) * c.a, uP[4]) : vec4(0.0);
+}
+vec4 blurInternal(vec2 texOffset) {
+    if (uP[0] <= 0.0) return vec4(0.0);
+    float numBlur = uP[6];
+    float adjSigma = numBlur / 2.14596602;
+    vec3 inc;
+    inc.x = 1.0 / (sqrt(2.0 * 3.14159265) * adjSigma);
+    inc.y = exp(-0.5 / (adjSigma * adjSigma));
+    inc.z = inc.y * inc.y;
+    vec4 avg = texture(uBlur, vUv) * inc.x;
+    float coefSum = inc.x;
+    for (float i = 1.0; i <= 4096.0; i += 2.0) {
+        if (i > numBlur) break;
+        float offset0 = i;
+        float offset1 = i + 1.0;
+        inc.xy *= inc.yz;
+        coefSum += 2.0 * inc.x;
+        float weight0 = inc.x;
+        inc.xy *= inc.yz;
+        coefSum += 2.0 * inc.x;
+        float weight1 = inc.x;
+        float weightL = weight0 + weight1;
+        float offsetL = (offset0 * weight0 + offset1 * weight1) / weightL;
+        vec2 stL = clamp(vUv - offsetL * texOffset, vec2(0.0), vec2(1.0));
+        vec2 stR = clamp(vUv + offsetL * texOffset, vec2(0.0), vec2(1.0));
+        avg += texture(uBlur, stL) * weightL;
+        avg += texture(uBlur, stR) * weightL;
+    }
+    return avg / coefSum;
+}
+void main() {
+    if (uPass == 0) {
+        oColor = pick(texture(uTex, vUv));
+    } else if (uPass == 1) {
+        oColor = blurInternal(vec2(uTexel.x, 0.0));
+    } else if (uPass == 2) {
+        vec4 base = texture(uTex, vUv);
+        vec4 result = uP[0] <= 0.0 ? pick(base) : blurInternal(vec2(0.0, uTexel.y));
+        vec3 aa = result.rgb / max(result.a, 0.0001) * uP[2];
+        float h = (1.0 - smoothstep(0.0, 0.15, abs(result.a - 0.15))) * uP[3];
+        vec3 hh = mix(aa / 0.15 * uP[3], uColor * uP[3], uP[4]);
+        aa += hh * h;
+        vec3 bb = base.rgb / max(base.a, 0.0001);
+        vec3 rgb = 1.0 - (1.0 - aa) * (1.0 - bb);
+        oColor = composite(base, vec4(rgb, 1.0) * min(base.a, result.a) * uP[5]);
+    } else {
+        oColor = texture(uTex, vUv);
+    }
+}
+)";
+
+
+// Inner Glow (Alight Motion's inner-glow, its recovered shader): pass 0 scans each row
+// for the nearest opaque / transparent pixel and packs both X distances into an RGBA
+// buffer (the def's encodeFloat of distance / MAX_RADIUS, the Smooth Bevel encoding);
+// pass 1 scans columns of that buffer for the true distance to the nearest transparent
+// pixel and blends the glow colour over the layer by alpha * p, p the def's REVERSED
+// smoothstep of that distance (formula form, like fxSstep). The taps step by uStride
+// pixels (the def's q), so the tap count stays <= 40 at any radius. uP: [alpha,
+// hardness, blend mode]. The geometry runs in the layer's own norm (AM uses its screen
+// norm), like Smooth Bevel's port. fxInnerGlowAmStride / fxInnerGlowAmP /
+// fxInnerGlowAmMap in fx_plan.cpp are the CPU twins.
+const char* kInnerGlow = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBuf;
+uniform vec2 uTexel;
+uniform float uRadius2;
+uniform float uStride;
+uniform int uPass;
+uniform float uP[7];
+uniform vec3 uColor;
+in vec2 vUv;
+out vec4 oColor;
+vec2 encF(float v) {
+    vec2 enc = fract(vec2(1.0, 255.0) * v);
+    enc.x -= enc.y / 255.0;
+    return enc;
+}
+float decF(vec2 v) { return dot(v, vec2(1.0, 1.0 / 255.0)); }
+void main() {
+    int steps = int(clamp(uRadius2 / max(uStride, 0.001), 1.0, 48.0));   // AM: max(1, int(radius2/q)), truncated
+    if (uPass == 0) {
+        float nearOut = 16383.0;
+        float nearIn = 16383.0;
+        for (int i = -48; i < 48; i++) {
+            if (i < -steps || i >= steps) continue;
+            float x = float(i) * uStride;
+            vec4 t = texture(uTex, vUv + vec2(x * uTexel.x, 0.0));
+            nearOut = min(nearOut, t.a > 0.0 ? abs(x) : uRadius2 * 2.0);
+            nearIn = min(nearIn, t.a < 0.003 ? abs(x) : uRadius2 * 2.0);
+        }
+        oColor = vec4(encF(nearOut / 16383.0), encF(nearIn / 16383.0));
+        return;
+    }
+    float nearIn = 16383.0;
+    for (int i = -48; i < 48; i++) {
+        if (i < -steps || i >= steps) continue;
+        float y = float(i) * uStride;
+        vec4 b = texture(uBuf, vUv + vec2(0.0, y * uTexel.y));
+        float xIn = decF(b.ba) * 16383.0;
+        nearIn = min(nearIn, length(vec2(xIn, abs(y))));
+    }
+    float e0 = uRadius2 + 0.51;
+    float e1 = uP[1] * uRadius2 - 0.51;
+    float t = clamp((nearIn - e0) / (e1 - e0), 0.0, 1.0);
+    float p = t * t * (3.0 - 2.0 * t);
+    vec4 tex = texture(uTex, vUv);
+    float inv = 1.0 / max(tex.a, 0.0001);
+    vec3 res;
+    int bm = int(uP[2] + 0.5);
+    if (bm == 1) {
+        res = (tex.rgb * inv) * uColor;
+    } else if (bm == 2) {
+        res = 1.0 - (1.0 - tex.rgb * inv) * (1.0 - uColor);
+    } else {
+        res = uColor;
+    }
+    vec4 result = vec4(res, 1.0) * tex.a;
+    oColor = mix(tex, result, clamp(uP[0], 0.0, 1.0) * p);
+}
+)";
+
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
-                                  kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind};
-static_assert(EF_COUNT <= 24, "eff_[] in renderer.h is too small");
+                                  kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
+                                  kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow};
+static_assert(EF_COUNT <= 28, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -986,6 +1315,11 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_CHROMA_KEY_AM: ok = fxChromaKeyAm(op, W, H, cur); break;
             case FX_SOFT_GLOW_AM: ok = fxSoftGlowAm(op, W, H, cur); break;
             case FX_FILL_BEHIND_AM: ok = fxFillBehindAm(op, W, H, cur); break;
+            case FX_DISPLACE_MAP_AM:
+            case FX_DISPLACE_MAP_RAD_AM: ok = fxDisplaceMapAm(op, W, H, cur); break;
+            case FX_SMOOTH_BEVEL_AM: ok = fxSmoothBevelAm(op, W, H, cur); break;
+            case FX_LIGHT_GLOW_AM: ok = fxLightGlowAm(op, W, H, cur); break;
+            case FX_INNER_GLOW_AM: ok = fxInnerGlowAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -1456,6 +1790,167 @@ bool Renderer::fxCopyBg(const FxOp& op, int W, int H, int* cur) {
     glUniform1i(loc(prog, "uBg"), 1);
     glUniform4f(loc(prog, "uRect"), bgRect_[0], bgRect_[1], bgRect_[2], bgRect_[3]);
     glUniform1f(loc(prog, "uAmount"), amount);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Displace Map (Alight): one pass sampling the backdrop; like Copy Background it is a
+// no-op when the backdrop was not captured for this layer (bgOk_).
+bool Renderer::fxDisplaceMapAm(const FxOp& op, int W, int H, int* cur) {
+    if (!bgOk_) return true;
+    const uint32_t prog = effProg(EF_DISPLACE_MAP);
+    if (!prog) return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    bindTex(1, texBackdrop_);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBg"), 1);
+    glUniform4f(loc(prog, "uRect"), bgRect_[0], bgRect_[1], bgRect_[2], bgRect_[3]);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    glUniform1i(loc(prog, "uRadial"), op.type == FX_DISPLACE_MAP_RAD_AM ? 1 : 0);
+    glUniform2f(loc(prog, "uScreen"), (float)w_, (float)h_);
+    glUniform1f(loc(prog, "uLayerAspect"), H > 0 ? (float)W / (float)H : 1.f);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Smooth Bevel (Alight): pass 0 writes the X-distance buffer into an lv_ level, pass 1
+// shades from it. op.p = [radius, angle_d, angle_s, intensity_d, intensity_s,
+// elevation_d, elevation_s], op.q = [spec, colour_d packed, colour_s packed].
+bool Renderer::fxSmoothBevelAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_SMOOTH_BEVEL);
+    if (!prog) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& buf = lv_[kFxGlowLevels - 1];
+    const float radius2 = op.p[0] * std::sqrt((float)W * (float)W + (float)H * (float)H) /
+                          std::sqrt(2.f * 1024.f * 1024.f);
+    begin(prog, buf.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1f(loc(prog, "uRadius2"), radius2);
+    glUniform1i(loc(prog, "uPass"), 0);
+    draw();
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    bindTex(1, buf.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBuf"), 1);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1f(loc(prog, "uRadius2"), radius2);
+    glUniform1i(loc(prog, "uPass"), 1);
+    // shader uP: [angle_s, angle_d, elev_s, elev_d, spec, intensity_s, intensity_d]
+    const float pp[7] = {op.p[2], op.p[1], op.p[6], op.p[5], op.q[0], op.p[4], op.p[3]};
+    glUniform1fv(loc(prog, "uP"), 7, pp);
+    auto unpack3 = [](float packedF, float* r, float* g, float* b) {
+        const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
+        *r = ((pk >> 16) & 0xFF) / 255.f;
+        *g = ((pk >> 8) & 0xFF) / 255.f;
+        *b = (pk & 0xFF) / 255.f;
+    };
+    float r, g, b;
+    unpack3(op.q[2], &r, &g, &b);
+    glUniform3f(loc(prog, "uColS"), r, g, b);
+    unpack3(op.q[1], &r, &g, &b);
+    glUniform3f(loc(prog, "uColD"), r, g, b);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Inner Glow (Alight): pass 0 writes the X-distance buffer into an lv_ level, pass 1
+// shades from it. op.p = [radius, alpha, hardness, colour packed, blend mode].
+bool Renderer::fxInnerGlowAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_INNER_GLOW);
+    if (!prog) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& buf = lv_[kFxGlowLevels - 1];
+    const float radius2 = op.p[0] * std::sqrt((float)W * (float)W + (float)H * (float)H) /
+                          std::sqrt(2.f * 1024.f * 1024.f);
+    const float stride = fxInnerGlowAmStride(radius2);
+    begin(prog, buf.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1f(loc(prog, "uRadius2"), radius2);
+    glUniform1f(loc(prog, "uStride"), stride);
+    glUniform1i(loc(prog, "uPass"), 0);
+    draw();
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    bindTex(1, buf.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBuf"), 1);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1f(loc(prog, "uRadius2"), radius2);
+    glUniform1f(loc(prog, "uStride"), stride);
+    glUniform1i(loc(prog, "uPass"), 1);
+    // shader uP: [alpha, hardness, blend mode]
+    const float pp[7] = {op.p[1], op.p[2], op.p[4], 0.f, 0.f, 0.f, 0.f};
+    glUniform1fv(loc(prog, "uP"), 7, pp);
+    const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[3])));
+    glUniform3f(loc(prog, "uColor"), ((pk >> 16) & 0xFF) / 255.f, ((pk >> 8) & 0xFF) / 255.f,
+                (pk & 0xFF) / 255.f);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Light Glow (Alight): four passes through half-size lv_ buffers (the def's downImg /
+// hblur / vblur chain). op.p = [strength, threshold, intensity, colour packed, blend,
+// halo, alpha].
+bool Renderer::fxLightGlowAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_LIGHT_GLOW);
+    if (!prog) return false;
+    const int hw = halfSize(W, 0), hh = halfSize(H, 0);
+    if (!ensureLevel(0, hw, hh) || !ensureLevel(1, hw, hh)) return false;
+    const FxLevel& half0 = lv_[0];
+    const FxLevel& half1 = lv_[1];
+    // shader uP: [strength, threshold, intensity, halo, blend, alpha, kernel]
+    const float pp[7] = {op.p[0], op.p[1], op.p[2], op.p[5], op.p[4], op.p[6],
+                         fxLightGlowAmKernel(op.p[0], (float)w_, (float)h_)};
+    const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[3])));
+    auto setCommon = [&]() {
+        glUniform1fv(loc(prog, "uP"), 7, pp);
+        glUniform3f(loc(prog, "uColor"), ((pk >> 16) & 0xFF) / 255.f, ((pk >> 8) & 0xFF) / 255.f,
+                    (pk & 0xFF) / 255.f);
+        glUniform2f(loc(prog, "uTexel"), 1.f / (float)hw, 1.f / (float)hh);
+    };
+    begin(prog, half0.fbo[0], hw, hh);   // pass 0: bright pick -> downImg
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 0);
+    setCommon();
+    draw();
+    begin(prog, half0.fbo[1], hw, hh);   // pass 1: horizontal blur -> hblur
+    bindTex(1, half0.tex[0]);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1i(loc(prog, "uPass"), 1);
+    setCommon();
+    draw();
+    begin(prog, half1.fbo[0], hw, hh);   // pass 2: vertical blur + composite -> vblur
+    bindTex(0, fxTex_[*cur]);
+    bindTex(1, half0.tex[1]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1i(loc(prog, "uPass"), 2);
+    setCommon();
+    draw();
+    const int dst = 1 - *cur;            // pass 3: copy out at full size
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, half1.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 3);
+    setCommon();
     draw();
     *cur = dst;
     return true;

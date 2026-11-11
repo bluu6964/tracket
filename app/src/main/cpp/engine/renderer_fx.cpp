@@ -323,7 +323,8 @@ bool Renderer::applyFx(const LayerDraw& d, const LayerFx& fx, LayerDraw* out) {
     // Copy Background: the frame so far goes into the backdrop texture before anything is drawn into the effect targets.
     bool needBg = false;
     for (int k = 0; k < fx.nOps; ++k)
-        if (fx.ops[k].type == FX_COPY_BG && !fxIsIdentity(fx.ops[k])) needBg = true;
+        if ((fx.ops[k].type == FX_COPY_BG || fx.ops[k].type == FX_DISPLACE_MAP_AM ||
+             fx.ops[k].type == FX_DISPLACE_MAP_RAD_AM) && !fxIsIdentity(fx.ops[k])) needBg = true;
     const bool haveScratch = needBg && fx.bgAligned && ensureScratch();  // may rebind the default framebuffer when it creates the scratch
 
     GLint prevFbo = 0;

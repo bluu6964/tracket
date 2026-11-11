@@ -227,6 +227,131 @@ object ClipFxLibrary {
     // AM's brightness / fgAlpha / fgScale / fgOffset have no slot (importer warns when one
     // is not at its default).
     const val FILL_BEHIND_AM = "fill_behind_am"
+    // WAVE_WARP_AM (native 90 + EXT 91, kFxWarp mode 18): Alight's wavewarp2. Values
+    // [0] phase (turns), [1] angle 1 deg, [2] spacing m1, [3] magnitude m2, [4] angle 2
+    // deg (relative), [5] damping, [6] damping spacing; EXT [7] damping origin,
+    // [8] screen space (the pattern is layer-anchored here, like every warp; the flag is
+    // carried but does not change the maths). Keyframed phase / magnitude / angles ride
+    // tails from index 14.
+    const val WAVE_WARP_AM = "wave_warp_am"
+    // CIRCULAR_RIPPLE_AM (native 92, kFxWarp mode 19): Alight's circularripple2 (=
+    // circularripple, byte-identical shader). Values [0] strength, [1] radius,
+    // [2] frequency, [3] feather, [4] phase (turns), [5..6] centre x/y (AM units).
+    // Keyframed frequency / strength / centre ride tails from index 7.
+    const val CIRCULAR_RIPPLE_AM = "circular_ripple_am"
+    // STRETCH_AM (native 93, kFxWarp mode 20): Alight's stretch2 / stretch — the two
+    // versions share the map, [3] selects the contentOnly compose (1 = v1 composites the
+    // layer under the masked sample, 2 = v2 keeps it). Values [0] scale, [1] angle deg,
+    // [2] content only. Keyframed scale / angle ride tails from index 7.
+    const val STRETCH_AM = "stretch_am"
+    // SQUEEZE_AM (native 94, kFxWarp mode 21): Alight's squeeze. Its def also declares a
+    // centre point and a radius, but the shader never reads them — [0] strength is all.
+    // A keyframed strength rides the tail from index 7.
+    const val SQUEEZE_AM = "squeeze_am"
+    // FRACTAL_WARP_AM (native 95 + EXT 96, kFxWarp mode 22): Alight's fractalwarp4.
+    // Values [0] magnitude, [1] scale, [2] intensity, [3] octaves, [4..5] the offset
+    // point x/y, [6] parallax x; EXT [7] parallax y (components, so keyframed points
+    // animate). Keyframed magnitude / offset / parallax / scale ride tails from
+    // index 14.
+    const val FRACTAL_WARP_AM = "fractal_warp_am"
+    // STRIPES_AM (native 97, kFxWarp mode 23): Alight's stripes. Values [0] amount,
+    // [1] width, [2] angle deg, [3] phase, [4] the colour packed 0xRRGGBB, [5] smoothing,
+    // [6] punch out. (The def's screenSpace branch is not reproduced; the importer warns
+    // when an instance sets it.) Keyframed phase / width ride tails from index 7.
+    const val STRIPES_AM = "stripes_am"
+    // TURBULENT_DISPLACE3_AM (native 98 + EXT 99, kFxWarp mode 24): Alight's
+    // turbulentdisplace3. Values [0] intensity, [1] scale, [2] evolution, [3] seed,
+    // [4] direction (0 X, 1 Y, 2 XY, 3 R, 4 φr, 5 φ), [5] octaves, [6] offset; EXT
+    // [7..8] the parallax point x/y, [9..10] the position point x/y, [11..12] stretch
+    // x/y, [13] flags (screen space + 2 * single axis; screen space only swaps the
+    // stretch here — the pattern stays layer-anchored). Keyframed intensity / scale
+    // ride tails from index 14.
+    const val TURBULENT_DISPLACE3_AM = "turbulent_displace3_am"
+    // ROUGHEN_EDGES_AM (native 100, kFxWarp mode 25): Alight's roughenedges — its shader
+    // is turbulentdisplace3's body with the geometry fixed (direction R, detail x5,
+    // offset 0.15); the def's other declared params are never read by the shader. Values
+    // [0] strength, [1] detail, [2] evolution, [3] seed, [4] octaves. A keyframed
+    // evolution rides the tail from index 7.
+    const val ROUGHEN_EDGES_AM = "roughen_edges_am"
+    // STREAKS_AM (native 101 + EXT 102, kFxBlur2 mode 9): Alight's streaks (linear).
+    // Values [0] strength, [1] angle deg, [2] bias, [3] alpha, [4..6] the R/G/B combine
+    // modes; EXT [7] the A combine mode (modes: 0 min, 1 max, 2 off, 3 average). A
+    // keyframed strength rides the tail from index 14.
+    const val STREAKS_AM = "streaks_am"
+    // COLOR_HOT_AM (native 103, kFxColor mode 21): Alight's colorhot. Values are the two
+    // hue-discs flattened: [0..2] colour hue deg / saturation / bias, [3..5] tint hue /
+    // saturation / bias.
+    const val COLOR_HOT_AM = "color_hot_am"
+    // COLORIZE_AM (native 104, kFxColor mode 22): Alight's colorize — the Color Tint
+    // formula with the hue-disc's saturation as the amount. Values [0] tint hue deg,
+    // [1] amount.
+    const val COLORIZE_AM = "colorize_am"
+    // HIGHLIGHT_SHADOW_AM (native 105, kFxColor mode 23): Alight's highlightshadow
+    // (GPUImage's formula). Values [0] shadows, [1] highlights (AM raw 0..2; both 1 =
+    // identity).
+    const val HIGHLIGHT_SHADOW_AM = "highlight_shadow_am"
+    // SPOT_COLOR_AM (native 106, kFxColor mode 24): Alight's spotcolor2 (group 0).
+    // Values [0] the colour packed 0xRRGGBB, [1] threshold, [2] feather, [3] saturation,
+    // [4] choke.
+    const val SPOT_COLOR_AM = "spot_color_am"
+    // DISSOLVE_AM (native 107, kFxStyle mode 15): Alight's dissolve. Values [0] amount,
+    // [1] seed. A keyframed amount rides the tail from index 7.
+    const val DISSOLVE_AM = "dissolve_am"
+    // SIMPLE_STARS_AM (native 108 + EXT 109, kFxStyle mode 16): Alight's simplestars2.
+    // Values [0] scale, [1] star size, [2] star feather, [3] the colour packed 0xRRGGBB,
+    // [4] star count, [5] brightness, [6] blend mode (0 normal, 1 multiply, 2 screen,
+    // 3 punch out); EXT [7..9] the parallax x/y/z, [10] alpha. Keyframed parallax
+    // (three tails) / star size ride tails from index 14.
+    const val SIMPLE_STARS_AM = "simple_stars_am"
+    // DOTS_AM (native 110 + EXT 111, kFxStyle mode 17): Alight's dots2. Values [0] scale,
+    // [1] phase (turns), [2] radius, [3] feather, [4..5] the two colours packed 0xRRGGBB,
+    // [6] density; EXT [7..8] the position point x/y, [9] fill, [10] alpha, [11] blend
+    // mode (0 normal, 1 multiply, 2 screen), [12] seed, [13] slack. Keyframed phase /
+    // density ride tails from index 14.
+    const val DOTS_AM = "dots_am"
+    // RIDGES_AM (native 112 + EXT 113, kFxStyle mode 18): Alight's ridges2 / ridges.
+    // Values [0] intensity, [1] scale, [2] evolution, [3] seed, [4] octaves, [5..6] the
+    // two colours packed 0xRRGGBB (their alpha is dropped, like every packed colour);
+    // EXT [7..8] the offset point x/y, [9..10] the parallax point x/y, [11..12] stretch
+    // x/y (v1: [11] is the scalar stretch), [13] version (1 or 2). Keyframed offset /
+    // parallax / evolution ride tails from index 14.
+    const val RIDGES_AM = "ridges_am"
+    // BEND_WARP_AM (native 114, kFxWarp mode 26): Alight's bendwarp. Values [0] amount
+    // deg, [1] offset, [2] origin (0 left, 1 right, 2 top, 3 bottom), [3] opposite type,
+    // [4] high limit, [5] low limit. Keyframed amount / offset ride tails from index 7.
+    const val BEND_WARP_AM = "bend_warp_am"
+    // DISPLACE_MAP_AM (native 115): dedicated backdrop pass (renderer_effects.cpp).
+    // Alight's displacemap3 (= displacemap2): the def's `comp` input is srcType "comp" —
+    // the composite of everything BELOW the layer, which is exactly the backdrop the
+    // renderer captures for Copy Background. Values [0..1] the offset point x/y,
+    // [2] x source, [3] y source (0 luma, 1 R, 2 G, 3 B), [4] edges (0 repeat, 1 mirror,
+    // 2 transparent, 3 tile), [5] from centre, [6] invert. A keyframed offset rides two
+    // tails from index 7.
+    const val DISPLACE_MAP_AM = "displace_map_am"
+    // DISPLACE_MAP_RAD_AM (native 116 + EXT 117): dedicated backdrop pass. Alight's
+    // displacemaprad. Values [0] offset angle deg, [1] offset radius, [2] x source,
+    // [3] y source, [4] edges, [5] from centre, [6] invert; EXT [7..8] the centre point
+    // x/y. A keyframed offset angle rides the tail from index 14.
+    const val DISPLACE_MAP_RAD_AM = "displace_map_rad_am"
+    // SMOOTH_BEVEL_AM (native 118 + EXT 119): dedicated two-pass effect
+    // (renderer_effects.cpp). Alight's smoothbevel. Values [0] radius, [1] diffuse angle
+    // deg, [2] specular angle deg, [3] diffuse intensity, [4] specular intensity,
+    // [5] diffuse elevation, [6] specular elevation; EXT [7] specular coefficient,
+    // [8] the diffuse colour packed 0xRRGGBB, [9] the specular colour packed. A keyframed
+    // specular angle rides the tail from index 14.
+    const val SMOOTH_BEVEL_AM = "smooth_bevel_am"
+    // LIGHT_GLOW_AM (native 120): dedicated four-pass effect (renderer_effects.cpp).
+    // Alight's lightglow — all four passes share one shader in the def (no host
+    // downsample shader after all; its buffers are plain downsample="2" targets).
+    // Values [0] strength, [1] threshold, [2] intensity, [3] the colour packed 0xRRGGBB,
+    // [4] blend, [5] halo, [6] alpha.
+    const val LIGHT_GLOW_AM = "light_glow_am"
+    // INNER_GLOW_AM (native 121): dedicated two-pass effect (renderer_effects.cpp).
+    // Alight's inner-glow — missed by the id-list censuses until the v165 full sweep
+    // (one visible corpus instance). Values [0] radius, [1] alpha, [2] hardness,
+    // [3] the colour packed 0xRRGGBB (its alpha is declared but never read by the
+    // shader), [4] blend mode (0 normal, 1 multiply, 2 screen).
+    const val INNER_GLOW_AM = "inner_glow_am"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -648,6 +773,249 @@ object ClipFxLibrary {
                 FxParamDef("Tint colour", 0f, 16777215f, 0xFF5566.toFloat(), "", step = 1f),
                 FxParamDef("Edge strength", 0f, 100f, 0f, "%"),
                 FxParamDef("Scan lines", 0f, 100f, 0f, "%")
+            )
+        ),
+        // ---- v165: Alight tier 3 (values as on the consts) ----
+        FxDef(
+            WAVE_WARP_AM, 90, "Wave Warp (Alight)", "Distort", "A sine wave displaces the layer (Alight Motion's Wave Warp 2)",
+            listOf(
+                FxParamDef("Phase", 0f, 500f, 0f, "", step = 0.25f),
+                FxParamDef("Angle", -1800f, 1800f, 0f, "°", step = 3f),
+                FxParamDef("Spacing", 0f, 500f, 20f, "", step = 0.5f),
+                FxParamDef("Magnitude", 0f, 30f, 4f, "", step = 0.5f),
+                FxParamDef("Warp angle", -180f, 180f, 90f, "°", step = 3f),
+                FxParamDef("Damping", -1f, 1f, 0f, "", step = 0.05f),
+                FxParamDef("Damping spacing", -1f, 1f, 0f, "", step = 0.05f)
+            )
+        ),
+        FxDef(
+            CIRCULAR_RIPPLE_AM, 92, "Circular Ripple (Alight)", "Distort", "A radial sine ripple around a centre (Alight Motion)",
+            listOf(
+                FxParamDef("Strength", -1f, 1f, 0.025f, "", step = 0.005f),
+                FxParamDef("Radius", 0f, 0.8f, 0.3f, "", step = 0.01f),
+                FxParamDef("Frequency", 0f, 100f, 20f, "", step = 0.5f),
+                FxParamDef("Feather", 0f, 1f, 0.1f, "", step = 0.01f),
+                FxParamDef("Phase", -1000f, 1000f, 0f, "", step = 0.25f),
+                FxParamDef("Centre X", -1000f, 1000f, 0f, "", step = 5f),
+                FxParamDef("Centre Y", -1000f, 1000f, 0f, "", step = 5f)
+            )
+        ),
+        FxDef(
+            STRETCH_AM, 93, "Stretch (Alight)", "Distort", "Scales the layer along a rotated axis (Alight Motion's Stretch)",
+            listOf(
+                FxParamDef("Scale", 0.01f, 50f, 1f, "", step = 0.01f),
+                FxParamDef("Angle", 0f, 3600f, 0f, "°", step = 3f),
+                FxParamDef("Content only", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Version", 1f, 2f, 2f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            SQUEEZE_AM, 94, "Squeeze (Alight)", "Distort", "Pinches the layer on one axis, bulges it on the other (Alight Motion)",
+            listOf(FxParamDef("Strength", -2f, 2f, 0f, "", step = 0.05f))
+        ),
+        FxDef(
+            FRACTAL_WARP_AM, 95, "Fractal Warp (Alight)", "Distort", "Value-noise fbm displaces the layer (Alight Motion's Fractal Warp)",
+            listOf(
+                FxParamDef("Magnitude", -5f, 5f, 0.2f, "", step = 0.05f),
+                FxParamDef("Scale", 0.1f, 4f, 1f, "", step = 0.05f),
+                FxParamDef("Intensity", 0.25f, 0.75f, 0.5f, "", step = 0.01f),
+                FxParamDef("Octaves", 1f, 9f, 6f, "", step = 1f),
+                FxParamDef("Offset X", -2000f, 2000f, 0f, "", step = 5f),
+                FxParamDef("Offset Y", -2000f, 2000f, 0f, "", step = 5f),
+                FxParamDef("Parallax X", -2000f, 2000f, 0f, "", step = 5f)
+            )
+        ),
+        FxDef(
+            STRIPES_AM, 97, "Stripes (Alight)", "Stylize", "Rotated colour bands over the layer (Alight Motion's Stripes)",
+            listOf(
+                FxParamDef("Amount", 0.5f, 200f, 10f, "", step = 0.5f),
+                FxParamDef("Width", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Angle", 0f, 3600f, 45f, "°", step = 3f),
+                FxParamDef("Phase", 0f, 1000f, 0f, "", step = 0.25f),
+                FxParamDef("Colour", 0f, 16777215f, 0x2D1EF6.toFloat(), "", step = 1f),
+                FxParamDef("Smoothing", 0f, 0.5f, 0.01f, "", step = 0.01f),
+                FxParamDef("Punch out", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            TURBULENT_DISPLACE3_AM, 98, "Turbulent Displace 3 (Alight)", "Distort", "Simplex turbulence displaces the layer (Alight Motion)",
+            listOf(
+                FxParamDef("Intensity", 0f, 2.5f, 0.25f, "", step = 0.05f),
+                FxParamDef("Scale", 0.01f, 50f, 1f, "", step = 0.01f),
+                FxParamDef("Evolution", -50f, 50f, 0f, "", step = 0.25f),
+                FxParamDef("Seed", 0f, 5f, 0f, "", step = 0.05f),
+                FxParamDef("Direction", 0f, 5f, 4f, "", step = 1f),
+                FxParamDef("Octaves", 1f, 9f, 6f, "", step = 1f),
+                FxParamDef("Offset", -1f, 1f, 0f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            ROUGHEN_EDGES_AM, 100, "Roughen Edges (Alight)", "Stylize", "Turbulence erodes the layer's edges (Alight Motion)",
+            listOf(
+                FxParamDef("Strength", 0f, 2.5f, 0.2f, "", step = 0.05f),
+                FxParamDef("Detail", 0.01f, 50f, 1f, "", step = 0.01f),
+                FxParamDef("Evolution", -50f, 50f, 0f, "", step = 0.25f),
+                FxParamDef("Seed", 0f, 5f, 0f, "", step = 0.05f),
+                FxParamDef("Octaves", 1f, 9f, 6f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            STREAKS_AM, 101, "Streaks (Alight)", "Blur", "A directional multi-tap smear (Alight Motion's Streaks)",
+            listOf(
+                FxParamDef("Strength", 0f, 1f, 0.15f, "", step = 0.01f),
+                FxParamDef("Angle", 0f, 3600f, 0f, "°", step = 3f),
+                FxParamDef("Bias", -1f, 1f, 0f, "", step = 0.05f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Red mode", 0f, 3f, 1f, "", step = 1f),
+                FxParamDef("Green mode", 0f, 3f, 1f, "", step = 1f),
+                FxParamDef("Blue mode", 0f, 3f, 1f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            COLOR_HOT_AM, 103, "Colour Hot (Alight)", "Color", "Luminance remapped between two hue discs (Alight Motion)",
+            listOf(
+                FxParamDef("Colour hue", 0f, 360f, 0f, "°", step = 3f),
+                FxParamDef("Colour saturation", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Colour bias", -1f, 1f, 0f, "", step = 0.05f),
+                FxParamDef("Tint hue", 0f, 360f, 60f, "°", step = 3f),
+                FxParamDef("Tint saturation", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Tint bias", -1f, 1f, 0f, "", step = 0.05f)
+            )
+        ),
+        FxDef(
+            COLORIZE_AM, 104, "Colorize (Alight)", "Color", "Pushes the chroma toward a tint (Alight Motion's Colorize)",
+            listOf(
+                FxParamDef("Tint hue", 0f, 360f, 0f, "°", step = 3f),
+                FxParamDef("Amount", 0f, 1f, 0f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            HIGHLIGHT_SHADOW_AM, 105, "Highlights & Shadows (Alight)", "Color", "GPUImage-style highlight / shadow lift (Alight Motion)",
+            listOf(
+                FxParamDef("Shadows", 0f, 2f, 1f, "", step = 0.01f),
+                FxParamDef("Highlights", 0f, 2f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            SPOT_COLOR_AM, 106, "Spot Colour (Alight)", "Color", "Keeps one colour, desaturates the rest (Alight Motion)",
+            listOf(
+                FxParamDef("Colour", 0f, 16777215f, 0xFF0000.toFloat(), "", step = 1f),
+                FxParamDef("Threshold", 0f, 2f, 0.35f, "", step = 0.01f),
+                FxParamDef("Feather", 0f, 2f, 0.25f, "", step = 0.01f),
+                FxParamDef("Saturation", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Choke", 0.5f, 20f, 5f, "", step = 0.1f)
+            )
+        ),
+        FxDef(
+            DISSOLVE_AM, 107, "Dissolve (Alight)", "Stylize", "A per-pixel hash dissolves the layer (Alight Motion)",
+            listOf(
+                FxParamDef("Amount", 0f, 1f, 0.75f, "", step = 0.01f),
+                FxParamDef("Seed", 0f, 5f, 0f, "", step = 0.05f)
+            )
+        ),
+        FxDef(
+            SIMPLE_STARS_AM, 108, "Simple Stars (Alight)", "Stylize", "Procedural star layers over the layer (Alight Motion)",
+            listOf(
+                FxParamDef("Scale", 0.01f, 50f, 1f, "", step = 0.01f),
+                FxParamDef("Star size", 0f, 5f, 0.1f, "", step = 0.05f),
+                FxParamDef("Star feather", 0f, 20f, 1f, "", step = 0.1f),
+                FxParamDef("Colour", 0f, 16777215f, 0xFFFFFF.toFloat(), "", step = 1f),
+                FxParamDef("Star count", 1f, 50f, 25f, "", step = 1f),
+                FxParamDef("Brightness", 0f, 5f, 1f, "", step = 0.05f),
+                FxParamDef("Blend mode", 0f, 3f, 2f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            DOTS_AM, 110, "Dots (Alight)", "Stylize", "A stepped Voronoi dot field over the layer (Alight Motion's Dots)",
+            listOf(
+                FxParamDef("Scale", 0.01f, 100f, 1f, "", step = 0.01f),
+                FxParamDef("Phase", -99f, 99f, 0f, "", step = 0.25f),
+                FxParamDef("Radius", 0f, 2f, 0.2f, "", step = 0.01f),
+                FxParamDef("Feather", 0f, 1f, 0.1f, "", step = 0.01f),
+                FxParamDef("Colour", 0f, 16777215f, 0xFFFFFF.toFloat(), "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Density", 1f, 13f, 12f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            RIDGES_AM, 112, "Ridges (Alight)", "Stylize", "A ridged fractal field between two colours (Alight Motion)",
+            listOf(
+                FxParamDef("Intensity", 0.1f, 1.5f, 1f, "", step = 0.01f),
+                FxParamDef("Scale", 0.01f, 50f, 1f, "", step = 0.01f),
+                FxParamDef("Evolution", -50f, 50f, 0f, "", step = 0.25f),
+                FxParamDef("Seed", 0f, 5f, 0f, "", step = 0.05f),
+                FxParamDef("Octaves", 1f, 9f, 6f, "", step = 1f),
+                FxParamDef("Colour 1", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0xFFFFFF.toFloat(), "", step = 1f)
+            )
+        ),
+        FxDef(
+            BEND_WARP_AM, 114, "Bend Warp (Alight)", "Distort", "Bends the layer past a line along an arc (Alight Motion)",
+            listOf(
+                FxParamDef("Amount", -180f, 180f, 0f, "°", step = 1f),
+                FxParamDef("Offset", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Origin", 0f, 3f, 3f, "", step = 1f),
+                FxParamDef("Opposite", 0f, 2f, 0f, "", step = 1f),
+                FxParamDef("High limit", 0f, 1f, 0.75f, "", step = 0.01f),
+                FxParamDef("Low limit", 0f, 1f, 0.25f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            DISPLACE_MAP_AM, 115, "Displace Map (Alight)", "Backdrop", "The layer's channels displace the backdrop (Alight Motion)",
+            listOf(
+                FxParamDef("Offset X", -1000f, 1000f, 0f, "", step = 1f),
+                FxParamDef("Offset Y", -1000f, 1000f, 0f, "", step = 1f),
+                FxParamDef("X source", 0f, 3f, 1f, "", step = 1f),
+                FxParamDef("Y source", 0f, 3f, 2f, "", step = 1f),
+                FxParamDef("Edges", 0f, 3f, 1f, "", step = 1f),
+                FxParamDef("From centre", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Invert", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            DISPLACE_MAP_RAD_AM, 116, "Displace Map Radial (Alight)", "Backdrop", "Rotates / pushes the backdrop radially (Alight Motion)",
+            listOf(
+                FxParamDef("Angle", -3600f, 3600f, 0f, "°", step = 3f),
+                FxParamDef("Radius", -1000f, 1000f, 0f, "", step = 1f),
+                FxParamDef("X source", 0f, 3f, 1f, "", step = 1f),
+                FxParamDef("Y source", 0f, 3f, 2f, "", step = 1f),
+                FxParamDef("Edges", 0f, 3f, 1f, "", step = 1f),
+                FxParamDef("From centre", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Invert", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            SMOOTH_BEVEL_AM, 118, "Smooth Bevel (Alight)", "Stylize", "A distance-field bevel with two lights (Alight Motion)",
+            listOf(
+                FxParamDef("Radius", 0f, 200f, 44f, "", step = 1f),
+                FxParamDef("Diffuse angle", 0f, 360f, 45f, "°", step = 3f),
+                FxParamDef("Specular angle", 0f, 360f, 45f, "°", step = 3f),
+                FxParamDef("Diffuse intensity", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Specular intensity", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Diffuse elevation", 0f, 5f, 0f, "", step = 0.05f),
+                FxParamDef("Specular elevation", 0f, 5f, 2.2f, "", step = 0.05f)
+            )
+        ),
+        FxDef(
+            LIGHT_GLOW_AM, 120, "Light Glow (Alight)", "Light", "A threshold glow with a halo (Alight Motion's Light Glow)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.25f, "", step = 0.01f),
+                FxParamDef("Threshold", 0f, 1f, 0.7f, "", step = 0.01f),
+                FxParamDef("Intensity", 0f, 5f, 1f, "", step = 0.05f),
+                FxParamDef("Colour", 0f, 16777215f, 0xFF5566.toFloat(), "", step = 1f),
+                FxParamDef("Blend", 0f, 1f, 0.25f, "", step = 0.01f),
+                FxParamDef("Halo", 0f, 5f, 0f, "", step = 0.05f),
+                FxParamDef("Alpha", 0f, 1f, 0.75f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            INNER_GLOW_AM, 121, "Inner Glow (Alight)", "Light", "A glow inward from the layer's edges (Alight Motion's Inner Glow)",
+            listOf(
+                FxParamDef("Radius", 0f, 400f, 50f, "", step = 1f),
+                FxParamDef("Alpha", 0f, 1f, 0.75f, "", step = 0.01f),
+                FxParamDef("Hardness", 0f, 1f, 0.2f, "", step = 0.01f),
+                FxParamDef("Colour", 0f, 16777215f, 0xFFFFFF.toFloat(), "", step = 1f),
+                FxParamDef("Blend mode", 0f, 2f, 2f, "", step = 1f)
             )
         ),
         FxDef(
@@ -1118,6 +1486,15 @@ object ClipFxLibrary {
         HEX_SHIFT_AM -> listOf(0f, packPoint(0f, 0f), 0f, 0f, 0f, 0f, 0f)
         SOFT_GLOW_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
         FILL_BEHIND_AM -> listOf(0f, 100f, 0f, 0f, 0f, 100f, 0f)
+        WAVE_WARP_AM -> listOf(0.5f, 0f, 0f, 0f, 0f, 0f, 0f)
+        FRACTAL_WARP_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
+        TURBULENT_DISPLACE3_AM -> listOf(0f, 0f, 0f, 0f, 1f, 1f, 2f)
+        STREAKS_AM -> listOf(1f, 0f, 0f, 0f, 0f, 0f, 0f)
+        SIMPLE_STARS_AM -> listOf(0f, 0f, 0f, 1f, 0f, 0f, 0f)
+        DOTS_AM -> listOf(0f, 0f, 1f, 1f, 0f, 0f, 1f)
+        RIDGES_AM -> listOf(0f, 0f, 0f, 0f, 1f, 1f, 2f)
+        DISPLACE_MAP_RAD_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
+        SMOOTH_BEVEL_AM -> listOf(35f, 0xFFFFFF.toFloat(), 0xFFFFFF.toFloat(), 0f, 0f, 0f, 0f)
         else -> emptyList()
     }
 
@@ -1130,6 +1507,15 @@ object ClipFxLibrary {
         HEX_SHIFT_AM -> 85
         SOFT_GLOW_AM -> 87
         FILL_BEHIND_AM -> 89
+        WAVE_WARP_AM -> 91
+        FRACTAL_WARP_AM -> 96
+        TURBULENT_DISPLACE3_AM -> 99
+        STREAKS_AM -> 102
+        SIMPLE_STARS_AM -> 109
+        DOTS_AM -> 111
+        RIDGES_AM -> 113
+        DISPLACE_MAP_RAD_AM -> 117
+        SMOOTH_BEVEL_AM -> 119
         else -> null
     }
 

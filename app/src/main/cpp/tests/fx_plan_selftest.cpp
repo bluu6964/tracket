@@ -51,7 +51,7 @@ int main() {
     }
     CHECK(fxBlurSigma(0, 1) == 0 && std::fabs(fxBlurSigma(100, 2) - 120.f) < 1e-4, "blur sigma");
     // 3. parse
-    float flat[] = {1, 40, 0, 0, 0, 0, 0, 0, 99, 1, 1, 1, 1, 1, 0, 0, 3, 30, 90, 50, 0, 0, 0, 0};
+    float flat[] = {1, 40, 0, 0, 0, 0, 0, 0, 999, 1, 1, 1, 1, 1, 0, 0, 3, 30, 90, 50, 0, 0, 0, 0};
     FxOp ops[kFxMaxOps];
     CHECK(fxParseOps(flat, 24, ops) == 2, "unknown type skipped");
     CHECK(ops[0].type == FX_BLUR && ops[1].type == FX_RGB_SPLIT && ops[1].p[1] == 90, "parse values");
@@ -675,6 +675,227 @@ int main() {
         // Fill behind: a straight-grey blur at gamma 1 / no tint keeps its colour.
         fxFillBehindAmBg(0.25f, 0.25f, 0.25f, 0.5f, 0, 0, 0, 0, 0, 1, &oR, &oG, &oB, &oA);
         CHECK(std::fabs(oR - 0.25f) < 0.002f && std::fabs(oA - 0.5f) < 1e-5f, "fill behind bg passthrough");
+    }
+    // ---- v165: tier 3 (AM defs, hunt round 3). Every expected value below was computed
+    // by an independent port of the recovered def formulas (expected_t3.py), not by the
+    // twins themselves. ----
+    {
+        float x, y, p;
+        bool in;
+        // Wave Warp (wavewarp2)
+        fxWaveWarpAmUv(0.3f, 0.7f, 0.25f, 30, 20, 40, 15, 0.5f, -0.3f, 0.4f, &x, &y);
+        CHECK(std::fabs(x - 0.305967f) < 2e-3f && std::fabs(y - 0.694033f) < 2e-3f, "wavewarp pin (%g %g)", x, y);
+        fxWaveWarpAmUv(0.85f, 0.15f, 0.f, 90, 5, 25, -30, -0.8f, 0.6f, 0.1f, &x, &y);
+        CHECK(std::fabs(x - 0.801892f) < 2e-3f && std::fabs(y - 0.233326f) < 2e-3f, "wavewarp pin 2 (%g %g)", x, y);
+        // Circular Ripple (circularripple2 = circularripple)
+        fxCircularRippleAmUv(0.7f, 0.3f, 0.2f, 0.6f, 3, 0.25f, 0.1f, 100, -50, 16.f / 9.f, &x, &y);
+        CHECK(std::fabs(x - 0.704564f) < 2e-3f && std::fabs(y - 0.288590f) < 2e-3f, "ripple pin (%g %g)", x, y);
+        fxCircularRippleAmUv(0.5f, 0.5f, 0.5f, 1.f, 2, 0.5f, 0.f, 0, 0, 1.f, &x, &y);
+        CHECK(x == 0.5f && y == 0.5f, "ripple centre still");
+        // Stretch (stretch2 / stretch)
+        fxStretchAmUv(0.8f, 0.2f, 2.f, 30.f, &x, &y);
+        CHECK(std::fabs(x - 0.752452f) < 2e-3f && std::fabs(y - 0.172548f) < 2e-3f, "stretch pin (%g %g)", x, y);
+        fxStretchAmUv(0.33f, 0.66f, 1.f, 77.f, &x, &y);
+        CHECK(std::fabs(x - 0.33f) < 1e-4f && std::fabs(y - 0.66f) < 1e-4f, "stretch scale 1 identity");
+        float oR, oG, oB, oA;
+        fxStretchAmMap(0.2f, 0.1f, 0.05f, 0.5f, 0.4f, 0.3f, 0.2f, 0.8f, 2, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.16f) < 1e-5f && std::fabs(oA - 0.4f) < 1e-5f, "stretch v2 contentOnly masks by T.a");
+        fxStretchAmMap(0.2f, 0.1f, 0.05f, 0.5f, 0.4f, 0.3f, 0.2f, 0.8f, 1, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.4f) < 1e-5f && std::fabs(oA - 0.88f) < 1e-5f, "stretch v1 composites T under");
+        // Squeeze
+        fxSqueezeAmUv(0.75f, 0.25f, 0.8f, &x, &y);
+        CHECK(std::fabs(x - 0.857143f) < 2e-3f && std::fabs(y - 0.307692f) < 2e-3f, "squeeze pin (%g %g)", x, y);
+        fxSqueezeAmUv(0.1f, 0.9f, -1.5f, &x, &y);
+        CHECK(std::fabs(x - 0.185039f) < 2e-3f && std::fabs(y - 1.047945f) < 2e-3f, "squeeze negative pin (%g %g)", x, y);
+        // Value noise / fbm + Fractal Warp (fractalwarp4)
+        CHECK(std::fabs(fxValueNoise(1.3f, 2.7f) - 0.770638f) < 3e-3f, "value noise pin");
+        CHECK(std::fabs(fxValueNoise(-0.5f, 4.25f) - 0.165649f) < 3e-3f, "value noise pin 2");
+        fxFractalWarpAmUv(0.4f, 0.6f, 0.3f, 1.5f, 0.6f, 3, 100, -200, 50, 25, 1.5f, &x, &y);
+        CHECK(std::fabs(x - 0.428589f) < 3e-3f && std::fabs(y - 0.568801f) < 3e-3f, "fractal warp pin (%g %g)", x, y);
+        // Stripes
+        const float band = fxStripesAmBand(0.3f, 0.7f, 800, 600, 4, 0.5f, 20, 0.1f, 0.1f);
+        CHECK(std::fabs(band - 0.783311f) < 2e-3f, "stripes band pin (%g)", band);
+        fxStripesAmMap(0.4f, 0.3f, 0.2f, 0.8f, 1.f, 0.f, 0.f, 0.5f, false, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.64f) < 1e-5f && std::fabs(oA - 0.88f) < 1e-5f, "stripes compose");
+        fxStripesAmMap(0.4f, 0.3f, 0.2f, 0.8f, 1.f, 0.f, 0.f, 0.5f, true, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-5f && std::fabs(oA - 0.4f) < 1e-5f, "stripes punchout");
+        // Turbulent Displace 3 (directions XY / phi / R)
+        fxTurbulentDisplace3AmUv(0.35f, 0.65f, 0.15f, 2, 0.7f, 3, 2, 3, 0.5f, 100, -50, 10, 20, 1.2f, 0.8f, false, 1.5f, &x, &y, &in);
+        CHECK(std::fabs(x - 0.470030f) < 5e-3f && std::fabs(y - 0.777765f) < 5e-3f && in, "turb3 XY pin (%g %g)", x, y);
+        fxTurbulentDisplace3AmUv(0.35f, 0.65f, 0.15f, 2, 0.7f, 3, 5, 3, 0.5f, 100, -50, 10, 20, 1.2f, 0.8f, true, 1.5f, &x, &y, &in);
+        CHECK(std::fabs(x - 0.269863f) < 5e-3f && std::fabs(y - 0.687149f) < 5e-3f, "turb3 phi pin (%g %g)", x, y);
+        fxTurbulentDisplace3AmUv(0.8f, 0.2f, 0.2f, 1, 0.f, 0, 3, 2, 0.5f, 0, 0, 0, 0, 1.f, 1.f, true, 1.f, &x, &y, &in);
+        CHECK(std::fabs(x - 0.888809f) < 5e-3f && std::fabs(y - 0.111191f) < 5e-3f && in, "turb3 R pin (%g %g)", x, y);
+        // Roughen Edges
+        fxRoughenEdgesAmUv(0.2f, 0.8f, 1.2f, 0.8f, 0.3f, 2, 3, 1.5f, &x, &y, &p);
+        CHECK(std::fabs(x - 0.188021f) < 5e-3f && std::fabs(y - 0.811979f) < 5e-3f, "roughen pin (%g %g)", x, y);
+        // Streaks
+        float vx, vy;
+        int ns;
+        fxStreaksAmVelocity(0.5f, 45, 1.f / 1920, 1.f / 1080, 1080.f / 1920, &vx, &vy, &ns);
+        CHECK(std::fabs(vx - 0.198874f) < 2e-3f && std::fabs(vy - (-0.353553f)) < 2e-3f && ns == 100, "streaks velocity pin (%g %g %d)", vx, vy, ns);
+        fxStreaksAmVelocity(0.001f, 0, 1.f / 100, 1.f / 100, 1.f, &vx, &vy, &ns);
+        CHECK(ns == 1, "streaks tiny strength clamps to 1 sample");
+        CHECK(fxStreaksAmCombine(0.5f, 0.2f, 0) == 0.2f && fxStreaksAmCombine(0.5f, 0.2f, 1) == 0.5f &&
+              fxStreaksAmCombine(0.5f, 0.2f, 2) == 0.5f && std::fabs(fxStreaksAmCombine(0.5f, 0.2f, 3) - 0.7f) < 1e-6f,
+              "streaks combine modes");
+        CHECK(std::fabs(fxStreaksAmFinish(3.f, 3, 10) - 0.3f) < 1e-6f && fxStreaksAmFinish(3.f, 1, 10) == 3.f,
+              "streaks finish divides only the average mode");
+        // Colour Hot
+        const float cd[3] = {200, 0.8f, 0.2f}, td[3] = {40, 0.9f, -0.1f};
+        fxColorHotAmMap(0.3f, 0.15f, 0.05f, cd, td, &oR, &oG, &oB);
+        CHECK(std::fabs(oR - 0.139178f) < 3e-3f && std::fabs(oG - 0.263775f) < 3e-3f && std::fabs(oB - 0.326077f) < 3e-3f,
+              "colorhot pin (%g %g %g)", oR, oG, oB);
+        // Colorize
+        fxColorizeAmMap(0.5f, 0.25f, 0.1f, 0.8f, 120, 0.7f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.227923f) < 3e-3f && std::fabs(oG - 0.397924f) < 3e-3f && std::fabs(oB - 0.051929f) < 3e-3f && oA == 0.8f,
+              "colorize pin (%g %g %g)", oR, oG, oB);
+        // Highlights & Shadows
+        fxHighlightShadowAmMap(0.4f, 0.2f, 0.1f, 1.5f, 1.4f, &oR, &oG, &oB);
+        CHECK(std::fabs(oR - 0.460474f) < 3e-3f && std::fabs(oG - 0.230455f) < 3e-3f && std::fabs(oB - 0.115446f) < 3e-3f,
+              "highlightshadow pin (%g %g %g)", oR, oG, oB);
+        fxHighlightShadowAmMap(0.f, 0.f, 0.f, 1.5f, 1.4f, &oR, &oG, &oB);
+        CHECK(std::fabs(oR - (-0.00625f)) < 2e-3f && std::fabs(oG - (-0.00625f)) < 2e-3f, "highlightshadow black: guarded division, white mix still applies");
+        // Spot Colour
+        fxSpotColorAmMap(0.9f, 0.1f, 0.05f, 1.f, 1, 0, 0, 0.15f, 0.05f, 1.f, 0.1f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.9f) < 1e-4f && std::fabs(oG - 0.1f) < 1e-4f, "spotcolour near keeps colour");
+        fxSpotColorAmMap(0.1f, 0.8f, 0.2f, 1.f, 1, 0, 0, 0.15f, 0.05f, 1.f, 0.1f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.501185f) < 3e-3f && std::fabs(oG - 0.536185f) < 3e-3f && std::fabs(oB - 0.506185f) < 3e-3f,
+              "spotcolour far desaturates (%g %g %g)", oR, oG, oB);
+        // Dissolve
+        CHECK(std::fabs(fxDissolveAmHash(0.333f, 0.777f, 640, 360, 2.5f) - 0.121094f) < 0.02f, "dissolve hash pin");
+        // The hash's sine argument is ~10^3 rad, so its exact value is chaotic across
+        // float32 sine implementations (AM's own pattern differs GPU to GPU the same
+        // way; the dissolved fraction is what matters). Pin the structure instead:
+        // range, determinism, constancy inside a pixel cell, seed sensitivity.
+        const float dh = fxDissolveAmHash(0.9f, 0.1f, 1920, 1080, 0.5f);
+        CHECK(dh >= 0.f && dh < 1.f && dh == fxDissolveAmHash(0.9f, 0.1f, 1920, 1080, 0.5f), "dissolve hash range + deterministic");
+        CHECK(fxDissolveAmHash(0.9001f, 0.1001f, 1920, 1080, 0.5f) == fxDissolveAmHash(0.9003f, 0.1003f, 1920, 1080, 0.5f),
+              "dissolve hash constant inside a pixel cell");
+        CHECK(fxDissolveAmHash(0.9f, 0.1f, 1920, 1080, 0.6f) != dh, "dissolve hash follows the seed");
+        // Simple Stars
+        const float sf = fxSimpleStarsAmField(0.3f, 0.7f, 1.f, 25, 1.f, 20, 100, -50, 90, 1.5f);
+        CHECK(std::fabs(sf - 0.213566f) < 3e-3f, "simplestars field pin (%g)", sf);
+        float ar, ag, ab, aa;
+        fxSimpleStarsAmAdj(0.2f, 0.4f, 0.6f, 0.5f, 1.2f, &ar, &ag, &ab, &aa);
+        CHECK(std::fabs(ar - 0.11475f) < 2e-3f && std::fabs(aa - 0.5f) < 1e-5f, "simplestars adj pin (the def applies p twice) (%g %g)", ar, aa);
+        fxSimpleStarsAmMap(0.4f, 0.3f, 0.2f, 0.8f, ar, ag, ab, aa, 0.5f, 2, 0.75f, &oR, &oG, &oB, &oA);
+        CHECK(oR >= 0.f && oR <= 1.f && std::fabs(oA - 0.8f) < 1e-5f, "simplestars screen map keeps alpha");
+        fxSimpleStarsAmMap(0.4f, 0.3f, 0.2f, 0.8f, ar, ag, ab, aa, 0.5f, 3, 1.f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-5f && std::fabs(oA - 0.4f) < 1e-5f, "simplestars punchout");
+        // Dots
+        float inten, cpct;
+        fxDotsAmField(0.35f, 0.65f, 1.f, 0.f, 0.5f, 0.5f, 12, 1, 0.9f, 0, 0, 1.5f, &inten, &cpct);
+        CHECK(std::fabs(inten - 1.f) < 3e-3f && std::fabs(cpct - 0.222656f) < 3e-3f, "dots field pin (%g %g)", inten, cpct);
+        fxDotsAmField(0.8f, 0.2f, 2.f, 0.25f, 0.7f, 0.2f, 5, 3, 1.f, 100, -100, 1.f, &inten, &cpct);
+        CHECK(std::fabs(inten - 0.062750f) < 3e-3f && std::fabs(cpct - 0.320313f) < 3e-3f, "dots field pin 2 (%g %g)", inten, cpct);
+        // Ridges v2 / v1
+        CHECK(std::fabs(fxRidgesAmField(0.3f, 0.6f, 0.8f, 1.5f, 0.4f, 2, 4, 50, -25, 10, 20, 1.2f, 0.7f, 2, 1.5f) - 0.265642f) < 5e-3f,
+              "ridges v2 pin");
+        CHECK(std::fabs(fxRidgesAmField(0.3f, 0.6f, 0.8f, 1.5f, 0.4f, 2, 4, 50, -25, 10, 20, -0.3f, 0.f, 1, 1.5f) - 0.679323f) < 5e-3f,
+              "ridges v1 pin");
+        // Bend Warp
+        fxBendWarpAmUv(0.5f, 0.8f, 45, 0.5f, 3, 0, 0.75f, 0.25f, 1.5f, &x, &y, &in);
+        CHECK(std::fabs(x - 0.545781f) < 3e-3f && std::fabs(y - 0.779790f) < 3e-3f && in, "bend pin (%g %g)", x, y);
+        fxBendWarpAmUv(0.5f, 0.2f, 45, 0.5f, 3, 0, 0.75f, 0.25f, 1.5f, &x, &y, &in);
+        CHECK(x == 0.5f && y == 0.2f, "bend before-start freeze");
+        fxBendWarpAmUv(0.8f, 0.4f, -30, 0.3f, 0, 1, 0.75f, 0.25f, 1.f, &x, &y, &in);
+        CHECK(std::fabs(x - 0.813410f) < 3e-3f && std::fabs(y - 0.497944f) < 3e-3f, "bend horizontal pin (%g %g)", x, y);
+        // Displace Map
+        CHECK(std::fabs(fxDisplaceMapAmPick(0.7f, 0.2f, 0.3f, 0) - (0.7f * 0.2126f + 0.2f * 0.7152f + 0.3f * 0.0722f)) < 1e-5f &&
+              fxDisplaceMapAmPick(0.7f, 0.2f, 0.3f, 2) == 0.2f, "displacemap pick");
+        CHECK(fxDisplaceMapAmShape(0.75f, true, false) == 0.5f && fxDisplaceMapAmShape(0.75f, false, true) == 0.25f &&
+              fxDisplaceMapAmShape(0.75f, true, true) == 0.5f, "displacemap shape (fromctr first, then invert, like the def)");
+        fxDisplaceMapAmUv(0.4f, 0.6f, 100, -50, 0.5f, 0.25f, 0.8f, 1.5f, &x, &y);
+        CHECK(std::fabs(x - 0.34f) < 1e-4f && std::fabs(y - 0.59f) < 1e-4f, "displacemap uv pin (%g %g)", x, y);
+        float tint;
+        fxDisplaceMapAmEdge(1.3f, -0.2f, 1, 0.7f, &x, &y, &tint, &in);
+        CHECK(std::fabs(x - 0.7f) < 1e-4f && std::fabs(y - 0.2f) < 1e-4f && tint == 0.7f && in, "displacemap mirror edge");
+        fxDisplaceMapAmEdge(1.3f, -0.2f, 0, 0.7f, &x, &y, &tint, &in);
+        CHECK(x == 1.3f && tint == 1.f, "displacemap repeat edge keeps raw");
+        fxDisplaceMapAmEdge(1.3f, 0.5f, 2, 0.7f, &x, &y, &tint, &in);
+        CHECK(!in, "displacemap transparent edge outside");
+        fxDisplaceMapRadAmUv(0.6f, 0.4f, 0.5f, 0.5f, 0, 0, 90, 0.f, 1.f, 1.f, 1.f, 1920, 1080, &x, &y);
+        CHECK(std::fabs(x - 0.443750f) < 2e-3f && std::fabs(y - 0.322222f) < 2e-3f, "displacemaprad rotates 90 deg (%g %g)", x, y);
+        // Smooth Bevel packing + lights
+        float e0, e1;
+        fxSmoothBevelAmEncode(1234.5f / 16383.f, &e0, &e1);
+        CHECK(std::fabs(fxSmoothBevelAmDecode(e0, e1) * 16383.f - 1234.5f) < 1.f, "smoothbevel encode/decode roundtrip (normalised by MAX_RADIUS)");
+        fxSmoothBevelAmEncode(0.f, &e0, &e1);
+        CHECK(fxSmoothBevelAmDecode(e0, e1) == 0.f, "smoothbevel zero roundtrip");
+        float lumS, lumD;
+        fxSmoothBevelAmLights(0.5f, 0.5f, 0.5f, 0.5f, 135, -45, 0.15f, 0.35f, 35, &lumS, &lumD);
+        CHECK(lumS < 1e-6f && std::fabs(lumD - 0.330f) < 0.01f, "smoothbevel flat centre faces -z (%g %g)", lumS, lumD);
+        fxSmoothBevelAmLights(0.f, 1.f, 0.f, 1.f, 135, -45, 0.15f, 0.35f, 35, &lumS, &lumD);
+        CHECK(lumS >= 0.f && lumD > 0.f, "smoothbevel slope catches the directional light (%g %g)", lumS, lumD);
+        // Light Glow
+        fxLightGlowAmPick(0.9f, 0.9f, 0.9f, 1.f, 0.5f, 0.25f, 1.f, 0.5f, 0.f, &oR, &oG, &oB, &oA);
+        CHECK(oR > 0.9f && oA == 1.f, "lightglow pick bright pixel");
+        fxLightGlowAmPick(0.1f, 0.1f, 0.1f, 1.f, 0.5f, 0.25f, 1.f, 0.5f, 0.f, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f && oA == 0.f, "lightglow pick dark pixel to black");
+        CHECK(std::fabs(fxLightGlowAmKernel(50, 1920, 1080) - 5231.905f) < 1.f, "lightglow kernel pin");
+        CHECK(std::fabs(fxLightGlowAmKernel(10, 640, 640) - 429.921f) < 0.5f, "lightglow kernel pin 2");
+        CHECK(fxLightGlowAmKernel(0, 1920, 1080) == 0.f, "lightglow kernel zero strength");
+        // inner glow (found by the full-corpus sweep, not the id lists)
+        CHECK(std::fabs(fxInnerGlowAmStride(100.f) - 3.0199f) < 0.01f, "innerglow stride mid");
+        CHECK(std::fabs(fxInnerGlowAmStride(1000.f) - 25.f) < 0.01f, "innerglow stride large");
+        CHECK(std::fabs(fxInnerGlowAmP(100.f, 0.2f, 0.f) - 1.f) < 1e-4f, "innerglow p at the edge");
+        CHECK(std::fabs(fxInnerGlowAmP(100.f, 0.2f, 50.f) - 0.68133f) < 0.001f, "innerglow p mid");
+        CHECK(fxInnerGlowAmP(100.f, 0.2f, 200.f) == 0.f, "innerglow p deep inside");
+        fxInnerGlowAmMap(0.4f, 0.2f, 0.1f, 0.8f, 1.f, 1.f, 1.f, 2, 0.75f, 1.f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.7f) < 1e-4f && std::fabs(oG - 0.65f) < 1e-4f &&
+              std::fabs(oB - 0.625f) < 1e-4f && std::fabs(oA - 0.8f) < 1e-4f, "innerglow screen map");
+        fxInnerGlowAmMap(0.4f, 0.2f, 0.1f, 0.8f, 0.25f, 0.5f, 0.75f, 0, 0.5f, 0.5f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.35f) < 1e-4f && std::fabs(oG - 0.25f) < 1e-4f &&
+              std::fabs(oB - 0.225f) < 1e-4f, "innerglow normal map");
+        fxInnerGlowAmMap(0.4f, 0.2f, 0.1f, 0.8f, 0.5f, 0.5f, 0.5f, 1, 1.f, 1.f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-4f && std::fabs(oG - 0.1f) < 1e-4f &&
+              std::fabs(oB - 0.05f) < 1e-4f, "innerglow multiply map");
+        {
+            FxOp ig; ig.type = FX_INNER_GLOW_AM;
+            ig.p[0] = 0.4f; ig.p[1] = 0.75f;
+            CHECK(fxIsIdentity(ig), "innerglow radius < 0.5 is identity");
+            ig.p[0] = 50.f; ig.p[1] = 0.f;
+            CHECK(fxIsIdentity(ig), "innerglow alpha 0 is identity");
+            ig.p[1] = 0.75f;
+            CHECK(!fxIsIdentity(ig), "innerglow live is not identity");
+            FxShaderRef sr2 = fxShaderOf(FX_INNER_GLOW_AM);
+            CHECK(sr2.group == FXG_NONE, "innerglow is a dedicated pass");
+        }
+        // parse folds + shader routing + identity for the new types
+        float flat2[] = {90, 0.25f, 30, 20, 40, 15, 0.5f, -0.3f, 91, 0.4f, 1, 0, 0, 0, 0, 0,
+                         115, 8, 0, 1, 2, 1, 0, 0};
+        FxOp ops2[kFxMaxOps];
+        CHECK(fxParseOps(flat2, 24, ops2) == 2, "tier3 parse count");
+        CHECK(ops2[0].type == FX_WAVE_WARP_AM && ops2[0].q[0] == 0.4f && ops2[0].q[1] == 1.f, "wavewarp EXT folds into q");
+        CHECK(ops2[1].type == FX_DISPLACE_MAP_AM, "displacemap parses");
+        float flat3[] = {91, 0.4f, 1, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flat3, 8, ops2) == 0, "bare EXT op is dropped");
+        FxShaderRef sr = fxShaderOf(FX_WAVE_WARP_AM);
+        CHECK(sr.group == FXG_WARP && sr.mode == 18, "wavewarp routes to warp 18");
+        sr = fxShaderOf(FX_STREAKS_AM);
+        CHECK(sr.group == FXG_BLUR2 && sr.mode == 9, "streaks routes to blur2 9");
+        sr = fxShaderOf(FX_COLOR_HOT_AM);
+        CHECK(sr.group == FXG_COLOR && sr.mode == 21, "colorhot routes to colour 21");
+        sr = fxShaderOf(FX_DOTS_AM);
+        CHECK(sr.group == FXG_STYLE && sr.mode == 17, "dots routes to style 17");
+        sr = fxShaderOf(FX_DISPLACE_MAP_AM);
+        CHECK(sr.group == FXG_NONE, "displacemap is a dedicated pass");
+        sr = fxShaderOf(FX_SMOOTH_BEVEL_AM);
+        CHECK(sr.group == FXG_NONE, "smoothbevel is a dedicated pass");
+        sr = fxShaderOf(FX_LIGHT_GLOW_AM);
+        CHECK(sr.group == FXG_NONE, "lightglow is a dedicated pass");
+        FxOp id{};
+        id.type = FX_WAVE_WARP_AM; id.p[3] = 0.f;
+        CHECK(fxIsIdentity(id), "wavewarp m2 0 is identity");
+        id.type = FX_STRETCH_AM; id.p[0] = 1.f;
+        CHECK(fxIsIdentity(id), "stretch scale 1 is identity");
+        id.type = FX_DISPLACE_MAP_AM;
+        CHECK(!fxIsIdentity(id), "displacemap is never identity (backdrop passthrough)");
+        id.type = FX_HIGHLIGHT_SHADOW_AM; id.p[0] = 1.f; id.p[1] = 1.f;
+        CHECK(fxIsIdentity(id), "highlightshadow 1/1 is identity");
+        id.type = FX_SMOOTH_BEVEL_AM; id.p[0] = 0.f;
+        CHECK(fxIsIdentity(id), "smoothbevel radius 0 is identity");
     }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

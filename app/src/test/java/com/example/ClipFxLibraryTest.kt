@@ -35,9 +35,20 @@ class ClipFxLibraryTest {
         // FX_COLOR_TINT_AM (79), FX_SPIN_BLUR_AM (80), FX_OFFSET_AM (81),
         // FX_RADIAL_WIPE_AM (82), FX_FIND_EDGES_AM (83), FX_HEX_SHIFT_AM (84),
         // FX_SOFT_GLOW_AM (86) and FX_FILL_BEHIND_AM (88); 77 / 85 / 87 / 89 are their EXT
-        // groups, folded the same way.
+        // groups, folded the same way. The v165 tier adds FX_WAVE_WARP_AM (90),
+        // FX_CIRCULAR_RIPPLE_AM (92), FX_STRETCH_AM (93), FX_SQUEEZE_AM (94),
+        // FX_FRACTAL_WARP_AM (95), FX_STRIPES_AM (97), FX_TURBULENT_DISPLACE3_AM (98),
+        // FX_ROUGHEN_EDGES_AM (100), FX_STREAKS_AM (101), FX_COLOR_HOT_AM (103),
+        // FX_COLORIZE_AM (104), FX_HIGHLIGHT_SHADOW_AM (105), FX_SPOT_COLOR_AM (106),
+        // FX_DISSOLVE_AM (107), FX_SIMPLE_STARS_AM (108), FX_DOTS_AM (110),
+        // FX_RIDGES_AM (112), FX_BEND_WARP_AM (114), FX_DISPLACE_MAP_AM (115),
+        // FX_DISPLACE_MAP_RAD_AM (116), FX_SMOOTH_BEVEL_AM (118),
+        // FX_LIGHT_GLOW_AM (120) and FX_INNER_GLOW_AM (121); 91 / 96 / 99 / 102 / 109 /
+        // 111 / 113 / 117 / 119 are their EXT groups.
         assertEquals(
-            ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88).toList(),
+            ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
+                90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
+                114 + 115 + 116 + 118 + 120 + 121).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

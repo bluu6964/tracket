@@ -2815,11 +2815,16 @@ $layers
     }
 
     @Test
-    fun counterOnAShapeStaysAWarning() {
+    fun counterOnAShapeIsNotedAsTextOnly() {
+        // Counter rewrites a text layer's characters; on a shape Alight shows nothing
+        // either, so since v165 the import notes it as a text-only no-op instead of an
+        // unsupported effect.
         val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.counter" locallyApplied="true"><property name="offset" type="float" value="0" /></effect>"""
         ), 1080f)
-        assertTrue(r.warnings.any { it.contains("counter is not supported yet") })
+        assertTrue(r.warnings.any { it.contains("counter only affects text layers") })
+        assertFalse(r.warnings.any { it.contains("counter is not supported yet") })
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }[0].effects.isEmpty())
     }
 
     @Test
@@ -3695,24 +3700,443 @@ $layers
     }
 
     @Test
-    fun lightglowStaysParked() {
+    fun lightglowImportsVerbatim() {
         // Verbatim from am-renderer-preset1.xml (without its hidden="true"; the corpus pair is
-        // hidden anyway). The def was recovered (defs-batch3) but its downsample pass names no
-        // shader — the kernel is an AM host built-in — so the effect stays honestly parked.
+        // hidden anyway, and hidden instances stay hidden-skipped). Was parked at v164 over a
+        // supposed host downsample shader; re-reading the def (defs-batch4) shows all four
+        // passes share one shader and the buffers are plain downsample="2" targets.
         val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.lightglow" locallyApplied="false"><property name="strength" type="float" value="0.055000" /><property name="threshold" type="float" value="0.000000" /><property name="intensity" type="float" value="3.670000" /><property name="color" type="color" value="#ffff5566" /><property name="blend" type="float" value="0.000000" /><property name="halo" type="float" value="0.000000" /><property name="alpha" type="float" value="0.750000" /></effect>"""
         ), 1080f)
-        assertTrue(r.warnings.any { it.contains("lightglow is not supported yet") })
+        assertFalse(r.warnings.any { it.contains("lightglow is not supported") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.LIGHT_GLOW_AM }
+        assertEquals(
+            listOf(0.055f, 0f, 3.67f, 0xFF5566.toFloat(), 0f, 0f, 0.75f),
+            fx.values
+        )
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(120f, arr[0], 0.001f)
     }
 
     @Test
-    fun displacemapradStaysParked() {
-        // Verbatim from celz-preset-9x16.xml. The def was recovered, but the shader samples
-        // the running composite (`comp` texture) and no def states whether that is
-        // backdrop-only or backdrop+self — the whole displacemap family stays parked.
+    fun displacemapradImportsVerbatim() {
+        // Verbatim from celz-preset-9x16.xml. Was parked at v164: the shader samples the
+        // `comp` input and no def said backdrop-only or backdrop+self; the def's srcType
+        // settles it — `comp` is srcType "comp" (the composite BELOW the layer; a layer
+        // cannot sample its own not-yet-composited output), which is the renderer's
+        // backdrop capture, so the family imports since v165.
         val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.displacemaprad" locallyApplied="false"><property name="offsAngle" type="float"><kf t="0.919670" v="0.000000" e="cubicBezier 0.0 0.0 0.0 1.0" /><kf t="0.131381" v="0.000000" /><kf t="0.519520" v="80.000000" e="cubicBezier 1.0 0.0 1.0 1.0" /><kf t="0.506757" v="-80.000000" e="cubicBezier 0.42 0.0 1.0 0.0" /></property><property name="offsRadius" type="float" value="0.000000" /><property name="typex" type="int" value="1" /><property name="typey" type="int" value="2" /><property name="edges" type="int" value="1" /><property name="fromctr" type="bool" value="true" /><property name="invert" type="bool" value="true" /></effect>"""
         ), 1080f)
-        assertTrue(r.warnings.any { it.contains("displacemaprad is not supported yet") })
+        assertFalse(r.warnings.any { it.contains("displacemaprad is not supported") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.DISPLACE_MAP_RAD_AM }
+        assertEquals(
+            listOf(0f, 0f, 1f, 2f, 1f, 1f, 1f, 0f, 0f, 0f, 0f, 0f, 0f, 0f),
+            fx.values.subList(0, 14)
+        )
+        // The keyframed offsAngle swings -80 -> +80 across t = 0.5068..0.5195; at the end of
+        // that segment (the last full millisecond before the +80 key) it is most of the way.
+        val mid = AmFxEval.resolve(listOf(fx), clip, clip.startMs + (clip.durationMs * 0.51952).toLong()).single()
+        assertTrue(mid.values[0] > 50f)
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(116f, arr[0], 0.001f)
+        assertEquals(117f, arr[8], 0.001f)
     }
+    // ---- v165 tier (hunt round 3): every effect below imports from AM's recovered defs ----
+
+    @Test
+    fun wavewarp2ImportsVerbatim() {
+        // celz-preset-9x16.xml: phase / m2 keyframed, the rest constant.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.wavewarp2" locallyApplied="false"><property name="phase" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="2.000000" /></property><property name="a1d" type="float" value="90.000000" /><property name="m1" type="float" value="20.000000" /><property name="m2" type="float"><kf t="0.000000" v="5.000000" /><kf t="1.000000" v="0.000000" /></property><property name="a2d" type="float" value="90.000000" /><property name="damping" type="float" value="0.000000" /><property name="dampingSpace" type="float" value="0.000000" /><property name="dampingOrigin" type="float" value="0.500000" /><property name="screenSpace" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("wavewarp2") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.WAVE_WARP_AM }
+        assertEquals(
+            listOf(0f, 90f, 20f, 5f, 90f, 0f, 0f, 0.5f, 0f, 0f, 0f, 0f, 0f, 0f),
+            fx.values.subList(0, 14)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(2f, end.values[0], 0.01f)   // the keyframed phase, at its last key
+        assertEquals(0f, end.values[3], 0.01f)   // the keyframed magnitude, at its last key
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(90f, arr[0], 0.001f)
+        assertEquals(91f, arr[8], 0.001f)
+    }
+
+    @Test
+    fun randomdisplaceBakesIntoPosition() {
+        // am-renderer-preset7.xml: mag / evolution keyframed. AM computes randomdisplace in
+        // a script from the layer's location, so the import bakes it into position keys —
+        // no fx entry, no warning.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.randomdisplace" locallyApplied="false"><property name="mag" type="float"><kf t="0.000000" v="75.000000" /><kf t="1.000000" v="0.000000" /></property><property name="evolution" type="float"><kf t="0.000000" v="2.500000" /><kf t="1.000000" v="0.000000" /></property><property name="seed" type="float" value="0.000000" /><property name="scatter" type="float" value="0.500000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("randomdisplace") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(clip.effects.isEmpty())
+        val keys = clip.keyframes[AnimProp.POSITION]
+        assertTrue(keys != null && keys.size >= 3)
+        assertTrue(keys!!.map { it.a }.distinct().size > 1 || keys.map { it.b }.distinct().size > 1)
+    }
+
+    @Test
+    fun randomdisplaceOnTextBakesToo() {
+        // Text layers used to store randomdisplace as an undrawn animator; AM applies it to
+        // text like any layer, so the bake runs there too (am-renderer-preset9.xml values).
+        val xml = scene(
+            """<text id="7" label="T" startTime="0" endTime="2000" size="48" font="googlefonts?name=Montserrat&amp;weight=700" align="center">
+  <effect id="com.alightcreative.effects.randomdisplace" locallyApplied="false"><property name="mag" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="500.000000" /></property><property name="evolution" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="5.000000" /></property><property name="seed" type="float" value="0.000000" /><property name="scatter" type="float" value="0.500000" /></effect>
+  <content>Hi</content></text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertFalse(r.warnings.any { it.contains("randomdisplace") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(clip.textAnimators.none { it.effectId == AlightXmlImporter.RANDOMDISPLACE })
+        assertTrue((clip.keyframes[AnimProp.POSITION]?.size ?: 0) >= 3)
+    }
+
+    @Test
+    fun circularRipple2ImportsVerbatim() {
+        // celz-preset-9x16.xml: frequency / strength keyframed to zero.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.circularripple2" locallyApplied="false"><property name="frequency" type="float"><kf t="0.000000" v="3.160000" /><kf t="1.000000" v="0.000000" /></property><property name="strength" type="float"><kf t="0.000000" v="0.048000" /><kf t="1.000000" v="0.000000" /></property><property name="phase" type="float" value="0.200000" /><property name="radius" type="float" value="0.800000" /><property name="feather" type="float" value="0.227000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("circularripple") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.CIRCULAR_RIPPLE_AM }
+        assertEquals(listOf(0.048f, 0.8f, 3.16f, 0.227f, 0.2f, 0f, 0f), fx.values.subList(0, 7))
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(0f, end.values[2], 0.01f)
+        assertEquals(0f, end.values[0], 0.01f)
+    }
+
+    @Test
+    fun stretch2ImportsVerbatim() {
+        // am-renderer-preset2.xml: scale keyframed flat, angle keyframed 0 -> 243.5.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.stretch2" locallyApplied="false"><property name="scale" type="float"><kf t="0.000000" v="1.000000" /><kf t="1.000000" v="1.000000" /></property><property name="angle" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="243.500000" /></property><property name="contentOnly" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("stretch2") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.STRETCH_AM }
+        assertEquals(listOf(1f, 0f, 0f, 2f), fx.values.subList(0, 4))   // [3] = version 2
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(243.5f, end.values[1], 0.01f)
+    }
+
+    @Test
+    fun squeezeImportsVerbatim() {
+        // am-renderer-preset2.xml: strength keyframed 0.2 -> 0 (the def's shader reads
+        // nothing else, so no other property is imported).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.squeeze" locallyApplied="false"><property name="strength" type="float"><kf t="0.000000" v="0.200000" /><kf t="1.000000" v="0.000000" /></property></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("squeeze") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.SQUEEZE_AM }
+        assertEquals(0.2f, fx.values[0], 0.001f)
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(0f, end.values[0], 0.01f)
+    }
+
+    @Test
+    fun fractalWarp4ImportsVerbatim() {
+        // am-renderer-preset2.xml: the offset point keyframed (y to -720), parallax constant.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.fractalwarp4" locallyApplied="false"><property name="mag" type="float" value="0.040000" /><property name="octaves" type="float" value="3.000000" /><property name="offs" type="vec2"><kf t="0.000000" v="0.000000,0.000000" /><kf t="1.000000" v="0.000000,-720.000000" /></property><property name="parr" type="vec2" value="0.000000,-1020.000000" /><property name="scale" type="float" value="3.600000" /><property name="intensity" type="float" value="0.500000" /><property name="screenSpace" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("fractalwarp4") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.FRACTAL_WARP_AM }
+        assertEquals(
+            listOf(0.04f, 3.6f, 0.5f, 3f, 0f, 0f, 0f, -1020f),
+            fx.values.subList(0, 8)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(-720f, end.values[5], 0.01f)   // the keyframed offs y
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(95f, arr[0], 0.001f)
+        assertEquals(96f, arr[8], 0.001f)
+    }
+
+    @Test
+    fun stripesImportsVerbatim() {
+        // preset-jj-solo-rhapdyy.xml: phase keyframed 0 -> 10, black bands.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.stripes" locallyApplied="false"><property name="amount" type="float" value="10.000000" /><property name="width" type="float" value="0.500000" /><property name="angle" type="float" value="115.000000" /><property name="phase" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="10.000000" /></property><property name="color" type="color" value="#ff000000" /><property name="punchout" type="bool" value="false" /><property name="smoothing" type="float" value="0.010000" /><property name="screenSpace" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("stripes") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.STRIPES_AM }
+        assertEquals(listOf(10f, 0.5f, 115f, 0f, 0f, 0.01f, 0f), fx.values.subList(0, 7))
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(10f, end.values[3], 0.01f)
+    }
+
+    @Test
+    fun turbulentDisplace3ImportsVerbatim() {
+        // edit-winkoko-preset.xml: direction X, stretch (0.07, 1), single axis on; parr and
+        // position are not serialized (their defaults ride the EXT group).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.turbulentdisplace3" locallyApplied="true"><property name="intensity" type="float" value="0.278000" /><property name="evolution" type="float" value="0.000000" /><property name="direction" type="int" value="0" /><property name="scale" type="float" value="1.000000" /><property name="stretch" type="vec2" value="0.070000,1.000000" /><property name="seed" type="float" value="0.000000" /><property name="singleAxis" type="bool" value="true" /><property name="screenSpace" type="bool" value="false" /><property name="octaves" type="float" value="6.000000" /><property name="offs" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("turbulentdisplace3") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.TURBULENT_DISPLACE3_AM }
+        assertEquals(
+            listOf(0.278f, 1f, 0f, 0f, 0f, 6f, 0f, 0f, 0f, 0f, 0f, 0.07f, 1f, 2f),
+            fx.values.subList(0, 14)
+        )
+    }
+
+    @Test
+    fun roughenEdgesImportsVerbatim() {
+        // shake-997-vetri-editz.xml: evolution keyframed, octaves 2.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.roughenedges" locallyApplied="false"><property name="strength" type="float" value="0.473000" /><property name="evolution" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="2.754737" /></property><property name="detail" type="float" value="1.000000" /><property name="seed" type="float" value="0.000000" /><property name="octaves" type="float" value="2.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("roughenedges") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.ROUGHEN_EDGES_AM }
+        assertEquals(listOf(0.473f, 1f, 0f, 0f, 2f), fx.values.subList(0, 5))
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(2.754737f, end.values[2], 0.01f)
+    }
+
+    @Test
+    fun streaksImportsVerbatim() {
+        // am-renderer-preset2.xml (strength keyframed): all four combine modes at max.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.streaks" locallyApplied="false"><property name="strength" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="0.500000" /></property><property name="angle" type="float" value="90.000000" /><property name="alpha" type="float" value="1.000000" /><property name="bias" type="float" value="0.000000" /><property name="rmode" type="int" value="1" /><property name="gmode" type="int" value="1" /><property name="bmode" type="int" value="1" /><property name="amode" type="int" value="1" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("streaks") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.STREAKS_AM }
+        assertEquals(
+            listOf(0f, 90f, 0f, 1f, 1f, 1f, 1f, 1f),
+            fx.values.subList(0, 8)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(0.5f, end.values[0], 0.01f)
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(101f, arr[0], 0.001f)
+        assertEquals(102f, arr[8], 0.001f)
+    }
+
+    @Test
+    fun colorHotImportsVerbatim() {
+        // cwlzy-preset.xml: the two hue discs serialize as vec3s (hue, saturation, bias).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.colorhot" locallyApplied="false"><property name="color" type="vec3" value="338.166748,0.009561,-0.050444" /><property name="tint" type="vec3" value="1.276667,0.011114,0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("colorhot") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.COLOR_HOT_AM }
+        assertEquals(
+            listOf(338.166748f, 0.009561f, -0.050444f, 1.276667f, 0.011114f, 0f),
+            fx.values.subList(0, 6)
+        )
+    }
+
+    @Test
+    fun colorizeImportsVerbatim() {
+        // am-renderer-preset10.xml: a negative hue, amount = the disc's saturation.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.colorize" locallyApplied="false"><property name="tint" type="vec3" value="-116.053452,0.423856,0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("colorize") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.COLORIZE_AM }
+        assertEquals(listOf(-116.053452f, 0.423856f), fx.values.subList(0, 2))
+    }
+
+    @Test
+    fun highlightShadowImportsVerbatim() {
+        // shake-effect-preset.xml: highlights at the 2.0 maximum, shadows at 1.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.highlightshadow" locallyApplied="false"><property name="highlights" type="float" value="2.000000" /><property name="shadows" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("highlightshadow") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.HIGHLIGHT_SHADOW_AM }
+        assertEquals(listOf(1f, 2f), fx.values.subList(0, 2))
+    }
+
+    @Test
+    fun spotColor2ImportsVerbatim() {
+        // edit-freefire-mental.xml (without its hidden="true"; the corpus instances are
+        // hidden and stay hidden-skipped): threshold at its 2.0 maximum, choke 2.22.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.spotcolor2" locallyApplied="false"><property name="choke" type="float" value="2.220000" /><property name="color" type="color" value="#ffff4444" /><property name="feather" type="float" value="0.000000" /><property name="threshold" type="float" value="2.000000" /><property name="saturation" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("spotcolor2") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.SPOT_COLOR_AM }
+        assertEquals(listOf(0xFF4444.toFloat(), 2f, 0f, 0f, 2.22f), fx.values.subList(0, 5))
+    }
+
+    @Test
+    fun simpleStars2ImportsVerbatim() {
+        // shake-997-vetri-editz.xml: the parallax z and the star size are keyframed.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.simplestars2" locallyApplied="false"><property name="starParallax" type="vec3"><kf t="0.000000" v="0.000000,0.000000,0.000000" /><kf t="1.000000" v="0.000000,0.000000,101.000000" /></property><property name="scale" type="float" value="1.000000" /><property name="starSize" type="float"><kf t="0.000000" v="0.229000" /><kf t="1.000000" v="0.000000" /></property><property name="starFeather" type="float" value="1.000000" /><property name="color" type="color" value="#ffffffff" /><property name="alpha" type="float" value="1.000000" /><property name="starCount" type="float" value="15.000000" /><property name="brightness" type="float" value="1.000000" /><property name="blendMode" type="int" value="2" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("simplestars2") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.SIMPLE_STARS_AM }
+        assertEquals(
+            listOf(1f, 0.229f, 1f, 0xFFFFFF.toFloat(), 15f, 1f, 2f, 0f, 0f, 0f, 1f),
+            fx.values.subList(0, 11)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(101f, end.values[9], 0.01f)   // the keyframed parallax z
+        assertEquals(0f, end.values[1], 0.01f)    // the keyframed star size
+    }
+
+    @Test
+    fun ridgesImportsVerbatim() {
+        // edit-freefire-mental.xml (v1, on a text layer there): offs / parr keyframed, the
+        // stretch a SCALAR 0.2, intensity at its 1.5 maximum.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.ridges" locallyApplied="false"><property name="parr" type="vec2"><kf t="0.000000" v="0.000000,0.000000" /><kf t="1.000000" v="455.118713,345.000000" /></property><property name="offs" type="vec2"><kf t="0.000000" v="0.000000,0.000000" /><kf t="1.000000" v="623.000000,0.000000" /></property><property name="evolution" type="float" value="0.270000" /><property name="scale" type="float" value="1.000000" /><property name="stretch" type="float" value="0.200000" /><property name="intensity" type="float" value="1.500000" /><property name="seed" type="float" value="0.000000" /><property name="color1" type="color" value="#ffffffff" /><property name="color2" type="color" value="#ff1ed91e" /><property name="octaves" type="float" value="9.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("ridges") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.RIDGES_AM }
+        assertEquals(
+            listOf(1.5f, 1f, 0.27f, 0f, 9f, 0xFFFFFF.toFloat(), 0x1ED91E.toFloat(), 0f, 0f, 0f, 0f, 0.2f, 0.2f, 1f),
+            fx.values.subList(0, 14)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(623f, end.values[7], 0.01f)   // the keyframed offs x
+        assertEquals(345f, end.values[10], 0.01f)  // the keyframed parallax y
+    }
+
+    @Test
+    fun ridges2ImportsVerbatim() {
+        // text-toji-pack.xml (v2): evolution keyframed, the stretch a POINT (1, 0.09).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.ridges2" locallyApplied="false"><property name="color1" type="color" value="#ff292929" /><property name="color2" type="color" value="#ffbebebe" /><property name="evolution" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="0.850000" /></property><property name="octaves" type="float" value="1.000000" /><property name="scale" type="float" value="7.130000" /><property name="seed" type="float" value="0.340000" /><property name="stretch" type="vec2" value="1.000000,0.090000" /><property name="intensity" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("ridges2") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.RIDGES_AM }
+        assertEquals(
+            listOf(1f, 7.13f, 0f, 0.34f, 1f, 0x292929.toFloat(), 0xBEBEBE.toFloat(), 0f, 0f, 0f, 0f, 1f, 0.09f, 2f),
+            fx.values.subList(0, 14)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(0.85f, end.values[2], 0.01f)
+    }
+
+    @Test
+    fun dots2ImportsVerbatim() {
+        // shake-997-vetri-editz.xml: phase / density keyframed.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.dots2" locallyApplied="false"><property name="scale" type="float" value="1.400000" /><property name="phase" type="float"><kf t="0.000000" v="0.635000" /><kf t="1.000000" v="0.900000" /></property><property name="radius" type="float" value="0.025000" /><property name="feather" type="float" value="1.000000" /><property name="color" type="color" value="#ffffffff" /><property name="color2" type="color" value="#ffffffff" /><property name="density" type="float"><kf t="0.000000" v="8.000000" /><kf t="1.000000" v="1.000000" /></property><property name="fill" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /><property name="blendMode" type="int" value="0" /><property name="seed" type="float" value="0.000000" /><property name="slack" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("dots2") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.DOTS_AM }
+        assertEquals(
+            listOf(1.4f, 0.635f, 0.025f, 1f, 0xFFFFFF.toFloat(), 0xFFFFFF.toFloat(), 8f, 0f, 0f, 1f, 1f, 0f, 0f, 1f),
+            fx.values.subList(0, 14)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(1f, end.values[6], 0.01f)   // the keyframed density
+        assertEquals(0.9f, end.values[1], 0.01f) // the keyframed phase
+    }
+
+    @Test
+    fun dissolveImportsVerbatim() {
+        // shake-rcf.xml (on a text layer there): amount keyframed 0.75 -> 0.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.dissolve" locallyApplied="true"><property name="amount" type="float"><kf t="0.000000" v="0.750000" /><kf t="1.000000" v="0.000000" /></property><property name="seed" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("dissolve") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.DISSOLVE_AM }
+        assertEquals(0.75f, fx.values[0], 0.001f)
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(0f, end.values[0], 0.01f)
+    }
+
+    @Test
+    fun bendWarpImportsVerbatim() {
+        // text-motion-graphics-preset.xml: origin LEFT, amount keyframed (10 keys there,
+        // first / last kept here), offset constant at 0.5.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.bendwarp" locallyApplied="false"><property name="originType" type="int" value="0" /><property name="amount" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="30.300001" /></property><property name="offset" type="float" value="0.500000" /><property name="oppositeType" type="int" value="1" /><property name="highLimit" type="float" value="0.750000" /><property name="lowLimit" type="float" value="0.250000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("bendwarp") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.BEND_WARP_AM }
+        assertEquals(listOf(0f, 0.5f, 0f, 1f, 0.75f, 0.25f), fx.values.subList(0, 6))
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(30.300001f, end.values[0], 0.01f)
+    }
+
+    @Test
+    fun displaceMap3ImportsVerbatim() {
+        // beraksi-ryzenzkidss.xml: the offset keyframed (0,0) -> (0,50) under elastic
+        // easings there; first / last keys kept here.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.displacemap3" locallyApplied="false"><property name="offs" type="vec2"><kf t="0.000000" v="0.000000,0.000000" /><kf t="1.000000" v="0.000000,50.000000" /></property><property name="typex" type="int" value="1" /><property name="typey" type="int" value="2" /><property name="edges" type="int" value="1" /><property name="fromctr" type="bool" value="false" /><property name="invert" type="bool" value="false" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("displacemap3") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.DISPLACE_MAP_AM }
+        assertEquals(listOf(0f, 0f, 1f, 2f, 1f, 0f, 0f), fx.values.subList(0, 7))
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(50f, end.values[1], 0.01f)   // the keyframed offs y
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(115f, arr[0], 0.001f)
+    }
+
+    @Test
+    fun smoothBevelImportsVerbatim() {
+        // text-motion-graphics-preset.xml (on a text layer there): the specular angle
+        // keyframed 0 -> 360, radius 6, specular intensity 1.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.internal.smoothbevel" locallyApplied="false"><property name="radius" type="float" value="6.000000" /><property name="angle_d" type="float" value="143.000000" /><property name="angle_s" type="float"><kf t="0.000000" v="0.000000" /><kf t="1.000000" v="360.000000" /></property><property name="color_d" type="color" value="#ffffffff" /><property name="color_s" type="color" value="#ffffffff" /><property name="intensity_d" type="float" value="0.500000" /><property name="intensity_s" type="float" value="1.000000" /><property name="elevation_d" type="float" value="0.000000" /><property name="elevation_s" type="float" value="2.200000" /><property name="spec" type="float" value="35.000000" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("smoothbevel") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.SMOOTH_BEVEL_AM }
+        assertEquals(
+            listOf(6f, 143f, 0f, 0.5f, 1f, 0f, 2.2f, 35f, 0xFFFFFF.toFloat(), 0xFFFFFF.toFloat()),
+            fx.values.subList(0, 10)
+        )
+        val end = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(360f, end.values[2], 0.01f)
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(118f, arr[0], 0.001f)
+        assertEquals(119f, arr[8], 0.001f)
+    }
+
+    @Test
+    fun innerGlowImportsVerbatim() {
+        // shake-technical-jm-legacy.xml — the one visible inner-glow instance in the
+        // corpus, missed by every id-list census (its id sits outside effects.*) and
+        // found by the v165 full sweep.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.inner-glow" locallyApplied="false"><property name="radius" type="float" value="83.000000" /><property name="alpha" type="float" value="0.180000" /><property name="hardness" type="float" value="0.110000" /><property name="color" type="color" value="#ffffffff" /><property name="blendMode" type="int" value="2" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("inner-glow") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.INNER_GLOW_AM }
+        assertEquals(listOf(83f, 0.18f, 0.11f, 0xFFFFFF.toFloat(), 2f), fx.values.subList(0, 5))
+        val arr = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(121f, arr[0], 0.001f)
+    }
+
+    @Test
+    fun extrudeStaysParked() {
+        // The one tier-3 effect left: its def needs a host-supplied 3D orientation matrix
+        // (AM's 3D layer system), a gaussian-blur buffer pass and a raymarch of up to 800
+        // steps — the design is written in the roadmap; the warning stays honest.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.extrude" locallyApplied="false"><property name="depth" type="float" value="0.100000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.any { it.contains("extrude is not supported yet") })
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }[0].effects.isEmpty())
+    }
+
 }

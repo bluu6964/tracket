@@ -92,6 +92,25 @@ internal object AmFxEval {
         ClipFxLibrary.HEX_SHIFT_AM -> listOf(Tracked(0, 1f), Tracked(4, 1f))      // strength (raw), angle (raw degrees)
         ClipFxLibrary.SOFT_GLOW_AM -> listOf(Tracked(0, 100f))                    // strength
         ClipFxLibrary.FILL_BEHIND_AM -> listOf(Tracked(0, 100f), Tracked(10, 1f), Tracked(11, 1f))  // strength, bg offset x / y
+        // v165 tier (slots hold AM units, so every scale is 1; point components are
+        // separate slots and ride separate tails):
+        ClipFxLibrary.WAVE_WARP_AM -> listOf(Tracked(0, 1f), Tracked(3, 1f), Tracked(1, 1f), Tracked(4, 1f))  // phase, magnitude, angle 1, angle 2
+        ClipFxLibrary.CIRCULAR_RIPPLE_AM -> listOf(Tracked(2, 1f), Tracked(0, 1f), Tracked(5, 1f), Tracked(6, 1f))  // frequency, strength, centre x, centre y
+        ClipFxLibrary.STRETCH_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))         // scale, angle
+        ClipFxLibrary.SQUEEZE_AM -> listOf(Tracked(0, 1f))                         // strength
+        ClipFxLibrary.FRACTAL_WARP_AM -> listOf(Tracked(0, 1f), Tracked(4, 1f), Tracked(5, 1f), Tracked(6, 1f), Tracked(7, 1f), Tracked(1, 1f))  // magnitude, offs x, offs y, parallax x, parallax y, scale
+        ClipFxLibrary.STRIPES_AM -> listOf(Tracked(3, 1f), Tracked(1, 1f))         // phase, width
+        ClipFxLibrary.TURBULENT_DISPLACE3_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))  // intensity, scale
+        ClipFxLibrary.ROUGHEN_EDGES_AM -> listOf(Tracked(2, 1f))                   // evolution
+        ClipFxLibrary.STREAKS_AM -> listOf(Tracked(0, 1f))                         // strength
+        ClipFxLibrary.SIMPLE_STARS_AM -> listOf(Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f), Tracked(1, 1f))  // parallax x, y, z, star size
+        ClipFxLibrary.DOTS_AM -> listOf(Tracked(1, 1f), Tracked(6, 1f))            // phase, density
+        ClipFxLibrary.RIDGES_AM -> listOf(Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f), Tracked(10, 1f), Tracked(2, 1f))  // offs x, offs y, parallax x, parallax y, evolution
+        ClipFxLibrary.DISSOLVE_AM -> listOf(Tracked(0, 1f))                        // amount
+        ClipFxLibrary.BEND_WARP_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))      // amount, offset
+        ClipFxLibrary.DISPLACE_MAP_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))   // offs x, offs y
+        ClipFxLibrary.DISPLACE_MAP_RAD_AM -> listOf(Tracked(0, 1f))               // offs angle
+        ClipFxLibrary.SMOOTH_BEVEL_AM -> listOf(Tracked(2, 1f))                   // specular angle
         else -> emptyList()
     }
 
@@ -99,7 +118,11 @@ internal object AmFxEval {
     private fun tailStart(type: String): Int = when (type) {
         ClipFxLibrary.TURBULENT_DISPLACE_AM, ClipFxLibrary.PIXELATE_AM,
         ClipFxLibrary.COLOR_BALANCE_AM, ClipFxLibrary.HEX_SHIFT_AM,
-        ClipFxLibrary.SOFT_GLOW_AM, ClipFxLibrary.FILL_BEHIND_AM -> EXT_TAIL_START
+        ClipFxLibrary.SOFT_GLOW_AM, ClipFxLibrary.FILL_BEHIND_AM,
+        ClipFxLibrary.WAVE_WARP_AM, ClipFxLibrary.FRACTAL_WARP_AM,
+        ClipFxLibrary.TURBULENT_DISPLACE3_AM, ClipFxLibrary.STREAKS_AM,
+        ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
+        ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM -> EXT_TAIL_START
         else -> TAIL_START
     }
 

@@ -22,6 +22,15 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_HEX_SHIFT_AM_EXT ? FX_HEX_SHIFT_AM
                            : t == FX_SOFT_GLOW_AM_EXT ? FX_SOFT_GLOW_AM
                            : t == FX_FILL_BEHIND_AM_EXT ? FX_FILL_BEHIND_AM
+                           : t == FX_WAVE_WARP_AM_EXT ? FX_WAVE_WARP_AM
+                           : t == FX_FRACTAL_WARP_AM_EXT ? FX_FRACTAL_WARP_AM
+                           : t == FX_TURBULENT_DISPLACE3_AM_EXT ? FX_TURBULENT_DISPLACE3_AM
+                           : t == FX_STREAKS_AM_EXT ? FX_STREAKS_AM
+                           : t == FX_SIMPLE_STARS_AM_EXT ? FX_SIMPLE_STARS_AM
+                           : t == FX_DOTS_AM_EXT ? FX_DOTS_AM
+                           : t == FX_RIDGES_AM_EXT ? FX_RIDGES_AM
+                           : t == FX_DISPLACE_MAP_RAD_AM_EXT ? FX_DISPLACE_MAP_RAD_AM
+                           : t == FX_SMOOTH_BEVEL_AM_EXT ? FX_SMOOTH_BEVEL_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -40,7 +49,15 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_CHROMA_KEY_AM && t != FX_COLOR_BALANCE_AM && t != FX_COLOR_TEMP_AM &&
             t != FX_COLOR_TINT_AM && t != FX_SPIN_BLUR_AM && t != FX_OFFSET_AM &&
             t != FX_RADIAL_WIPE_AM && t != FX_FIND_EDGES_AM && t != FX_HEX_SHIFT_AM &&
-            t != FX_SOFT_GLOW_AM && t != FX_FILL_BEHIND_AM) {
+            t != FX_SOFT_GLOW_AM && t != FX_FILL_BEHIND_AM &&
+            t != FX_WAVE_WARP_AM && t != FX_CIRCULAR_RIPPLE_AM && t != FX_STRETCH_AM &&
+            t != FX_SQUEEZE_AM && t != FX_FRACTAL_WARP_AM && t != FX_STRIPES_AM &&
+            t != FX_TURBULENT_DISPLACE3_AM && t != FX_ROUGHEN_EDGES_AM && t != FX_STREAKS_AM &&
+            t != FX_COLOR_HOT_AM && t != FX_COLORIZE_AM && t != FX_HIGHLIGHT_SHADOW_AM &&
+            t != FX_SPOT_COLOR_AM && t != FX_DISSOLVE_AM && t != FX_SIMPLE_STARS_AM &&
+            t != FX_DOTS_AM && t != FX_RIDGES_AM && t != FX_BEND_WARP_AM &&
+            t != FX_DISPLACE_MAP_AM && t != FX_DISPLACE_MAP_RAD_AM && t != FX_SMOOTH_BEVEL_AM &&
+            t != FX_LIGHT_GLOW_AM && t != FX_INNER_GLOW_AM) {
             owner = -1;
             continue;
         }
@@ -267,6 +284,25 @@ FxShaderRef fxShaderOf(int type) {
         case FX_RADIAL_WIPE_AM: r = {FXG_WARP, 16}; break;
         case FX_FIND_EDGES_AM: r = {FXG_STYLE, 14}; break;
         case FX_HEX_SHIFT_AM: r = {FXG_WARP, 17}; break;
+        // v165 tier (the dedicated passes stay FXG_NONE like FX_GLOW_SCAN).
+        case FX_WAVE_WARP_AM: r = {FXG_WARP, 18}; break;
+        case FX_CIRCULAR_RIPPLE_AM: r = {FXG_WARP, 19}; break;
+        case FX_STRETCH_AM: r = {FXG_WARP, 20}; break;
+        case FX_SQUEEZE_AM: r = {FXG_WARP, 21}; break;
+        case FX_FRACTAL_WARP_AM: r = {FXG_WARP, 22}; break;
+        case FX_STRIPES_AM: r = {FXG_WARP, 23}; break;
+        case FX_TURBULENT_DISPLACE3_AM: r = {FXG_WARP, 24}; break;
+        case FX_ROUGHEN_EDGES_AM: r = {FXG_WARP, 25}; break;
+        case FX_BEND_WARP_AM: r = {FXG_WARP, 26}; break;
+        case FX_STREAKS_AM: r = {FXG_BLUR2, 9}; break;
+        case FX_COLOR_HOT_AM: r = {FXG_COLOR, 21}; break;
+        case FX_COLORIZE_AM: r = {FXG_COLOR, 22}; break;
+        case FX_HIGHLIGHT_SHADOW_AM: r = {FXG_COLOR, 23}; break;
+        case FX_SPOT_COLOR_AM: r = {FXG_COLOR, 24}; break;
+        case FX_DISSOLVE_AM: r = {FXG_STYLE, 15}; break;
+        case FX_SIMPLE_STARS_AM: r = {FXG_STYLE, 16}; break;
+        case FX_DOTS_AM: r = {FXG_STYLE, 17}; break;
+        case FX_RIDGES_AM: r = {FXG_STYLE, 18}; break;
         default: break;
     }
     return r;
@@ -357,6 +393,30 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_HEX_SHIFT_AM: return std::fabs(p[0]) < 0.00005f;   // strength 0: the sample is the pixel
         case FX_SOFT_GLOW_AM: return p[6] < 0.5f;   // alpha 0: blendInside is 0, the screen keeps the pixel
         case FX_FILL_BEHIND_AM: return false;   // the edge / feather terms can bite even at strength 0
+        // v165 tier:
+        case FX_WAVE_WARP_AM: return std::fabs(p[3]) < 0.0005f;   // magnitude 0: the offset is 0
+        case FX_CIRCULAR_RIPPLE_AM: return std::fabs(p[0]) < 0.0005f;   // strength 0: no offset
+        case FX_STRETCH_AM: return std::fabs(p[0] - 1.f) < 0.0005f;   // scale 1: the sample is the pixel
+        case FX_SQUEEZE_AM: return std::fabs(p[0]) < 0.0005f;   // strength 0: both divisors are 1
+        case FX_FRACTAL_WARP_AM: return std::fabs(p[0]) < 0.0005f;   // magnitude 0: the sample is the pixel
+        case FX_STRIPES_AM: return false;   // a band pattern always paints (or punches out)
+        case FX_TURBULENT_DISPLACE3_AM: return std::fabs(p[0]) < 0.0005f;   // intensity 0: p is 0
+        case FX_ROUGHEN_EDGES_AM: return std::fabs(p[0]) < 0.0005f;   // strength 0: p is 0, the sample is the pixel
+        case FX_BEND_WARP_AM: return std::fabs(p[0]) < 0.0005f;   // amount 0: bend() is the identity branch
+        case FX_STREAKS_AM: return std::fabs(p[0]) < 0.0005f || p[3] < 0.0005f;   // no velocity, or the mix keeps the original
+        case FX_COLOR_HOT_AM: return false;   // the luma re-grade always bites
+        case FX_COLORIZE_AM: return std::fabs(p[1]) < 0.0005f;   // amount 0: the chroma mix is a no-op
+        case FX_HIGHLIGHT_SHADOW_AM: return std::fabs(p[0] - 1.f) < 0.0005f && std::fabs(p[1] - 1.f) < 0.0005f;   // 1 / 1 is GPUImage's neutral
+        case FX_SPOT_COLOR_AM: return false;   // the desaturate side always differs somewhere
+        case FX_DISSOLVE_AM: return p[0] >= 1.f;   // step(amount, r) is 1 everywhere (r < 1)
+        case FX_SIMPLE_STARS_AM: return o.q[2] < 0.0005f;   // alpha 0: the final mix keeps the pixel
+        case FX_DOTS_AM: return o.q[2] < 0.0005f && std::fabs(o.q[1] - 1.f) < 0.0005f;   // alpha 0 and fill 1: the output is the pixel
+        case FX_RIDGES_AM: return false;   // the colour field always paints over the layer
+        case FX_DISPLACE_MAP_AM: return false;   // the output is the backdrop even at offset 0 (the layer only drives it)
+        case FX_DISPLACE_MAP_RAD_AM: return false;   // same: the output is the composite, not the layer
+        case FX_SMOOTH_BEVEL_AM: return p[0] < 0.0005f;   // radius 0: AM's scan degenerates (a division by radius2)
+        case FX_LIGHT_GLOW_AM: return p[6] < 0.0005f;   // alpha 0: the composite keeps the base
+        case FX_INNER_GLOW_AM: return p[0] < 0.5f || p[1] < 0.0005f;   // AM: radius < 0.5 is a plain copy; alpha 0 mixes nothing
         default: return false;
     }
 }
@@ -1124,6 +1184,950 @@ void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturatio
     *outG = g * blurA;
     *outB = b * blurA;
     *outA = blurA;
+}
+
+// ---- v165: Alight's tier 3 (the same maths as fx_shaders.h warp modes 18..26 / colour
+// modes 21..24 / blur2 mode 9 / style modes 15..18 and the dedicated passes) ----
+namespace {
+float fxT3Clamp(float v, float lo, float hi) { return std::min(hi, std::max(lo, v)); }
+// AM's hsv2rgb (the K-formula of the defs): hue 0..1, saturation 0..1, value 0..1.
+void fxAmHsv(float h, float s, float v, float* r, float* g, float* b) {
+    float hr, hg, hb;
+    fxHsvToRgb(h * 360.f, 1.f, &hr, &hg, &hb);
+    *r = v * ((1.f - s) + s * hr);
+    *g = v * ((1.f - s) + s * hg);
+    *b = v * ((1.f - s) + s * hb);
+}
+}  // namespace
+
+void fxWaveWarpAmUv(float uvX, float uvY, float phase, float a1d, float m1, float m2, float a2d,
+                    float damping, float dampingSpace, float dampingOrigin, float* outX, float* outY) {
+    // AM's wavewarp2 shader, line by line (layer space: st = acLayerNorm = our uv).
+    const float a1 = a1d * 0.0174533f;
+    const float a2 = (a1d + a2d) * 0.0174533f;
+    const float rvx = std::cos(a1), rvy = -std::sin(a1);
+    const float rawP = uvX * rvx + uvY * rvy;
+    float spaceDamp = 1.f;
+    if (dampingSpace < 0.f) {
+        spaceDamp = 1.f - (fxT3Clamp(std::fabs(rawP - dampingOrigin), 0.f, 1.f) * (0.f - dampingSpace));
+    } else if (dampingSpace > 0.f) {
+        spaceDamp = 1.f - ((1.f - fxT3Clamp(std::fabs(rawP - dampingOrigin), 0.f, 1.f)) * dampingSpace);
+    }
+    const float space = m1 * spaceDamp;
+    const float p = (uvX * rvx + uvY * rvy) * space;
+    const float ddist = space != 0.f ? std::fabs(p / space) : 0.f;
+    float damp = 1.f;
+    if (damping < 0.f) {
+        damp = 1.f - (fxT3Clamp(std::fabs(ddist - dampingOrigin), 0.f, 1.f) * (0.f - damping));
+    } else if (damping > 0.f) {
+        damp = 1.f - ((1.f - fxT3Clamp(std::fabs(ddist - dampingOrigin), 0.f, 1.f)) * damping);
+    }
+    const float mag = (m2 * damp) / 100.f;
+    const float s = std::sin(p + phase * 6.28318f);
+    *outX = uvX + std::cos(a2) * mag * s;
+    *outY = uvY + (-std::sin(a2)) * mag * s;
+}
+
+void fxCircularRippleAmUv(float uvX, float uvY, float strength, float radius, float frequency,
+                          float feather, float phase, float cX, float cY, float aspectYX,
+                          float* outX, float* outY) {
+    // AM's circularripple2 shader, line by line, layer-anchored: st is the layer norm
+    // relative to the layer centre, y corrected by the aspect (AM uses the screen's).
+    const float featherSize = radius * 0.5f * feather;
+    const float inner = std::max(0.f, radius - featherSize);
+    const float outer = std::max(inner + 0.00001f, radius + featherSize);
+    float sx = uvX - 0.5f + (-cX / 1000.f);
+    float sy = uvY - 0.5f + (cY / 1000.f);
+    sy *= aspectYX;
+    const float dist = std::sqrt(sx * sx + sy * sy);
+    const float damping = fxSstep(outer, inner, dist);
+    const float k = std::sin(dist * frequency * 3.14159f * 2.f + phase * 3.14159f * 2.f) * strength / 2.f * damping;
+    float nx = 0.f, ny = 0.f;
+    if (dist > 1e-9f) { nx = sx / dist; ny = sy / dist; }
+    sx += nx * k;
+    sy += ny * k;
+    sy /= aspectYX;
+    *outX = sx + 0.5f - (-cX / 1000.f);
+    *outY = sy + 0.5f - (cY / 1000.f);
+}
+
+void fxStretchAmUv(float uvX, float uvY, float scale, float angleDeg, float* outX, float* outY) {
+    // AM's stretch shader: ((((uv - .5) * rot) * (1/scale, 1)) * invrot) + .5 with GLSL's
+    // vec * mat (row-vector) convention: v * M = (v.x * M[0][0] + v.y * M[1][0], ...).
+    const float rad = angleDeg * 0.0174533f;
+    const float c = std::cos(rad), s = std::sin(rad);
+    // rot columns are (c, -s) and (s, c): v * rot = (v.x * c + v.y * s, -v.x * s + v.y * c)
+    float x = uvX - 0.5f, y = uvY - 0.5f;
+    float rx = x * c + y * s;
+    float ry = -x * s + y * c;
+    rx *= (scale != 0.f ? 1.f / scale : 0.f);
+    // invrot = rot(-rad): columns (c, s) and (-s, c): v * invrot = (v.x * c - v.y * s, v.x * s + v.y * c)
+    *outX = rx * c - ry * s + 0.5f;
+    *outY = rx * s + ry * c + 0.5f;
+}
+
+void fxStretchAmMap(float sr, float sg, float sb, float sa, float tr, float tg, float tb, float ta,
+                    int version, float* outR, float* outG, float* outB, float* outA) {
+    // AM's stretch shaders under contentOnly: the sample is first masked by the layer's
+    // own alpha (S *= T.a); v2 keeps the masked sample alone, v1 composites the layer
+    // under it.
+    const float mr = sr * ta, mg = sg * ta, mb = sb * ta, ma = sa * ta;
+    if (version == 1) {
+        *outR = mr + tr * (1.f - ma);
+        *outG = mg + tg * (1.f - ma);
+        *outB = mb + tb * (1.f - ma);
+        *outA = ma + ta * (1.f - ma);
+    } else {
+        *outR = mr; *outG = mg; *outB = mb; *outA = ma;
+    }
+}
+
+void fxSqueezeAmUv(float uvX, float uvY, float strength, float* outX, float* outY) {
+    // AM's squeeze shader, line by line: st in [-1, 1], the divisors clamped to [0, 2].
+    const float str = strength / 2.f;
+    float x = (uvX - 0.5f) * 2.f;
+    float y = (uvY - 0.5f) * 2.f;
+    float xdiv = fxT3Clamp(1.f + (1.f - y * y) * (-str), 0.f, 2.f);
+    float ydiv = fxT3Clamp(1.f + (1.f - x * x) * str, 0.f, 2.f);
+    if (xdiv != 0.f) x /= xdiv;
+    if (ydiv != 0.f) y /= ydiv;
+    *outX = x / 2.f + 0.5f;
+    *outY = y / 2.f + 0.5f;
+}
+
+float fxValueNoise(float stX, float stY) {
+    // McGuire value noise (AM's fractalwarp4 / dots2 helper), line by line.
+    auto random = [](float x, float y) {
+        const float d = x * 12.9898f + y * 78.233f;
+        const float s = std::sin(d) * 43758.5453123f;
+        return s - std::floor(s);
+    };
+    const float ix = std::floor(stX), iy = std::floor(stY);
+    const float fx = stX - ix, fy = stY - iy;
+    const float a = random(ix, iy);
+    const float b = random(ix + 1.f, iy);
+    const float c = random(ix, iy + 1.f);
+    const float d = random(ix + 1.f, iy + 1.f);
+    const float ux = fx * fx * (3.f - 2.f * fx);
+    const float uy = fy * fy * (3.f - 2.f * fy);
+    return (a + (b - a) * ux) + (c - a) * uy * (1.f - ux) + (d - b) * ux * uy;
+}
+
+float fxValueFbm(float stX, float stY, float parX, float parY, int octaves, float intensity) {
+    float value = 0.f;
+    float amplitude = 0.5f;
+    float x = stX, y = stY;
+    const int n = std::max(1, std::min(9, octaves));
+    for (int i = 0; i < n; ++i) {
+        value += amplitude * fxValueNoise(x, y);
+        x = x * 2.f + parX;
+        y = y * 2.f + parY;
+        amplitude *= intensity;
+    }
+    return value;
+}
+
+void fxFractalWarpAmUv(float uvX, float uvY, float mag, float scale, float intensity, int octaves,
+                       float offX, float offY, float parX, float parY, float aspect,
+                       float* outX, float* outY) {
+    // AM's fractalwarp4 shader, line by line (layer space): st.x aspect-corrected, the offs
+    // point in /1000 with the (-1, +1) flip, the parallax point /200 with the same flip.
+    float sx = uvX * aspect + offX / 1000.f * -1.f;
+    float sy = uvY + offY / 1000.f;
+    const float px = parX / 200.f * -1.f;
+    const float py = parY / 200.f;
+    const float dx = fxValueFbm((sx - 0.5f) * 3.f * scale + 0.5f, (sy - 0.5f) * 3.f * scale + 0.5f,
+                                px, py, octaves, intensity);
+    const float dy = fxValueFbm((sx + 25.3f - 0.5f) * 3.f * scale + 0.5f,
+                                (sy + 12.9f - 0.5f) * 3.f * scale + 0.5f,
+                                px, py, octaves, intensity);
+    *outX = uvX + (dx - 0.5f) * mag;
+    *outY = uvY + (dy - 0.5f) * mag;
+}
+
+float fxStripesAmBand(float uvX, float uvY, float picW, float picH, float amount, float width,
+                      float angleDeg, float phase, float smoothing) {
+    // AM's stripes shader, layer branch, line by line: st is the top-down pixel position
+    // relative to the layer centre over the picture diagonal, rotated by the def's matrix
+    // (vec * mat, row-vector), then banded.
+    const float len = std::sqrt(picW * picW + picH * picH);
+    float sx = (uvX * picW - picW / 2.f) / (len > 0.f ? len : 1.f);
+    float sy = ((1.f - uvY) * picH - picH / 2.f) / (len > 0.f ? len : 1.f);
+    const float a = angleDeg * 0.0174533f;
+    const float sn = std::sin(a), cs = std::cos(a);
+    // mat2(sin, -cos, cos, sin) has columns (sin, -cos) and (cos, sin):
+    // v * M = (v.x * sin + v.y * cos, -v.x * cos + v.y * sin); only x is read afterwards.
+    const float rx = sx * sn + sy * cs;
+    float p = std::fmod(rx * amount + phase, 1.f);
+    if (p < 0.f) p += 1.f;
+    return fxSstep(width, width - smoothing, p) * fxSstep(0.f, smoothing, p);
+}
+
+void fxStripesAmMap(float tr, float tg, float tb, float ta, float colR, float colG, float colB,
+                    float band, bool punchout, float* outR, float* outG, float* outB, float* outA) {
+    if (punchout) {
+        const float k = 1.f - band;
+        *outR = tr * k; *outG = tg * k; *outB = tb * k; *outA = ta * k;
+        return;
+    }
+    // c = colour * band, then c *= tex.a, out = c + tex * (1 - c.a); the colour's alpha is 1.
+    const float ca = band * ta;
+    *outR = colR * ca + tr * (1.f - ca);
+    *outG = colG * ca + tg * (1.f - ca);
+    *outB = colB * ca + tb * (1.f - ca);
+    *outA = ca + ta * (1.f - ca);
+}
+
+namespace {
+// AM's turbulence() input geometry of turbulentdisplace3 for a direction: the sampleCoord
+// the def builds from st (aspect-corrected layer norm, position already added).
+void fxTurb3SampleCoord(float stX, float stY, int direction, bool singleAxis, float* outX, float* outY) {
+    if (!singleAxis) { *outX = stX - 0.5f; *outY = stY - 0.5f; return; }
+    switch (direction) {
+        case 0: *outX = 0.f; *outY = stY - 0.5f; return;
+        case 1: *outX = stX - 0.5f; *outY = 0.f; return;
+        case 2:
+        case 4: *outX = stX - 0.5f; *outY = stY - 0.5f; return;
+        case 5: {
+            const float dx = stX - 0.5f, dy = stY - 0.5f;
+            *outX = 0.f; *outY = std::sqrt(dx * dx + dy * dy);
+            return;
+        }
+        default: {   // R (3 and anything else)
+            const float tt = std::fabs(std::atan2(stX - 0.5f, stY - 0.5f) / 6.28318f) * 2.f;
+            *outX = tt; *outY = 0.f;
+            return;
+        }
+    }
+}
+}  // namespace
+
+void fxTurbulentDisplace3AmUv(float uvX, float uvY, float intensity, float scale, float evolution,
+                              float seed, int direction, int octaves, float offs,
+                              float parX, float parY, float posX, float posY,
+                              float stretchX, float stretchY, bool singleAxis, float aspect,
+                              float* outX, float* outY, bool* inside) {
+    // AM's turbulentdisplace3 shader, layer branch, line by line.
+    float stX = uvX * aspect + posX * -1.f / 500.f;
+    float stY = uvY + posY / 500.f;
+    const float parrX = parX * -1.f / 100.f;
+    const float parrY = parY / 100.f;
+    const float svX = scale * stretchY;
+    const float svY = scale * stretchX;
+    float scX, scY;
+    fxTurb3SampleCoord(stX, stY, direction, singleAxis, &scX, &scY);
+    float p = fxTurbulence((scX - 0.5f) / svX + 0.5f, (scY - 0.5f) / svY + 0.5f, octaves,
+                           parrX, parrY, evolution + 7391.935f * seed);
+    p += (offs - 0.25f);
+    p *= intensity * 2.f;
+    float x = uvX, y = uvY;
+    auto turbQ = [&]() {
+        float q = fxTurbulence(scX / svX + 0.5f, scY / svY + 0.5f, octaves, parrX, parrY,
+                               evolution + 3937.7249f * (seed + 6.3379f));
+        q += (offs - 0.25f);
+        q *= intensity * 2.f;
+        return q;
+    };
+    switch (direction) {
+        case 0: x += p; break;
+        case 1: y += p; break;
+        case 2: {
+            const float q = turbQ();
+            x += p;
+            y += q;
+            break;
+        }
+        case 4: {
+            const float q = turbQ();
+            const float dx = x - 0.5f, dy = y - 0.5f;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            if (len > 1e-9f) { x += dx / len * p; y += dy / len * p; }
+            const float cq = std::cos(q), sq = std::sin(q);
+            const float nx = cq * x - sq * y;
+            const float ny = sq * x + cq * y;
+            x = nx; y = ny;
+            break;
+        }
+        case 5: {
+            const float cq = std::cos(p), sq = std::sin(p);
+            const float nx = cq * x - sq * y;
+            const float ny = sq * x + cq * y;
+            x = nx; y = ny;
+            break;
+        }
+        default: {   // R
+            const float dx = x - 0.5f, dy = y - 0.5f;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            if (len > 1e-9f) { x += dx / len * p; y += dy / len * p; }
+            break;
+        }
+    }
+    *outX = x;
+    *outY = y;
+    *inside = x >= 0.f && x <= 1.f && y >= 0.f && y <= 1.f;
+}
+
+void fxRoughenEdgesAmUv(float uvX, float uvY, float strength, float detail, float evolution,
+                        float seed, int octaves, float aspect,
+                        float* outX, float* outY, float* outP) {
+    // AM's roughenedges shader: turbulentdisplace3's body with parr / position 0, direction
+    // R, scaleVec = (detail * 5, detail * 5), offs 0.15, intensity = strength * 0.1 (and no
+    // x2: its p *= intensity, where turbulentdisplace3 has intensity * 2).
+    const float stX = uvX * aspect;
+    const float stY = uvY;
+    const float sv = detail * 5.f;
+    float p = fxTurbulence((stX - 0.5f) * sv + 0.5f, (stY - 0.5f) * sv + 0.5f, octaves,
+                           0.f, 0.f, evolution + 7391.935f * seed);
+    p += (0.15f - 0.25f);
+    p *= strength * 0.1f;
+    const float dx = uvX - 0.5f, dy = uvY - 0.5f;
+    const float len = std::sqrt(dx * dx + dy * dy);
+    float x = uvX, y = uvY;
+    if (len > 1e-9f) { x += dx / len * p; y += dy / len * p; }
+    *outX = x;
+    *outY = y;
+    *outP = p;
+}
+
+void fxStreaksAmVelocity(float strength, float angleDeg, float texelX, float texelY,
+                         float aspectYX, float* outVx, float* outVy, int* outSamples) {
+    // AM's streaks shader: velocity from the angle, x corrected by the aspect (the screen's
+    // in AM; the layer's is the stand-in), the count from the speed in texels.
+    const float rad = angleDeg * 0.0174533f;
+    float vx = std::cos(rad) * strength;
+    float vy = -std::sin(rad) * strength;
+    vx *= aspectYX;
+    const float sx = texelX != 0.f ? vx / texelX : 0.f;
+    const float sy = texelY != 0.f ? vy / texelY : 0.f;
+    const float speed = std::sqrt(sx * sx + sy * sy);
+    *outVx = vx;
+    *outVy = vy;
+    *outSamples = (int)fxT3Clamp(speed, 1.01f, 100.01f);
+}
+
+float fxStreaksAmCombine(float acc, float tap, int mode) {
+    switch (mode) {
+        case 0: return std::min(acc, tap);
+        case 1: return std::max(acc, tap);
+        case 3: return acc + tap;
+        default: return acc;   // 2 = off
+    }
+}
+
+float fxStreaksAmFinish(float acc, int mode, int nSamples) {
+    return mode == 3 && nSamples > 0 ? acc / (float)nSamples : acc;
+}
+
+void fxColorHotAmMap(float r, float g, float b, const float colorDisc[3], const float tintDisc[3],
+                     float* outR, float* outG, float* outB) {
+    // AM's colorhot shader, line by line: the luminance is read off the sampled
+    // (premultiplied) colour; the output is the blend colour (the caller multiplies by a).
+    float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    const float gamma = colorDisc[2] + 1.f;
+    lum = std::pow(std::max(lum, 0.f), 1.f / gamma);
+    float dr, dg, db, lr, lg, lb;
+    fxAmHsv(colorDisc[0] / 360.f, colorDisc[1], 1.f, &dr, &dg, &db);
+    fxAmHsv(tintDisc[0] / 360.f, tintDisc[1], 1.f, &lr, &lg, &lb);
+    const float cutoff = tintDisc[2] / 2.f + 0.5f;
+    float br, bgc, bb;
+    if (lum < cutoff) {
+        br = dr; bgc = dg; bb = db;   // dark == base in AM's def: the low branch is constant
+    } else {
+        const float t = (1.f - cutoff) > 1e-6f ? (lum - cutoff) / (1.f - cutoff) : 0.f;
+        br = dr + (lr - dr) * t; bgc = dg + (lg - dg) * t; bb = db + (lb - db) * t;
+    }
+    float y, u, v;
+    fxAmToYuv(br, bgc, bb, &y, &u, &v);
+    y = lum;
+    u *= lum;
+    v *= lum;
+    fxAmToRgb(y, u, v, &br, &bgc, &bb);
+    float shine = std::max(0.f, lum - 0.85f) * (1.f / 0.15f);
+    shine = shine * shine * colorDisc[1];
+    *outR = br + (1.f - br) * shine;
+    *outG = bgc + (1.f - bgc) * shine;
+    *outB = bb + (1.f - bb) * shine;
+}
+
+void fxColorizeAmMap(float pr, float pg, float pb, float pa, float hueDeg, float amount,
+                     float* outR, float* outG, float* outB, float* outA) {
+    // AM's colorize shader, line by line (the same maths as Color Tint's, with the
+    // hue-disc's y as the amount).
+    float tr, tg, tb;
+    fxAmHsv(hueDeg / 360.f, 1.f, 0.5f, &tr, &tg, &tb);
+    float ty, tu, tv, y, u, v;
+    fxAmToYuv(tr, tg, tb, &ty, &tu, &tv);
+    fxAmToYuv(pr, pg, pb, &y, &u, &v);
+    const float k = amount * pa;
+    u += (tu - u) * k;
+    v += (tv - v) * k;
+    fxAmToRgb(y, u, v, outR, outG, outB);
+    *outA = pa;
+}
+
+void fxHighlightShadowAmMap(float r, float g, float b, float shadows, float highlights,
+                            float* outR, float* outG, float* outB) {
+    // AM's highlightshadow shader (GPUImage's formula), line by line. AM divides the
+    // sampled colour by its luminance; a black pixel is guarded to black (AM gets NaN
+    // there — the mixes below still run, on 0).
+    const float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    const float cs = fxT3Clamp(shadows, 1.f, 2.f);
+    const float shadow = fxT3Clamp(std::pow(std::max(lum, 0.f), 1.f / cs) -
+                                   0.76f * std::pow(std::max(lum, 0.f), 2.f / cs) - lum, 0.f, 1.f);
+    const float hden = std::max(2.f - highlights, 0.001f);
+    const float hl = fxT3Clamp(1.f - (std::pow(std::max(1.f - lum, 0.f), 1.f / hden) -
+                                      0.8f * std::pow(std::max(1.f - lum, 0.f), 2.f / hden)) - lum,
+                               -1.f, 0.f);
+    float rr = 0.f, rg = 0.f, rb = 0.f;
+    if (lum > 1e-6f) {
+        const float k = (lum + shadow + hl) / lum;
+        rr = r * k; rg = g * k; rb = b * k;
+    }
+    const float cl = (lum - 0.5f) * 1.5f + 0.5f;
+    const float whiteK = cl * cl * cl * (fxT3Clamp(highlights, 1.f, 2.f) - 1.f);
+    rr += (1.f - rr) * whiteK; rg += (1.f - rg) * whiteK; rb += (1.f - rb) * whiteK;
+    const float icl = 1.f - cl;
+    const float blackK = icl * icl * icl * (1.f - fxT3Clamp(shadows, 0.f, 1.f));
+    rr *= (1.f - blackK); rg *= (1.f - blackK); rb *= (1.f - blackK);
+    *outR = rr; *outG = rg; *outB = rb;
+}
+
+void fxSpotColorAmMap(float pr, float pg, float pb, float pa, float spotR, float spotG, float spotB,
+                      float threshold, float feather, float saturation, float choke,
+                      float* outR, float* outG, float* outB, float* outA) {
+    // AM's spotcolor2 shader (group 0), line by line.
+    float sy, su, sv, ty, tu, tv;
+    fxAmToYuv(spotR, spotG, spotB, &sy, &su, &sv);
+    fxAmToYuv(pr, pg, pb, &ty, &tu, &tv);
+    su *= choke; sv *= choke;
+    tu *= choke; tv *= choke;
+    const float dy = sy - ty, du = su - tu, dv = sv - tv;
+    const float dist = std::sqrt(dy * dy + du * du + dv * dv);
+    const float a = std::min(threshold + feather, 1.f);
+    const float b = std::max(threshold - feather, 0.f);
+    const float p = fxSstep(a, std::min(b, a - 0.01f), dist);
+    float dr, dg, db;
+    fxAmToRgb(ty, tu * saturation / 2.f, tv * saturation / 2.f, &dr, &dg, &db);
+    *outR = dr + (pr - dr) * p;
+    *outG = dg + (pg - dg) * p;
+    *outB = db + (pb - db) * p;
+    *outA = pa;
+}
+
+float fxDissolveAmHash(float uvX, float uvY, float picW, float picH, float seed) {
+    // AM's dissolve shader: st = floor(top-down pixel position - centre px) / layer px,
+    // the hash is AM's hexshift rand (same constants), r = rand(st * t).
+    const float stX = std::floor((uvX - 0.5f) * picW) / (picW > 0.f ? picW : 1.f);
+    const float stY = std::floor((0.5f - uvY) * picH) / (picH > 0.f ? picH : 1.f);
+    float t = std::fmod(seed * 3197.3791f, 2.8f) + 2.7f;
+    const float coX = stX * t, coY = stY * t;
+    const float dt = coX * 719.310f + coY * 178.233f;
+    const float sn = std::fmod(dt, 3.14f);
+    const float r = std::sin(sn) * 33758.5453f;
+    return r - std::floor(r);
+}
+
+namespace {
+// simplestars2's rand / rand2 (the McGuire hash, NOT the value noise).
+float fxStarRand(float x, float y) {
+    const float s = std::sin(x * 12.9898f + y * 78.233f) * 43758.5453123f;
+    return s - std::floor(s);
+}
+float fxStarField(float stX, float stY, float parX, float parY, float depth, float size,
+                  float feather, float starCount) {
+    const float adjSize = size * 0.001f;
+    const float f = depth - std::floor(depth);
+    const float layer = std::floor(depth);
+    float p = 0.f;
+    const int n = (int)std::ceil(starCount);
+    for (int i = 1; i < n; ++i) {
+        const float fi = (float)i;
+        if (!(fi < starCount)) break;
+        const float ux = stX * ((fi - f) / 9.f) + parX;
+        const float uy = stY * ((fi - f) / 9.f) + parY;
+        const float rx = fxStarRand(fi + layer, 2.904f);
+        const float ry = fxStarRand((fi + layer) + 3.7321f * 7.1231f, 2.904f + 9.2517f * 6.9377f);
+        const float sx = std::sin((ux + rx) * 20.f);
+        const float sy = std::sin((uy + ry) * 20.f);
+        const float adjFeather = adjSize * feather;
+        const float star = fxSstep(1.f - adjSize - adjFeather, 1.f - adjSize, sx * sy);
+        p += star * fxSstep(starCount, 1.f, fi - f);
+    }
+    return p;
+}
+}  // namespace
+
+float fxSimpleStarsAmField(float uvX, float uvY, float scale, float starSize, float starFeather,
+                           float starCount, float parX, float parY, float parZ, float aspect) {
+    // AM's simplestars2 main: st flipped, centred, aspect-corrected, scaled; the parallax
+    // point's xy runs /1000 negated, z /45 is the depth.
+    float stX = uvX - 0.5f;
+    float stY = (1.f - uvY) - 0.5f;
+    stX *= aspect;
+    if (scale != 0.f) { stX /= scale; stY /= scale; }
+    return fxStarField(stX, stY, -parX / 1000.f, -parY / 1000.f, parZ / 45.f, starSize,
+                       starFeather, starCount);
+}
+
+void fxSimpleStarsAmAdj(float colR, float colG, float colB, float p, float brightness,
+                        float* outR, float* outG, float* outB, float* outA) {
+    // adjColor = clamp(vec4(mix(colour + 0.15, white, 0.05) * p * brightness, 1), 0, 1) * p.
+    auto ch = [&](float c) {
+        const float m = (c + 0.15f) + (1.f - (c + 0.15f)) * 0.05f;
+        return fxT3Clamp(m * p * brightness, 0.f, 1.f) * p;
+    };
+    *outR = ch(colR);
+    *outG = ch(colG);
+    *outB = ch(colB);
+    *outA = fxT3Clamp(1.f, 0.f, 1.f) * p;
+}
+
+void fxSimpleStarsAmMap(float tr, float tg, float tb, float ta,
+                        float ar, float ag, float ab, float aa, float p,
+                        int blendMode, float alpha,
+                        float* outR, float* outG, float* outB, float* outA) {
+    // AM's simplestars2 compose, line by line; the result is mixed over the pixel by alpha.
+    float rr, rg, rb, ra;
+    if (blendMode == 1) {
+        // vec4((tex.rgb / tex.a) * adj.rgb, 1) * tex.a
+        const float inv = ta > 1e-5f ? 1.f / ta : 0.f;
+        rr = (tr * inv) * ar * ta; rg = (tg * inv) * ag * ta; rb = (tb * inv) * ab * ta; ra = ta;
+    } else if (blendMode == 2) {
+        // vec4(1 - (1 - tex.rgb / tex.a) * (1 - adj.rgb), 1) * tex.a
+        const float inv = ta > 1e-5f ? 1.f / ta : 0.f;
+        rr = (1.f - (1.f - tr * inv) * (1.f - ar)) * ta;
+        rg = (1.f - (1.f - tg * inv) * (1.f - ag)) * ta;
+        rb = (1.f - (1.f - tb * inv) * (1.f - ab)) * ta;
+        ra = ta;
+    } else if (blendMode == 3) {
+        const float k = 1.f - std::min(p, 1.f);
+        rr = tr * k; rg = tg * k; rb = tb * k; ra = ta * k;
+    } else {
+        // result = adj * tex.a; result = tex * (1 - result.a) + result
+        const float raa = aa * ta;
+        rr = tr * (1.f - raa) + ar * ta;
+        rg = tg * (1.f - raa) + ag * ta;
+        rb = tb * (1.f - raa) + ab * ta;
+        ra = ta * (1.f - raa) + raa;
+    }
+    *outR = tr + (rr - tr) * alpha;
+    *outG = tg + (rg - tg) * alpha;
+    *outB = tb + (rb - tb) * alpha;
+    *outA = ta + (ra - ta) * alpha;
+}
+
+namespace {
+// dots2's rand2v: the VALUE-noise pair (not a hash), AM's offsets.
+void fxDotsRand2v(float x, float y, float* outX, float* outY) {
+    *outX = fxValueNoise(x, y);
+    *outY = fxValueNoise(x + 613.312f, y + 736.019f);
+}
+float fxDotsRandom(float x, float y) {
+    const float s = std::sin(x * 12.9898f + y * 78.233f) * 43758.5453123f;
+    return s - std::floor(s);
+}
+}  // namespace
+
+void fxDotsAmField(float uvX, float uvY, float scale, float phase, float radius, float feather,
+                   float density, float seed, float slack, float posX, float posY, float aspect,
+                   float* intensity, float* colorPct) {
+    // AM's dots2 shader, line by line.
+    float stX = uvX * aspect - 0.5f - posX / 1000.f;
+    float stY = uvY - 0.5f + posY / 1000.f;
+    const float div = scale * 0.07f;
+    if (div != 0.f) { stX /= div; stY /= div; }
+    const float tileX = std::floor(stX), tileY = std::floor(stY);
+    const float tpX = stX - tileX, tpY = stY - tileY;
+    float maxDist = 100.f;
+    float nearestTileX = 0.f, nearestTileY = 0.f, nearestK = 0.f;
+    const int densitySteps = (int)std::max(1.f, density - 10.f);
+    const float threshold = std::min(1.f, density / 11.f);
+    const float actualPhase = phase * 6.28318f;
+    for (int i = -1; i <= 1; ++i) {
+        for (int j = -1; j <= 1; ++j) {
+            for (int k = 0; k < densitySteps; ++k) {
+                float px, py;
+                fxDotsRand2v(tileX + 523.135f * (float)k + (float)i + 123.215f * seed,
+                             tileY + 621.265f * (float)k + (float)j + 272.055f * seed, &px, &py);
+                const float sl = std::max(0.00001f, slack);
+                px = 0.5f + 0.5f * std::sin(actualPhase + 6.2831f * px) * sl;
+                py = 0.5f + 0.5f * std::sin(actualPhase + 6.2831f * py) * sl;
+                const float dx = (float)i + px - tpX;
+                const float dy = (float)j + py - tpY;
+                const float dist = std::sqrt(dx * dx + dy * dy);
+                const float tix = (float)i + tileX, tiy = (float)j + tileY;
+                const float ck = fxDotsRandom(tix + (float)k + 541.117f * (seed + 0.1f),
+                                              tiy - (float)k + 163.713f * (seed + 0.1f));
+                if (dist < maxDist && ck <= threshold) {
+                    maxDist = dist;
+                    nearestK = (float)k;
+                    nearestTileX = tix;
+                    nearestTileY = tiy;
+                }
+            }
+        }
+    }
+    *colorPct = fxDotsRandom(nearestTileX + nearestK + 721.117f * seed,
+                             nearestTileY - nearestK + 433.215f * seed);
+    *intensity = fxSstep(1.f - radius, 1.f - radius * (1.f - feather), 1.f - maxDist);
+}
+
+void fxDotsAmMap(float tr, float tg, float tb, float ta, float rr, float rg, float rb, float ra,
+                 float fill, int blendMode, float alpha,
+                 float* outR, float* outG, float* outB, float* outA) {
+    // AM's dots2 compose, line by line: over = tex * fill; the blend branches composite
+    // rcolor (premultiplied) with over; the output mixes over -> result by alpha.
+    const float orr = tr * fill, og = tg * fill, ob = tb * fill, oa = ta * fill;
+    float resr, resg, resb, resa;
+    if (blendMode == 1 || blendMode == 2) {
+        const float tinv = ta > 1e-5f ? 1.f / ta : 0.f;
+        const float rinv = ra > 1e-5f ? 1.f / ra : 0.f;
+        float cr, cg, cb;
+        if (blendMode == 1) {
+            cr = (tr * tinv) * (rr * rinv);
+            cg = (tg * tinv) * (rg * rinv);
+            cb = (tb * tinv) * (rb * rinv);
+        } else {
+            cr = 1.f - (1.f - tr * tinv) * (1.f - rr * rinv);
+            cg = 1.f - (1.f - tg * tinv) * (1.f - rg * rinv);
+            cb = 1.f - (1.f - tb * tinv) * (1.f - rb * rinv);
+        }
+        resr = fxT3Clamp(cr, 0.f, 1.f) * ra * ta;
+        resg = fxT3Clamp(cg, 0.f, 1.f) * ra * ta;
+        resb = fxT3Clamp(cb, 0.f, 1.f) * ra * ta;
+        resa = ra * ta;
+        resr = fxT3Clamp(resr + orr * (1.f - resa), 0.f, 1.f);
+        resg = fxT3Clamp(resg + og * (1.f - resa), 0.f, 1.f);
+        resb = fxT3Clamp(resb + ob * (1.f - resa), 0.f, 1.f);
+        resa = resa + oa * (1.f - resa);
+    } else {
+        resr = rr + orr * (1.f - ra);
+        resg = rg + og * (1.f - ra);
+        resb = rb + ob * (1.f - ra);
+        resa = ra + oa * (1.f - ra);
+    }
+    *outR = orr + (resr - orr) * alpha;
+    *outG = og + (resg - og) * alpha;
+    *outB = ob + (resb - ob) * alpha;
+    *outA = oa + (resa - oa) * alpha;
+}
+
+float fxRidgesAmField(float uvX, float uvY, float intensity, float scale, float evolution,
+                      float seed, int octaves, float offX, float offY, float parX, float parY,
+                      float stretchX, float stretchY, int version, float aspect) {
+    // AM's ridges2 / ridges main + ridgedMF, line by line.
+    float stX = uvX * aspect + offX * -1.f / 500.f;
+    float stY = uvY + offY / 500.f;
+    stX += std::fmod(821.921f * seed, 4.365f);
+    stY += std::fmod(437.317f * seed, 7.701f);
+    const float parrX = parX * -1.f / 100.f;
+    const float parrY = parY / 100.f;
+    float svX, svY;
+    if (version == 1) {
+        if (stretchX < 0.f) { svX = scale - stretchX; svY = scale; }
+        else { svX = scale; svY = scale + stretchX; }
+    } else {
+        svX = scale * stretchX;
+        svY = scale * stretchY;
+    }
+    float px, py;
+    if (version == 1) {
+        px = (stX - 0.5f) * svX + 0.5f;
+        py = (stY - 0.5f) * svY + 0.5f;
+    } else {
+        px = (stX - 0.5f) / svX + 0.5f;
+        py = (stY - 0.5f) / svY + 0.5f;
+    }
+    // ridgedMF: sum of ridge(snoise(p * freq, evo)) * amp * (1 + prev), freq x2, amp x0.5.
+    float sum = 0.f;
+    float freq = 1.f, amp = 0.5f, prev = 1.f;
+    const int n = std::max(1, std::min(9, octaves));
+    for (int i = 0; i < n; ++i) {
+        float h = std::fabs(fxSnoise3(px * freq, py * freq, evolution));
+        h = 0.9f - h;
+        h = h * h;
+        sum += h * amp;
+        sum += h * amp * prev;
+        prev = h;
+        freq *= 2.f;
+        px += parrX;
+        py += parrY;
+        amp *= 0.5f;
+    }
+    return sum * intensity;
+}
+
+namespace {
+void fxBendCurve(float px, float py, float a, bool vertical, float* outX, float* outY) {
+    // AM's bendwarp bend(), line by line (l = w = 1 at both call sites).
+    if (std::fabs(a) < 0.001f) { *outX = px; *outY = py; return; }
+    const float s = a > 0.f ? 1.f : -1.f;
+    if (vertical) {
+        const float ra = 0.5f / a;
+        const float qx = px - ra;
+        const float len = std::sqrt(qx * qx + py * py);
+        *outX = (std::fabs(ra) - len) * s;
+        *outY = ra * std::atan2(s * py, -s * qx);
+    } else {
+        const float ra = 0.5f / a;
+        const float qy = py - ra;
+        const float len = std::sqrt(px * px + qy * qy);
+        *outX = ra * std::atan2(s * px, -s * qy);
+        *outY = (std::fabs(ra) - len) * s;
+    }
+}
+}  // namespace
+
+void fxBendWarpAmUv(float uvX, float uvY, float amountDeg, float offset, int originType,
+                    int oppositeType, float highLimit, float lowLimit, float aspect,
+                    float* outX, float* outY, bool* inside) {
+    // AM's bendwarp shader, line by line (layer space).
+    const float adjOffset = offset * 0.99f;
+    float ax = 0.f, ay = 0.f, bx = 0.f, by = 0.f, cx = 0.f, cy = 0.f;
+    bool vertical = false;
+    float angleVal = amountDeg;
+    switch (originType) {
+        case 0: ax = adjOffset; ay = 0.5f; bx = 1.f; by = 0.5f; cx = 0.f; cy = 0.5f; break;
+        case 1: ax = 1.f - adjOffset; ay = 0.5f; bx = 0.f; by = 0.5f; cx = 1.f; cy = 0.5f; angleVal = -amountDeg; break;
+        case 2: ax = 0.5f; ay = 1.f - adjOffset; bx = 0.5f; by = 0.f; cx = 0.5f; cy = 1.f; vertical = true; break;
+        default: ax = 0.5f; ay = adjOffset; bx = 0.5f; by = 1.f; cx = 0.5f; cy = 0.f; vertical = true; angleVal = -amountDeg; break;
+    }
+    float a2bx = bx - ax, a2by = by - ay;
+    const float check = a2bx * (uvX - ax) + a2by * (uvY - ay);
+    if (check < 0.f) {
+        if (oppositeType == 0 || adjOffset <= 0.f) {
+            *outX = uvX; *outY = uvY; *inside = true;
+            return;
+        }
+        if (adjOffset < lowLimit && lowLimit != 0.f) angleVal *= (adjOffset / lowLimit);
+        a2bx = cx - ax; a2by = cy - ay;
+        if (oppositeType == 2) angleVal = -angleVal;
+    } else {
+        if (adjOffset >= highLimit * 0.99f) {
+            const float den = 0.99f - highLimit * 0.99f;
+            if (den != 0.f) angleVal *= (1.f - (adjOffset - highLimit * 0.99f) / den);
+        }
+    }
+    const float len = std::sqrt(a2bx * a2bx + a2by * a2by);
+    angleVal = angleVal * 0.01745329252f * 0.5f / (len > 0.f ? len : 1.f);
+    float rx, ry;
+    if (vertical) {
+        fxBendCurve((uvX - ax) * aspect, uvY - ay, angleVal, true, &rx, &ry);
+        *outX = rx / aspect + ax;
+        *outY = ry + ay;
+    } else {
+        fxBendCurve(uvX - ax, (uvY - ay) / aspect, angleVal, false, &rx, &ry);
+        *outX = rx + ax;
+        *outY = ry * aspect + ay;
+    }
+    *inside = *outX >= 0.f && *outX <= 1.f && *outY >= 0.f && *outY <= 1.f;
+}
+
+float fxDisplaceMapAmPick(float r, float g, float b, int type) {
+    switch (type) {
+        case 0: return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        case 1: return r;
+        case 2: return g;
+        default: return b;
+    }
+}
+
+float fxDisplaceMapAmShape(float p, bool fromCtr, bool invert) {
+    if (fromCtr) p = (p - 0.5f) * 2.f;
+    if (invert) p = 1.f - p;
+    return p;
+}
+
+void fxDisplaceMapAmUv(float snX, float snY, float offX, float offY, float px, float py, float a,
+                       float layerAspect, float* outX, float* outY) {
+    // AM's displacemap shader: adjOffs = offs / 1000, x scaled by the layer aspect and
+    // negated, then weighted by the picked channels and the pixel's own alpha.
+    float ax = offX / 1000.f;
+    float ay = offY / 1000.f;
+    ax *= layerAspect * -1.f;
+    ax *= px * a;
+    ay *= py * a;
+    *outX = snX + ax;
+    *outY = snY + ay;
+}
+
+void fxDisplaceMapAmEdge(float uvX, float uvY, int edges, float texA, float* outX, float* outY,
+                         float* tint, bool* inside) {
+    // AM's displacemap edges branches: 0 repeat keeps the raw position and does NOT scale
+    // by the pixel's alpha; 1 mirror-folds; 2 zeroes outside; 3 tiles; anything else raw.
+    auto fold = [](float v) {
+        const float m = v - 2.f * std::floor(v / 2.f);
+        return 1.f - std::fabs(m - 1.f);
+    };
+    auto tile = [](float v) { return v - std::floor(v); };
+    *inside = true;
+    switch (edges) {
+        case 0: *outX = uvX; *outY = uvY; *tint = 1.f; break;
+        case 1: *outX = fold(uvX); *outY = fold(uvY); *tint = texA; break;
+        case 2:
+            *outX = uvX; *outY = uvY; *tint = texA;
+            *inside = uvX >= 0.f && uvX <= 1.f && uvY >= 0.f && uvY <= 1.f;
+            break;
+        case 3: *outX = tile(uvX); *outY = tile(uvY); *tint = texA; break;
+        default: *outX = uvX; *outY = uvY; *tint = texA; break;
+    }
+}
+
+void fxDisplaceMapRadAmUv(float snX, float snY, float lcX, float lcY, float cX, float cY,
+                          float offsAngleDeg, float offsRadius, float px, float py, float a,
+                          float screenW, float screenH, float* outX, float* outY) {
+    // AM's displacemaprad shader, line by line: around the layer centre (shifted by the
+    // centre point), aspect-corrected, rotated by the picked angle, pushed out radially.
+    const float adjA = offsAngleDeg * px * a;
+    const float adjR = offsRadius * py * a;
+    const float cenX = cX / 1000.f * -1.f;
+    const float cenY = cY / 1000.f;
+    float ux = snX - (lcX - cenX);
+    float uy = snY - (lcY - cenY);
+    const float asp = screenW != 0.f ? screenH / screenW : 1.f;
+    uy *= asp;
+    const float rad = adjA * 0.0174533f;
+    const float cs = std::cos(rad), sn = std::sin(rad);
+    float rx = ux * cs + uy * sn;
+    float ry = -ux * sn + uy * cs;
+    const float diag = std::sqrt(screenW * screenW + screenH * screenH);
+    const float len = std::sqrt(rx * rx + ry * ry);
+    if (len > 1e-9f && diag > 0.f) {
+        const float k = adjR / diag;
+        rx += rx / len * k;
+        ry += ry / len * k;
+    }
+    ry /= asp;
+    *outX = rx + (lcX - cenX);
+    *outY = ry + (lcY - cenY);
+}
+
+void fxSmoothBevelAmEncode(float v, float* out0, float* out1) {
+    // AM's smoothbevel encodeFloat: enc = fract((1, 255) * v); enc.x -= enc.y / 255.
+    float e1 = 255.f * v;
+    e1 = e1 - std::floor(e1);
+    float e0 = v - std::floor(v);
+    e0 -= e1 / 255.f;
+    *out0 = e0;
+    *out1 = e1;
+}
+
+float fxSmoothBevelAmDecode(float e0, float e1) {
+    return e0 + e1 / 255.f;
+}
+
+void fxSmoothBevelAmLights(float tl, float tr, float bl, float br, float angleSdeg,
+                           float angleDdeg, float elevS, float elevD, float spec,
+                           float* outLumS, float* outLumD) {
+    // AM's smoothbevel shading: v is the mean of the four corner vectors; the lights are
+    // (cos a, -sin a, -elevation). pow of a negative dot is undefined in GLSL; clamped to
+    // 0 here (a surface facing away from the specular light gets no shine).
+    const float vx = (-bl + br - tl + tr) / 4.f;
+    const float vy = (-bl - br + tl + tr) / 4.f;
+    const float vz = -(bl + br + tl + tr) / 4.f;
+    const float vl = std::sqrt(vx * vx + vy * vy + vz * vz);
+    if (vl < 1e-9f) { *outLumS = 0.f; *outLumD = 0.f; return; }
+    auto light = [&](float angleDeg, float elev, float* lx, float* ly, float* lz) {
+        const float a = angleDeg * 0.0174533f;
+        const float x = std::cos(a), y = -std::sin(a), z = -elev;
+        const float l = std::sqrt(x * x + y * y + z * z);
+        *lx = x / l; *ly = y / l; *lz = z / l;
+    };
+    float lx, ly, lz;
+    light(angleSdeg, elevS, &lx, &ly, &lz);
+    const float dotS = (vx * lx + vy * ly + vz * lz) / vl;
+    light(angleDdeg, elevD, &lx, &ly, &lz);
+    const float dotD = (vx * lx + vy * ly + vz * lz) / vl;
+    *outLumS = std::pow(std::max(dotS, 0.f), spec);
+    *outLumD = dotD;
+}
+
+void fxLightGlowAmPick(float r, float g, float b, float a, float threshold, float blend,
+                       float colR, float colG, float colB,
+                       float* outR, float* outG, float* outB, float* outA) {
+    // AM's lightglow pass 0: over the threshold the pixel mixes toward the tint colour
+    // (premultiplied by its own alpha); under it, black.
+    const float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    if (lum > threshold) {
+        *outR = r + (colR * a - r) * blend;
+        *outG = g + (colG * a - g) * blend;
+        *outB = b + (colB * a - b) * blend;
+        *outA = a;
+    } else {
+        *outR = *outG = *outB = *outA = 0.f;
+    }
+}
+
+float fxLightGlowAmKernel(float strength, float previewW, float previewH) {
+    // AM's lightglow kernel size: strength / 2 * 1.14 / 4 / 3 * |preview size|.
+    return strength / 2.f * 1.14f / 4.f / 3.f * std::sqrt(previewW * previewW + previewH * previewH);
+}
+
+void fxLightGlowAmComposite(float br, float bg, float bb, float ba,
+                            float rr, float rg, float rb, float ra,
+                            float intensity, float halo, float blend,
+                            float colR, float colG, float colB, float alpha,
+                            float* outR, float* outG, float* outB, float* outA) {
+    // AM's lightglow pass 2 tail (after the blur): screen the unpremultiplied glow over
+    // the base and composite, line by line.
+    const float inv = 1.f / std::max(ra, 0.0001f);
+    float ar = rr * inv * intensity;
+    float ag = rg * inv * intensity;
+    float ab = rb * inv * intensity;
+    const float h = (1.f - fxSstep(0.f, 0.15f, std::fabs(ra - 0.15f))) * halo;
+    const float hr = (ar / 0.15f * halo) + (colR * halo - ar / 0.15f * halo) * blend;
+    const float hg = (ag / 0.15f * halo) + (colG * halo - ag / 0.15f * halo) * blend;
+    const float hb = (ab / 0.15f * halo) + (colB * halo - ab / 0.15f * halo) * blend;
+    ar += hr * h;
+    ag += hg * h;
+    ab += hb * h;
+    const float binv = 1.f / std::max(ba, 0.0001f);
+    const float sr = 1.f - (1.f - ar) * (1.f - br * binv);
+    const float sg = 1.f - (1.f - ag) * (1.f - bg * binv);
+    const float sb = 1.f - (1.f - ab) * (1.f - bb * binv);
+    const float bA = std::min(ba, ra) * alpha;
+    *outR = br * (1.f - bA) + sr * bA;
+    *outG = bg * (1.f - bA) + sg * bA;
+    *outB = bb * (1.f - bA) + sb * bA;
+    *outA = ba * (1.f - bA) + bA;
+}
+
+float fxInnerGlowAmStride(float radius2) {
+    // AM's inner-glow stride: q = max(radius2^1.24 / radius2, radius2 / 40).
+    if (radius2 <= 0.f) return 1.f;
+    const float a = std::pow(radius2, 1.24f) / radius2;
+    const float b = radius2 / 40.f;
+    return std::max(a, b);
+}
+
+float fxInnerGlowAmP(float radius2, float hardness, float nearestInside) {
+    // AM: smoothstep(radius2 + 0.51, hardness * radius2 - 0.51, nearestInside) — REVERSED
+    // edges (fxSstep's formula): 1 at the edge (distance 0), 0 a radius inside.
+    return fxSstep(radius2 + 0.51f, hardness * radius2 - 0.51f, nearestInside);
+}
+
+void fxInnerGlowAmMap(float tr, float tg, float tb, float ta,
+                      float cr, float cg, float cb, int blendMode, float alpha, float p,
+                      float* outR, float* outG, float* outB, float* outA) {
+    // AM's inner-glow pass 1 tail: blend the colour against the pixel's STRAIGHT colour,
+    // re-premultiply by the pixel alpha, then mix(tex, result, alpha * p). AM divides by
+    // the alpha unguarded; the guard only changes a=0 pixels, whose result is 0 either way.
+    const float inv = 1.f / std::max(ta, 0.0001f);
+    float rr, rg, rb;
+    if (blendMode == 1) {
+        rr = tr * inv * cr; rg = tg * inv * cg; rb = tb * inv * cb;
+    } else if (blendMode == 2) {
+        rr = 1.f - (1.f - tr * inv) * (1.f - cr);
+        rg = 1.f - (1.f - tg * inv) * (1.f - cg);
+        rb = 1.f - (1.f - tb * inv) * (1.f - cb);
+    } else {
+        rr = cr; rg = cg; rb = cb;
+    }
+    const float m = alpha * p;
+    *outR = tr + (rr * ta - tr) * m;
+    *outG = tg + (rg * ta - tg) * m;
+    *outB = tb + (rb * ta - tb) * m;
+    *outA = ta;   // the result's alpha is the pixel's own (vec4(rgb, 1) * tex.a)
 }
 
 }  // namespace am

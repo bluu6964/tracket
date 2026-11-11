@@ -130,10 +130,11 @@ enum FxType : int {
                             // kFxColor mode 17 (the program's straight-space maths is AM's own).
     // v164: the parked tier of Alight's own effects, hunt round 2 — every definition recovered
     // from the same public APK asset dump (hunt-staging/defs-batch3, see its SOURCES.md). Two of
-    // the tier stay parked with the precise missing evidence in the ROADMAP: lightglow (its
-    // downsample pass names no shader — the kernel is a host built-in) and the displacemap
-    // family incl. displacemaprad (they sample the running composite; no def states whether
-    // that is backdrop-only or backdrop+self).
+    // the tier stayed parked at v164 and shipped at v165 (defs-batch4): lightglow (re-reading
+    // the def showed all four passes share ONE shader branched on acPass — no host-named
+    // downsample shader exists in it) and the displacemap family (the defs' srcType evidence —
+    // inputImg is "content", comp is "comp" — pins comp as the composite BELOW the layer,
+    // which is the renderer's existing backdrop capture).
     FX_CHROMA_KEY_AM = 75,  // p0 key colour packed 0xRRGGBB, p1 threshold 0..100 (% of AM's raw),
                             // p2 feather 0..100 (%), p3 defringe 0/1, p4 invert 0/1. Dedicated
                             // pass (it scales alpha and defringes in premultiplied space).
@@ -179,6 +180,114 @@ enum FxType : int {
                              // fgOffset have no slot: the importer warns when one is not at its
                              // default (all are, in the corpus instance).
     FX_FILL_BEHIND_AM_EXT = 89,
+    // v165: Alight's effects tier 3, hunt round 3 (hunt-staging/defs-batch4, see its
+    // SOURCES.md). Every value is stored in AM's own units unless noted; keyframed primaries
+    // ride AmFxEval tails like the earlier tiers. Only extrude stays parked (its vertex
+    // shader needs a host-supplied orient matrix from AM's 3D system — see ROADMAP).
+    FX_WAVE_WARP_AM = 90,   // p0 phase (turns), p1 direction a1d (deg), p2 spacing m1 (AM raw),
+                            // p3 magnitude m2 (AM raw), p4 warp angle a2d (deg), p5 damping
+                            // -1..1, p6 damping spacing -1..1; q0 damping origin 0..1,
+                            // q1 screen space 0/1 (the pattern is layer-anchored here, like
+                            // Hex Shift's). kFxWarp mode 18.
+    FX_WAVE_WARP_AM_EXT = 91,
+    FX_CIRCULAR_RIPPLE_AM = 92,  // p0 strength (AM raw -1..1), p1 radius 0..0.8, p2 frequency
+                                 // (AM raw), p3 feather 0..1, p4 phase (turns), p5/p6 centre
+                                 // point (AM units, /1000 in the shader). circularripple's
+                                 // shader is byte-identical to circularripple2's: one mapping.
+                                 // kFxWarp mode 19.
+    FX_STRETCH_AM = 93,     // p0 scale (AM raw 0.01..50), p1 angle (deg), p2 content only 0/1,
+                            // p3 version (1 = stretch, 2 = stretch2: their output rules differ
+                            // under contentOnly). kFxWarp mode 20.
+    FX_SQUEEZE_AM = 94,     // p0 strength (AM raw -2..2; the def pins the axis rule build 101
+                            // refused to guess). kFxWarp mode 21.
+    FX_FRACTAL_WARP_AM = 95,  // p0 magnitude (AM raw), p1 scale, p2 intensity (lacunarity),
+                              // p3 octaves 1..9, p4/p5 the offs point components (AM units,
+                              // separate so keyframed points animate), p6 parallax x;
+                              // q0 parallax y. kFxWarp mode 22.
+    FX_FRACTAL_WARP_AM_EXT = 96,
+    FX_STRIPES_AM = 97,     // p0 amount (AM raw), p1 width 0..1, p2 angle (deg), p3 phase
+                            // (AM raw), p4 colour packed 0xRRGGBB (its alpha is always 1:
+                            // AM declares the colour alpha="false"), p5 smoothing 0..0.5,
+                            // p6 punch out 0/1. kFxWarp mode 23.
+    FX_TURBULENT_DISPLACE3_AM = 98,  // p0 intensity (AM raw), p1 scale (AM raw), p2 evolution,
+                                     // p3 seed, p4 direction (0 X, 1 Y, 2 XY, 3 R, 4 phi-r,
+                                     // 5 phi), p5 octaves 1..9, p6 offs (bias) -1..1;
+                                     // q0/q1 parallax point components, q2/q3 position point
+                                     // components, q4/q5 stretch x/y, q6 flags (screen
+                                     // space + 2 * single axis; screen space stays
+                                     // layer-anchored here). kFxWarp mode 24.
+    FX_TURBULENT_DISPLACE3_AM_EXT = 99,
+    FX_ROUGHEN_EDGES_AM = 100,  // p0 strength (AM raw), p1 detail, p2 evolution, p3 seed,
+                                // p4 octaves 1..9. turbulentdisplace3's shader with direction
+                                // R hardcoded; the output is the layer times the displaced
+                                // sample's alpha (edge erosion). kFxWarp mode 25.
+    FX_STREAKS_AM = 101,    // p0 strength (AM raw 0..1), p1 angle (deg), p2 bias -1..1,
+                            // p3 alpha 0..1, p4/p5/p6 the R/G/B combine modes; q0 the A
+                            // combine mode (modes: 0 min, 1 max, 2 off, 3 average).
+                            // kFxBlur2 mode 9.
+    FX_STREAKS_AM_EXT = 102,
+    FX_COLOR_HOT_AM = 103,  // p0..p2 the colour hue-disc (hue deg, saturation 0..1, bias),
+                            // p3..p5 the tint hue-disc. kFxColor mode 21.
+    FX_COLORIZE_AM = 104,   // p0 tint hue (deg), p1 tint amount 0..1 (the hue-disc's y).
+                            // kFxColor mode 22.
+    FX_HIGHLIGHT_SHADOW_AM = 105,  // p0 shadows 0..2, p1 highlights 0..2 (GPUImage's formula,
+                                   // verbatim in AM's def). kFxColor mode 23.
+    FX_SPOT_COLOR_AM = 106,  // p0 colour packed 0xRRGGBB, p1 threshold (AM raw), p2 feather
+                             // (AM raw), p3 saturation (AM raw), p4 choke. kFxColor mode 24.
+    FX_DISSOLVE_AM = 107,   // p0 amount 0..1, p1 seed. kFxStyle mode 15.
+    FX_SIMPLE_STARS_AM = 108,  // p0 scale, p1 star size, p2 star feather, p3 colour packed
+                               // 0xRRGGBB, p4 star count 1..50, p5 brightness, p6 blend mode
+                               // (0 normal, 1 multiply, 2 screen, 3 punchout); q0/q1/q2 the
+                               // star parallax x/y/z components (AM units), q3 alpha 0..1.
+                               // kFxStyle mode 16.
+    FX_SIMPLE_STARS_AM_EXT = 109,
+    FX_DOTS_AM = 110,       // p0 scale, p1 phase (turns), p2 radius, p3 feather, p4/p5 the two
+                            // colours packed 0xRRGGBB, p6 density 1..13; q0/q1 the position
+                            // point components (AM units), q2 fill 0..1, q3 alpha 0..1,
+                            // q4 blend mode (0 normal, 1 multiply, 2 screen), q5 seed,
+                            // q6 slack 0..1. kFxStyle mode 17.
+    FX_DOTS_AM_EXT = 111,
+    FX_RIDGES_AM = 112,     // p0 intensity, p1 scale, p2 evolution, p3 seed, p4 octaves 1..9,
+                            // p5/p6 colours 1/2 packed 0xRRGGBB; q0/q1 the offs point
+                            // components, q2/q3 the parallax point components, q4/q5
+                            // stretch x/y, q6 version (1 = ridges: scalar stretch,
+                            // (st-.5)*scaleVec; 2 = ridges2: point stretch, (st-.5)/scaleVec).
+                            // kFxStyle mode 18.
+    FX_RIDGES_AM_EXT = 113,
+    FX_BEND_WARP_AM = 114,  // p0 amount (deg), p1 offset 0..1, p2 origin type (0 left,
+                            // 1 right, 2 top, 3 bottom), p3 opposite type (0 freeze, 1 bend
+                            // same, 2 bend opposite), p4 high limit 0..1, p5 low limit 0..1.
+                            // kFxWarp mode 26.
+    FX_DISPLACE_MAP_AM = 115,  // p0/p1 the offs point components (AM units, /1000 in the
+                               // shader), p2 X source (0 luma, 1 R, 2 G, 3 B), p3 Y source,
+                               // p4 edges (0 repeat, 1 mirror, 2 transparent, 3 tile),
+                               // p5 from centre 0/1, p6 invert 0/1. displacemap3's shader is
+                               // byte-identical to displacemap2's. Dedicated backdrop pass
+                               // (samples the composite below the layer, like Copy
+                               // Background's source).
+    FX_DISPLACE_MAP_RAD_AM = 116,  // p0 offs angle (deg), p1 offs radius (AM raw), p2/p3 the
+                                   // phi/rho sources, p4 edges, p5 from centre 0/1,
+                                   // p6 invert 0/1; q0/q1 the centre point components
+                                   // (AM units). Dedicated pass.
+    FX_DISPLACE_MAP_RAD_AM_EXT = 117,
+    FX_SMOOTH_BEVEL_AM = 118,  // p0 radius (AM raw), p1 diffuse angle (deg), p2 specular
+                               // angle (deg), p3 diffuse intensity 0..1, p4 specular
+                               // intensity 0..1, p5 diffuse elevation, p6 specular elevation;
+                               // q0 spec coefficient, q1 diffuse colour packed 0xRRGGBB,
+                               // q2 specular colour packed. Dedicated two-pass (X distance
+                               // scan into a packed buffer, then the Y scan + shading).
+    FX_SMOOTH_BEVEL_AM_EXT = 119,
+    FX_LIGHT_GLOW_AM = 120,  // p0 strength (AM raw), p1 threshold 0..1, p2 intensity,
+                             // p3 colour packed 0xRRGGBB, p4 blend 0..1, p5 halo, p6 alpha 0..1.
+                             // Dedicated four-pass (bright-pick + incremental Gaussian at
+                             // half res, composite, copy up).
+    FX_INNER_GLOW_AM = 121,  // p0 radius (AM raw 0..400), p1 alpha 0..1, p2 hardness 0..1,
+                             // p3 colour packed 0xRRGGBB (the def's colour alpha is never
+                             // read by its shader), p4 blend mode (0 normal, 1 multiply,
+                             // 2 screen). Dedicated two-pass distance scan, like Smooth
+                             // Bevel's buffer (X scan, then Y scan + shade): the glow
+                             // colour blends over the layer by alpha * p, p the reversed
+                             // smoothstep of the distance to the nearest transparent pixel.
     FX_MAX = FX_COPY_BG
 };
 
@@ -408,6 +517,193 @@ void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturatio
                       float* outR, float* outG, float* outB, float* outA);
 // Spin Blur (AM's spinblur2) has no scalar CPU reference: its tap count depends on the pixel's
 // radius, so the host test pins fxShaderOf / fxIsIdentity and the importer pins only.
+
+// ---- v165: Alight's tier 3 (hunt round 3; the GLSL twins live in fx_shaders.h warp modes
+// 18..26 / colour modes 21..24 / blur2 mode 9 / style modes 15..18 and in
+// renderer_effects.cpp's dedicated passes) ----
+// CPU reference of Wave Warp (AM's wavewarp2): the sample position for a fragment at
+// (uvX, uvY) (layer norm, like every warp here). All params are AM units (angles degrees).
+void fxWaveWarpAmUv(float uvX, float uvY, float phase, float a1d, float m1, float m2, float a2d,
+                    float damping, float dampingSpace, float dampingOrigin, float* outX, float* outY);
+// CPU reference of Circular Ripple (AM's circularripple2 = circularripple): the sample
+// position for a fragment at (uvX, uvY); (cX, cY) is the centre point in AM units,
+// aspectYX = picture height / width (AM corrects with the screen's; the layer's is the
+// stand-in here, identical for full-frame layers). strength / radius / frequency / feather /
+// phase are AM units.
+void fxCircularRippleAmUv(float uvX, float uvY, float strength, float radius, float frequency,
+                          float feather, float phase, float cX, float cY, float aspectYX,
+                          float* outX, float* outY);
+// CPU reference of Stretch (AM's stretch2 / stretch): the sample position for a fragment at
+// (uvX, uvY); scale / angleDeg are AM units. The two versions share this map and differ only
+// in the contentOnly compose (fxStretchAmMap).
+void fxStretchAmUv(float uvX, float uvY, float scale, float angleDeg, float* outX, float* outY);
+// The contentOnly compose of Stretch: S is the displaced sample, T the fragment's own pixel
+// (both premultiplied). The sample is masked by T's alpha first; v2 keeps the masked
+// sample alone, v1 composites T under it. Without contentOnly the output is S itself
+// (no twin needed).
+void fxStretchAmMap(float sr, float sg, float sb, float sa, float tr, float tg, float tb, float ta,
+                    int version, float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Squeeze (AM's squeeze): the sample position for a fragment at (uvX, uvY);
+// strength is AM raw (-2..2). The def's axis rule: x is divided by a factor driven by |y|
+// (with -strength), y by a factor driven by |x| (with +strength).
+void fxSqueezeAmUv(float uvX, float uvY, float strength, float* outX, float* outY);
+// McGuire value noise + fbm, AM's fractalwarp4 / dots2 helper set (line by line).
+float fxValueNoise(float stX, float stY);
+float fxValueFbm(float stX, float stY, float parX, float parY, int octaves, float intensity);
+// CPU reference of Fractal Warp (AM's fractalwarp4): the sample position for a fragment at
+// (uvX, uvY); offs / parallax are AM points (x, y), aspect = picture width / height.
+void fxFractalWarpAmUv(float uvX, float uvY, float mag, float scale, float intensity, int octaves,
+                       float offX, float offY, float parX, float parY, float aspect,
+                       float* outX, float* outY);
+// CPU reference of Stripes (AM's stripes): the band value (0..1) at a fragment; st is the
+// def's layer space, ((uv flipped to top-down) * picture px - centre px) / |picture px| —
+// computed here from (uvX, uvY) and the picture size. amount / phase / width / smoothing /
+// angleDeg are AM units.
+float fxStripesAmBand(float uvX, float uvY, float picW, float picH, float amount, float width,
+                      float angleDeg, float phase, float smoothing);
+// Stripes' compose: T is the fragment's pixel (premultiplied), the colour is straight
+// (its alpha is 1 in AM); punchout multiplies T by (1 - band) instead.
+void fxStripesAmMap(float tr, float tg, float tb, float ta, float colR, float colG, float colB,
+                    float band, bool punchout, float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Turbulent Displace 3 (AM's turbulentdisplace3): the sample position for a
+// fragment at (uvX, uvY) and whether it lands inside the layer (AM multiplies the sample by
+// the [0,1]^2 step). direction is AM's selector (0 X, 1 Y, 2 XY, 3 R, 4 φr, 5 φ); offs /
+// position / parallax are AM points; aspect = picture width / height.
+void fxTurbulentDisplace3AmUv(float uvX, float uvY, float intensity, float scale, float evolution,
+                              float seed, int direction, int octaves, float offs,
+                              float parX, float parY, float posX, float posY,
+                              float stretchX, float stretchY, bool singleAxis, float aspect,
+                              float* outX, float* outY, bool* inside);
+// CPU reference of Roughen Edges (AM's roughenedges): the displacement p of a fragment is
+// returned via *outP and its displaced sample position via (*outX, *outY) — the effect's
+// output is the fragment's own pixel times the displaced sample's alpha (the renderer does
+// that multiply; the twin pins the geometry). strength / detail / evolution / seed are AM
+// units; aspect = picture width / height.
+void fxRoughenEdgesAmUv(float uvX, float uvY, float strength, float detail, float evolution,
+                        float seed, int octaves, float aspect,
+                        float* outX, float* outY, float* outP);
+// Streaks (AM's streaks): the tap velocity (norm units) and sample count for a strength /
+// angle; texelX / texelY are the picture texel size, aspectYX = picture height / width (AM
+// corrects with the screen's; the layer's is the stand-in). One combine step and the
+// per-channel finish (mode 3 divides by the sample count), AM's per-channel modes.
+void fxStreaksAmVelocity(float strength, float angleDeg, float texelX, float texelY,
+                         float aspectYX, float* outVx, float* outVy, int* outSamples);
+float fxStreaksAmCombine(float acc, float tap, int mode);
+float fxStreaksAmFinish(float acc, int mode, int nSamples);
+// CPU reference of Colour Hot (AM's colorhot): the pixel is PREMULTIPLIED in and out (AM
+// computes its luminance on the sampled colour). The two hue-discs are (hue deg, saturation
+// 0..1, bias) triples.
+void fxColorHotAmMap(float r, float g, float b, const float colorDisc[3], const float tintDisc[3],
+                     float* outR, float* outG, float* outB);
+// CPU reference of Colorize (AM's colorize): the pixel is PREMULTIPLIED in and out; the
+// chroma mix factor is amount * a, like AM (and like Color Tint's). hueDeg is AM raw.
+void fxColorizeAmMap(float pr, float pg, float pb, float pa, float hueDeg, float amount,
+                     float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Highlights & Shadows (AM's highlightshadow, GPUImage's formula): the
+// pixel is PREMULTIPLIED in and out (AM divides the sampled colour by its own luminance;
+// a black pixel maps to black — the division is guarded, the mixes still apply).
+void fxHighlightShadowAmMap(float r, float g, float b, float shadows, float highlights,
+                            float* outR, float* outG, float* outB);
+// CPU reference of Spot Colour (AM's spotcolor2, shader group 0): the pixel is PREMULTIPLIED
+// in and out; the spot colour is straight (its alpha is 1: AM declares it alpha="false").
+// threshold / feather / saturation / choke are AM raw — note the desaturated colour keeps
+// the CHOKED chroma times saturation / 2, like the def.
+void fxSpotColorAmMap(float pr, float pg, float pb, float pa, float spotR, float spotG, float spotB,
+                      float threshold, float feather, float saturation, float choke,
+                      float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Dissolve (AM's dissolve): the per-pixel hash r of a fragment — the
+// fragment is kept when amount <= r. (uvX, uvY) is the layer norm (y up, like every warp
+// here; AM builds its grid from the top-down pixel position — the hash input here is
+// floor((uv - 0.5) * picture px) / picture px, the same values). seed is AM raw.
+float fxDissolveAmHash(float uvX, float uvY, float picW, float picH, float seed);
+// CPU reference of Simple Stars (AM's simplestars2): the star field value p at a fragment
+// (before the colour / blend compose, which fxSimpleStarsAmMap pins).
+float fxSimpleStarsAmField(float uvX, float uvY, float scale, float starSize, float starFeather,
+                           float starCount, float parX, float parY, float parZ, float aspect);
+// Simple Stars' compose: T is the fragment's pixel (premultiplied), adj the star colour
+// (premultiplied, fxSimpleStarsAmAdj), blendMode AM's (0..3), alpha the final mix.
+void fxSimpleStarsAmAdj(float colR, float colG, float colB, float p, float brightness,
+                        float* outR, float* outG, float* outB, float* outA);
+void fxSimpleStarsAmMap(float tr, float tg, float tb, float ta,
+                        float ar, float ag, float ab, float aa, float p,
+                        int blendMode, float alpha,
+                        float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Dots (AM's dots2): the dot field at a fragment — *intensity is the disc
+// falloff (0..1), *colorPct the per-dot colour mix. All params AM units; aspect = picture
+// width / height; (posX, posY) is the position point.
+void fxDotsAmField(float uvX, float uvY, float scale, float phase, float radius, float feather,
+                   float density, float seed, float slack, float posX, float posY, float aspect,
+                   float* intensity, float* colorPct);
+// Dots' compose: T is the fragment's pixel (premultiplied); rcolor is the dot colour times
+// the field intensity times T's alpha (premultiplied, built by the caller from
+// fxDotsAmField); over = T * fill. blendMode AM's (0..2), alpha the final mix.
+void fxDotsAmMap(float tr, float tg, float tb, float ta, float rr, float rg, float rb, float ra,
+                 float fill, int blendMode, float alpha,
+                 float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Ridges (AM's ridges2 / ridges): the field value p at a fragment (before
+// the colour mix, which is mix(colour1, colour2, p) * tex.a over the pixel). version selects
+// the stretch rule; offs / parallax are AM points; aspect = picture width / height.
+float fxRidgesAmField(float uvX, float uvY, float intensity, float scale, float evolution,
+                      float seed, int octaves, float offX, float offY, float parX, float parY,
+                      float stretchX, float stretchY, int version, float aspect);
+// CPU reference of Bend Warp (AM's bendwarp): the sample position for a fragment at
+// (uvX, uvY) (layer norm); *inside is AM's [0,1]^2 step on the bent position (the
+// before-start freeze region reports inside with the unbent position). amountDeg / offset /
+// highLimit / lowLimit are AM units; aspect = picture width / height.
+void fxBendWarpAmUv(float uvX, float uvY, float amountDeg, float offset, int originType,
+                    int oppositeType, float highLimit, float lowLimit, float aspect,
+                    float* outX, float* outY, bool* inside);
+// CPU references of Displace Map (AM's displacemap3 = displacemap2): the channel pick
+// (type 0 luma / 1 R / 2 G / 3 B) on a PREMULTIPLIED pixel, the from-centre / invert shaping,
+// the displaced screen-norm position for a layer pixel whose own screen-norm position is
+// (snX, snY) — offs is the AM point, layerAspect = the layer's width / height — and the
+// edges fold (mode 0 repeat keeps the position raw and reports *tint = 1; the other modes
+// fold into [0,1]^2 and report *tint = the pixel's alpha, AM's rule).
+float fxDisplaceMapAmPick(float r, float g, float b, int type);
+float fxDisplaceMapAmShape(float p, bool fromCtr, bool invert);
+void fxDisplaceMapAmUv(float snX, float snY, float offX, float offY, float px, float py, float a,
+                       float layerAspect, float* outX, float* outY);
+void fxDisplaceMapAmEdge(float uvX, float uvY, int edges, float texA, float* outX, float* outY,
+                         float* tint, bool* inside);
+// CPU reference of Displace Map Radial (AM's displacemaprad): the displaced screen-norm
+// position; (lcX, lcY) is the layer centre in screen norm, (cX, cY) the centre point in AM
+// units, screenW / screenH the canvas size in pixels (AM's acScreenSize).
+void fxDisplaceMapRadAmUv(float snX, float snY, float lcX, float lcY, float cX, float cY,
+                          float offsAngleDeg, float offsRadius, float px, float py, float a,
+                          float screenW, float screenH, float* outX, float* outY);
+// CPU references of Smooth Bevel (AM's smoothbevel): the two-byte float packing of the
+// X-distance buffer (encode into two 0..1 channels, decode back), and the final shading —
+// the four smoothed corner distances (0..1) build the normal v; lumS / lumD are the two
+// lights' factors (before colour / intensity / original.a are applied).
+void fxSmoothBevelAmEncode(float v, float* out0, float* out1);
+float fxSmoothBevelAmDecode(float e0, float e1);
+void fxSmoothBevelAmLights(float tl, float tr, float bl, float br, float angleSdeg,
+                           float angleDdeg, float elevS, float elevD, float spec,
+                           float* outLumS, float* outLumD);
+// CPU references of Light Glow (AM's lightglow): the pass-0 bright pick (premultiplied in
+// and out; the colour is straight, its alpha 1 in AM) and the kernel size of the blur
+// passes for a strength and a preview (canvas) size in pixels.
+void fxLightGlowAmPick(float r, float g, float b, float a, float threshold, float blend,
+                       float colR, float colG, float colB,
+                       float* outR, float* outG, float* outB, float* outA);
+float fxLightGlowAmKernel(float strength, float previewW, float previewH);
+// Light Glow's composite (pass 2): base is the layer pixel, result the blurred bright pick
+// (both premultiplied); intensity / halo / blend / alpha are AM raw, the colour straight.
+void fxLightGlowAmComposite(float br, float bg, float bb, float ba,
+                            float rr, float rg, float rb, float ra,
+                            float intensity, float halo, float blend,
+                            float colR, float colG, float colB, float alpha,
+                            float* outR, float* outG, float* outB, float* outA);
+
+// fx_plan.cpp twins of AM's inner-glow (glow-inner.xml): the pass stride
+// q = max(radius2^1.24 / radius2, radius2 / 40) (the X/Y scans step by q pixels, so the
+// tap count radius2/q never exceeds 40), the edge falloff p (AM's reversed smoothstep of
+// the distance to the nearest transparent pixel), and the final blend + mix.
+float fxInnerGlowAmStride(float radius2);
+float fxInnerGlowAmP(float radius2, float hardness, float nearestInside);
+void fxInnerGlowAmMap(float tr, float tg, float tb, float ta,
+                      float cr, float cg, float cb, int blendMode, float alpha, float p,
+                      float* outR, float* outG, float* outB, float* outA);
 
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);

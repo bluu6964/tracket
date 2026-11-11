@@ -291,6 +291,15 @@ bool Renderer::applyFx(const LayerDraw& d, const LayerFx& fx, LayerDraw* out) {
     }
     if (!ensureFxTargets(W, H, lw, lh)) return false;
 
+    // The frame clip (the canvas scissor beginFrame keeps on) must not cut the effects' own
+    // rendering: the targets here are the size of the layer's picture, which can be larger than
+    // the canvas. Saved here, switched off for the whole call, restored with the framebuffer /
+    // viewport at the end.
+    const GLboolean scissorWas = glIsEnabled(GL_SCISSOR_TEST);
+    GLint scissorBox[4] = {0, 0, 0, 0};
+    if (scissorWas) glGetIntegerv(GL_SCISSOR_BOX, scissorBox);
+    glDisable(GL_SCISSOR_TEST);
+
     // Copy Background: the frame so far goes into the backdrop texture before anything is drawn into the effect targets.
     bool needBg = false;
     for (int k = 0; k < fx.nOps; ++k)
@@ -410,6 +419,10 @@ bool Renderer::applyFx(const LayerDraw& d, const LayerFx& fx, LayerDraw* out) {
     glActiveTexture(GL_TEXTURE0);
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
     glViewport(vp[0], vp[1], vp[2], vp[3]);
+    if (scissorWas) {
+        glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3]);
+        glEnable(GL_SCISSOR_TEST);
+    }
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 

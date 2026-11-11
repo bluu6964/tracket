@@ -64,6 +64,21 @@ internal class LayerPainter(
     /** [applyOpacity]: false when the caller applies the layer's opacity itself (blend shader). */
     /** [timeMs]: timeline time of this frame (animated stickers pick their frame from it). */
     fun draw(canvas: Canvas, clip: TimelineClip, applyOpacity: Boolean, timeMs: Long = -1L) {
+        // Final-frame clip (see CanvasClip): the whole layer is clipped to the canvas rect, so a
+        // layer placed outside the scene area contributes nothing to the frame and one crossing
+        // an edge is cut exactly at the edge — the same rule the C++ renderer applies with its
+        // canvas scissor, and the same result Alight Motion gives for off-scene elements.
+        val fr = CanvasClip.frameRect(frameW, frameH)
+        val frameSave = canvas.save()
+        canvas.clipRect(fr[0], fr[1], fr[2], fr[3])
+        try {
+            drawClipped(canvas, clip, applyOpacity, timeMs)
+        } finally {
+            canvas.restoreToCount(frameSave)
+        }
+    }
+
+    private fun drawClipped(canvas: Canvas, clip: TimelineClip, applyOpacity: Boolean, timeMs: Long = -1L) {
         // Text can be drawn by the C++ text engine straight into the overlay bitmap (used by the native exporter).
         // It returns false for anything it cannot do, then the Canvas version below runs as before.
         if (clip.type != LayerType.SHAPE && clip.type != LayerType.STICKER &&

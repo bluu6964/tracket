@@ -233,6 +233,44 @@ int main() {
         drawShape(h.px.data(), h.w, h.h, h.w * 4, z);
         near(h.coverage(), 200.0 * 200.0, 200.0 * 200.0 * 0.01, "crop of a non-uniform rect = half its width");
     }
+    {   // Canvas clip: the shape engine draws into the frame-sized picture both composites use
+        // (preview + export), so an off-canvas shape must contribute nothing and a shape crossing
+        // an edge must be cut exactly at the edge — the painter half of the final-frame clip
+        // (CanvasClip / the renderer's canvas scissor are the composite half).
+        Bmp b(400, 400);
+        Request r = base(CIRCLE); r.cx = 2000.f;  // fully past the right edge (the ST Intro case)
+        drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
+        ok(b.coverage() == 0.0, "circle fully right of the canvas draws nothing");
+        r = base(CIRCLE); r.cy = -500.f;
+        drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
+        ok(b.coverage() == 0.0, "circle fully above the canvas draws nothing");
+        r = base(RECT); r.cx = -500.f;
+        drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
+        ok(b.coverage() == 0.0, "rect fully left of the canvas draws nothing");
+
+        // Crossing the right edge: centre 10 px inside it, radius 100 -> the visible part is the
+        // circle minus the segment past x = 400, and coverage reaches the last column.
+        Bmp c(400, 400);
+        Request q = base(CIRCLE); q.cx = 390.f;
+        drawShape(c.px.data(), c.w, c.h, c.w * 4, q);
+        const double seg = 100.0 * 100.0 * std::acos(0.1) - 10.0 * std::sqrt(100.0 * 100.0 - 100.0);
+        near(c.coverage(), pi * 100 * 100 - seg, (pi * 100 * 100 - seg) * 0.02, "circle cut at the right edge: area");
+        ok(c.at(399, 200)[3] == 255, "circle cut at the right edge reaches the last column");
+
+        // Crossing the left edge: only a thin sliver (10 px) is on the canvas.
+        Bmp d(400, 400);
+        Request s = base(CIRCLE); s.cx = -90.f;
+        drawShape(d.px.data(), d.w, d.h, d.w * 4, s);
+        ok(d.at(0, 200)[3] == 255 && d.at(12, 200)[3] == 0, "circle cut at the left edge: sliver only");
+        ok(d.coverage() > 300.0 && d.coverage() < 900.0, "circle cut at the left edge: sliver area");
+
+        // Crossing the bottom edge: a rect centred 10 px above it keeps 110 of its 200 rows.
+        Bmp e(400, 400);
+        Request u = base(RECT); u.cy = 390.f;
+        drawShape(e.px.data(), e.w, e.h, e.w * 4, u);
+        near(e.coverage(), 200.0 * 110.0, 200.0 * 110.0 * 0.015, "rect cut at the bottom edge: area");
+        ok(e.at(200, 399)[3] == 255, "rect cut at the bottom edge reaches the last row");
+    }
     ok(!drawShape(nullptr, 1, 1, 4, base(CIRCLE)), "null target refused");
     Request z = base(CIRCLE); z.base = 0.f;
     Bmp t(8, 8);

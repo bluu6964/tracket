@@ -84,6 +84,10 @@ public:
     int width() const { return w_; }
     int height() const { return h_; }
 
+    // Starts a frame on the current output. The frame is clipped to the canvas (0, 0, w_, h_): a
+    // scissor on that rect stays enabled for the whole composition (layers, blends, group targets),
+    // so nothing a layer draws lands outside the canvas. applyFx turns it off only while rendering
+    // into its picture-sized targets and restores it before returning.
     void beginFrame(float r, float g, float b, float a);
     void drawLayer(const LayerDraw& d);
     // Blend modes (ids = BlendModes.kt shaderId: 0 Normal, 1-4 mattes, 10.. colour blends). The layer is

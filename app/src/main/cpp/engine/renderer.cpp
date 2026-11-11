@@ -396,6 +396,12 @@ void Renderer::beginFrame(float r, float g, float b, float a) {
     targetFbo_ = 0;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, w_, h_);
+    // Final-frame clip: for the whole frame composition (layers, blend scratch, group targets — all
+    // canvas-sized) a scissor on the canvas rect is kept enabled, so nothing a layer draws can land
+    // outside the canvas (0, 0, w_, h_). applyFx disables it while it renders into picture-sized
+    // targets (a layer's own picture can be larger than the canvas) and restores it on exit.
+    glScissor(0, 0, w_, h_);
+    glEnable(GL_SCISSOR_TEST);
     glClearColor(r * a, g * a, b * a, a);
     glClear(GL_COLOR_BUFFER_BIT);
 }
@@ -615,7 +621,8 @@ bool Renderer::beginGroup() {
     const uint32_t fbo = grpFbo_[grpDepth_];
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, w_, h_);
-    glDisable(GL_SCISSOR_TEST);
+    glScissor(0, 0, w_, h_);            // the group picture is canvas-sized: the frame clip stays on
+    glEnable(GL_SCISSOR_TEST);
     glClearColor(0.f, 0.f, 0.f, 0.f);  // transparent: the group is its own picture, the canvas colour is not part of it
     glClear(GL_COLOR_BUFFER_BIT);
     glEnable(GL_BLEND);

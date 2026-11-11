@@ -1512,6 +1512,167 @@ $layers
     }
 
     @Test
+    fun longShadowStackImportsFromTheFreefirePreset() {
+        // The freefire preset stacks longshadow AND longshadow2 on one text layer (a soft faint one
+        // under a hard full one); both map onto the app's Long Shadow. A text layer's box is the
+        // scene, so Alight's size (a fraction of the scene height) becomes that % directly.
+        val xml = scene(
+            """<text id="291408" startTime="0" endTime="2000" fillType="color" size="32.000000" font="googlefonts?name=Open Sans&amp;weight=800&amp;italic=1" wrapWidth="937" align="center">
+  <transform><location value="540.000000,960.000000" /></transform>
+  <effect id="com.alightcreative.effects.longshadow">
+    <property name="size" type="float" value="0.019000" /><property name="angle" type="float" value="45.000000" />
+    <property name="color" type="color" value="#ff000000" /><property name="alpha" type="float" value="0.153000" />
+    <property name="solidity" type="float" value="0.626000" /><property name="fill" type="float" value="1.000000" />
+    <property name="fade" type="float" value="0.000000" /><property name="fadeType" type="int" value="0" />
+  </effect>
+  <effect id="com.alightcreative.effects.longshadow2">
+    <property name="size" type="float" value="0.019000" /><property name="angle" type="float" value="45.000000" />
+    <property name="color" type="color" value="#ff000000" /><property name="alpha" type="float" value="1.000000" />
+    <property name="solidity" type="float" value="1.000000" /><property name="fill" type="float" value="1.000000" />
+    <property name="fade" type="float" value="0.000000" /><property name="fadeType" type="int" value="0" />
+  </effect>
+  <content>MENTAL</content>
+</text>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.filter { it.type == ClipFxLibrary.LONG_SHADOW }
+        assertEquals(2, fx.size)
+        assertEquals(1.9f, fx[0].values[0], 0.01f)
+        assertEquals(45f, fx[0].values[1], 0.01f)
+        assertEquals(15.3f, fx[0].values[2], 0.01f)
+        assertEquals(62.6f, fx[0].values[3], 0.01f)
+        assertEquals(0f, fx[0].values[4], 0.01f)
+        assertEquals(0f, fx[0].values[5], 0.01f)   // black, packed 0xRRGGBB
+        assertEquals(100f, fx[1].values[2], 0.01f)
+        assertEquals(100f, fx[1].values[3], 0.01f)
+        assertFalse(r.warnings.any { it.contains("longshadow") && it.contains("skipped") })
+    }
+
+    @Test
+    fun longShadow2KeyframedSizeUsesFirstValue() {
+        // The toji pack: size keyframed 0.075 -> 0.014 under a 202 degree angle, in a square scene.
+        val xml = scene(
+            """<text id="7" startTime="0" endTime="2000" fillType="color" size="56.000000" font="googlefonts?name=Roboto&amp;weight=900" wrapWidth="900" align="center">
+  <transform><location value="540.000000,540.000000" /></transform>
+  <effect id="com.alightcreative.effects.longshadow2" locallyApplied="false">
+    <property name="alpha" type="float" value="1.000000" />
+    <property name="angle" type="float" value="202.000000" />
+    <property name="size" type="float"><kf t="0.000000" v="0.075000" /><kf t="2.164339" v="0.014000" /></property>
+    <property name="color" type="color" value="#ff000000" />
+    <property name="solidity" type="float" value="1.000000" />
+    <property name="fill" type="float" value="1.000000" />
+    <property name="fade" type="float" value="0.000000" />
+    <property name="fadeType" type="int" value="0" />
+  </effect>
+  <content>TOJI</content>
+</text>""", 1080, 1080
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.LONG_SHADOW }
+        assertEquals(7.5f, fx.values[0], 0.01f)
+        assertEquals(202f, fx.values[1], 0.01f)
+        assertTrue(r.warnings.any { it.contains("longshadow2") && it.contains("keyframed size") })
+    }
+
+    @Test
+    fun raysImportsFromTheTextMotionPreset() {
+        // Text-motion preset, first rays: centre keyframed (the earliest key wins), blue fill colour.
+        val xml = scene(
+            """<text id="6301517" startTime="0" endTime="2000" fillType="color" size="32.000000" font="googlefonts?name=Roboto&amp;weight=900" wrapWidth="961" align="center">
+  <transform><location value="960.000000,540.000000" /></transform>
+  <effect id="com.alightcreative.effects.rays" locallyApplied="false">
+    <property name="centerPoint" type="vec2"><kf t="0.500000" v="130.000000,40.000000" /><kf t="0.007874" v="-160.000000,40.000000" /><kf t="0.975886" v="-160.000000,40.000000" /></property>
+    <property name="strength" type="float" value="0.300000" />
+    <property name="intensity" type="float" value="3.080000" />
+    <property name="threshold" type="float" value="0.990000" />
+    <property name="thresholdColor" type="color" value="#ff000000" />
+    <property name="fillColor" type="color" value="#ff2d1ef6" />
+    <property name="blend" type="float" value="0.000000" />
+    <property name="quality" type="float" value="150.000000" />
+  </effect>
+  <content>RAY</content>
+</text>""", 1920, 1080
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.LIGHT_RAYS }
+        assertEquals(99f, fx.values[0], 0.01f)          // threshold 0.99 -> %
+        assertEquals(9.9f, fx.values[1], 0.01f)         // strength 0.3 x 33
+        assertEquals(300f, fx.values[2], 0.01f)         // intensity 3.08 x 100, capped at 300
+        assertEquals(41.67f, fx.values[3], 0.05f)       // centre: 50 - 160 / 1920 x 100
+        assertEquals(53.70f, fx.values[4], 0.05f)       // 50 + 40 / 1080 x 100
+        assertEquals(244.17f, fx.values[5], 0.5f)       // hue of #2d1ef6
+        assertEquals(100f, fx.values[6], 0.01f)
+        assertTrue(r.warnings.any { it.contains("rays") && it.contains("keyframed centerPoint") })
+        assertTrue(r.warnings.any { it.contains("rays is approximated by the app's Light Rays") })
+        assertFalse(r.warnings.any { it.contains("rays") && it.contains("blend") })
+    }
+
+    @Test
+    fun raysKeyframedStrengthUsesFirstValue() {
+        // Toji pack, second rays: strength keyframed from 0, centre constant at (65, 0) layer px.
+        val xml = scene(
+            """<text id="8" startTime="0" endTime="2000" fillType="color" size="56.000000" font="googlefonts?name=Roboto&amp;weight=900" wrapWidth="900" align="center">
+  <transform><location value="540.000000,540.000000" /></transform>
+  <effect id="com.alightcreative.effects.rays" locallyApplied="false">
+    <property name="centerPoint" type="vec2" value="65.000000,0.000000" />
+    <property name="strength" type="float"><kf t="0.083158" v="0.000000" /><kf t="0.364211" v="3.030000" /><kf t="0.995789" v="0.000000" /></property>
+    <property name="intensity" type="float" value="4.650000" />
+    <property name="threshold" type="float" value="0.600000" />
+    <property name="thresholdColor" type="color" value="#ff000000" />
+    <property name="fillColor" type="color" value="#ff2d1ef6" />
+    <property name="blend" type="float" value="0.000000" />
+    <property name="quality" type="float" value="150.000000" />
+  </effect>
+  <content>TOJI</content>
+</text>""", 1080, 1080
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.LIGHT_RAYS }
+        assertEquals(60f, fx.values[0], 0.01f)
+        assertEquals(0f, fx.values[1], 0.01f)           // the first strength key is 0
+        assertEquals(300f, fx.values[2], 0.01f)         // 4.65 x 100, capped
+        assertEquals(56.02f, fx.values[3], 0.05f)       // 50 + 65 / 1080 x 100
+        assertEquals(50f, fx.values[4], 0.01f)
+        assertTrue(r.warnings.any { it.contains("rays") && it.contains("keyframed strength") })
+    }
+
+    @Test
+    fun colorTuneImportsFromTheVetriPreset() {
+        // The vetri preset's colortune2: lift / gain vec3s of (hue, strength, luminance shift).
+        val c = onlyClip(shapeWith(
+            """<effect id="com.alightcreative.effects.colortune2" hidden="true" locallyApplied="false"><property name="lift" type="vec3" value="-118.477776,0.347525,-0.080692" /><property name="gain" type="vec3" value="-117.208038,0.258421,0.000000" /></effect>"""
+        ))
+        val fx = c.effects.first { it.type == ClipFxLibrary.COLOR_TUNE }
+        assertEquals(241.52f, fx.values[0], 0.05f)   // -118.478 wrapped into 0..360
+        assertEquals(34.75f, fx.values[1], 0.01f)
+        assertEquals(-8.07f, fx.values[2], 0.01f)
+        assertEquals(242.79f, fx.values[3], 0.05f)
+        assertEquals(25.84f, fx.values[4], 0.01f)
+        assertEquals(0f, fx.values[5], 0.01f)
+    }
+
+    @Test
+    fun glowScanAndMirrorStayWarned() {
+        // Every glowscan in the corpus is the same copied preset (identical radius / power / strength),
+        // so its transfer function cannot be separated; mirror's single instance carries a `type` enum
+        // whose meaning no reachable Alight doc pins down. Both stay skipped, honestly.
+        val g = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.glowscan" locallyApplied="false"><property name="threshold" type="float"><kf t="0.016508" v="0.080000" /><kf t="0.983492" v="1.000000" /></property><property name="radius" type="float" value="0.100000" /><property name="power" type="float" value="2.000000" /><property name="strength" type="float" value="0.050000" /><property name="fillColor" type="color" value="#ff0088ff" /><property name="blend" type="float" value="0.000000" /><property name="fill" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(g.warnings.any { it.contains("glowscan is not supported yet: skipped") })
+        assertTrue(g.snapshot.tracks.flatMap { it.clips }.all { it.effects.isEmpty() })
+        val m = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.mirror" locallyApplied="false"><property name="type" type="int" value="0" /><property name="blendMode" type="int" value="0" /><property name="alpha" type="float" value="1.000000" /><property name="offset" type="float" value="0.000000" /></effect>"""
+        ), 1080f)
+        assertTrue(m.warnings.any { it.contains("mirror is not supported yet: skipped") })
+        assertTrue(m.snapshot.tracks.flatMap { it.clips }.all { it.effects.isEmpty() })
+    }
+
+    @Test
     fun gaussianBlurOnAGroupAppliesToTheGroup() {
         // The "Shadow" group of the "ST Intro" file carries a gaussianblur of strength 0.505.
         val xml = scene(

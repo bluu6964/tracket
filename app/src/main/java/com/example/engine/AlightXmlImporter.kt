@@ -166,6 +166,10 @@ object AlightXmlImporter {
     const val REPEAT_RADIAL = "com.alightcreative.effects.repeat.radial"
     const val REPEAT_SCATTER = "com.alightcreative.effects.repeat.scatter"
     const val MOVEALONGPATH = "com.alightcreative.effect.movealongpath3"
+    const val LONGSHADOW = "com.alightcreative.effects.longshadow"
+    const val LONGSHADOW2 = "com.alightcreative.effects.longshadow2"
+    const val RAYS = "com.alightcreative.effects.rays"
+    const val COLORTUNE2 = "com.alightcreative.effects.colortune2"
     const val MOTIONBLUR = "com.alightcreative.effects.motionblur"
     const val MOTIONBLUR2 = "com.alightcreative.effects.motionblur2"
     const val MOTIONBLUR4 = "com.alightcreative.effects.motionblur4"
@@ -1027,6 +1031,9 @@ object AlightXmlImporter {
                 REPEAT_RADIAL -> applyRepeatRadial(fx, clip, ctx)
                 REPEAT_SCATTER -> applyRepeatScatter(fx, clip, ctx)
                 MOVEALONGPATH -> applyMoveAlongPath(fx, el, clip, ctx)
+                LONGSHADOW, LONGSHADOW2 -> applyLongShadow(fx, clip, ctx, id)
+                RAYS -> applyRays(fx, clip, ctx)
+                COLORTUNE2 -> applyColorTune(fx, clip, ctx)
                 else -> {
                     ctx.warnings += "Effect " + id.substringAfterLast('.') + " is not supported yet: skipped"
                     clip
@@ -1602,6 +1609,168 @@ object AlightXmlImporter {
         val props = fxProps(fx)
         val strength = props["strength"]?.firstValue(ctx.warnings, "gaussianblur", "strength") ?: return clip0
         return addFx(clip0, ctx, ClipFxLibrary.BLUR, listOf((strength * 50f).coerceIn(0f, 100f)), "gaussianblur")
+    }
+
+    /**
+     * `longshadow` / `longshadow2` -> the app's Long Shadow: the layer's silhouette extruded along
+     * `angle` (degrees, clockwise on screen: 45 = down-right, as in the presets) for `size` of the scene
+     * height, tinted `color` at `alpha`, `solidity` between a soft and a hard extrusion, `fade` letting
+     * it die out along its length. The app's length is % of the layer picture's height, so the scene-px
+     * length is converted against the layer's box (for text the box is the scene: size x 100). The two
+     * Alight ids carry the same properties (the corpus stacks both on one layer with different alpha /
+     * solidity, as two shadows) and map the same way. A non-default `fadeType` or a `fill` below 1 has
+     * no counterpart and is reported.
+     */
+    private fun applyLongShadow(fx: Element, clip0: TimelineClip, ctx: Ctx, id: String): TimelineClip {
+        val w = ctx.warnings
+        val short = id.substringAfterLast('.')
+        val props = fxProps(fx)
+        val size = props["size"]?.firstValue(w, short, "size") ?: 0.02f
+        val angle = props["angle"]?.firstValue(w, short, "angle") ?: 45f
+        val alpha = props["alpha"]?.firstValue(w, short, "alpha") ?: 1f
+        val solidity = props["solidity"]?.firstValue(w, short, "solidity") ?: 1f
+        val fade = props["fade"]?.firstValue(w, short, "fade") ?: 0f
+        val colorT = props["color"]
+        if (colorT != null && colorT.keys.size >= 2) {
+            w += "Effect " + short + ": keyframed color is not supported yet: the first value is used"
+        }
+        val packed = if (colorT != null) (unpacked(colorT.valueAt(0f)) and 0xFFFFFFL).toFloat() else 0f
+        val aspects = ArrayList<String>()
+        if ((props["fadeType"]?.scalarAt(0f)?.toInt() ?: 0) != 0) aspects += "its fade type is not reproduced"
+        if ((props["fill"]?.scalarAt(0f) ?: 1f) < 0.999f) aspects += "its fill setting is not reproduced"
+        if (aspects.isNotEmpty()) {
+            w += "Effect " + short + " is approximated by the app's Long Shadow: " + aspects.joinToString(", ")
+        }
+        val boxH = layerBoxPx(clip0, ctx).second
+        val lenPct = if (boxH > 1f) (size * ctx.sceneH / boxH * 100f).coerceIn(0f, 100f) else (size * 100f).coerceIn(0f, 100f)
+        val ang = ((angle % 360f) + 360f) % 360f
+        return addFx(
+            clip0, ctx, ClipFxLibrary.LONG_SHADOW,
+            listOf(
+                lenPct, ang,
+                (alpha * 100f).coerceIn(0f, 100f),
+                (solidity * 100f).coerceIn(0f, 100f),
+                (fade * 100f).coerceIn(0f, 100f),
+                packed
+            ),
+            short
+        )
+    }
+
+    /**
+     * `rays` -> the app's Light Rays, approximately: Alight blooms the parts of the layer at / above its
+     * `threshold` (keyed against `thresholdColor`) in `fillColor` from `centerPoint`; the app's rays
+     * smear the bright parts of the layer toward a centre and tint them one colour. The mapping:
+     * threshold 0..1 -> %, strength -> Length (the corpus tops out at ~3, so x 33 fills the app's range),
+     * intensity -> Intensity (a plain multiplier, x 100, capped at the app's 300), centerPoint (layer px
+     * from the layer's centre, y down) -> Centre % of the layer's box, fillColor -> the tint's hue at
+     * full amount — a black fill reads as "no tint" (a black tint would erase the rays it colours).
+     * Alight's `quality` is a render-cost knob, not a look, and is dropped silently; a non-black
+     * threshold colour and a blend mode are reported.
+     */
+    private fun applyRays(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val strength = props["strength"]?.firstValue(w, "rays", "strength") ?: 1f
+        val intensity = props["intensity"]?.firstValue(w, "rays", "intensity") ?: 1f
+        val threshold = props["threshold"]?.firstValue(w, "rays", "threshold") ?: 0f
+        val cpT = props["centerPoint"]
+        if (cpT != null && cpT.keys.size >= 2) {
+            w += "Effect rays: keyframed centerPoint is not supported yet: the first value is used"
+        }
+        val cp = cpT?.valueAt(0f)
+        val (boxW, boxH) = layerBoxPx(clip0, ctx)
+        val cx = if (cp != null && boxW > 1f) (50f + (cp.getOrNull(0) ?: 0f) / boxW * 100f).coerceIn(0f, 100f) else 50f
+        val cy = if (cp != null && boxH > 1f) (50f + (cp.getOrNull(1) ?: 0f) / boxH * 100f).coerceIn(0f, 100f) else 50f
+        val fillT = props["fillColor"]
+        if (fillT != null && fillT.keys.size >= 2) {
+            w += "Effect rays: keyframed fillColor is not supported yet: the first value is used"
+        }
+        var hue = 0f
+        var amount = 0f
+        if (fillT != null) {
+            val argb = unpacked(fillT.valueAt(0f))
+            if ((argb and 0xFFFFFFL) != 0L) {
+                hue = hueOfArgb(argb)
+                amount = 100f
+            }
+        }
+        val aspects = ArrayList<String>()
+        val tcT = props["thresholdColor"]
+        if (tcT != null && (listOf(tcT.constant) + tcT.keys.map { it.v }).any { (unpacked(it) and 0xFFFFFFL) != 0L }) {
+            aspects += "its threshold colour is not reproduced"
+        }
+        if ((props["blend"]?.scalarAt(0f) ?: 0f) > 0.5f) aspects += "its blend mode is not reproduced"
+        w += "Effect rays is approximated by the app's Light Rays" +
+            (if (aspects.isEmpty()) "" else ": " + aspects.joinToString(", "))
+        return addFx(
+            clip0, ctx, ClipFxLibrary.LIGHT_RAYS,
+            listOf(
+                (threshold * 100f).coerceIn(0f, 100f),
+                (strength * 33f).coerceIn(0f, 100f),
+                (intensity * 100f).coerceIn(0f, 300f),
+                cx, cy, hue, amount
+            ),
+            "rays"
+        )
+    }
+
+    /** The hue (0..360) of an ARGB colour, 0 for a grey. */
+    private fun hueOfArgb(argb: Long): Float {
+        val r = ((argb shr 16) and 0xFF).toFloat() / 255f
+        val g = ((argb shr 8) and 0xFF).toFloat() / 255f
+        val b = (argb and 0xFF).toFloat() / 255f
+        val mx = maxOf(r, g, b)
+        val mn = minOf(r, g, b)
+        val d = mx - mn
+        if (d < 1e-6f) return 0f
+        var h = when (mx) {
+            r -> ((g - b) / d) % 6f
+            g -> (b - r) / d + 2f
+            else -> (r - g) / d + 4f
+        } * 60f
+        if (h < 0f) h += 360f
+        return h
+    }
+
+    /**
+     * `colortune2` -> the app's Color Tune. Each of Alight's four controls (Lift / Gamma / Gain /
+     * Offset) is a vec3 of (hue degrees, strength 0..1, luminance shift -1..1) — the only reading the
+     * corpus values allow (strengths sit in 0..1, shifts in -1..1, the hues agree). The app runs Lift
+     * and Gain (Alight's own guide weights them (1-y)^2 and y^2 by the pixel's luminance); a Gamma or
+     * Offset that actually does something is reported, not faked.
+     */
+    private fun applyColorTune(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        fun disc(name: String): List<Float> {
+            val t = props[name] ?: return listOf(0f, 0f, 0f)
+            if (t.keys.size >= 2) w += "Effect colortune2: keyframed " + name + " is not supported yet: the first value is used"
+            val v = t.valueAt(0f)
+            return listOf(
+                (((v.getOrNull(0) ?: 0f) % 360f) + 360f) % 360f,
+                ((v.getOrNull(1) ?: 0f) * 100f).coerceIn(0f, 100f),
+                ((v.getOrNull(2) ?: 0f) * 100f).coerceIn(-100f, 100f)
+            )
+        }
+        val lift = disc("lift")
+        val gain = disc("gain")
+        val dropped = ArrayList<String>()
+        for (name in listOf("gamma", "offset")) {
+            val t = props[name] ?: continue
+            val v = t.valueAt(0f)
+            if (abs(v.getOrNull(1) ?: 0f) > 1e-4f || abs(v.getOrNull(2) ?: 0f) > 1e-4f) {
+                dropped += name.replaceFirstChar { it.uppercase() }
+            }
+        }
+        if (dropped.isNotEmpty()) {
+            w += "Effect colortune2: its " + dropped.joinToString(" / ") + " controls are not reproduced"
+        }
+        return addFx(
+            clip0, ctx, ClipFxLibrary.COLOR_TUNE,
+            listOf(lift[0], lift[1], lift[2], gain[0], gain[1], gain[2]),
+            "colortune2"
+        )
     }
 
     /** `exposure` -> the app's Exposure: stops as-is, offset 0..1 -> -100..100, gamma as a percent. */

@@ -24,8 +24,22 @@ class ClipFxLibraryTest {
         // FX_BLUR (1) .. FX_COPY_BG (54), plus FX_MOTION_BLUR (55), FX_REPEAT (56), FX_REPEAT_RADIAL
         // (57) and FX_REPEAT_SCATTER (58): every type the engine knows has a tile, none outside that
         // range. 55..58 are the odd ones: Kotlin resolves them before they reach the engine, and
-        // fxParseOps skips them (they sit above FX_MAX).
-        assertEquals((1..58).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+        // fxParseOps skips them (they sit above FX_MAX). FX_LONG_SHADOW (59) and FX_COLOR_TUNE (60)
+        // sit above FX_MAX too, but they ARE shaded effects: fxParseOps accepts them explicitly.
+        assertEquals((1..60).toList(), ClipFxLibrary.all.map { it.nativeType }.sorted())
+    }
+
+    @Test fun longShadowAndColorTuneReachTheEngine() {
+        // Unlike Motion Blur / Repeat, the v160 effects run in the shared shader programs, so
+        // toNative must emit them (fxParseOps accepts 59 / 60 explicitly).
+        val ls = ClipFxLibrary.create(ClipFxLibrary.LONG_SHADOW)!!
+        val flatLs = ClipFxLibrary.toNative(listOf(ls))!!
+        assertEquals(59f, flatLs[0], 0f)
+        assertEquals(20f, flatLs[1], 0f)   // default length
+        val ct = ClipFxLibrary.create(ClipFxLibrary.COLOR_TUNE)!!
+        val flatCt = ClipFxLibrary.toNative(listOf(ct))!!
+        assertEquals(60f, flatCt[0], 0f)
+        assertEquals(240f, flatCt[1], 0f)  // default lift hue
     }
 
     @Test fun motionBlurIsSkippedByToNativeButCountsAsAnEffect() {

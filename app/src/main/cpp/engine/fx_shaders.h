@@ -1,7 +1,9 @@
 // GLSL ES 3.00 sources of the v140 effects. Four programs, each with a `uMode` branch (see fxShaderOf in fx_plan.cpp):
-//   kFxBlur2  : 0 directional blur, 1 radial blur (spin / zoom), 2 sharpen, 3 lens blur, 4 tilt-shift, 5 surface blur, 6 light rays
+//   kFxBlur2  : 0 directional blur, 1 radial blur (spin / zoom), 2 sharpen, 3 lens blur, 4 tilt-shift, 5 surface blur, 6 light rays,
+//               7 long shadow
 //   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
-//               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize
+//               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize,
+//               15 colour tune
 //   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare
 // All of them work on the premultiplied picture the layer shader uses (top of the picture at v = 1), take the raw slider
@@ -199,7 +201,7 @@ void main() {
             wsum += w;
         }
         oColor = acc / max(wsum, 1e-4);
-    } else {
+    } else if (uMode == 6) {
         // Light rays: bright parts of the picture are smeared towards a centre point and added on top.
         float thr = clamp(uP[0], 0.0, 100.0) / 100.0;
         float len = clamp(uP[1], 0.0, 100.0) / 100.0;
@@ -222,6 +224,35 @@ void main() {
         float ra = max(rays.r, max(rays.g, rays.b));
         float a = clamp(c0.a + ra * (1.0 - c0.a), 0.0, 1.0);
         oColor = vec4(min(c0.rgb + rays, vec3(a)), a);
+    } else {
+        // Long shadow: the layer's own silhouette, extruded along the angle and laid UNDER the layer in
+        // the shadow colour. Coverage at a pixel = the source alpha found marching from the pixel back
+        // against the shadow direction; Solidity blends between an averaged (soft) and a max (hard)
+        // extrusion, Fade lets the coverage fall off towards the tip. The length is % of the picture
+        // height, the colour is packed 0xRRGGBB in uP[5] (written by the Alight importer; 0 = black).
+        float lenPx = clamp(uP[0], 0.0, 100.0) / 100.0 / max(uTexel.y, 1e-6);
+        float alpha = clamp(uP[2], 0.0, 100.0) / 100.0;
+        if (lenPx < 0.5 || alpha < 0.005) { oColor = c0; return; }
+        float ang = radians(uP[1]);
+        vec2 dir = vec2(cos(ang), -sin(ang));  // uv space: the angle runs clockwise on screen, like mode 0
+        float solid = clamp(uP[3], 0.0, 100.0) / 100.0;
+        float fade = clamp(uP[4], 0.0, 100.0) / 100.0;
+        float pk = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
+        vec3 scol = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        const int N = 64;
+        float jit = ign(gl_FragCoord.xy);
+        float mx = 0.0, sum = 0.0, wsum = 0.0;
+        for (int i = 0; i < N; i++) {
+            float t = (float(i) + 0.5 + (jit - 0.5)) / float(N);
+            float sa = tap(vUv - dir * (t * lenPx) * uTexel).a;
+            float w = mix(1.0, 1.0 - t, fade);
+            mx = max(mx, sa * w);
+            sum += sa * w;
+            wsum += w;
+        }
+        float cov = mix(sum / max(wsum, 1e-4), mx, solid) * alpha;
+        float sa2 = cov * (1.0 - c0.a);
+        oColor = vec4(c0.rgb + scol * sa2, clamp(c0.a + sa2, 0.0, 1.0));
     }
 }
 )";
@@ -418,11 +449,24 @@ void main() {
         c2 = c2 * (1.0 - 0.12 * fd) + 0.06 * fd;
         c2 = mix(vec3(dot(c2, LW)), c2, 1.0 + sat);
         o = mix(rgb, c2, amt);
-    } else {
+    } else if (uMode == 14) {
         // Solarize: values above the threshold flip (the Sabattier look).
         float th = clamp(uP[0], 0.0, 100.0) / 100.0;
         vec3 s = mix(rgb, 1.0 - rgb, smoothstep(vec3(th - 0.02), vec3(th + 0.02), rgb));
         o = mix(rgb, s, clamp(uP[1], 0.0, 100.0) / 100.0);
+    } else {
+        // Colour tune (Alight Motion's grading effect): a Lift and a Gain control, each a colour-disc
+        // push plus a luminance shift, weighted by the pixel's luminance with Alight's published curves
+        // (Lift (1 - y)^2, Gain y^2). As in Colour Balance (mode 4) the disc push carries no luminance of
+        // its own; the same maths lives in fx_plan.cpp (fxColorTuneMap) — keep the two in step.
+        float y = dot(rgb, LW);
+        float wL = (1.0 - y) * (1.0 - y);
+        float wG = y * y;
+        vec3 cl = hueRgb(uP[0]); cl -= dot(cl, LW);
+        vec3 cg = hueRgb(uP[3]); cg -= dot(cg, LW);
+        vec3 add = cl * (clamp(uP[1], 0.0, 100.0) / 100.0) * wL + cg * (clamp(uP[4], 0.0, 100.0) / 100.0) * wG;
+        float dl = clamp(uP[2], -100.0, 100.0) / 100.0 * wL + clamp(uP[5], -100.0, 100.0) / 100.0 * wG;
+        o = rgb + add * 0.45 + dl;
     }
     o = clamp(o + amDither(), 0.0, 1.0);
     oColor = vec4(o * c.a, c.a);

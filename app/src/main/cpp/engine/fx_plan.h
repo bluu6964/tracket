@@ -65,7 +65,7 @@ enum FxType : int {
     FX_OLD_FILM = 51,        // p0 scratches, p1 dust, p2 flicker, p3 gate weave, p4 sepia, p5 fade (all 0..100)
     FX_LIGHT_LEAK = 52,      // p0 intensity 0..100, p1 hue 0..360, p2 size 0..100, p3 speed -100..100, p4 position 0..100
     FX_LENS_FLARE = 53,      // p0 centre x, p1 centre y (%), p2 brightness 0..200 %, p3 size 0..100, p4 ghosts 0..100, p5 streak 0..100, p6 hue 0..360
-    FX_LAST = FX_LENS_FLARE,  // last effect that runs through the shared shaded programs
+    FX_LAST = FX_LENS_FLARE,  // last of the v140 / v149 shaded effects (v160 adds 59 / 60 above; fxShaderOf is the map)
     // v157: Copy Background. Not a shaded effect: it needs the frame drawn so far (see Renderer::fxCopyBg).
     FX_COPY_BG = 54,         // p0 amount 0..100 % (how much of the picture behind the layer replaces the layer, cut to the layer's shape)
     // v158: Motion Blur. Not a shaded effect either: Kotlin resolves it per frame to FX_DIR_BLUR (see MotionBlurEval),
@@ -74,6 +74,13 @@ enum FxType : int {
     // v159: Repeat. Not a shaded effect either: Kotlin draws the layer once per copy in the overlay loops
     // (see RepeatEval), so it must never reach the shaders. Same rule as Motion Blur above.
     FX_REPEAT = 56,         // p0 count, p1/p2 offset x/y (preview px), p3 angle deg, p4 scale %, p5 alpha % — per copy
+    // v160: two more shaded effects, ABOVE the Kotlin-resolved block on purpose but still parsed: they run
+    // through the shared shaded programs like 7..53 (fxShaderOf maps them), so fxParseOps accepts them
+    // explicitly and runEffects dispatches on fxShaderOf, not on a numeric range. 57 / 58 stay skipped.
+    FX_LONG_SHADOW = 59,    // p0 length % of picture height, p1 angle 0..360, p2 opacity 0..100, p3 solidity 0..100,
+                            // p4 fade 0..100, p5 shadow colour packed 0xRRGGBB (importer only; 0 = black)
+    FX_COLOR_TUNE = 60,     // p0 lift hue 0..360, p1 lift strength 0..100, p2 lift luminance -100..100,
+                            // p3 gain hue 0..360, p4 gain strength 0..100, p5 gain luminance -100..100
     FX_MAX = FX_COPY_BG
 };
 
@@ -162,6 +169,11 @@ bool fxIsIdentity(const FxOp& op);
 float fxLevelsMap(float v, float inBlack, float inWhite, float gammaPct, float outBlack, float outWhite);
 // CPU reference of the Brightness & Contrast curve (one channel, 0..1): brightness / contrast -100..100.
 float fxBrightContrast(float v, float brightness, float contrast);
+// CPU reference of the Color Tune effect (the same maths as kFxColor mode 15): Lift / Gain colour-disc
+// pushes (hue 0..360, strength 0..100) and luminance shifts (-100..100), weighted by the pixel's own
+// luminance with Alight's published curves (Lift (1-y)^2, Gain y^2). r / g / b are 0..1, in and out.
+void fxColorTuneMap(float r, float g, float b, float liftHue, float liftStrength, float liftLum,
+                    float gainHue, float gainStrength, float gainLum, float* outR, float* outG, float* outB);
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);
 // Units of the animated effects: phase of the Wave Warp / Turbulent Displace at a pattern frame (24 / s), in turns.

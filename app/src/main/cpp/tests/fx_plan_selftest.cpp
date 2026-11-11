@@ -259,6 +259,49 @@ int main() {
         CHECK(fxPosterize(1.f, 6) == 1.f && fxPosterize(0.f, 6) == 0.f, "ends stay");
         // animation phase: 24 frames = one second
         CHECK(std::fabs(fxAutoPhase(24, 100.f) - 1.f) < 1e-6f && fxAutoPhase(24, 0.f) == 0.f, "auto phase");
+        // v160: the long shadow / colour tune are shaded types above FX_MAX: parsed and mapped, with
+        // neutral settings that skip the pass; the Kotlin-resolved neighbours 57 / 58 stay skipped.
+        {
+            float ls[8] = {(float)FX_LONG_SHADOW, 20, 45, 60, 80, 0, 0, 0};
+            CHECK(fxParseOps(ls, 8, ops) == 1 && ops[0].type == FX_LONG_SHADOW, "long shadow parsed");
+            float ct[8] = {(float)FX_COLOR_TUNE, 240, 30, 0, 36, 0, 0, 0};
+            CHECK(fxParseOps(ct, 8, ops) == 1 && ops[0].type == FX_COLOR_TUNE, "colour tune parsed");
+            float rr[8] = {57, 4, 200, 0, 360, 0, 100, 100};
+            CHECK(fxParseOps(rr, 8, ops) == 0, "repeat radial still skipped by the parser");
+            float rs[8] = {58, 12, 400, 0, 0, 0, 20, 100};
+            CHECK(fxParseOps(rs, 8, ops) == 0, "repeat scatter still skipped by the parser");
+            CHECK(fxShaderOf(FX_LONG_SHADOW).group == FXG_BLUR2 && fxShaderOf(FX_LONG_SHADOW).mode == 7, "long shadow shader");
+            CHECK(fxShaderOf(FX_COLOR_TUNE).group == FXG_COLOR && fxShaderOf(FX_COLOR_TUNE).mode == 15, "colour tune shader");
+            for (int t = FX_DIR_BLUR; t <= FX_LAST; ++t) {
+                CHECK(!(fxShaderOf(t).group == FXG_BLUR2 && fxShaderOf(t).mode == 7), "type %d collides with long shadow", t);
+                CHECK(!(fxShaderOf(t).group == FXG_COLOR && fxShaderOf(t).mode == 15), "type %d collides with colour tune", t);
+            }
+            FxOp l0{FX_LONG_SHADOW, {0, 45, 60, 80, 0, 0, 0}};
+            CHECK(fxIsIdentity(l0), "long shadow length 0 is neutral");
+            l0.p[0] = 20;
+            l0.p[2] = 0;
+            CHECK(fxIsIdentity(l0), "long shadow opacity 0 is neutral");
+            l0.p[2] = 60;
+            CHECK(!fxIsIdentity(l0), "long shadow runs");
+            FxOp c0{FX_COLOR_TUNE, {240, 0, 0, 36, 0, 0, 0}};
+            CHECK(fxIsIdentity(c0), "colour tune neutral");
+            c0.p[1] = 30;
+            CHECK(!fxIsIdentity(c0), "colour tune lift strength runs");
+            // colour tune maths: neutral = identity; lift works on dark pixels, gain on bright ones;
+            // a pure luminance shift keeps a grey grey.
+            float r, g, b;
+            fxColorTuneMap(0.3f, 0.5f, 0.7f, 240, 0, 0, 36, 0, 0, &r, &g, &b);
+            CHECK(std::fabs(r - 0.3f) < 1e-5f && std::fabs(g - 0.5f) < 1e-5f && std::fabs(b - 0.7f) < 1e-5f, "colour tune neutral = identity");
+            fxColorTuneMap(0.1f, 0.1f, 0.1f, 240, 100, 0, 36, 0, 0, &r, &g, &b);
+            CHECK(b > 0.3f && b > r && std::fabs(r - g) < 1e-5f, "lift pushes dark grey toward blue");
+            float r2, g2, b2;
+            fxColorTuneMap(0.9f, 0.9f, 0.9f, 240, 100, 0, 36, 0, 0, &r2, &g2, &b2);
+            CHECK(b2 - 0.9f < b - 0.1f, "lift barely touches bright pixels");
+            fxColorTuneMap(0.9f, 0.9f, 0.9f, 240, 0, 0, 240, 100, 0, &r, &g, &b);
+            CHECK(b > 0.95f && r < 0.9f, "gain pushes bright grey toward blue");
+            fxColorTuneMap(0.1f, 0.1f, 0.1f, 240, 0, 50, 36, 0, 0, &r, &g, &b);
+            CHECK(std::fabs(r - g) < 1e-5f && std::fabs(g - b) < 1e-5f && r > 0.4f && r < 0.6f, "lift luminance lifts a dark grey evenly");
+        }
     }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

@@ -11,7 +11,9 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
     if (!flat || !out) return 0;
     for (int i = 0; i + kFxStride <= n && count < kFxMaxOps; i += kFxStride) {
         const int t = (int)std::lround(flat[i]);
-        if (t < FX_BLUR || t > FX_MAX) continue;
+        // 55..58 are resolved by Kotlin before the engine (see FxType) and must never reach the shaders;
+        // 59 / 60 are shaded effects and are accepted explicitly.
+        if ((t < FX_BLUR || t > FX_MAX) && t != FX_LONG_SHADOW && t != FX_COLOR_TUNE) continue;
         FxOp& o = out[count++];
         o.type = t;
         for (int k = 0; k < 7; ++k) o.p[k] = flat[i + 1 + k];
@@ -212,6 +214,8 @@ FxShaderRef fxShaderOf(int type) {
         case FX_OLD_FILM: r = {FXG_STYLE, 11}; break;
         case FX_LIGHT_LEAK: r = {FXG_STYLE, 12}; break;
         case FX_LENS_FLARE: r = {FXG_STYLE, 13}; break;
+        case FX_LONG_SHADOW: r = {FXG_BLUR2, 7}; break;
+        case FX_COLOR_TUNE: r = {FXG_COLOR, 15}; break;
         default: break;
     }
     return r;
@@ -270,6 +274,9 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_LIGHT_LEAK: return p[0] < 0.5f;
         case FX_LENS_FLARE: return p[2] < 0.5f;
         case FX_COPY_BG: return p[0] < 0.5f;
+        case FX_LONG_SHADOW: return p[0] < 0.05f || p[2] < 0.5f;
+        case FX_COLOR_TUNE:
+            return std::fabs(p[1]) < 0.5f && std::fabs(p[2]) < 0.5f && std::fabs(p[4]) < 0.5f && std::fabs(p[5]) < 0.5f;
         default: return false;
     }
 }
@@ -296,6 +303,31 @@ float fxPosterize(float v, float levels) {
     const float n = std::min(32.f, std::max(2.f, std::round(levels)));
     const float x = std::min(1.f, std::max(0.f, v));
     return std::floor(x * (n - 1.f) + 0.5f) / (n - 1.f);
+}
+
+void fxColorTuneMap(float r, float g, float b, float liftHue, float liftStrength, float liftLum,
+                    float gainHue, float gainStrength, float gainLum, float* outR, float* outG, float* outB) {
+    // The same maths as kFxColor mode 15 (keep the two in step): LW is that program's luminance, a disc
+    // push is the hue colour with its own luminance removed (so the push alone never brightens), weighted
+    // by Alight's published curves, and the luminance sliders add a plain grey shift of the same weight.
+    const float lwR = 0.2126f, lwG = 0.7152f, lwB = 0.0722f;
+    const float y = lwR * r + lwG * g + lwB * b;
+    const float wL = (1.f - y) * (1.f - y);
+    const float wG = y * y;
+    float hr, hg, hb;
+    fxHsvToRgb(liftHue, 1.f, &hr, &hg, &hb);
+    const float ll = lwR * hr + lwG * hg + lwB * hb;
+    const float ls = std::min(100.f, std::max(0.f, liftStrength)) / 100.f * wL;
+    float gr, gg, gb;
+    fxHsvToRgb(gainHue, 1.f, &gr, &gg, &gb);
+    const float gl = lwR * gr + lwG * gg + lwB * gb;
+    const float gs = std::min(100.f, std::max(0.f, gainStrength)) / 100.f * wG;
+    const float dl = std::min(100.f, std::max(-100.f, liftLum)) / 100.f * wL +
+                     std::min(100.f, std::max(-100.f, gainLum)) / 100.f * wG;
+    auto cl = [](float v) { return std::min(1.f, std::max(0.f, v)); };
+    *outR = cl(r + ((hr - ll) * ls + (gr - gl) * gs) * 0.45f + dl);
+    *outG = cl(g + ((hg - ll) * ls + (gg - gl) * gs) * 0.45f + dl);
+    *outB = cl(b + ((hb - ll) * ls + (gb - gl) * gs) * 0.45f + dl);
 }
 
 float fxAutoPhase(int frame, float speed) { return (float)frame / 24.f * (speed / 100.f); }

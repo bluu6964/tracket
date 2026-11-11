@@ -605,7 +605,9 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_CHROMA: ok = fxChroma(op, W, H, cur); break;
             case FX_COPY_BG: ok = fxCopyBg(op, W, H, cur); break;
             default:
-                if (op.type > FX_CHROMA && op.type <= FX_LAST) ok = fxShaded(op, W, H, cur, fx.grainFrame);
+                // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
+                // v160, the long shadow / colour tune at 59 / 60); anything else here is not for the engine.
+                if (fxShaderOf(op.type).group != FXG_NONE) ok = fxShaded(op, W, H, cur, fx.grainFrame);
                 break;
         }
         if (!ok) LOGE("effect %d skipped (shader or target failed)", op.type);

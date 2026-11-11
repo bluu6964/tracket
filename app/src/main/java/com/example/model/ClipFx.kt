@@ -108,6 +108,12 @@ object ClipFxLibrary {
     // sit above FX_MAX for the same reason.
     const val REPEAT_RADIAL = "repeat_radial"
     const val REPEAT_SCATTER = "repeat_scatter"
+    // v160: two more SHADED effects (they DO reach the engine, unlike 55..58): Long Shadow (the layer's
+    // silhouette extruded along an angle, kFxBlur2 mode 7) and Color Tune (Alight's Lift / Gain grading,
+    // kFxColor mode 15). Their native types 59 / 60 sit above FX_MAX too, but fxParseOps accepts them
+    // explicitly — see fx_plan.h.
+    const val LONG_SHADOW = "long_shadow"
+    const val COLOR_TUNE = "color_tune"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -227,6 +233,35 @@ object ClipFxLibrary {
                 FxParamDef("Seed", 0f, 1f, 0f, "", step = 0.01f),
                 FxParamDef("Copy Scale", 0f, 100f, 20f, "%", step = 5f),
                 FxParamDef("Alpha", 0f, 100f, 100f, "%", step = 5f)
+            )
+        ),
+        // Long Shadow is a shader effect (kFxBlur2 mode 7): values[0] is the shadow length in % of
+        // the picture height, [1] its angle, [2] its opacity, [3] its solidity (soft averaged ->
+        // hard extruded), [4] its fade along the length. Value [5] (the shadow colour, packed
+        // 0xRRGGBB) is written by the Alight importer only and survives panel edits like every
+        // value past the declared params; absent / 0 = black, which is also the panel look.
+        FxDef(
+            LONG_SHADOW, 59, "Long Shadow", "Stylize", "The layer's silhouette stretched into a long flat shadow",
+            listOf(
+                FxParamDef("Length", 0f, 100f, 20f, "%"),
+                FxParamDef("Angle", 0f, 360f, 45f, "°", step = 3f),
+                FxParamDef("Opacity", 0f, 100f, 60f, "%"),
+                FxParamDef("Solidity", 0f, 100f, 80f, "%"),
+                FxParamDef("Fade", 0f, 100f, 0f, "%")
+            )
+        ),
+        // Color Tune is a shader effect (kFxColor mode 15): a Lift and a Gain control, each a
+        // colour-disc push (hue + strength) and a luminance shift, weighted by the pixel's own
+        // luminance (Lift (1-y)^2, Gain y^2) — Alight Motion's colour grading effect.
+        FxDef(
+            COLOR_TUNE, 60, "Color Tune", "Color", "Grades shadows (Lift) and highlights (Gain) toward a colour",
+            listOf(
+                FxParamDef("Lift hue", 0f, 360f, 240f, "°", step = 3f),
+                FxParamDef("Lift strength", 0f, 100f, 0f, "%"),
+                FxParamDef("Lift luminance", -100f, 100f, 0f, "%"),
+                FxParamDef("Gain hue", 0f, 360f, 36f, "°", step = 3f),
+                FxParamDef("Gain strength", 0f, 100f, 0f, "%"),
+                FxParamDef("Gain luminance", -100f, 100f, 0f, "%")
             )
         ),
         FxDef(

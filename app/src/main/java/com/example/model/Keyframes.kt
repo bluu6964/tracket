@@ -279,6 +279,23 @@ fun TimelineClip.pieSegmentsAt(relMs: Long): List<PathSeg> {
     return PieOutline.normalisedSegments(s.toDouble(), e.toDouble())
 }
 
+/** True for an imported `.arc`: its outline is rebuilt per frame from its angle tracks. */
+val TimelineClip.hasArc: Boolean
+    get() = arcStartKeys.isNotEmpty() && arcEndKeys.isNotEmpty() && arcRadius > 0f
+
+/**
+ * The arc's normalised outline at [relMs] (ms from the layer's start): both angle tracks are
+ * sampled with the ordinary keyframe sampler and the outline is rebuilt from the evaluated
+ * angles by [ArcOutline]. Empty when the def's wrap rule closes the arc at that instant — the
+ * layer draws nothing then, exactly as in Alight. A non-arc layer keeps its stored segments.
+ */
+fun TimelineClip.arcSegmentsAt(relMs: Long): List<PathSeg> {
+    if (!hasArc) return pathSegments
+    val s = arcStartKeys.valueAt(relMs).first
+    val e = arcEndKeys.valueAt(relMs).first
+    return ArcOutline.normalisedSegments(s.toDouble(), e.toDouble(), arcClosed)
+}
+
 /**
  * The layer as it looks at project time [timeMs]: every keyframed property is replaced by its
  * animated value. Layers without keyframes are returned as they are (no copy).
@@ -286,7 +303,8 @@ fun TimelineClip.pieSegmentsAt(relMs: Long): List<PathSeg> {
  */
 fun TimelineClip.at(timeMs: Long): TimelineClip {
     if (keyframes.isEmpty()) {
-        return if (hasPie) copy(pathSegments = pieSegmentsAt(timeMs - startMs)) else this
+        return if (hasPie) copy(pathSegments = pieSegmentsAt(timeMs - startMs))
+        else if (hasArc) copy(pathSegments = arcSegmentsAt(timeMs - startMs)) else this
     }
     val rel = timeMs - startMs
     var c = this
@@ -296,6 +314,7 @@ fun TimelineClip.at(timeMs: Long): TimelineClip {
         c = c.withProp(p, a, b)
     }
     if (c.hasPie) c = c.copy(pathSegments = c.pieSegmentsAt(rel))
+    if (c.hasArc) c = c.copy(pathSegments = c.arcSegmentsAt(rel))
     return c
 }
 
@@ -336,30 +355,35 @@ fun TimelineClip.withEasing(p: AnimProp, index: Int, easing: Easing): TimelineCl
 
 /** Moves every keyframe by [deltaMs] (the layer start moved: left trim / split). */
 fun TimelineClip.withShiftedKeyframes(deltaMs: Long): TimelineClip {
-    if ((keyframes.isEmpty() && masks.isEmpty() && !hasPie) || deltaMs == 0L) return this
+    if ((keyframes.isEmpty() && masks.isEmpty() && !hasPie && !hasArc) || deltaMs == 0L) return this
     return copy(
         keyframes = keyframes.mapValues { (_, l) -> l.map { it.copy(timeMs = it.timeMs + deltaMs) } },
         masks = masks.shiftedKeys(deltaMs),
         pieStartKeys = pieStartKeys.map { it.copy(timeMs = it.timeMs + deltaMs) },
-        pieEndKeys = pieEndKeys.map { it.copy(timeMs = it.timeMs + deltaMs) }
+        pieEndKeys = pieEndKeys.map { it.copy(timeMs = it.timeMs + deltaMs) },
+        arcStartKeys = arcStartKeys.map { it.copy(timeMs = it.timeMs + deltaMs) },
+        arcEndKeys = arcEndKeys.map { it.copy(timeMs = it.timeMs + deltaMs) }
     )
 }
 
 /** Stretches the keyframe times (speed change: the layer got longer / shorter). */
 fun TimelineClip.withScaledKeyframes(factor: Float): TimelineClip {
-    if ((keyframes.isEmpty() && masks.isEmpty() && !hasPie) || abs(factor - 1f) < 1e-4f) return this
+    if ((keyframes.isEmpty() && masks.isEmpty() && !hasPie && !hasArc) || abs(factor - 1f) < 1e-4f) return this
     return copy(
         keyframes = keyframes.mapValues { (_, l) -> l.map { it.copy(timeMs = (it.timeMs * factor).toLong()) } },
         masks = masks.scaledKeys(factor),
         pieStartKeys = pieStartKeys.map { it.copy(timeMs = (it.timeMs * factor).toLong()) },
-        pieEndKeys = pieEndKeys.map { it.copy(timeMs = (it.timeMs * factor).toLong()) }
+        pieEndKeys = pieEndKeys.map { it.copy(timeMs = (it.timeMs * factor).toLong()) },
+        arcStartKeys = arcStartKeys.map { it.copy(timeMs = (it.timeMs * factor).toLong()) },
+        arcEndKeys = arcEndKeys.map { it.copy(timeMs = (it.timeMs * factor).toLong()) }
     )
 }
 
 /** Every distinct keyframe time of the layer (relative), for the diamonds on the layer strip. */
 fun TimelineClip.keyframeTimes(): List<Long> =
     (keyframes.values.flatten().map { it.timeMs } + masks.flatMap { m -> m.keys.map { it.timeMs } } +
-        pieStartKeys.map { it.timeMs } + pieEndKeys.map { it.timeMs }).distinct().sorted()
+        pieStartKeys.map { it.timeMs } + pieEndKeys.map { it.timeMs } +
+        arcStartKeys.map { it.timeMs } + arcEndKeys.map { it.timeMs }).distinct().sorted()
 
 // =====================================================================================
 // Speed: time remapping

@@ -266,6 +266,27 @@ data class TimelineClip(
     val pieStartKeys: List<Keyframe> = emptyList(),
     val pieEndKeys: List<Keyframe> = emptyList(),
     val pieRadius: Float = 0f,
+    /**
+     * An imported `.arc`'s animation, the pie's sibling: the arc's outline is parametric (its
+     * start / end angles are keyframed in Alight), so the engines rebuild [pathSegments] per
+     * frame from these tracks (see [ArcOutline] and `arcSegmentsAt`); the stored [pathSegments]
+     * are only the outline at the layer's most open instant. [arcRadius] is the normalisation
+     * basis (the raw outline divided by it); [arcClosed] is the def's `closed` switch (the
+     * outline closes by the straight chord, never through the centre). Empty tracks = not an arc.
+     */
+    val arcStartKeys: List<Keyframe> = emptyList(),
+    val arcEndKeys: List<Keyframe> = emptyList(),
+    val arcRadius: Float = 0f,
+    val arcClosed: Boolean = false,
+    /**
+     * A `path-stroke`'s end caps (Alight's `start` / `end="circle-filled"` styles): the size of
+     * the filled circle drawn at the outline's start / end, as a multiple of the stroke width
+     * (the cap's diameter is size x the stroke width — AM's `start-size` / `end-size`). 0 = no
+     * cap at that end (every stroke without an explicit cap style, whatever its `end-size`
+     * says: the value is inert until a style is chosen). Only the PATH painter draws them.
+     */
+    val strokeCapStartSize: Float = 0f,
+    val strokeCapEndSize: Float = 0f,
     // Transform parameters (2D, Pivot, 3D, Warp)
     val transformX: Float = 0f,
     val transformY: Float = 0f,

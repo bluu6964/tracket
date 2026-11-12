@@ -2,6 +2,8 @@ package com.example.engine
 
 import com.example.model.AnimProp
 import com.example.model.TimelineClip
+import com.example.model.arcSegmentsAt
+import com.example.model.hasArc
 import com.example.model.hasPie
 import com.example.model.pieSegmentsAt
 import com.example.model.renderAt
@@ -46,7 +48,9 @@ internal object NativeRenderAt {
         // A `.pie` wedge's outline is parametric (the native anim has no slot for its angle
         // tracks): rebuild it from the evaluated angles with the model's own builder, so the
         // preview here and the export (which goes through the model's renderAt) agree.
-        return if (c.hasPie) base.copy(pathSegments = c.pieSegmentsAt(timeMs - c.startMs)) else base
+        // An `.arc`'s outline is parametric the same way.
+        return if (c.hasPie) base.copy(pathSegments = c.pieSegmentsAt(timeMs - c.startMs))
+        else if (c.hasArc) base.copy(pathSegments = c.arcSegmentsAt(timeMs - c.startMs)) else base
     }
 
     private fun renderAtKeyframed(c: TimelineClip, timeMs: Long, trackMs: Long = timeMs): TimelineClip {

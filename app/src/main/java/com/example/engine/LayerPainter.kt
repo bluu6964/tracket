@@ -312,6 +312,37 @@ internal class LayerPainter(
                 }
                 canvas.drawPath(outline, paint)
                 drawStrokePath(outline)
+                // End caps (Alight path-stroke `start` / `end="circle-filled"`): a filled circle in
+                // the stroke colour at each open end of the outline, its diameter the cap size x
+                // the stroke width. A trim moves the visible ends, so the caps ride the trim
+                // window like the stroke itself; a closed outline has no ends to cap.
+                if ((clip.strokeCapStartSize > 0f || clip.strokeCapEndSize > 0f) &&
+                    stroke.strokeWidth > 0f && clip.pathSegments.none { it.op == PATH_OP_CLOSE }
+                ) {
+                    val measure = android.graphics.PathMeasure(outline, false)
+                    val len = measure.length
+                    val windowEmpty = trimOn && !clip.strokeTrimFill &&
+                        clip.strokeTrimEnd <= clip.strokeTrimStart
+                    if (len > 0f && !windowEmpty) {
+                        val capPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            this.color = strokeCol
+                            style = Paint.Style.FILL
+                        }
+                        val pos = FloatArray(2)
+                        if (clip.strokeCapEndSize > 0f) {
+                            val f = if (trimOn && !clip.strokeTrimFill) clip.strokeTrimEnd else 1f
+                            if (measure.getPosTan(len * f, pos, null)) {
+                                canvas.drawCircle(pos[0], pos[1], stroke.strokeWidth * 0.5f * clip.strokeCapEndSize, capPaint)
+                            }
+                        }
+                        if (clip.strokeCapStartSize > 0f) {
+                            val f = if (trimOn && !clip.strokeTrimFill) clip.strokeTrimStart else 0f
+                            if (measure.getPosTan(len * f, pos, null)) {
+                                canvas.drawCircle(pos[0], pos[1], stroke.strokeWidth * 0.5f * clip.strokeCapStartSize, capPaint)
+                            }
+                        }
+                    }
+                }
             }
             else -> { // CIRCLE
                 canvas.drawCircle(0f, 0f, base, paint)

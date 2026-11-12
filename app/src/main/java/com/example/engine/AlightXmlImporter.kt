@@ -2,6 +2,7 @@ package com.example.engine
 
 import com.example.model.AnimKey
 import com.example.model.AnimProp
+import com.example.model.ArcOutline
 import com.example.model.AnimValue
 import com.example.model.AspectRatio
 import com.example.model.CalloutOutline
@@ -583,11 +584,15 @@ object AlightXmlImporter {
             ?: 0xFFFFFFFFL
 
         // Transform: constant value or keyframes per property.
-        val tr = readTransform(el, w, pivotUsed = false)
+        val tr = readTransform(el, w, pivotUsed = true)
         val loc = tr.loc
         val scl = tr.scl
         val rot = tr.rot
         val opa = tr.opa ?: child(el, "opacity")?.let { readTrack(it) }
+        // A transform pivot folds into the position (see pivotFoldedPosition); the app's own
+        // text scale is uniform (the horizontal component), so a non-uniform scale's pivot
+        // fold keeps the same approximation the scale itself already makes.
+        val pivotFold = pivotFoldedPosition(tr, durMs, ctx)
 
         // Alight's font height in scene pixels: size x scale, in units of sceneWidth / 640 px —
         // the width of the scene the TEXT sits in (its em is that many of the project's pixels:
@@ -611,7 +616,11 @@ object AlightXmlImporter {
             val l = trackKeys(t, durMs, map)
             if (l.isNotEmpty()) keyframes[prop] = l
         }
-        keys(AnimProp.POSITION, loc) { ctx.posX(it) to ctx.posY(it) }
+        if (pivotFold != null) {
+            if (pivotFold.second.isNotEmpty()) keyframes[AnimProp.POSITION] = pivotFold.second
+        } else {
+            keys(AnimProp.POSITION, loc) { ctx.posX(it) to ctx.posY(it) }
+        }
         keys(AnimProp.SCALE, scl) { scalePct(it) to 0f }
         keys(AnimProp.ROTATION, rot) { (it.firstOrNull() ?: 0f) to 0f }
         keys(AnimProp.OPACITY, opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
@@ -659,8 +668,8 @@ object AlightXmlImporter {
             textAlign = when (el.getAttribute("align")) { "left" -> 0; "right" -> 2; else -> 1 },
             textWrapFrac = wrapFrac,
             scalePercent = scalePct(sclV ?: listOf(1f, 1f)),
-            transformX = ctx.posX(locV ?: emptyList()),
-            transformY = ctx.posY(locV ?: emptyList()),
+            transformX = pivotFold?.first?.first ?: ctx.posX(locV ?: emptyList()),
+            transformY = pivotFold?.first?.second ?: ctx.posY(locV ?: emptyList()),
             rotationDeg = rotV?.firstOrNull() ?: 0f,
             opacity = ((opaV?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             keyframes = keyframes,
@@ -695,6 +704,8 @@ object AlightXmlImporter {
         if (kind == ".poly") return readPolyShape(el, ctx)
         if (kind == ".star") return readStarShape(el, ctx)
         if (kind == ".pie") return readPieShape(el, ctx)
+        if (kind == ".arc") return readArcShape(el, ctx)
+        if (kind == "com.alightcreative.arrow2") return readArrow2Shape(el, ctx)
         if (kind == ".callout.roundrect") return readCalloutShape(el, ctx)
         val pattern = when (kind) {
             ".rect" -> "RECT"
@@ -713,7 +724,9 @@ object AlightXmlImporter {
         val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
         val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
         val durMs = (endMs - startMs).coerceAtLeast(250L)
-        val tr = readTransform(el, w, pivotUsed = false)
+        val tr = readTransform(el, w, pivotUsed = true)
+        // A transform pivot folds into the position (see pivotFoldedPosition).
+        val pivotFold = pivotFoldedPosition(tr, durMs, ctx)
 
         // Fill: the <fillColor> child, or the media of a media fill (a still in `fillImage`, a
         // playing video in `fillVideo` — the uri travels in the XML either way).
@@ -816,7 +829,11 @@ object AlightXmlImporter {
             val l = trackKeys(t, durMs, map)
             if (l.isNotEmpty()) keyframes[prop] = l
         }
-        keys(AnimProp.POSITION, tr.loc) { ctx.posX(it) to ctx.posY(it) }
+        if (pivotFold != null) {
+            if (pivotFold.second.isNotEmpty()) keyframes[AnimProp.POSITION] = pivotFold.second
+        } else {
+            keys(AnimProp.POSITION, tr.loc) { ctx.posX(it) to ctx.posY(it) }
+        }
         keys(AnimProp.ROTATION, tr.rot) { (it.firstOrNull() ?: 0f) to 0f }
         keys(AnimProp.OPACITY, tr.opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
         val sizeKeys = composedSizeKeys(sizeT, tr.scl, durMs, box)
@@ -824,8 +841,8 @@ object AlightXmlImporter {
             keyframes[AnimProp.SCALE] = sizeKeys
         }
 
-        val posX = ctx.posX(tr.loc?.first() ?: emptyList())
-        val posY = ctx.posY(tr.loc?.first() ?: emptyList())
+        val posX = pivotFold?.first?.first ?: ctx.posX(tr.loc?.first() ?: emptyList())
+        val posY = pivotFold?.first?.second ?: ctx.posY(tr.loc?.first() ?: emptyList())
         val built = TimelineClip(
             id = UUID.randomUUID().toString(),
             name = el.getAttribute("label").ifBlank { "Shape" },
@@ -863,7 +880,8 @@ object AlightXmlImporter {
         ctx.outlineSpecs[built.id] = PathSpec(
             kind = pattern, startMs = built.startMs, durMs = built.durationMs,
             loc = tr.loc ?: Track(listOf(ctx.sceneW / 2f, ctx.sceneH / 2f), emptyList()),
-            scl = tr.scl, rot = tr.rot, size = sizeT, corner = cornerLocal
+            scl = tr.scl, rot = tr.rot, size = sizeT, corner = cornerLocal,
+            pivot = tr.pivot?.first() ?: emptyList()
         )
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
     }
@@ -996,6 +1014,44 @@ object AlightXmlImporter {
         val segs = ArrayList<PathSeg>()
         segs += PathSeg(PATH_OP_MOVE, listOf(pts[0].first, pts[0].second))
         for (i in 1 until pts.size) segs += PathSeg(PATH_OP_LINE, listOf(pts[i].first, pts[i].second))
+        if (closed) segs += PathSeg(PATH_OP_CLOSE, emptyList())
+        return finishPathShape(el, ctx, segs)
+    }
+
+    /**
+     * A `com.alightcreative.arrow2` shape: a free-point polygon like the `.triangle` / `.penta`
+     * kinds, over as many `pN` points as the layer serialises — no shape definition for this
+     * kind exists in either recovered asset dump (the dumps carry `shapes/arrow.xml`, the
+     * headed start/end arrow, which is a different kind), so the instances are the evidence:
+     * both corpus layers (khanbh-scene-6's "Arrow 2 1" and its copy) serialise exactly
+     * p1..p6 + `closed`, and their points trace the block-arrow outline verbatim — p1 the
+     * head's left shoulder, p2 the tip, p3 the right shoulder, p4 / p6 the tail's corners,
+     * p5 the notch — so the construction is the point kinds' own (points in order, closed
+     * unless the switch is off). The points have no recovered defaults: a layer that stops
+     * serialising before p3 cannot be drawn and is skipped; past p3 the outline simply runs
+     * over the points present. A keyframed point keeps its first value with a note, like the
+     * other point kinds'.
+     */
+    private fun readArrow2Shape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val pts = ArrayList<Pair<Float, Float>>()
+        var i = 1
+        while (true) {
+            val t = shapeParam(el, "p" + i) ?: break
+            keyframedParamNote(ctx, "arrow2", "p" + i, t)
+            val v = t.first()
+            pts += (v.getOrNull(0) ?: 0f) to (v.getOrNull(1) ?: 0f)
+            i++
+        }
+        if (pts.size < 3) {
+            w += "Layer <shape>" + labelOf(el) +
+                ": an arrow2 needs at least 3 points in the XML, it has " + pts.size + ": skipped"
+            return null
+        }
+        val closed = shapeParamBool(el, ctx, "arrow2", "closed", true)
+        val segs = ArrayList<PathSeg>()
+        segs += PathSeg(PATH_OP_MOVE, listOf(pts[0].first, pts[0].second))
+        for (j in 1 until pts.size) segs += PathSeg(PATH_OP_LINE, listOf(pts[j].first, pts[j].second))
         if (closed) segs += PathSeg(PATH_OP_CLOSE, emptyList())
         return finishPathShape(el, ctx, segs)
     }
@@ -1160,6 +1216,97 @@ object AlightXmlImporter {
     }
 
     /**
+     * An `.arc` shape: a circular arc about the layer's centre — [ArcOutline] is the line-by-line
+     * port of AM's own shape definition (recovered from the public decompiled AM assets,
+     * `assets/shapes/arc.xml`; copies in hunt-staging/shape-defs-r2/), finished by the shared
+     * path-shape tail exactly like the `.pie` (whose def shares the arc's angle preparation and
+     * Riskus cubics): the stored outline is the most open instant, normalised by the radius with
+     * a zero centre offset (the arc is centred on the layer's own origin by construction), and
+     * the angle tracks ride on the clip so the engines rebuild the outline per frame — the
+     * corpus's khanbh-scene-9 "Arc 1" keyframes startAngle through ten keys (450 -> 109 -> ...
+     * -> 110 against a constant endAngle of 90), while its sibling "Arc 1 Copy" is a constant
+     * 91 -> 90 pair, which the def's wrap rule sweeps 359 degrees. A keyframed radius composes
+     * into the SCALE keyframes as the shape's size track, as a pie's does. The def's defaults:
+     * startAngle 0, endAngle 90, radius 100, closed false.
+     */
+    private fun readArcShape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
+        val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
+        val durMs = (endMs - startMs).coerceAtLeast(250L)
+        val startT = shapeParam(el, "startAngle")
+        val endT = shapeParam(el, "endAngle")
+        val radiusT = shapeParam(el, "radius")
+        val closedT = shapeParam(el, "closed")
+        if (closedT != null && closedT.keys.size >= 2) {
+            w += "Keyframed \"closed\" of an arc is not supported yet: the first value is used"
+        }
+        val closed = (closedT?.first()?.firstOrNull() ?: 0f) > 0.5f
+        val radius = radiusT?.first()?.firstOrNull() ?: 100f
+        if (radius == 0f) {
+            w += "Layer <shape>" + labelOf(el) + ": its radius is 0: skipped"
+            return null
+        }
+        if (radius < 0f) {
+            w += "Layer <shape>" + labelOf(el) + ": its radius is negative: skipped"
+            return null
+        }
+        val startKeys = angleKeys(startT, durMs, 0f)
+        val endKeys = angleKeys(endT, durMs, 90f)
+        // The stored outline: the most open instant among the tracks' key times and the segment
+        // midpoints between them, sampled through the app's own keyframe sampler (easings in).
+        val times = (startKeys.map { it.timeMs } + endKeys.map { it.timeMs }).distinct().sorted()
+        val samples = ArrayList<Long>()
+        samples += times
+        for (i in 0 until times.size - 1) samples += (times[i] + times[i + 1]) / 2L
+        samples += 0L
+        samples += durMs
+        var bestT = -1L
+        var bestSweep = 0.0
+        for (t in samples.distinct()) {
+            val sweep = ArcOutline.sweepDegrees(
+                startKeys.valueAt(t).first.toDouble(), endKeys.valueAt(t).first.toDouble()
+            )
+            if (sweep > bestSweep) {
+                bestSweep = sweep
+                bestT = t
+            }
+        }
+        if (bestT < 0L || bestSweep < 0.01) {
+            w += "Layer <shape>" + labelOf(el) +
+                ": its start and end angles keep the arc closed at every keyframe: skipped"
+            return null
+        }
+        val raw = ArcOutline.segments(
+            startKeys.valueAt(bestT).first.toDouble(), endKeys.valueAt(bestT).first.toDouble(),
+            radius.toDouble(), closed
+        )
+        if (raw.isEmpty()) {
+            w += "Layer <shape>" + labelOf(el) +
+                ": its start and end angles keep the arc closed at every keyframe: skipped"
+            return null
+        }
+        val norm = PathNorm(
+            raw.map { seg -> PathSeg(seg.op, seg.pts.map { v -> v / radius }) },
+            radius, 0f, 0f, flattenPathSegments(raw)
+        )
+        // A keyframed radius composes into the SCALE keyframes as the shape's size track:
+        // (radius, radius) pairs at the radius track's own key times.
+        val sizeTrack = if (radiusT != null && radiusT.keys.size >= 2) {
+            Track(
+                listOf(radius, radius),
+                radiusT.keys.map { k ->
+                    val r = k.v.firstOrNull() ?: radius
+                    TKey(k.t, listOf(r, r), k.easing)
+                }
+            )
+        } else null
+        return finishPathShapeWithNorm(el, ctx, raw, norm, sizeTrack) { clip ->
+            clip.copy(arcStartKeys = startKeys, arcEndKeys = endKeys, arcRadius = radius, arcClosed = closed)
+        }
+    }
+
+    /**
      * A `.callout.roundrect` shape: a rounded rectangle with a speech-bubble tail on one side —
      * [CalloutOutline] is the line-by-line port of AM's own shape definition (recovered from the
      * public decompiled AM assets, `assets/shapes/`), finished by the shared path-shape tail
@@ -1289,7 +1436,7 @@ object AlightXmlImporter {
         val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
         val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
         val durMs = (endMs - startMs).coerceAtLeast(250L)
-        val tr = readTransform(el, w, pivotUsed = false)
+        val tr = readTransform(el, w, pivotUsed = true)
 
         // Fill and stroke, exactly as a built-in shape reads them (a media fill keeps its picture
         // or its video, as there).
@@ -1330,10 +1477,30 @@ object AlightXmlImporter {
 
         var strokeColor = 0xFFFFFFFFL
         var strokeSz = 0f
+        var capStartSize = 0f
+        var capEndSize = 0f
         val strokeEl = child(el, "path-stroke")
         if (strokeEl != null && strokeEl.getAttribute("enabled") != "false") {
             strokeColor = child(strokeEl, "color")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
             strokeSz = child(strokeEl, "size")?.getAttribute("value")?.toFloatOrNull() ?: 0f
+            // End caps: `start` / `end` select the cap style at the outline's ends and
+            // `start-size` / `end-size` scale it against the stroke width (the cap's diameter
+            // is size x the width). With no style chosen the size is inert — all 132 other
+            // corpus strokes carry end-size 1.5 with no `end` attribute and grow no cap.
+            // Only "circle-filled" has ever been seen (khanbh-op02, x2, end-size 2.6 on a
+            // width-9 stroke); any other style keeps a precise warning instead of a guess.
+            fun capSize(styleAttr: String, sizeAttr: String, which: String): Float {
+                val style = strokeEl.getAttribute(styleAttr)
+                if (style.isEmpty()) return 0f
+                if (style != "circle-filled") {
+                    w += "Shape" + labelOf(el) + ": its stroke " + which + " cap \"" + style +
+                        "\" is not supported yet: no cap is drawn"
+                    return 0f
+                }
+                return strokeEl.getAttribute(sizeAttr).toFloatOrNull() ?: 1.5f
+            }
+            capStartSize = capSize("start", "start-size", "start")
+            capEndSize = capSize("end", "end-size", "end")
         }
 
         val box = ctx.shapeBoxPx
@@ -1351,28 +1518,35 @@ object AlightXmlImporter {
 
         // The app's anchor is the clip position; the stored outline is centred on the path's box, so
         // the position is the Alight anchor plus the box centre's offset, rotated / scaled with it.
+        // A transform pivot composes the way Alight composes every layer (see the pivot fold in
+        // [pivotFoldedPosition]): the anchor is loc + P + R.S.(c - P) — the box centre measured
+        // from the pivot, the pivot added back plain.
         fun anchorAt(t: Float): Pair<Float, Float> {
             val loc = tr.loc?.valueAt(t)
             val sc = tr.scl?.valueAt(t) ?: listOf(1f, 1f)
             val rot = tr.rot?.valueAt(t)?.firstOrNull() ?: 0f
-            val ox = cx * (sc.getOrNull(0) ?: 1f)
-            val oy = cy * (sc.getOrNull(1) ?: sc.getOrNull(0) ?: 1f)
+            val piv = tr.pivot?.valueAt(t) ?: listOf(0f, 0f)
+            val px = piv.getOrNull(0) ?: 0f
+            val py = piv.getOrNull(1) ?: 0f
+            val ox = (cx - px) * (sc.getOrNull(0) ?: 1f)
+            val oy = (cy - py) * (sc.getOrNull(1) ?: sc.getOrNull(0) ?: 1f)
             val rad = Math.toRadians(rot.toDouble())
             val c = cos(rad).toFloat()
             val s = sin(rad).toFloat()
             val lx = loc?.getOrNull(0) ?: ctx.sceneW / 2f
             val ly = loc?.getOrNull(1) ?: ctx.sceneH / 2f
-            return (lx + ox * c - oy * s) to (ly + ox * s + oy * c)
+            return (lx + px + ox * c - oy * s) to (ly + py + ox * s + oy * c)
         }
         val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
-        val times = ((tr.loc?.keys ?: emptyList()) + (tr.scl?.keys ?: emptyList()) + (tr.rot?.keys ?: emptyList()))
+        val times = ((tr.loc?.keys ?: emptyList()) + (tr.scl?.keys ?: emptyList()) + (tr.rot?.keys ?: emptyList()) +
+            (tr.pivot?.keys ?: emptyList()))
             .map { it.t }.distinct().sorted()
         if (times.size >= 2) {
             val keys = times.mapIndexed { i, t ->
                 val next = times.getOrNull(i + 1)
                 val e = if (next == null) Easing.LINEAR
                 else tr.loc?.keyAt(next)?.easing ?: tr.scl?.keyAt(next)?.easing
-                    ?: tr.rot?.keyAt(next)?.easing ?: Easing.LINEAR
+                    ?: tr.rot?.keyAt(next)?.easing ?: tr.pivot?.keyAt(next)?.easing ?: Easing.LINEAR
                 val a = anchorAt(t)
                 Keyframe(
                     (t.coerceIn(0f, 1f) * durMs).roundToLong(),
@@ -1418,6 +1592,8 @@ object AlightXmlImporter {
             shapeScaleY = rendH / box,
             strokeWidth = strokeWidth,
             strokeColor = strokeColor,
+            strokeCapStartSize = capStartSize,
+            strokeCapEndSize = capEndSize,
             transformX = posX,
             transformY = posY,
             shapeOffsetX = posX,
@@ -1433,7 +1609,7 @@ object AlightXmlImporter {
         ctx.outlineSpecs[built.id] = PathSpec(
             kind = "PATH", startMs = built.startMs, durMs = built.durationMs,
             loc = tr.loc ?: Track(listOf(ctx.sceneW / 2f, ctx.sceneH / 2f), emptyList()),
-            scl = tr.scl, rot = tr.rot,
+            scl = tr.scl, rot = tr.rot, pivot = tr.pivot?.first() ?: emptyList(),
             pathPts = flat, pathClosed = raw.any { it.op == PATH_OP_CLOSE }
         )
         return applyLayerEffects(el, built, ctx, durMs, FxTarget.SHAPE)
@@ -2285,7 +2461,12 @@ object AlightXmlImporter {
         val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
         val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
         val durMs = (endMs - startMs).coerceAtLeast(1L)
-        val tr = readTransform(el, w, pivotUsed = false)
+        val tr = readTransform(el, w, pivotUsed = true)
+        // A transform pivot folds into the position (see pivotFoldedPosition): the null's
+        // anchor is what its children hang from, and ParentRig composes them about the null's
+        // stored pose, so the folded pose IS Alight's anchor motion (the robo packs' nulls
+        // carry pivots hundreds of units from their locations, under keyframed scales).
+        val pivotFold = pivotFoldedPosition(tr, durMs, ctx)
         fun scalePct(v: List<Float>): Float {
             if (v.size >= 2 && abs(v[0] - v[1]) > 1e-3f) w += "Non-uniform scale: only the horizontal scale is used"
             return (v.firstOrNull() ?: 1f) * 100f
@@ -2295,7 +2476,11 @@ object AlightXmlImporter {
             val l = trackKeys(t, durMs, map)
             if (l.isNotEmpty()) keyframes[prop] = l
         }
-        keys(AnimProp.POSITION, tr.loc) { ctx.posX(it) to ctx.posY(it) }
+        if (pivotFold != null) {
+            if (pivotFold.second.isNotEmpty()) keyframes[AnimProp.POSITION] = pivotFold.second
+        } else {
+            keys(AnimProp.POSITION, tr.loc) { ctx.posX(it) to ctx.posY(it) }
+        }
         keys(AnimProp.SCALE, tr.scl) { scalePct(it) to 0f }
         keys(AnimProp.ROTATION, tr.rot) { (it.firstOrNull() ?: 0f) to 0f }
         keys(AnimProp.OPACITY, tr.opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
@@ -2306,8 +2491,8 @@ object AlightXmlImporter {
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = NULL_COLOR,
-            transformX = ctx.posX(tr.loc?.first() ?: emptyList()),
-            transformY = ctx.posY(tr.loc?.first() ?: emptyList()),
+            transformX = pivotFold?.first?.first ?: ctx.posX(tr.loc?.first() ?: emptyList()),
+            transformY = pivotFold?.first?.second ?: ctx.posY(tr.loc?.first() ?: emptyList()),
             scalePercent = scalePct(tr.scl?.first() ?: listOf(1f, 1f)),
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
@@ -7049,8 +7234,9 @@ object AlightXmlImporter {
      * segment, [p1] -> [p2]), or "PATH" (a freehand `<path>` shape: the outline is its flattened
      * raw points, [pathPts]). The transform / size tracks are the layer's own, evaluated with
      * Alight's easing at the follower's time; a line's scale / rotation / pivot enter as first
-     * values and a shape's pivot not at all — exactly how the layer's own reader renders it, so the
-     * follower stays glued to the outline as the app itself draws that layer.
+     * values, and a shape's pivot as its first value too (build 137: the shape readers fold the
+     * pivot into their positions, and [pointAt] composes it the same way) — exactly how the
+     * layer's own reader renders it, so the follower stays glued to the outline as drawn.
      */
     private class PathSpec(
         val kind: String,
@@ -7240,18 +7426,33 @@ object AlightXmlImporter {
             return PathPoint(p.x - p.tanY * inset, p.y + p.tanX * inset, p.tanX, p.tanY)
         }
         val p = shapeWalk(n).pointAt(frac)
-        val ox = p.x - p.tanY * inset
-        val oy = p.y + p.tanX * inset
+        var ox = p.x - p.tanY * inset
+        var oy = p.y + p.tanX * inset
+        // The layer's transform pivot, as its first value (the line treatment): the outline is
+        // composed about it exactly as the layer's own reader now folds it (build 137) —
+        // world = loc + P + R.(q - S.P), q the scaled outline point — so the follower stays
+        // glued to the outline as drawn. No pivot (the corpus's only case) is byte-identical.
+        val pivX = pivot.getOrNull(0) ?: 0f
+        val pivY = pivot.getOrNull(1) ?: 0f
+        if (pivX != 0f || pivY != 0f) {
+            val sc = scl?.valueAtEased(n) ?: listOf(1f, 1f)
+            ox -= (sc.getOrNull(0) ?: 1f) * pivX
+            oy -= (sc.getOrNull(1) ?: sc.getOrNull(0) ?: 1f) * pivY
+        }
         val loc = loc?.valueAtEased(n) ?: listOf(0f, 0f)
         val rotDeg = rot?.valueAtEased(n)?.firstOrNull() ?: 0f
         if (abs(rotDeg) < 1e-6f) {
-            return PathPoint((loc.getOrNull(0) ?: 0f) + ox, (loc.getOrNull(1) ?: 0f) + oy, p.tanX, p.tanY)
+            return PathPoint(
+                (loc.getOrNull(0) ?: 0f) + pivX + ox, (loc.getOrNull(1) ?: 0f) + pivY + oy,
+                p.tanX, p.tanY
+            )
         }
         val rad = Math.toRadians(rotDeg.toDouble())
         val c = cos(rad).toFloat()
         val s = sin(rad).toFloat()
         return PathPoint(
-            (loc.getOrNull(0) ?: 0f) + ox * c - oy * s, (loc.getOrNull(1) ?: 0f) + ox * s + oy * c,
+            (loc.getOrNull(0) ?: 0f) + pivX + ox * c - oy * s,
+            (loc.getOrNull(1) ?: 0f) + pivY + ox * s + oy * c,
             p.tanX * c - p.tanY * s, p.tanX * s + p.tanY * c
         )
     }
@@ -7432,6 +7633,65 @@ object AlightXmlImporter {
             child(tr, "opacity")?.let { readTrack(it) },
             pivot
         )
+    }
+
+    /**
+     * Alight composes a layer about its transform `<pivot>`: a local point p renders at
+     * loc + P + R.S.(p - P), the pivot added back plain — the composition the group reader
+     * (build 116) and the line reader (build 135) already use. The app composes about the
+     * layer's own anchor (its stored position), so for a plain layer the pivot folds into the
+     * position: pos(t) = loc(t) + P(t) - R(t).S(t).P(t), sampled at the union of the four
+     * tracks' key times (the [finishPathShapeWithNorm] anchor resample: the values are the
+     * tracks' own at those times, and each segment takes the easing of the Alight keyframe it
+     * ends at). Any of the tracks may be keyframed — a keyframed pivot included — and the fold
+     * follows all of them per frame. Returns the folded position as (stored-units value at
+     * t = 0, POSITION keyframes), or null when the layer has no pivot, or a pivot that is
+     * (0, 0) at every key — which composes exactly like no pivot (the corpus's only keyframed
+     * pivot, blxze-editardd-rmk's single (0, 0) key, is that case) — so untouched layers keep
+     * their byte-identical plain location handling.
+     */
+    private fun pivotFoldedPosition(
+        tr: TransformTracks, durMs: Long, ctx: Ctx
+    ): Pair<Pair<Float, Float>, List<Keyframe>>? {
+        val piv = tr.pivot ?: return null
+        fun isZero(v: List<Float>) =
+            abs(v.getOrNull(0) ?: 0f) < 1e-6f && abs(v.getOrNull(1) ?: 0f) < 1e-6f
+        if (isZero(piv.constant) && piv.keys.all { isZero(it.v) }) return null
+        fun foldedAt(t: Float): Pair<Float, Float> {
+            val l = tr.loc?.valueAt(t)
+            val lx = l?.getOrNull(0) ?: ctx.sceneW / 2f
+            val ly = l?.getOrNull(1) ?: ctx.sceneH / 2f
+            val sc = tr.scl?.valueAt(t) ?: listOf(1f, 1f)
+            val sx = sc.getOrNull(0) ?: 1f
+            val sy = sc.getOrNull(1) ?: sx
+            val rot = tr.rot?.valueAt(t)?.firstOrNull() ?: 0f
+            val p = piv.valueAt(t)
+            val px = p.getOrNull(0) ?: 0f
+            val py = p.getOrNull(1) ?: 0f
+            val rad = Math.toRadians(rot.toDouble())
+            val c = cos(rad).toFloat()
+            val s = sin(rad).toFloat()
+            val rx = c * (sx * px) - s * (sy * py)
+            val ry = s * (sx * px) + c * (sy * py)
+            return ((lx + px - rx - ctx.sceneW / 2f) * ctx.k) to
+                ((ly + py - ry - ctx.sceneH / 2f) * ctx.k)
+        }
+        val times = ((tr.loc?.keys ?: emptyList()) + (tr.scl?.keys ?: emptyList()) +
+            (tr.rot?.keys ?: emptyList()) + piv.keys)
+            .map { it.t }.distinct().sorted()
+        var keys: List<Keyframe> = emptyList()
+        if (times.size >= 2) {
+            keys = times.mapIndexed { i, t ->
+                val next = times.getOrNull(i + 1)
+                val e = if (next == null) Easing.LINEAR
+                else tr.loc?.keyAt(next)?.easing ?: tr.scl?.keyAt(next)?.easing
+                    ?: tr.rot?.keyAt(next)?.easing ?: piv.keyAt(next)?.easing ?: Easing.LINEAR
+                val a = foldedAt(t)
+                Keyframe((t.coerceIn(0f, 1f) * durMs).roundToLong(), a.first, a.second, e)
+            }.distinctBy { it.timeMs }
+            if (keys.size < 2) keys = emptyList()
+        }
+        return foldedAt(0f) to keys
     }
 
     /**

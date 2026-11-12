@@ -288,6 +288,10 @@ enum FxType : int {
                              // Bevel's buffer (X scan, then Y scan + shade): the glow
                              // colour blends over the layer by alpha * p, p the reversed
                              // smoothstep of the distance to the nearest transparent pixel.
+    FX_DARK_GLOW_AM = 122,   // p0 strength % (AM raw x100), p1 threshold %, p2 colour packed
+                             // 0xRRGGBB, p3 blend %, p4 alpha %. Dedicated pass chain
+                             // (Renderer::fxDarkGlowAm): extract the dark parts, blur them,
+                             // multiply back over the layer (AM's darkglow def, build 120).
     FX_MAX = FX_COPY_BG
 };
 
@@ -515,6 +519,22 @@ void fxSoftGlowAmMap(float tr, float tg, float tb, float ta, float br, float bg,
 void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturation,
                       float tintR, float tintG, float tintB, float tintStrength, float gamma,
                       float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Dark Glow (AM's darkglow def, build 120), its two pixel stages (the blur
+// between them is the shared machinery). fxDarkGlowExtract is the def's pass 0: a pixel whose
+// luma is below the threshold is kept, mixed toward the colour by blend; anything brighter
+// becomes transparent. fxDarkGlowComposite is the def's final composite: the blurred extract's
+// straight colour multiplied by the base's straight colour, laid over the base at
+// min(base.a, extract.a) * alpha. All inputs premultiplied, params AM raw (0..1).
+void fxDarkGlowExtract(float r, float g, float b, float a, float threshold,
+                       float colR, float colG, float colB, float blend,
+                       float* outR, float* outG, float* outB, float* outA);
+void fxDarkGlowComposite(float baseR, float baseG, float baseB, float baseA,
+                         float blurR, float blurG, float blurB, float blurA, float alpha,
+                         float* outR, float* outG, float* outB, float* outA);
+// The def's blur kernel as a full-resolution sigma in px: AM blurs at half resolution with
+// numBlurPixelsPerSide = strength / 2 * 1.14 / 4 / 3 * length(preview size) and
+// sigma = numBlurPixelsPerSide / 2.14596602 in half-res px, i.e. twice that at full res.
+float fxDarkGlowSigma(float strength, float previewDiagPx);
 // Spin Blur (AM's spinblur2) has no scalar CPU reference: its tap count depends on the pixel's
 // radius, so the host test pins fxShaderOf / fxIsIdentity and the importer pins only.
 

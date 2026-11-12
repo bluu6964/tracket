@@ -1297,11 +1297,84 @@ $layers
         assertEquals(com.example.model.GRAD_LINEAR, c.gradType)
         assertEquals(0xFF0000FFL, c.gradColor1)
         assertEquals(0xFFFF0000L, c.gradColor2)
-        // Angle 0, no offset, scale 1: the gradient runs from the middle of the left edge to the right one.
-        assertEquals(0f, c.gradX1, 0.001f)
-        assertEquals(0.5f, c.gradY1, 0.001f)
-        assertEquals(1f, c.gradX2, 0.001f)
-        assertEquals(0.5f, c.gradY2, 0.001f)
+        // Angle 0, no offset, scale 1: AM's angle 0 points UP, so the gradient runs from the
+        // middle of the bottom edge to the middle of the top one.
+        assertEquals(0.5f, c.gradX1, 0.001f)
+        assertEquals(1f, c.gradY1, 0.001f)
+        assertEquals(0.5f, c.gradX2, 0.001f)
+        assertEquals(0f, c.gradY2, 0.001f)
+    }
+
+    @Test
+    fun gradientOverlayGeometryFollowsTheDef() {
+        // Verbatim ST Intro instance (shape 633194 of 1c30cfdb): angle 45.5, offset (-182, 0),
+        // scale 1.32. Centre = (0.5 - 182/500, 0.5) = (0.136, 0.5); the direction (sin a, -cos a)
+        // = (0.7133, -0.7009); t = 0 / 1 at centre -/+ direction x 0.66.
+        val xml = scene(
+            """<shape id="1" label="Pill" startTime="0" endTime="1000" fillType="color" s=".rect">
+  <transform><location value="500,500,0" /><scale value="10,10" /></transform>
+  <fillColor value="#ff000000" />
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ffb891ff" /><property name="color2" type="color" value="#ff7a32ff" /><property name="angle" type="float" value="45.5" /><property name="offset" type="vec2" value="-182,0" /><property name="scale" type="float" value="1.32" /><property name="alpha" type="float" value="1" /><property name="gradType" type="int" value="0" /><property name="blendMode" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>""", 1000, 1000
+        )
+        val r = AlightXmlImporter.parse(xml, 1000f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(0xFFB891FFL, c.gradColor1)
+        assertEquals(0xFF7A32FFL, c.gradColor2)
+        assertEquals(-0.3347f, c.gradX1, 0.002f)
+        assertEquals(0.9626f, c.gradY1, 0.002f)
+        assertEquals(0.6067f, c.gradX2, 0.002f)
+        assertEquals(0.0374f, c.gradY2, 0.002f)
+        assertTrue(r.warnings.none { it.contains("approximately") })
+
+        // Verbatim Graph instance (the day-label gradient): angle 0, offset (0, 146), scale 0.54.
+        // Centre = (0.5, 0.5 + 146/500) = (0.5, 0.792); direction (0, -1); half = 0.27.
+        val xml2 = scene(
+            """<shape id="1" label="Bar" startTime="0" endTime="1000" fillType="color" s=".rect">
+  <transform><location value="500,500,0" /><scale value="10,10" /></transform>
+  <fillColor value="#ff000000" />
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ff0088ff" /><property name="color2" type="color" value="#ff052243" /><property name="angle" type="float" value="0" /><property name="offset" type="vec2" value="0,146" /><property name="scale" type="float" value="0.54" /><property name="alpha" type="float" value="1" /><property name="gradType" type="int" value="0" /><property name="blendMode" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>""", 1000, 1000
+        )
+        val c2 = AlightXmlImporter.parse(xml2, 1000f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(0.5f, c2.gradX1, 0.001f)
+        assertEquals(1.062f, c2.gradY1, 0.001f)
+        assertEquals(0.5f, c2.gradX2, 0.001f)
+        assertEquals(0.522f, c2.gradY2, 0.001f)
+
+        // Radial (the def: t = 2 x centre distance / scale): the second point sits scale/2 from
+        // the offset centre along +x; angle plays no part.
+        val xml3 = scene(
+            """<shape id="1" label="Dot" startTime="0" endTime="1000" fillType="color" s=".circle">
+  <transform><location value="500,500,0" /><scale value="10,10" /></transform>
+  <fillColor value="#ff000000" />
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ffffffff" /><property name="color2" type="color" value="#ff000000" /><property name="angle" type="float" value="30" /><property name="offset" type="vec2" value="100,-50" /><property name="scale" type="float" value="2" /><property name="alpha" type="float" value="1" /><property name="gradType" type="int" value="1" /><property name="blendMode" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>""", 1000, 1000
+        )
+        val c3 = AlightXmlImporter.parse(xml3, 1000f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(com.example.model.GRAD_RADIAL, c3.gradType)
+        assertEquals(0.7f, c3.gradX1, 0.001f)
+        assertEquals(0.4f, c3.gradY1, 0.001f)
+        assertEquals(1.7f, c3.gradX2, 0.001f)
+        assertEquals(0.4f, c3.gradY2, 0.001f)
+
+        // Sweep (the def: t runs clockwise from the (-cos a, -sin a) ray): angle 0 starts at the
+        // leftward ray, and the wrap difference is reported.
+        val xml4 = scene(
+            """<shape id="1" label="Fan" startTime="0" endTime="1000" fillType="color" s=".circle">
+  <transform><location value="500,500,0" /><scale value="10,10" /></transform>
+  <fillColor value="#ff000000" />
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ffffffff" /><property name="color2" type="color" value="#ff000000" /><property name="angle" type="float" value="0" /><property name="offset" type="vec2" value="0,0" /><property name="scale" type="float" value="1" /><property name="alpha" type="float" value="1" /><property name="gradType" type="int" value="2" /><property name="blendMode" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="100,100" /></shape>""", 1000, 1000
+        )
+        val r4 = AlightXmlImporter.parse(xml4, 1000f)
+        val c4 = r4.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(com.example.model.GRAD_SWEEP, c4.gradType)
+        assertEquals(0.5f, c4.gradX1, 0.001f)
+        assertEquals(0.5f, c4.gradY1, 0.001f)
+        assertEquals(0f, c4.gradX2, 0.001f)
+        assertEquals(0.5f, c4.gradY2, 0.001f)
+        assertTrue(r4.warnings.any { it.contains("sweep wraps") })
     }
 
     @Test
@@ -2076,7 +2149,9 @@ $layers
     }
 
     @Test
-    fun darkGlowOnAGroupBecomesGlowWithApproximationNote() {
+    fun darkGlowOnAGroupBecomesNativeDarkGlow() {
+        // All three corpus darkglow instances sit on (nested) groups in the Graph preset;
+        // since build 120 the group carries the native Dark Glow, not the Glow approximation.
         val xml = scene(
             """<embedScene id="2" label="Glow 1" startTime="0" endTime="2000" fillType="intrinsic" outTime="2000">
   <transform><location value="540,960,0" /></transform>
@@ -2088,10 +2163,13 @@ $layers
         )
         val r = AlightXmlImporter.parse(xml, 1080f)
         val g = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
-        val fx = g.effects.first { it.type == com.example.model.ClipFxLibrary.GLOW }
-        assertEquals(47.3f, fx.values[0], 0.01f)
-        assertEquals(25f, fx.values[2], 0.01f)
-        assertTrue(r.warnings.any { it.contains("darkglow is approximated") })
+        val fx = g.effects.first { it.type == ClipFxLibrary.DARK_GLOW_AM }
+        assertEquals(25f, fx.values[0], 0.01f)
+        assertEquals(47.3f, fx.values[1], 0.01f)
+        assertEquals(0xFF5566.toFloat(), fx.values[2], 0.01f)
+        assertEquals(25f, fx.values[3], 0.01f)   // no blend in the fixture: the def's default 0.25
+        assertEquals(75f, fx.values[4], 0.01f)
+        assertTrue(r.warnings.none { it.contains("darkglow is approximated") })
     }
 
     @Test
@@ -4125,6 +4203,53 @@ $layers
         assertEquals(listOf(83f, 0.18f, 0.11f, 0xFFFFFF.toFloat(), 2f), fx.values.subList(0, 5))
         val arr = ClipFxLibrary.toNative(listOf(fx))!!
         assertEquals(121f, arr[0], 0.001f)
+    }
+
+    @Test
+    fun darkGlowImportsVerbatim() {
+        // Verbatim from 7e363d75 (the Graph preset) — one of its three darkglow instances,
+        // previously approximated by the app's bright-part Glow (build 120 ports the def).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.darkglow" locallyApplied="true"><property name="strength" type="float" value="0.250000" /><property name="threshold" type="float" value="0.300000" /><property name="color" type="color" value="#ffff5566" /><property name="blend" type="float" value="0.000000" /><property name="alpha" type="float" value="0.750000" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.none { it.contains("darkglow") })
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(clip.effects.none { it.type == ClipFxLibrary.GLOW })
+        val fx = clip.effects.single { it.type == ClipFxLibrary.DARK_GLOW_AM }
+        assertEquals(25f, fx.values[0], 0.001f)
+        assertEquals(30f, fx.values[1], 0.001f)
+        assertEquals(0xFF5566.toFloat(), fx.values[2], 0.001f)
+        assertEquals(0f, fx.values[3], 0.001f)
+        assertEquals(75f, fx.values[4], 0.001f)
+        assertEquals(122f, ClipFxLibrary.toNative(listOf(fx))!![0], 0.001f)
+    }
+
+    @Test
+    fun darkGlowKeyframedStrengthRidesATail() {
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.darkglow" locallyApplied="true"><property name="strength" type="float"><kf t="0.000000" v="0.010000" /><kf t="0.500000" v="0.250000" /></property><property name="threshold" type="float" value="0.473000" /><property name="color" type="color" value="#ffff5566" /><property name="blend" type="float" value="0.000000" /><property name="alpha" type="float" value="0.750000" /></effect>"""
+        ), 1080f)
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = clip.effects.single { it.type == ClipFxLibrary.DARK_GLOW_AM }
+        assertEquals(1f, fx.values[0], 0.001f)   // the first keyframe's strength, in %
+        assertEquals(2f, fx.values[7], 0.001f)   // the tail: two keys
+        val done = AmFxEval.resolve(listOf(fx), clip, clip.startMs + clip.durationMs).single()
+        assertEquals(25f, done.values[0], 0.01f)
+    }
+
+    @Test
+    fun edgeGlowStillApproximatesToGlow() {
+        // Verbatim from 7e363d75: edgeglow keeps the Glow approximation (its def chain's
+        // pass-parameter wiring is the host's, not the defs' — see applyGlow).
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.edgeglow" locallyApplied="true"><property name="smoothing" type="float" value="2.050000" /><property name="threshold" type="float" value="0.590000" /><property name="invert" type="bool" value="false" /><property name="strength" type="float" value="0.000000" /><property name="spread" type="float" value="1.540000" /><property name="fillColor" type="color" value="#ffffffff" /></effect>"""
+        ), 1080f)
+        val clip = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(clip.effects.none { it.type == ClipFxLibrary.DARK_GLOW_AM })
+        val fx = clip.effects.single { it.type == ClipFxLibrary.GLOW }
+        assertEquals(59f, fx.values[0], 0.001f)
+        assertEquals(50.82f, fx.values[1], 0.01f)
+        assertEquals(0f, fx.values[2], 0.001f)
     }
 
     @Test

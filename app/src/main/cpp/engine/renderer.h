@@ -161,6 +161,7 @@ private:
     bool fxChromaKeyAm(const FxOp& op, int W, int H, int* cur);
     bool fxSoftGlowAm(const FxOp& op, int W, int H, int* cur);
     bool fxFillBehindAm(const FxOp& op, int W, int H, int* cur);
+    bool fxDarkGlowAm(const FxOp& op, int W, int H, int* cur);
     // Tier 3 dedicated passes: Displace Map (samples texBackdrop_ like fxCopyBg), Smooth
     // Bevel (two passes through an lv_ distance buffer), Light Glow (four passes through
     // half-size lv_ buffers).
@@ -212,7 +213,7 @@ private:
     };
     std::unordered_map<int, MaskSlot> masks_;
     // Effect programs (built when first used) and the small pictures of the blur / glow pyramids.
-    uint32_t eff_[28] = {0};
+    uint32_t eff_[30] = {0};
     uint32_t maskTex_[2] = {0, 0}, maskFbo_[2] = {0, 0};  // R8 coverage pictures (ping-pong)
     int maskW_ = 0, maskH_ = 0;
     struct FxLevel {

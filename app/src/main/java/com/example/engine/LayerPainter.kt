@@ -281,7 +281,9 @@ internal class LayerPainter(
             "OVAL", "ELLIPSE" -> {
                 val r = RectF(-base * 1.2f, -base * 0.75f, base * 1.2f, base * 0.75f)
                 canvas.drawOval(r, paint)
-                drawStrokePath(Path().apply { addOval(r, Path.Direction.CW) })
+                // Start at the TOP, clockwise — the trim convention of the C++ painter (and of
+                // Alight's own circle path, build 120); addOval would start at the +x axis.
+                drawStrokePath(Path().apply { addArc(r, -90f, 360f) })
             }
             "TRIANGLE" -> {
                 val path = Path().apply {
@@ -313,7 +315,9 @@ internal class LayerPainter(
             }
             else -> { // CIRCLE
                 canvas.drawCircle(0f, 0f, base, paint)
-                drawStrokePath(Path().apply { addCircle(0f, 0f, base, Path.Direction.CW) })
+                // Start at the TOP, clockwise, like the C++ painter and Alight's circle path
+                // (build 120); addCircle would start at the +x axis, a quarter turn out.
+                drawStrokePath(Path().apply { addArc(RectF(-base, -base, base, base), -90f, 360f) })
             }
         }
         canvas.restore()

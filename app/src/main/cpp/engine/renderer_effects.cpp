@@ -32,7 +32,8 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_BLUR2, EF_COLOR, EF_WARP, EF_STYLE, EF_COPYBG, EF_GLOW_SCAN,
              EF_LUMA_KEY, EF_FOUR_GRADIENT, EF_TURBULENT_AM, EF_PIXELATE_AM,
              EF_CHROMA_KEY_AM, EF_SOFT_GLOW, EF_FILL_BEHIND,
-             EF_DISPLACE_MAP, EF_SMOOTH_BEVEL, EF_LIGHT_GLOW, EF_INNER_GLOW, EF_COUNT };  // eff_[] in renderer.h has room for 28
+             EF_DISPLACE_MAP, EF_SMOOTH_BEVEL, EF_LIGHT_GLOW, EF_INNER_GLOW,
+             EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_COUNT };  // eff_[] in renderer.h has room for 30
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -811,6 +812,44 @@ void main() {
 }
 )";
 
+// Dark Glow (Alight Motion's `darkglow`, its recovered def; fx_plan.cpp fxDarkGlowExtract /
+// fxDarkGlowComposite are the CPU twins): pass 0 keeps the pixels whose luma is below the
+// threshold, mixed toward the colour by blend; the extract is blurred (the def's kernel, via
+// fxDarkGlowSigma) and the composite multiplies the blurred extract's straight colour by the
+// base's straight colour, over the base at min(base.a, extract.a) * alpha. AM runs the chain
+// on half-size buffers; here it runs at the layer's own size with the sigma doubled to match
+// (see fxDarkGlowSigma), so the base keeps its full sharpness — a softness-only difference.
+const char* kDarkGlowExtract = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec3 uColor;
+uniform vec2 uP;   // threshold, blend (0..1)
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 c = texture(uTex, vUv);
+    float luminance = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+    oColor = luminance < uP.x ? mix(c, vec4(uColor, 1.0) * c.a, uP.y) : vec4(0.0);
+}
+)";
+
+const char* kDarkGlowComp = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform float uAlpha;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 base = texture(uTex, vUv);
+    vec4 res = texture(uBlur, vUv);
+    float glowA = min(base.a, res.a) * uAlpha;
+    vec3 glow = (res.rgb / max(res.a, 0.0001)) * (base.rgb / max(base.a, 0.0001));
+    vec4 g = vec4(glow, 1.0) * glowA;
+    oColor = base * (1.0 - g.a) + g;
+}
+)";
+
 // Displace Map (Alight Motion's displacemap3 = displacemap2, and displacemaprad; their
 // recovered shaders): the layer's own channels displace where the BACKDROP (the frame so
 // far, texBackdrop_ — the def's `comp`, srcType "comp", i.e. everything below the layer,
@@ -1141,8 +1180,8 @@ void main() {
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
                                   kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
-                                  kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow};
-static_assert(EF_COUNT <= 28, "eff_[] in renderer.h is too small");
+                                  kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp};
+static_assert(EF_COUNT <= 30, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -1315,6 +1354,7 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_CHROMA_KEY_AM: ok = fxChromaKeyAm(op, W, H, cur); break;
             case FX_SOFT_GLOW_AM: ok = fxSoftGlowAm(op, W, H, cur); break;
             case FX_FILL_BEHIND_AM: ok = fxFillBehindAm(op, W, H, cur); break;
+            case FX_DARK_GLOW_AM: ok = fxDarkGlowAm(op, W, H, cur); break;
             case FX_DISPLACE_MAP_AM:
             case FX_DISPLACE_MAP_RAD_AM: ok = fxDisplaceMapAm(op, W, H, cur); break;
             case FX_SMOOTH_BEVEL_AM: ok = fxSmoothBevelAm(op, W, H, cur); break;
@@ -1712,6 +1752,50 @@ bool Renderer::fxFillBehindAm(const FxOp& op, int W, int H, int* cur) {
     glUniform4f(loc(prog, "uFgP"), cl(op.p[6]), std::max(0.f, op.q[0]), cl(op.p[5]), cl(op.q[5]));
     glUniform3f(loc(prog, "uEdge"), er, eg, eb);
     glUniform2f(loc(prog, "uFeaP"), cl(op.p[1]), cl(op.p[0]));
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Dark Glow (Alight): keep the layer, extract its dark parts, blur the extract with the def's
+// kernel (its size runs off the scene diagonal — acPreviewSize — converted here to the app
+// blur's blurriness at this buffer's height), then the multiply composite. At strength 0 the
+// def composites the UNBLURRED extract, which the skipped blur (sigma < 0.25 is a no-op in
+// fxBlur) reproduces exactly.
+bool Renderer::fxDarkGlowAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t ext = effProg(EF_DARK_GLOW_EXTRACT), comp = effProg(EF_DARK_GLOW_COMP), copy = effProg(EF_COPY);
+    if (!ext || !comp || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    auto cl = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
+    const int dst0 = 1 - *cur;
+    begin(ext, fxFbo_[dst0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(ext, "uTex"), 0);
+    const int packed = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[2])));
+    glUniform3f(loc(ext, "uColor"), ((packed >> 16) & 0xFF) / 255.f, ((packed >> 8) & 0xFF) / 255.f,
+                (packed & 0xFF) / 255.f);
+    glUniform2f(loc(ext, "uP"), cl(op.p[1]), cl(op.p[3]));
+    draw();
+    *cur = dst0;
+    FxOp blurOp;
+    blurOp.type = FX_BLUR;
+    const float diag = std::hypot((float)width(), (float)height());
+    const float sigma = fxDarkGlowSigma(std::min(200.f, std::max(0.f, op.p[0])) / 100.f, diag);
+    blurOp.p[0] = std::min(100.f, sigma * 1800.f / std::max(1, H));   // fxBlurSigma inverts: sigma = b * 0.6 * H / 1080
+    if (!fxBlur(blurOp, W, H, cur)) return false;
+    const int dst = 1 - *cur;
+    begin(comp, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(comp, "uTex"), 0);
+    glUniform1i(loc(comp, "uBlur"), 1);
+    glUniform1f(loc(comp, "uAlpha"), cl(op.p[4]));
     draw();
     *cur = dst;
     return true;

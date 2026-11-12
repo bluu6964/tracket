@@ -352,6 +352,13 @@ object ClipFxLibrary {
     // [3] the colour packed 0xRRGGBB (its alpha is declared but never read by the
     // shader), [4] blend mode (0 normal, 1 multiply, 2 screen).
     const val INNER_GLOW_AM = "inner_glow_am"
+    // DARK_GLOW_AM (native 122): dedicated pass chain (renderer_effects.cpp). Alight's
+    // darkglow, ported from its def (build 120): the layer's dark parts (luma below the
+    // threshold), tinted toward the colour by blend, are blurred and multiplied back over
+    // the layer at alpha — a glow of the shadows, not of the highlights. Values
+    // [0] strength % (AM raw x100), [1] threshold %, [2] the colour packed 0xRRGGBB,
+    // [3] blend %, [4] alpha %. Keyframed strength / threshold ride tails from index 7.
+    const val DARK_GLOW_AM = "dark_glow_am"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -1016,6 +1023,17 @@ object ClipFxLibrary {
                 FxParamDef("Hardness", 0f, 1f, 0.2f, "", step = 0.01f),
                 FxParamDef("Colour", 0f, 16777215f, 0xFFFFFF.toFloat(), "", step = 1f),
                 FxParamDef("Blend mode", 0f, 2f, 2f, "", step = 1f)
+            )
+        ),
+        // Dark Glow (Alight): values as on the const.
+        FxDef(
+            DARK_GLOW_AM, 122, "Dark Glow (Alight)", "Light", "The layer's dark parts, blurred and multiplied back over it (Alight Motion's Dark Glow)",
+            listOf(
+                FxParamDef("Strength", 0f, 200f, 25f, "%"),
+                FxParamDef("Threshold", 0f, 100f, 30f, "%"),
+                FxParamDef("Colour", 0f, 16777215f, 0xFF5566.toFloat(), "", step = 1f),
+                FxParamDef("Blend", 0f, 100f, 25f, "%"),
+                FxParamDef("Alpha", 0f, 100f, 75f, "%")
             )
         ),
         FxDef(

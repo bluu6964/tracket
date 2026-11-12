@@ -162,10 +162,10 @@ int main() {
     {   // stroke trim (draw-on): only the outline between the trim fractions is drawn
         const double ring = pi * (105.0 * 105 - 95.0 * 95);
         Bmp b(400, 400); Request r = base(CIRCLE); r.fillOn = false; r.strokeW = 10.f; r.strokeArgb = 0xFFFF0000u;
-        r.trimStart = 0.f; r.trimEnd = 0.25f;  // first quarter: +x axis clockwise (y down) = bottom-right quadrant
+        r.trimStart = 0.f; r.trimEnd = 0.25f;  // first quarter from AM's path start (the top, clockwise) = top-right quadrant
         drawShape(b.px.data(), b.w, b.h, b.w * 4, r);
         near(b.coverage(), ring / 4, ring * 0.02, "circle trim = a quarter of the ring");
-        ok(b.at(271, 271)[3] == 255 && b.at(271, 129)[3] == 0 && b.at(129, 271)[3] == 0, "circle trim quadrant");
+        ok(b.at(271, 129)[3] == 255 && b.at(271, 271)[3] == 0 && b.at(129, 271)[3] == 0, "circle trim quadrant");
 
         Bmp c(400, 400); Request q = base(RECT); q.fillOn = false; q.strokeW = 20.f; q.strokeArgb = 0xFFFFFFFFu;
         q.trimStart = 0.5f; q.trimEnd = 1.f;  // second half: bottom edge (right to left) + left edge

@@ -91,6 +91,7 @@ internal object AmFxEval {
         ClipFxLibrary.RADIAL_WIPE_AM -> listOf(Tracked(0, 1f))                    // progress (degrees)
         ClipFxLibrary.HEX_SHIFT_AM -> listOf(Tracked(0, 1f), Tracked(4, 1f))      // strength (raw), angle (raw degrees)
         ClipFxLibrary.SOFT_GLOW_AM -> listOf(Tracked(0, 100f))                    // strength
+        ClipFxLibrary.DARK_GLOW_AM -> listOf(Tracked(0, 100f), Tracked(1, 100f))  // strength, threshold
         ClipFxLibrary.FILL_BEHIND_AM -> listOf(Tracked(0, 100f), Tracked(10, 1f), Tracked(11, 1f))  // strength, bg offset x / y
         // v165 tier (slots hold AM units, so every scale is 1; point components are
         // separate slots and ride separate tails):

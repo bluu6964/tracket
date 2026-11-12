@@ -675,6 +675,29 @@ int main() {
         // Fill behind: a straight-grey blur at gamma 1 / no tint keeps its colour.
         fxFillBehindAmBg(0.25f, 0.25f, 0.25f, 0.5f, 0, 0, 0, 0, 0, 1, &oR, &oG, &oB, &oA);
         CHECK(std::fabs(oR - 0.25f) < 0.002f && std::fabs(oA - 0.5f) < 1e-5f, "fill behind bg passthrough");
+        // Dark glow (build 120, the def's two pixel stages; expected values hand-computed
+        // from def_darkglow.xml): the extract keeps dark pixels (luma 0.1177 < 0.3), at
+        // blend 0 unchanged, at blend 0.25 mixed a quarter toward colour x alpha.
+        fxDarkGlowExtract(0.2f, 0.1f, 0.05f, 1, 0.3f, 1, 85.f / 255.f, 102.f / 255.f, 0, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-5f && std::fabs(oG - 0.1f) < 1e-5f && oA == 1.f, "dark glow extract blend 0");
+        fxDarkGlowExtract(0.2f, 0.1f, 0.05f, 1, 0.3f, 1, 85.f / 255.f, 102.f / 255.f, 0.25f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.4f) < 1e-4f && std::fabs(oG - 0.158333f) < 1e-4f && std::fabs(oB - 0.1375f) < 1e-4f, "dark glow extract blend");
+        fxDarkGlowExtract(0.9f, 0.9f, 0.9f, 1, 0.3f, 1, 0, 0, 0.25f, &oR, &oG, &oB, &oA);
+        CHECK(oA == 0.f && oR == 0.f, "dark glow extract drops bright pixels");
+        fxDarkGlowExtract(0.1f, 0.05f, 0.02f, 0.5f, 0.3f, 1, 85.f / 255.f, 102.f / 255.f, 0.25f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-4f && std::fabs(oG - 0.079167f) < 1e-4f && std::fabs(oA - 0.5f) < 1e-5f, "dark glow extract translucent");
+        // The composite: straight colours multiply, over the base at min(a) * alpha = 0.75.
+        fxDarkGlowComposite(0.2f, 0.1f, 0.05f, 1, 0.4f, 0.158333f, 0.1375f, 1, 0.75f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.11f) < 1e-4f && std::fabs(oG - 0.036875f) < 1e-4f && std::fabs(oB - 0.017656f) < 1e-4f && oA == 1.f, "dark glow composite");
+        fxDarkGlowComposite(0.2f, 0.1f, 0.05f, 1, 0, 0, 0, 0, 0.75f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-5f && oA == 1.f, "dark glow composite empty extract");
+        // The kernel: strength 0.25 over a 1080x1920 scene -> sigma ~24.4 full-res px.
+        CHECK(std::fabs(fxDarkGlowSigma(0.25f, 2202.9f) - 24.38f) < 0.05f, "dark glow sigma (%g)", fxDarkGlowSigma(0.25f, 2202.9f));
+        CHECK(fxDarkGlowSigma(0, 2202.9f) == 0.f, "dark glow sigma 0");
+        { FxOp dg{FX_DARK_GLOW_AM, {25, 30, 0xFF5566, 25, 75}};
+          CHECK(!fxIsIdentity(dg), "dark glow defaults run");
+          dg.p[4] = 0; CHECK(fxIsIdentity(dg), "dark glow alpha 0 is neutral");
+          dg.p[4] = 75; dg.p[1] = 0; CHECK(fxIsIdentity(dg), "dark glow threshold 0 is neutral"); }
     }
     // ---- v165: tier 3 (AM defs, hunt round 3). Every expected value below was computed
     // by an independent port of the recovered def formulas (expected_t3.py), not by the

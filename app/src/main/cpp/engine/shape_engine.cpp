@@ -192,11 +192,18 @@ float outlineDistance(int kind, float base, float corner, float cornerY, const P
 /**
  * Arc-length fraction (0..1) of the outline point closest to the local point (x, y) — the parameter the stroke
  * trim gates on. Only meaningful near the outline (inside the stroke band), where the closest point is unique
- * except at corners, whose two answers agree. The traversal matches the Canvas fallback (LayerPainter): it runs
- * clockwise (screen space, y down) from the outline's path start — circle / oval at the +x axis, rectangle /
- * rounded rectangle at the top-left corner along the top edge, triangle at its apex, polygons at their first
- * (top) vertex. Alight's own path starts are not documented; for a line (trimmed as a RECT fill) the fraction is
- * exact, for closed shapes the start point is this convention.
+ * except at corners, whose two answers agree. The traversal matches the Canvas fallback (LayerPainter) AND,
+ * since build 120, Alight Motion's own shape constructions (the getPath scripts of AM's shape definitions,
+ * recovered from the public decompiled dump, boiniArun2006/am-xml `assets/shapes/`): the outline runs
+ * clockwise (screen space, y down) from each kind's path start — rectangle at the top-left corner along the
+ * top edge, rounded rectangle at the top edge's left end (the top-left corner arc is the LAST segment),
+ * circle / oval at the TOP (0, -base).
+ * Build 81 had guessed the circle's start at the +x axis; AM's circle path starts at the top and runs
+ * top -> right -> bottom -> left, so the circle / oval parameter is the angle from +x rotated by a quarter
+ * turn. The remaining kinds are app-native only (AM's .triangle / .penta / .poly / .star are not imported):
+ * the triangle keeps its apex start, the polygons their first (top) vertex, all clockwise — AM's own
+ * .poly / .star scripts in fact run COUNTERclockwise from the top vertex, banked in the roadmap for the
+ * day those kinds are imported. (For a line, trimmed as a RECT fill, the fraction is exact.)
  */
 float outlineParam(int kind, float base, float corner, float cornerY, const Poly* poly, float x, float y) {
     const float twoPi = 6.28318530718f;
@@ -301,9 +308,12 @@ float outlineParam(int kind, float base, float corner, float cornerY, const Poly
             }
             return total > 0.f ? bestS / total : 0.f;
         }
-        default: {  // CIRCLE, OVAL: angle from the +x axis, clockwise in y-down space
+        default: {  // CIRCLE, OVAL: AM's circle path starts at the TOP and runs clockwise (y down), so the
+                    // parameter is the +x-axis angle rotated by a quarter turn (top = 0, right = 0.25, ...).
             float u = std::atan2(y, x) / twoPi;
             if (u < 0.f) u += 1.f;
+            u += 0.25f;
+            if (u >= 1.f) u -= 1.f;
             return u;
         }
     }

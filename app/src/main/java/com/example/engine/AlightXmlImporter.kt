@@ -81,8 +81,8 @@ import kotlin.math.tan
  *    and the nested times are remapped from the [inTime, outTime] window onto the group's length.
  *  - effects (pass 2): `solidcolor` -> the Solid Color effect (the picture flattened to one colour at
  *    render; keyframed: the colour also stored as FILL_COLOR keyframes for per-frame resolution) and its
- *    alpha multiplied into the opacity; `gradientoverlay2` -> the app's gradient fill (colours, type, an approximate
- *    angle / offset / scale); `textspacing` -> letter spacing / line height of a text layer; `scaleassist`
+ *    alpha multiplied into the opacity; `gradientoverlay2` -> the app's gradient fill (colours, type, and the
+ *    def's exact angle / offset / scale geometry, build 120); `textspacing` -> letter spacing / line height of a text layer; `scaleassist`
  *    (axis 3) composed into the SCALE track; `oscillate` / `oscillate3` / `swing` / `swing2` are procedural, so
  *    they are BAKED into the POSITION / ROTATION keyframes at the scene fps, composed over the layer's own
  *    keyframes. `textprogress` is stored as a [TextAnimator] like the other text effects and DRAWN as a
@@ -2011,8 +2011,8 @@ object AlightXmlImporter {
                 OSCILLATE, OSCILLATE3 -> applyOscillate(fx, clip, ctx, durMs, id)
                 SWING, SWING2 -> applySwing(fx, clip, ctx, durMs, id)
                 WIPE -> applyWipe(fx, clip, ctx, durMs)
-                EDGEGLOW -> applyGlow(fx, clip, ctx, dark = false)
-                DARKGLOW -> applyGlow(fx, clip, ctx, dark = true)
+                EDGEGLOW -> applyGlow(fx, clip, ctx)
+                DARKGLOW -> applyDarkGlowAm(fx, clip, ctx)
                 GAUSSIANBLUR -> applyGaussianBlur(fx, clip, ctx)
                 SHAKE -> applyShake(fx, clip, ctx, durMs)
                 FLIP -> applyFlip(fx, clip, ctx, durMs)
@@ -2229,10 +2229,16 @@ object AlightXmlImporter {
     /**
      * `com.alightcreative.gradientoverlay2` -> the app's gradient fill: its two colours (constant or
      * GRAD_COLOR_1 / GRAD_COLOR_2 keyframes) and its type (0 linear, 1 radial, 2 sweep, the app's order).
-     * Alight places the gradient in layer space by angle / scale / offset (scene pixels); the app wants two
-     * points inside the layer box, so those three are converted approximately. The effect's own alpha (it
-     * blends the gradient over the layer's fill in Alight; the app's gradient REPLACES the fill) and a
-     * non-normal blend mode are not mapped.
+     * The geometry is the def's own shader maths (recovered build 120 from the public dump,
+     * boiniArun2006/am-xml `assets/effects/gradientoverlay2.xml`): in layer space the gradient is
+     * centred at C = (0.5 + offset.x / 500, 0.5 + offset.y / 500) (AM's effect point params run 500 to
+     * the layer box, y down as stored); a linear gradient's t grows along (sin a, -cos a) — angle 0
+     * points UP, 90 right — with t = 0 / 1 at C -/+ that direction x scale/2; a radial gradient's t is
+     * twice the centre distance / scale; a sweep's t runs clockwise (screen) from the (-cos a, -sin a)
+     * ray. What the app's model cannot say is reported: the effect's own alpha and a non-normal blend
+     * mode (in Alight the gradient composites OVER the layer's fill; the app's gradient REPLACES it),
+     * keyframed geometry, and the sweep's wrap (AM jumps from colour 2 back to colour 1, the app's
+     * sweep blends back).
      */
     private fun applyGradientOverlay(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long, target: FxTarget): TimelineClip {
         val w = ctx.warnings
@@ -2270,27 +2276,40 @@ object AlightXmlImporter {
                 clip = if (first) clip.copy(gradColor1 = c) else clip.copy(gradColor2 = c)
             }
         }
-        val angle = props["angle"]?.scalarAt(0f) ?: 0f
-        val scale = props["scale"]?.scalarAt(0f) ?: 1f
-        val off = props["offset"]?.first() ?: emptyList()
-        val (boxW, boxH) = layerBoxPx(clip, ctx)
+        val angle = props["angle"]?.firstValue(w, "gradientoverlay", "angle") ?: 0f
+        val scale = props["scale"]?.firstValue(w, "gradientoverlay", "scale") ?: 1f
+        val offT = props["offset"]
+        if (offT != null && offT.keys.size >= 2) {
+            w += "Effect gradientoverlay: keyframed offset is not supported yet: the first value is used"
+        }
+        val off = offT?.first() ?: emptyList()
+        val cx = 0.5f + (off.getOrNull(0) ?: 0f) / 500f
+        val cy = 0.5f + (off.getOrNull(1) ?: 0f) / 500f
         val rad = Math.toRadians(angle.toDouble())
-        val dx = cos(rad).toFloat()
-        val dy = sin(rad).toFloat()
-        val cx = 0.5f + (off.getOrNull(0) ?: 0f) / boxW
-        val cy = 0.5f + (off.getOrNull(1) ?: 0f) / boxH
         val half = 0.5f * scale
-        clip = if (gradType == GRAD_LINEAR) {
-            clip.copy(gradX1 = cx - dx * half, gradY1 = cy - dy * half, gradX2 = cx + dx * half, gradY2 = cy + dy * half)
-        } else {
-            clip.copy(gradX1 = cx, gradY1 = cy, gradX2 = cx + dx * half, gradY2 = cy + dy * half)
+        clip = when (gradType) {
+            GRAD_RADIAL -> clip.copy(gradX1 = cx, gradY1 = cy, gradX2 = cx + half, gradY2 = cy)
+            GRAD_SWEEP -> {
+                w += "Effect gradientoverlay: its sweep wraps from colour 2 back to colour 1; the app's sweep blends back instead"
+                clip.copy(
+                    gradX1 = cx, gradY1 = cy,
+                    gradX2 = cx - cos(rad).toFloat() * half, gradY2 = cy - sin(rad).toFloat() * half
+                )
+            }
+            else -> {
+                val dx = sin(rad).toFloat()
+                val dy = -cos(rad).toFloat()
+                clip.copy(
+                    gradX1 = cx - dx * half, gradY1 = cy - dy * half,
+                    gradX2 = cx + dx * half, gradY2 = cy + dy * half
+                )
+            }
         }
         props["alpha"]?.let { aT ->
             if (aT.keys.size >= 2 || abs(aT.scalarAt(0f) - 1f) > 1e-4f) {
                 w += "Effect gradientoverlay: its alpha is not supported yet: the gradient replaces the fill"
             }
         }
-        w += "Effect gradientoverlay: angle, offset and scale are mapped approximately"
         return clip
     }
 
@@ -2626,28 +2645,27 @@ object AlightXmlImporter {
     }
 
     /**
-     * `edgeglow` / `darkglow` -> the app's Glow. Edge glow blooms the layer's edges outwards in a colour;
+     * `edgeglow` -> the app's Glow. Edge glow blooms the layer's edges outwards in a colour;
      * the app's glow blooms the bright parts of the layer itself, so the mapping is: threshold 0..1 -> %,
      * spread -> Radius (spread ~1.5 reads as about half the app's radius range), strength 0..1 -> Intensity
-     * %. The glow colour (the app's glow has none) and, for darkglow, the fact that Alight blooms the DARK
-     * parts, are reported. Dark glow's `alpha` has no counterpart and is dropped with the colour note.
+     * %. The glow colour (the app's glow has none) and an inverted edge pass are reported. (darkglow used
+     * to share this approximation; since build 120 it has its own native port, [applyDarkGlowAm]. The
+     * edge glow's own def chain — a findedges pass plus a gaussianblur pass whose parameter wiring is
+     * the host's, not the defs' — is what still keeps this one approximate.)
      */
-    private fun applyGlow(fx: Element, clip0: TimelineClip, ctx: Ctx, dark: Boolean): TimelineClip {
+    private fun applyGlow(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
-        val short = if (dark) "darkglow" else "edgeglow"
+        val short = "edgeglow"
         val props = fxProps(fx)
         val threshold = props["threshold"]?.firstValue(w, short, "threshold") ?: 0f
         val strength = props["strength"]?.firstValue(w, short, "strength") ?: 0f
         val spread = props["spread"]?.firstValue(w, short, "spread") ?: 0f
-        val colorProp = if (dark) "color" else "fillColor"
-        val colorTrack = props[colorProp]
+        val colorTrack = props["fillColor"]
         val anyNonWhite = colorTrack != null &&
             (listOf(colorTrack.constant) + colorTrack.keys.map { it.v }).any { unpacked(it) != 0xFFFFFFFFL }
         val aspects = ArrayList<String>()
-        if (dark) aspects += "it blooms dark parts, the app's Glow blooms bright ones"
         if (anyNonWhite) aspects += "its colour is not reproduced"
-        if (!dark && (props["invert"]?.scalarAt(0f) ?: 0f) > 0.5f) aspects += "its invert is not reproduced"
-        if (dark && abs((props["alpha"]?.scalarAt(0f) ?: 1f) - 1f) > 1e-4f) aspects += "its alpha is not reproduced"
+        if ((props["invert"]?.scalarAt(0f) ?: 0f) > 0.5f) aspects += "its invert is not reproduced"
         if (aspects.isNotEmpty()) {
             w += "Effect " + short + " is approximated by the app's Glow: " + aspects.joinToString(", ")
         }
@@ -2660,6 +2678,30 @@ object AlightXmlImporter {
             ),
             short
         )
+    }
+
+    /**
+     * `darkglow` -> the app's Dark Glow (Alight), from the effect's def (build 120): the layer's
+     * dark parts (luma below `threshold`), tinted toward `color` by `blend`, blurred by a kernel
+     * that runs off `strength` and the scene diagonal, multiplied back over the layer at `alpha`.
+     * Defaults are the def's (strength 0.25, threshold 0.3, colour #FF5566, blend 0.25, alpha
+     * 0.75); keyframed strength / threshold ride AmFxEval tails, the rest take first values.
+     */
+    private fun applyDarkGlowAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val strT = props["strength"]
+        val str = (strT?.scalarAtEased(0f) ?: 0.25f) * 100f
+        val thrT = props["threshold"]
+        val thr = (thrT?.scalarAtEased(0f) ?: 0.3f) * 100f
+        val color = props["color"]?.packedColor(w, "darkglow", "color") ?: 0xFF5566.toFloat()
+        val blend = (props["blend"]?.firstValue(w, "darkglow", "blend") ?: 0.25f) * 100f
+        val alpha = (props["alpha"]?.firstValue(w, "darkglow", "alpha") ?: 0.75f) * 100f
+        val values = listOf(
+            str.coerceIn(0f, 200f), thr.coerceIn(0f, 100f), color,
+            blend.coerceIn(0f, 100f), alpha.coerceIn(0f, 100f), 0f, 0f
+        ) + tailsOf(trackTail(strT), trackTail(thrT))
+        return addFx(clip0, ctx, ClipFxLibrary.DARK_GLOW_AM, values, "darkglow")
     }
 
     /**

@@ -57,7 +57,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_SPOT_COLOR_AM && t != FX_DISSOLVE_AM && t != FX_SIMPLE_STARS_AM &&
             t != FX_DOTS_AM && t != FX_RIDGES_AM && t != FX_BEND_WARP_AM &&
             t != FX_DISPLACE_MAP_AM && t != FX_DISPLACE_MAP_RAD_AM && t != FX_SMOOTH_BEVEL_AM &&
-            t != FX_LIGHT_GLOW_AM && t != FX_INNER_GLOW_AM) {
+            t != FX_LIGHT_GLOW_AM && t != FX_INNER_GLOW_AM && t != FX_DARK_GLOW_AM) {
             owner = -1;
             continue;
         }
@@ -392,6 +392,7 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_FIND_EDGES_AM: return false;   // always a posterize of the gradient
         case FX_HEX_SHIFT_AM: return std::fabs(p[0]) < 0.00005f;   // strength 0: the sample is the pixel
         case FX_SOFT_GLOW_AM: return p[6] < 0.5f;   // alpha 0: blendInside is 0, the screen keeps the pixel
+        case FX_DARK_GLOW_AM: return p[4] < 0.5f || p[1] <= 0.f;   // alpha 0, or no pixel under the threshold: the extract is empty
         case FX_FILL_BEHIND_AM: return false;   // the edge / feather terms can bite even at strength 0
         // v165 tier:
         case FX_WAVE_WARP_AM: return std::fabs(p[3]) < 0.0005f;   // magnitude 0: the offset is 0
@@ -1160,6 +1161,44 @@ void fxSoftGlowAmMap(float tr, float tg, float tb, float ta, float br, float bg,
     *outG = fxClamp(rg * ta, 0.f, 1.f);
     *outB = fxClamp(rb * ta, 0.f, 1.f);
     (void)ca;
+}
+
+void fxDarkGlowExtract(float r, float g, float b, float a, float threshold,
+                       float colR, float colG, float colB, float blend,
+                       float* outR, float* outG, float* outB, float* outA) {
+    // AM's darkglow pass 0, line by line: dark pixels mix toward the (premultiplied) colour.
+    const float luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    if (!(luminance < threshold)) { *outR = *outG = *outB = *outA = 0.f; return; }
+    *outR = r + (colR * a - r) * blend;
+    *outG = g + (colG * a - g) * blend;
+    *outB = b + (colB * a - b) * blend;
+    *outA = a;
+}
+
+void fxDarkGlowComposite(float baseR, float baseG, float baseB, float baseA,
+                         float blurR, float blurG, float blurB, float blurA, float alpha,
+                         float* outR, float* outG, float* outB, float* outA) {
+    // AM's darkglow final composite: the blurred extract's straight colour times the base's
+    // straight colour, over the base at min(base.a, extract.a) * alpha (its composite()).
+    const float glowA = std::min(baseA, blurA) * alpha;
+    float gr = 0.f, gg = 0.f, gb = 0.f;
+    if (blurA > 0.0001f && baseA > 0.0001f) {
+        gr = (blurR / blurA) * (baseR / baseA) * glowA;
+        gg = (blurG / blurA) * (baseG / baseA) * glowA;
+        gb = (blurB / blurA) * (baseB / baseA) * glowA;
+    }
+    const float inv = 1.f - glowA;
+    *outR = baseR * inv + gr;
+    *outG = baseG * inv + gg;
+    *outB = baseB * inv + gb;
+    *outA = baseA * inv + glowA;
+}
+
+float fxDarkGlowSigma(float strength, float previewDiagPx) {
+    // AM's kernel: numBlurPixelsPerSide = strength / 2 * 1.14 / 4 / 3 * diag (half-res px),
+    // sigma = that / 2.14596602, at half res — twice it at full res.
+    if (strength <= 0.f) return 0.f;
+    return strength * 0.5f * 1.14f / 4.f / 3.f * previewDiagPx / 2.14596602f * 2.f;
 }
 
 void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturation,

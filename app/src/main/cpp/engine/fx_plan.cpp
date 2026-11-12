@@ -21,6 +21,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                           : t == FX_EXTRUDE_FLAT_AM_EXT2 ? FX_EXTRUDE_FLAT_AM_EXT
                           : t == FX_TURBULENCE2_AM_EXT2 ? FX_TURBULENCE2_AM_EXT
                           : t == FX_ELECTRIC_EDGES_AM_EXT2 ? FX_ELECTRIC_EDGES_AM_EXT
+                          : t == FX_DEEP_GLOW2_AM_EXT2 ? FX_DEEP_GLOW2_AM_EXT
                                                          : FX_NONE;
         if (ext2Ext != FX_NONE) {
             if (extFoldedOp >= 0 && extFoldedType == ext2Ext) {
@@ -57,6 +58,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_TURBULENCE2_AM_EXT ? FX_TURBULENCE2_AM
                            : t == FX_CHECKER2_AM_EXT ? FX_CHECKER2_AM
                            : t == FX_ELECTRIC_EDGES_AM_EXT ? FX_ELECTRIC_EDGES_AM
+                           : t == FX_DEEP_GLOW2_AM_EXT ? FX_DEEP_GLOW2_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -94,7 +96,8 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_HALFTONE_LINES_AM && t != FX_TURBULENCE2_AM && t != FX_CHECKER2_AM &&
             t != FX_MOSAIC_AM && t != FX_GLOW_AM && t != FX_INNER_BLUR_AM &&
             t != FX_BOX_BLUR3_AM && t != FX_FEATHER_AM && t != FX_ELECTRIC_EDGES_AM &&
-            t != FX_SMOOTH_EDGES_AM) {
+            t != FX_SMOOTH_EDGES_AM && t != FX_GAUSSIAN_BLUR_AM && t != FX_DEEP_GLOW2_AM &&
+            t != FX_DROP_SHADOW_AM) {
             owner = -1;
             extFoldedOp = -1;
             extFoldedType = FX_NONE;
@@ -486,6 +489,16 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_ELECTRIC_EDGES_AM:
             return p[6] < 0.0005f && o.q[0] < 0.0005f && std::fabs(o.q[3] - 1.f) < 0.0005f;   // no edge, no glow, fill 1: c is 0
         case FX_SMOOTH_EDGES_AM: return false;   // the alpha cut reshapes even at strength 0 (dd = 0.05)
+        // v176 tier:
+        case FX_GAUSSIAN_BLUR_AM: return p[0] <= 0.f;   // sigma 0
+        case FX_DEEP_GLOW2_AM:
+            // strength 0: the def outputs the input (overd then scales it by its
+            // alpha — an identity only while overd is off).
+            return p[0] <= 0.00001f && !(std::lround(o.r[3]) & 1);
+        case FX_DROP_SHADOW_AM:
+            // The layer at alphac over the shadow: identity when the layer is
+            // untouched at full weight and the shadow paints nothing.
+            return p[5] >= 1.f && (p[4] <= 0.f || p[1] <= 0.f);
         default: return false;
     }
 }
@@ -614,9 +627,18 @@ void fxGlowScanMap(float inR, float inG, float inB, float inA, float baseR, floa
     *outB = cl(mb);
 }
 
-float fxGlowScanBlurriness(float smoothingPct) {
-    // AM strength x 50, the product clamped to the app's blur range (the applyGaussianBlur rule).
-    return std::min(100.f, std::max(0.f, smoothingPct * 0.5f));
+float fxAmGaussianSigma(float strength, float previewDiagPx) {
+    // AM's gaussianblur kernel (its def, hunt round 3): numBlurPixelsPerSide =
+    // strength / 2 * 1.14 / 4 / 3 * length(acPreviewSize) in half-res px, sigma =
+    // that / 2.14596602 at half res — twice it at full res:
+    // sigma = strength * length(previewSize) * 0.04427 (approx).
+    if (strength <= 0.f) return 0.f;
+    return strength * 0.5f * 1.14f / 4.f / 3.f * previewDiagPx / 2.14596602f * 2.f;
+}
+
+float fxGlowScanBlurSigma(float smoothingPct, float previewDiagPx) {
+    // The scan's smoothing is AM's gaussianblur strength (stored x 100 in the slot).
+    return fxAmGaussianSigma(smoothingPct / 100.f, previewDiagPx);
 }
 
 // ---- v163: Alight's next tier (CPU references of the recovered definitions) ----
@@ -1263,10 +1285,9 @@ void fxDarkGlowComposite(float baseR, float baseG, float baseB, float baseA,
 }
 
 float fxDarkGlowSigma(float strength, float previewDiagPx) {
-    // AM's kernel: numBlurPixelsPerSide = strength / 2 * 1.14 / 4 / 3 * diag (half-res px),
-    // sigma = that / 2.14596602, at half res — twice it at full res.
-    if (strength <= 0.f) return 0.f;
-    return strength * 0.5f * 1.14f / 4.f / 3.f * previewDiagPx / 2.14596602f * 2.f;
+    // Darkglow's def carries the host gaussianblur kernel verbatim (build 120), so
+    // this is fxAmGaussianSigma — kept under its own name for its build-120 pins.
+    return fxAmGaussianSigma(strength, previewDiagPx);
 }
 
 void fxEdgeGlowAmEdge(const float luma8[8], float cR, float cG, float cB, float cA,
@@ -1335,10 +1356,126 @@ void fxEdgeGlowAmComposite(float baseR, float baseG, float baseB, float baseA,
     *outA = baseA + (glowA + (lum - glowA) * factor);
 }
 
-float fxEdgeGlowAmBlurOp(float strength) {
-    // The applyGaussianBlur calibration: AM's gaussianblur strength 0..1 -> the app
-    // blur's 0..50 (edgeglow's strength runs to 2, onto the app's 100 cap).
-    return fxClamp(strength * 50.f, 0.f, 100.f);
+float fxEdgeGlowAmBlurSigma(float strength, float previewDiagPx) {
+    // The host gaussianblur of the edge buffer at the def's strength ("Blur"): the
+    // gaussianblur def's kernel at the frame diagonal.
+    return fxAmGaussianSigma(strength, previewDiagPx);
+}
+
+void fxDeepGlow2Pixel(float texR, float texG, float texB, float texA,
+                      float blurR, float blurG, float blurB, float blurA,
+                      float blurLowR, float blurLowG, float blurLowB,
+                      float blurHighR, float blurHighG, float blurHighB,
+                      float strength, float oalpha, float lowThreshold, float highThreshold,
+                      float feather, float calpha, float hue, float satX, float satY,
+                      float colR, float colG, float colB, float alpb,
+                      int flags, int bmode,
+                      float* outR, float* outG, float* outB, float* outA) {
+    // AM's deepglow2 composite, line by line (hunt round 3, defs-batch8). The blur
+    // sample at the glow position is [blurMid]; the chromatic split reads the two
+    // offset samples instead of the position one. (The def never reads the low
+    // sample's blue or the high sample's red — those params are honoured by being
+    // ignored, exactly as in the shader.)
+    (void)blurLowB; (void)blurHighR;
+    const float bR = texR * calpha, bG = texG * calpha, bB = texB * calpha, bA = texA * calpha;
+    float cR = blurR, cG = blurG, cB = blurB;
+    const float cA = blurA;
+    if (flags & 4) {   // CHROM: the centre channel comes from the mid sample
+        const int cc = (flags >> 5) & 3;
+        if (cc == 0) { cR = blurR; cG = blurLowG; cB = blurHighB; }
+        else if (cc == 1) { cR = blurLowR; cG = blurG; cB = blurHighB; }
+        else { cR = blurLowR; cG = blurHighG; cB = blurB; }
+    }
+    float gR = cR, gG = cG, gB = cB, gA = cA;
+    if (flags & 2) {   // GCE: pow 1/2.2, then the whole vec4 scaled by the alpha
+        gR = std::pow(std::max(cR, 0.f), 1.f / 2.2f) * cA;
+        gG = std::pow(std::max(cG, 0.f), 1.f / 2.2f) * cA;
+        gB = std::pow(std::max(cB, 0.f), 1.f / 2.2f) * cA;
+        gA = cA * cA;
+    }
+    // SATVIB + HUE in YUV (the def's matrices, via the shared pair).
+    float y, u, v;
+    fxAmToYuv(gR, gG, gB, &y, &u, &v);
+    const float rad = hue * 0.0174533f;
+    const float cs = std::cos(rad), sn = std::sin(rad);
+    const float hu = u * cs + v * sn, hv = -u * sn + v * cs;
+    u = hu; v = hv;
+    const float origSat = std::min(1.f, std::sqrt(u * u + v * v) * 2.5f);
+    const float su = u * satY, sv = v * satY;
+    u = su + (u - su) * origSat;
+    v = sv + (v - sv) * origSat;
+    u *= (satX + 1.f);
+    v *= (satX + 1.f);
+    float sR, sG, sB;
+    fxAmToRgb(y, u, v, &sR, &sG, &sB);
+    const float satA = gA;
+    const float inv = 1.f / std::max(satA, 0.0001f);   // the edgeglow-comp guard
+    const float dR = sR * inv, dG = sG * inv, dB = sB * inv;
+    const float luma = dR * 0.2126f + dG * 0.7152f + dB * 0.0722f;
+    const float lowB = lowThreshold * (1.f + feather) - 0.0001f;
+    const float lowA = lowB - std::max(feather, 0.00001f);
+    const float highA = highThreshold * (1.f + feather) - feather + 0.0001f;
+    const float highB = highA + std::max(feather, 0.00001f);
+    auto sstep = [](float a, float b, float x) {
+        const float t = fxClamp((x - a) / (b - a), 0.f, 1.f);
+        return t * t * (3.f - 2.f * t);
+    };
+    const float lumafx = std::min(sstep(lowA, lowB, luma), 1.f - sstep(highA, highB, luma));
+    float k = satA * oalpha;
+    if (lowThreshold > 0.001f || highThreshold < 0.001f) k *= lumafx;   // the def's condition, verbatim
+    float blR = dR * k, blG = dG * k, blB = dB * k, blA = k;
+    if (flags & 8) {   // cblend: the glow colour mixed in, then scaled by the glow alpha
+        const float bgR = (flags & 16) ? colR : blR + colR;
+        const float bgG = (flags & 16) ? colG : blG + colG;
+        const float bgB = (flags & 16) ? colB : blB + colB;
+        blR = (blR + (bgR - blR) * alpb) * blA;
+        blG = (blG + (bgG - blG) * alpb) * blA;
+        blB = (blB + (bgB - blB) * alpb) * blA;
+        blA = blA * blA;
+    }
+    float oR, oG, oB, oA;
+    if (bmode == 0) {          // SCREEN through newLayer
+        const float sR2 = 1.f - (1.f - bR) * (1.f - blR);
+        const float sG2 = 1.f - (1.f - bG) * (1.f - blG);
+        const float sB2 = 1.f - (1.f - bB) * (1.f - blB);
+        oR = bR * (1.f - blA) + sR2;
+        oG = bG * (1.f - blA) + sG2;
+        oB = bB * (1.f - blA) + sB2;
+        oA = bA * (1.f - blA) + blA;
+    } else if (bmode == 1) {   // COLOR (dodge): a vec4 division, alpha included
+        oR = bR / (1.f - blR);
+        oG = bG / (1.f - blG);
+        oB = bB / (1.f - blB);
+        oA = bA / (1.f - blA);
+    } else if (bmode == 3) {   // LAYER: newLayer
+        oR = bR * (1.f - blA) + blR;
+        oG = bG * (1.f - blA) + blG;
+        oB = bB * (1.f - blA) + blB;
+        oA = bA * (1.f - blA) + blA;
+    } else {                   // LINEAR (2, and the def's default)
+        oR = bR + blR;
+        oG = bG + blG;
+        oB = bB + blB;
+        oA = bA + blA;
+    }
+    if (strength <= 0.00001f) { oR = texR; oG = texG; oB = texB; oA = texA; }
+    if (flags & 1) { oR *= texA; oG *= texA; oB *= texA; oA *= texA; }   // overd
+    *outR = oR; *outG = oG; *outB = oB; *outA = oA;
+}
+
+void fxDropShadowPixel(float baseR, float baseG, float baseB, float baseA, float blurA,
+                       float colR, float colG, float colB, float colA,
+                       float alpha, float alphac,
+                       float* outR, float* outG, float* outB, float* outA) {
+    // AM's dropshadow composite, line by line: the layer at alphac over the tinted
+    // blurred alpha (the def's newLayer(shadow, texColor)).
+    const float tR = baseR * alphac, tG = baseG * alphac, tB = baseB * alphac, tA = baseA * alphac;
+    const float sR = colR * alpha * blurA, sG = colG * alpha * blurA;
+    const float sB = colB * alpha * blurA, sA = colA * alpha * blurA;
+    *outR = sR * (1.f - tA) + tR;
+    *outG = sG * (1.f - tA) + tG;
+    *outB = sB * (1.f - tA) + tB;
+    *outA = sA * (1.f - tA) + tA;
 }
 
 void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturation,

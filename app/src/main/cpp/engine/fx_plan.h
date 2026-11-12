@@ -329,8 +329,8 @@ enum FxType : int {
     // pass 3 the def's composite. The wiring follows AM's host convention (a pass
     // reads the params its own def declares): smoothing / threshold / invert feed
     // pass 1 (findedges-edgeglow declares exactly those), strength feeds the blur
-    // (its def label is literally "Blur"; the app's applyGaussianBlur calibration,
-    // x50 onto the app blur, converts it). Slot layout (AM units throughout):
+    // (its def label is literally "Blur"; the gaussianblur kernel converts it).
+    // Slot layout (AM units throughout):
     //   p: [0] smoothing 1..10, [1] threshold 0..1, [2] invert 0/1, [3] strength
     //      0..2, [4] spread 0..3, [5] fillColor packed 0xRRGGBB, [6] blend 0..2
     //   q: [0] gamma, [1] brightness -1..1, [2] tintColor packed 0xRRGGBB, [3] tint 0..1
@@ -407,8 +407,52 @@ enum FxType : int {
     FX_ELECTRIC_EDGES_AM_EXT2 = 148,
     FX_SMOOTH_EDGES_AM = 149,  // p0 strength 0..2, p1 mask to layer 0/1. Dedicated
                                // pass: a gaussianblur buffer (strength through the
-                               // applyGaussianBlur calibration) + the def's directional
+                               // gaussianblur kernel) + the def's directional
                                // streak composites, then the alpha smoothstep cut.
+    // v176: Queue 15 top batch (hunt round 3, defs-batch8 — the Ultra dump + the
+    // TrueMotion conversions agree param-for-param; both passed the schema
+    // acceptance test against the corpus's serialized instances).
+    FX_GAUSSIAN_BLUR_AM = 150,  // p0 strength 0..2 (AM raw). The standalone host
+                                // gaussianblur as its OWN op (it mapped onto the app's
+                                // FX_BLUR at strength x 50 until v175): the renderer
+                                // computes the def's sigma from the frame diagonal at
+                                // the point of application (fxAmGaussianSigma), so the
+                                // stored value stays AM's. Keyframed strength rides an
+                                // AmFxEval tail from index 7. NOT FX_BLUR (the app's own
+                                // panel blur, whose value is its blurriness 0..100).
+    FX_DEEP_GLOW2_AM = 151,  // Alight's deepglow2 AND deepglow_enc (one def, two ids —
+                             // TrueMotion maps the same source def to both; the corpus
+                             // serializes the identical 20-property schema for each).
+                             // Dedicated chain (Renderer::fxDeepGlow2Am): the host
+                             // gaussianblur of the layer, then the def's composite,
+                             // the whole pass list repeated `iter` times. AM units:
+                             //   p: [0] strength 0..2 (the blur), [1] oalpha 0..3,
+                             //      [2] lowThreshold 0..1, [3] highThreshold 0..1,
+                             //      [4] feather 0..10, [5] alpb 0..1, [6] bmode 0..3
+                             //      (0 SCREEN, 1 COLOR dodge, 2 LINEAR add, 3 LAYER)
+                             //   q: [0] calpha 0..1, [1] hue (raw degrees, def default
+                             //      360), [2] satvib x, [3] satvib y, [4] colblend
+                             //      packed 0xRRGGBB (its alpha is never read),
+                             //      [5] strengthhh -8..8, [6] angleee (raw degrees)
+                             //   r: [0] position point packed, [1] stretch point
+                             //      packed, [2] OFT point packed, [3] flags:
+                             //      overd 1 + GCE 2 + CHROM 4 + cblend 8 + cmode 16 +
+                             //      centerChannel 32/64, [4] iter 1..3
+                             // Keyframed strength / oalpha ride AmFxEval tails from
+                             // index 21. position / stretch / OFT sit at their def
+                             // defaults in every corpus instance.
+    FX_DEEP_GLOW2_AM_EXT = 152,
+    FX_DEEP_GLOW2_AM_EXT2 = 153,
+    FX_DROP_SHADOW_AM = 154,  // Alight's dropshadow: the host gaussianblur of the
+                              // layer, tinted (colorshadow x alpha) by its alpha,
+                              // offset by position x (-1, 1) / 500, the layer laid
+                              // over it at alphac (the def's newLayer). Dedicated
+                              // pass (Renderer::fxDropShadowAm). AM units:
+                              //   p: [0] shadow colour packed 0xRRGGBB, [1] its alpha
+                              //      0..1 (it scales the shadow, so it cannot ride the
+                              //      packed colour), [2] position point packed,
+                              //      [3] strength 0..5 (the blur), [4] alpha 0..5,
+                              //      [5] alphac 0..1
     FX_MAX = FX_COPY_BG
 };
 
@@ -540,10 +584,11 @@ void fxMirrorMap(float sr, float sg, float sb, float sa, float fr, float fg, flo
 void fxGlowScanMap(float inR, float inG, float inB, float inA, float baseR, float baseG, float baseB, float baseA,
                    float threshold, float radius, float power, float fillR, float fillG, float fillB,
                    float blend, float fill, float alpha, float* outR, float* outG, float* outB, float* outA);
-// The FX_BLUR blurriness (p0) a Glow Scan smoothing value (%, AM strength x 100) produces: the
-// importer's applyGaussianBlur calibration (AM strength x 50), so the scan's pre-blur matches the
-// blur the same strength gives as a standalone effect.
-float fxGlowScanBlurriness(float smoothingPct);
+// The FX_BLUR sigma (in the current frame's pixels) of a Glow Scan smoothing value
+// (%, AM strength x 100): the host gaussianblur formula (fxAmGaussianSigma) at the
+// frame diagonal. (Until v175 this went through the app blur's value at the flat
+// x50 calibration; the gaussianblur def's own kernel replaces it.)
+float fxGlowScanBlurSigma(float smoothingPct, float previewDiagPx);
 
 // ---- v163: Alight's next tier (the maths of the recovered definitions; the GLSL twins live in
 // fx_shaders.h modes 12..14 / 17 and in renderer_effects.cpp's dedicated passes) ----
@@ -668,6 +713,46 @@ void fxDarkGlowComposite(float baseR, float baseG, float baseB, float baseA,
 // numBlurPixelsPerSide = strength / 2 * 1.14 / 4 / 3 * length(preview size) and
 // sigma = numBlurPixelsPerSide / 2.14596602 in half-res px, i.e. twice that at full res.
 float fxDarkGlowSigma(float strength, float previewDiagPx);
+// The host gaussianblur kernel of Alight's gaussianblur def (hunt round 3,
+// defs-batch8 — the Ultra dump's stock copy; darkglow's def carries the identical
+// kernel): the full-resolution sigma in px for an AM `strength` (0..2) at a render
+// surface whose diagonal is [previewDiagPx] (AM's length(acPreviewSize); in this
+// engine the renderer's current frame, width() x height(), the fxDarkGlowSigma
+// precedent). AM runs the kernel at half resolution, which softens a touch more
+// than the same sigma at full res — a known second-order difference, as in build
+// 120's darkglow port. This replaces the flat x50 calibration the app used until
+// v175 (strength x 50 onto the app blur's value: ~2x too weak at 1080p, only
+// accidentally right near 480p).
+float fxAmGaussianSigma(float strength, float previewDiagPx);
+// CPU reference of Deep Glow 2's composite (AM's deepglow2 def, hunt round 3; the
+// GLSL twin is Renderer::fxDeepGlow2Am's program): [tex] is the layer pixel and
+// [blurMid] the blurred layer at the glow position (both PREMULTIPLIED, 0..1+);
+// [blurLow] / [blurHigh] are the blurred layer at the chromatic -/+ offsets (only
+// read when CHROM is on). The remaining params are the op's, AM raw: the sat /
+// vibrance point, the hue in raw degrees, the key colour's straight r / g / b, the
+// flags (overd 1 + GCE 2 + CHROM 4 + cblend 8 + cmode 16 + centerChannel 32/64)
+// and the blend mode. The un-premultiply of the glow divides by max(a, 0.0001)
+// (the edgeglow-comp guard precedent; invisible where a ~ 0). The threshold gate
+// keeps the def's own condition verbatim: it applies only when lowThreshold >
+// 0.001 or highThreshold < 0.001. At strength <= 0.00001 the def outputs the
+// input itself; overd then multiplies the output by the input's alpha.
+void fxDeepGlow2Pixel(float texR, float texG, float texB, float texA,
+                      float blurR, float blurG, float blurB, float blurA,
+                      float blurLowR, float blurLowG, float blurLowB,
+                      float blurHighR, float blurHighG, float blurHighB,
+                      float strength, float oalpha, float lowThreshold, float highThreshold,
+                      float feather, float calpha, float hue, float satX, float satY,
+                      float colR, float colG, float colB, float alpb,
+                      int flags, int bmode,
+                      float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Drop Shadow's composite (AM's dropshadow def, hunt round 3):
+// [base] is the layer pixel (premultiplied), [blurA] the blurred layer's alpha at
+// the offset position; the shadow colour is straight r / g / b / a. The output is
+// the def's newLayer(shadow, base x alphac): shadow = (colour x alpha) x blurA.
+void fxDropShadowPixel(float baseR, float baseG, float baseB, float baseA, float blurA,
+                       float colR, float colG, float colB, float colA,
+                       float alpha, float alphac,
+                       float* outR, float* outG, float* outB, float* outA);
 // CPU reference of Edge Glow (AM's edgeglow def): fxEdgeGlowAmEdge is pass 1's output
 // stage — the Scharr magnitude g of the 8 neighbours' premultiplied lumas (luma8 order:
 // nw, n, ne, w, e, sw, s, se — fxFindEdgesAmG's kernel, which findedges-edgeglow's def
@@ -687,10 +772,12 @@ void fxEdgeGlowAmComposite(float baseR, float baseG, float baseB, float baseA,
                            float fillR, float fillG, float fillB, float blend,
                            float tintR, float tintG, float tintB, float tint,
                            float* outR, float* outG, float* outB, float* outA);
-// AM's gaussianblur strength for the edge buffer, as the app blur's own value: the
-// applyGaussianBlur calibration (strength 0..1 -> 0..50, clamped to the app's 0..100).
-// Strength 0 is the identity blur — the def composites the unblurred edge buffer then.
-float fxEdgeGlowAmBlurOp(float strength);
+// AM's gaussianblur strength for the edge buffer, as a sigma in the current
+// frame's pixels: the host gaussianblur formula (fxAmGaussianSigma) at the frame
+// diagonal. Strength 0 gives sigma 0 — the def composites the unblurred edge
+// buffer then. (Until v175 this was fxEdgeGlowAmBlurOp, the flat x50 calibration
+// onto the app blur's value.)
+float fxEdgeGlowAmBlurSigma(float strength, float previewDiagPx);
 // Spin Blur (AM's spinblur2) has no scalar CPU reference: its tap count depends on the pixel's
 // radius, so the host test pins fxShaderOf / fxIsIdentity and the importer pins only.
 

@@ -55,11 +55,14 @@ class ClipFxLibraryTest {
         // FX_INNER_BLUR_AM (143), FX_BOX_BLUR3_AM (144), FX_FEATHER_AM (145),
         // FX_ELECTRIC_EDGES_AM (146) and FX_SMOOTH_EDGES_AM (149); 133 / 137 / 140 /
         // 147 are their EXT groups and 138 / 148 their EXT2 groups.
+        // Build 132 (v176) adds FX_GAUSSIAN_BLUR_AM (150), FX_DEEP_GLOW2_AM (151)
+        // and FX_DROP_SHADOW_AM (154); 152 / 153 are Deep Glow 2's EXT / EXT2 groups.
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
                 114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126 + 129 +
-                131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149).toList(),
+                131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149 +
+                150 + 151 + 154).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

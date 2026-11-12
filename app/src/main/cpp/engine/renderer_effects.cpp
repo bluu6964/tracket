@@ -36,7 +36,7 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_EXTRUDE,
              EF_EDGE_GLOW_EDGE, EF_EDGE_GLOW_COMP,
              EF_CHANNEL_MAP, EF_MOSAIC_AM, EF_BOX_PAIR, EF_GLOW_OUTER, EF_ELECTRIC_AM,
-             EF_SMOOTH_EDGES_AM, EF_COUNT };  // eff_[] in renderer.h has room for 44
+             EF_SMOOTH_EDGES_AM, EF_DEEP_GLOW_COMP, EF_DROP_SHADOW, EF_COUNT };  // eff_[] in renderer.h has room for 44
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -860,7 +860,7 @@ void main() {
 // (or (1 - g) * texColor.a when inverted). The magnitude is symmetric under the picture's
 // y orientation, so AM's screen-norm sampling and the layer-space vUv here agree. Pass 2
 // (in fxEdgeGlowAm) is the host gaussianblur of the edge buffer at the def's strength
-// (its label is "Blur"; fxEdgeGlowAmBlurOp converts it). The composite below is the def's
+// (its label is "Blur"; fxEdgeGlowAmBlurSigma converts it). The composite below is the def's
 // final shader line by line; its only guard is max(a, 0.0001) on the two un-premultiply
 // divisions, where AM's raw division is 0/0 on invisible pixels.
 const char* kEdgeGlowEdge = R"(#version 300 es
@@ -916,6 +916,117 @@ void main() {
     float factor = max(clamp(uBlend, 0.0, 1.0) * (1.0 - lum), uBlend - 1.0);
     oColor = mix(base, base * vec4(uTint, 1.0), uP.w) +
              mix(glow, vec4(uFill, 1.0) * lum, factor);
+}
+)";
+
+// Deep Glow 2 (Alight's deepglow2 AND deepglow_enc — one def, two ids; hunt round 3,
+// defs-batch8): the def's composite, line by line. uTex is the layer, uBlur its
+// gaussianblur buffer. The def's spaces: the glow offset (position) and the chromatic
+// offset are in screen norm / layer norm — anchored to the layer picture here (its
+// vUv), the house convention for AM's norm spaces (Fill Behind's uBgOff, Hex Shift);
+// position / stretch / OFT sit at their def defaults (0) in every corpus instance,
+// so the anchoring is inert there. uP = strength, oalpha, lowThreshold,
+// highThreshold; uQ = feather, calpha, hue (raw degrees, folded to turns by the
+// caller), alpb; uCol the key colour (straight); uOff the chromatic offset, ready
+// in vUv (converted CPU-side); uGlowOff = position, stretch (AM units; the shader
+// applies the / 500 and the stretch warp, as the def does); uFlags = (overd, GCE,
+// CHROM, centerChannel 0..2), uFlags2 = (cblend, cmode). fxDeepGlow2Pixel in
+// fx_plan.cpp is the CPU twin. The un-premultiply divides by max(a, 0.0001) (the
+// edgeglow-comp guard).
+const char* kDeepGlowComp = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec4 uP;
+uniform vec4 uQ;
+uniform vec3 uCol;
+uniform vec2 uOff;   // the chromatic offset (CPU-side: dir(angleee) x strengthhh / 8
+                     // + OFT x (-1, 1) / 500, the def's layer-norm formula)
+uniform vec4 uGlowOff;
+uniform vec4 uSat;   // satvib x, satvib y, strengthhh, 0
+uniform vec4 uFlags;   // overd, GCE, CHROM, centerChannel (0..2)
+uniform vec2 uFlags2;   // cblend, cmode
+uniform float uBmode;
+in vec2 vUv;
+out vec4 oColor;
+vec4 newLayer(vec4 a, vec4 b) { return a * (1.0 - b.a) + b; }
+float ss(float a, float b, float x) { float t = clamp((x - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
+void main() {
+    mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+    mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+    vec4 texColor = texture(uTex, vUv);
+    vec4 baseColor = texColor * uQ.y;
+    float ang = 6.2831855 * uQ.z;
+    mat3 huemat = mat3(1.0, 0.0, 0.0,
+                       0.0, cos(ang), sin(ang),
+                       0.0, -sin(ang), cos(ang));
+    vec2 ume = vUv + uGlowOff.xy / 500.0 * vec2(-1.0, 1.0);
+    ume -= (ume - 0.5) * 0.7 * vec2(fract(uGlowOff.z * 0.5), fract(uGlowOff.w * 0.5));
+    vec4 mid = texture(uBlur, ume);
+    vec4 compColorr = mid;
+    if (uFlags.z > 0.5) {
+        vec2 off = uOff;
+        vec4 lo = texture(uBlur, vUv - off);
+        vec4 hi = texture(uBlur, vUv + off);
+        int cc = int(uFlags.w + 0.5);
+        if (cc == 0) compColorr = vec4(mid.r, lo.g, hi.b, mid.a);
+        else if (cc == 1) compColorr = vec4(lo.r, mid.g, hi.b, mid.a);
+        else compColorr = vec4(lo.r, hi.g, mid.b, mid.a);
+    }
+    vec4 gammaComp = compColorr;
+    if (uFlags.y > 0.5) gammaComp = vec4(pow(max(compColorr.rgb, vec3(0.0)), vec3(1.0 / 2.2)), compColorr.a) * compColorr.a;
+    vec3 yuv = gammaComp.rgb * rgb2yuv;
+    yuv *= huemat;
+    float origSat = min(1.0, length(yuv.yz) * 2.5);
+    yuv.yz = mix(yuv.yz * uSat.y, yuv.yz, origSat);
+    yuv.yz *= (uSat.x + 1.0);
+    vec4 satComp = vec4(yuv * yuv2rgb, gammaComp.a);
+    vec4 dblur = vec4(satComp.rgb / max(satComp.a, 0.0001), 1.0);
+    float lumafxC = dot(vec3(0.2126, 0.7152, 0.0722), dblur.rgb);
+    float lowB = uP.z * (1.0 + uQ.x) - 0.0001;
+    float lowA = lowB - max(uQ.x, 0.00001);
+    float highA = uP.w * (1.0 + uQ.x) - uQ.x + 0.0001;
+    float highB = highA + max(uQ.x, 0.00001);
+    float lumafx = min(ss(lowA, lowB, lumafxC), 1.0 - ss(highA, highB, lumafxC));
+    vec4 dblurr = dblur;
+    if (uP.z > 0.001 || uP.w < 0.001) dblurr *= lumafx;
+    dblurr *= satComp.a;
+    dblurr *= uP.y;
+    vec4 blendComp = dblurr;
+    if (uFlags2.x > 0.5) {
+        vec3 blendGlow = uFlags2.y > 0.5 ? uCol : dblurr.rgb + uCol;
+        blendComp = mix(dblurr, vec4(blendGlow, dblurr.a), uQ.w) * dblurr.a;
+    }
+    vec4 finalGlow;
+    int bm = int(uBmode + 0.5);
+    if (bm == 0) finalGlow = newLayer(baseColor, vec4(1.0 - (1.0 - baseColor.rgb) * (1.0 - blendComp.rgb), blendComp.a));
+    else if (bm == 1) finalGlow = baseColor / (1.0 - blendComp);
+    else if (bm == 3) finalGlow = newLayer(baseColor, blendComp);
+    else finalGlow = baseColor + blendComp;
+    vec4 outc = uP.x > 0.00001 ? finalGlow : texColor;
+    if (uFlags.x > 0.5) outc *= texColor.a;
+    oColor = outc;
+}
+)";
+
+// Drop Shadow (Alight's dropshadow; hunt round 3, defs-batch8): the def's composite,
+// line by line. uTex is the layer, uBlur its gaussianblur buffer; uShadow the shadow
+// colour (straight rgba), uOff the position offset in uv (position x (-1, 1) / 500,
+// the def's screen-norm space anchored to the layer picture — the house convention),
+// uP = alpha, alphac. fxDropShadowPixel in fx_plan.cpp is the CPU twin.
+const char* kDropShadow = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec4 uShadow;
+uniform vec2 uOff;
+uniform vec2 uP;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 texColor = texture(uTex, vUv) * uP.y;
+    vec4 shadowb = uShadow * texture(uBlur, vUv + uOff).a;
+    oColor = shadowb * (1.0 - texColor.a) + texColor;
 }
 )";
 
@@ -1251,7 +1362,7 @@ void main() {
 // tracing march (up to MAX_ITER steps, the def's own cap of 800) over the box SDF, whose
 // step size runs off the blurred copy's alpha (uBlur = the gaussianblur buffer pass:
 // the layer blurred at the effect's `strength`, the name-matched pass wiring, read with
-// the applyGaussianBlur calibration). uMat is the orientation matrix R = Rz*Rx*Ry
+// the gaussianblur kernel (fxAmGaussianSigma)). uMat is the orientation matrix R = Rz*Rx*Ry
 // (fxExtrudeRotateMat; the host `orient` is the identity — layers here have no 3D
 // orientation, and the only serialised orient in the corpus is the identity quaternion).
 // The maths runs in AM's layer space (layer-norm, y down); texture fetches flip y back
@@ -1774,7 +1885,7 @@ const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSpli
                                   kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp, kExtrude,
                                   kEdgeGlowEdge, kEdgeGlowComp,
                                   kChannelMapAm, kMosaicAm, kBoxPair, kGlowOuter, kElectricEdgesAm,
-                                  kSmoothEdgesAm};
+                                  kSmoothEdgesAm, kDeepGlowComp, kDropShadow};
 static_assert(EF_COUNT <= 44, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
@@ -1965,6 +2076,9 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_GLOW_AM: ok = fxGlowOuterAm(op, W, H, cur); break;
             case FX_ELECTRIC_EDGES_AM: ok = fxElectricEdgesAm(op, W, H, cur); break;
             case FX_SMOOTH_EDGES_AM: ok = fxSmoothEdgesAm(op, W, H, cur); break;
+            case FX_GAUSSIAN_BLUR_AM: ok = fxGaussianBlurAm(op, W, H, cur); break;
+            case FX_DEEP_GLOW2_AM: ok = fxDeepGlow2Am(op, W, H, cur); break;
+            case FX_DROP_SHADOW_AM: ok = fxDropShadowAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -2038,7 +2152,14 @@ bool Renderer::runMasks(const LayerFx& fx, int W, int H, int* cur) {
 }
 
 bool Renderer::fxBlur(const FxOp& op, int W, int H, int* cur) {
-    const float sigma = fxBlurSigma(op.p[0], (float)H / 1080.f);
+    return fxBlurPx(fxBlurSigma(op.p[0], (float)H / 1080.f), W, H, cur);
+}
+
+// The separable gaussian at an explicit sigma in px (the fxBlur body; v176 split it
+// out so the Alight passes that wire the host gaussianblur def can drive it with the
+// def's own sigma — fxAmGaussianSigma — instead of round-tripping through the app
+// blur's value, whose 0..100 clamp silently capped sigma at 60 x H / 1080).
+bool Renderer::fxBlurPx(float sigma, int W, int H, int* cur) {
     if (sigma < 0.25f) return true;
     const uint32_t down = effProg(EF_DOWN), blur = effProg(EF_BLUR), copy = effProg(EF_COPY);
     if (!blur || (!down && fxPlanBlur(sigma).shift > 0) || !copy) return false;
@@ -2163,10 +2284,8 @@ bool Renderer::fxGlowScan(const FxOp& op, int W, int H, int* cur) {
     bindTex(0, fxTex_[*cur]);
     glUniform1i(loc(copy, "uTex"), 0);
     draw();
-    FxOp blurOp;
-    blurOp.type = FX_BLUR;
-    blurOp.p[0] = fxGlowScanBlurriness(op.p[3]);
-    if (!fxBlur(blurOp, W, H, cur)) return false;   // the blurred copy, back in `cur` (a no-op under sigma 0.25)
+    if (!fxBlurPx(fxGlowScanBlurSigma(op.p[3], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;   // the blurred copy, back in `cur` (a no-op under sigma 0.25)
     const int dst = 1 - *cur;
     begin(prog, fxFbo_[dst], W, H);
     bindTex(0, keep.tex[0]);
@@ -2297,10 +2416,8 @@ bool Renderer::fxSoftGlowAm(const FxOp& op, int W, int H, int* cur) {
     bindTex(0, fxTex_[*cur]);
     glUniform1i(loc(copy, "uTex"), 0);
     draw();
-    FxOp blurOp;
-    blurOp.type = FX_BLUR;
-    blurOp.p[0] = fxGlowScanBlurriness(op.p[0]);   // AM strength -> the app blur, the Glow Scan calibration
-    if (!fxBlur(blurOp, W, H, cur)) return false;
+    if (!fxBlurPx(fxGlowScanBlurSigma(op.p[0], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;   // AM strength -> the host gaussianblur sigma (the Glow Scan calibration)
     auto cl = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
     const int packed = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[4])));
     const int dst = 1 - *cur;
@@ -2330,10 +2447,8 @@ bool Renderer::fxFillBehindAm(const FxOp& op, int W, int H, int* cur) {
     bindTex(0, fxTex_[*cur]);
     glUniform1i(loc(copy, "uTex"), 0);
     draw();
-    FxOp blurOp;
-    blurOp.type = FX_BLUR;
-    blurOp.p[0] = fxGlowScanBlurriness(op.p[0]);
-    if (!fxBlur(blurOp, W, H, cur)) return false;
+    if (!fxBlurPx(fxGlowScanBlurSigma(op.p[0], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;
     auto cl = [](float v) { return std::min(100.f, std::max(0.f, v)) / 100.f; };
     auto unpack = [](float packedF, float* r, float* g, float* b) {
         const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
@@ -2363,10 +2478,11 @@ bool Renderer::fxFillBehindAm(const FxOp& op, int W, int H, int* cur) {
 }
 
 // Dark Glow (Alight): keep the layer, extract its dark parts, blur the extract with the def's
-// kernel (its size runs off the scene diagonal — acPreviewSize — converted here to the app
-// blur's blurriness at this buffer's height), then the multiply composite. At strength 0 the
+// kernel (its size runs off the scene diagonal — acPreviewSize — applied directly as a sigma
+// through fxBlurPx since v176; before, it round-tripped through the app blur's value), then
+// the multiply composite. At strength 0 the
 // def composites the UNBLURRED extract, which the skipped blur (sigma < 0.25 is a no-op in
-// fxBlur) reproduces exactly.
+// fxBlurPx) reproduces exactly.
 bool Renderer::fxDarkGlowAm(const FxOp& op, int W, int H, int* cur) {
     if (fxIsIdentity(op)) return true;
     const uint32_t ext = effProg(EF_DARK_GLOW_EXTRACT), comp = effProg(EF_DARK_GLOW_COMP), copy = effProg(EF_COPY);
@@ -2388,12 +2504,9 @@ bool Renderer::fxDarkGlowAm(const FxOp& op, int W, int H, int* cur) {
     glUniform2f(loc(ext, "uP"), cl(op.p[1]), cl(op.p[3]));
     draw();
     *cur = dst0;
-    FxOp blurOp;
-    blurOp.type = FX_BLUR;
     const float diag = std::hypot((float)width(), (float)height());
     const float sigma = fxDarkGlowSigma(std::min(200.f, std::max(0.f, op.p[0])) / 100.f, diag);
-    blurOp.p[0] = std::min(100.f, sigma * 1800.f / std::max(1, H));   // fxBlurSigma inverts: sigma = b * 0.6 * H / 1080
-    if (!fxBlur(blurOp, W, H, cur)) return false;
+    if (!fxBlurPx(sigma, W, H, cur)) return false;
     const int dst = 1 - *cur;
     begin(comp, fxFbo_[dst], W, H);
     bindTex(0, keep.tex[0]);
@@ -2408,7 +2521,7 @@ bool Renderer::fxDarkGlowAm(const FxOp& op, int W, int H, int* cur) {
 
 // Edge Glow (Alight): keep the layer, run the def's findedges-edgeglow pass into the
 // other fx target, blur that edge buffer with the host gaussianblur at the def's
-// strength (fxEdgeGlowAmBlurOp — strength 0 leaves it unblurred, exactly as AM's
+// strength (fxEdgeGlowAmBlurSigma — strength 0 leaves it unblurred, exactly as AM's
 // chain composites it then), then the def's composite over the kept layer.
 bool Renderer::fxEdgeGlowAm(const FxOp& op, int W, int H, int* cur) {
     const uint32_t edge = effProg(EF_EDGE_GLOW_EDGE), comp = effProg(EF_EDGE_GLOW_COMP), copy = effProg(EF_COPY);
@@ -2427,10 +2540,8 @@ bool Renderer::fxEdgeGlowAm(const FxOp& op, int W, int H, int* cur) {
     glUniform3f(loc(edge, "uP"), op.p[0], op.p[1], op.p[2]);   // smoothing, threshold, invert
     draw();
     *cur = dst0;
-    FxOp blurOp;
-    blurOp.type = FX_BLUR;
-    blurOp.p[0] = fxEdgeGlowAmBlurOp(op.p[3]);   // strength, the def's "Blur"
-    if (!fxBlur(blurOp, W, H, cur)) return false;
+    if (!fxBlurPx(fxEdgeGlowAmBlurSigma(op.p[3], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;   // strength, the def's "Blur"
     auto unpack = [](float packedF, float* r, float* g, float* b) {
         const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
         *r = ((pk >> 16) & 0xFF) / 255.f;
@@ -2455,9 +2566,113 @@ bool Renderer::fxEdgeGlowAm(const FxOp& op, int W, int H, int* cur) {
     return true;
 }
 
+// The standalone gaussianblur (Alight): the def IS the host blur — sigma from the
+// def's kernel at the frame diagonal (fxAmGaussianSigma), applied at full res.
+// AM's previewSize is the renderer's current frame (width() x height()) — the size
+// the layer is being composited into, the fxDarkGlowAm precedent; the fx pass runs
+// on the layer's crop buffer (W x H) but the kernel scales with the frame, exactly
+// as AM's scales with its preview.
+bool Renderer::fxGaussianBlurAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    return fxBlurPx(fxAmGaussianSigma(op.p[0], std::hypot((float)width(), (float)height())), W, H, cur);
+}
+
+// Deep Glow 2 (Alight; deepglow2 and deepglow_enc share the def): per iteration —
+// keep the layer, blur a copy with the host gaussianblur at `strength`, composite
+// (EF_DEEP_GLOW_COMP, the def's shader). The packed points unpack through
+// ClipFx.packPoint's 12-bit fields, whole AM units.
+bool Renderer::fxDeepGlow2Am(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_DEEP_GLOW_COMP), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    auto unpackPt = [](float packedF, float* x, float* y) {
+        const int pk = (int)std::lround(packedF);
+        *x = (float)(pk / 4096 - 2048);
+        *y = (float)(pk % 4096 - 2048);
+    };
+    float posX, posY, strX, strY, oftX, oftY;
+    unpackPt(op.r[0], &posX, &posY);
+    unpackPt(op.r[1], &strX, &strY);
+    unpackPt(op.r[2], &oftX, &oftY);
+    const int flags = (int)std::lround(op.r[3]);
+    const int iter = std::min(3, std::max(1, (int)std::lround(op.r[4])));
+    const int packedCol = (int)std::lround(std::min(16777215.f, std::max(0.f, op.q[4])));
+    const float diag = std::hypot((float)width(), (float)height());
+    const float sigma = fxAmGaussianSigma(op.p[0], diag);
+    const float rad = op.q[6] * 0.0174533f;   // angleee, raw degrees (the def's radians())
+    for (int it = 0; it < iter; ++it) {
+        begin(copy, keep.fbo[0], W, H);
+        bindTex(0, fxTex_[*cur]);
+        glUniform1i(loc(copy, "uTex"), 0);
+        draw();
+        if (!fxBlurPx(sigma, W, H, cur)) return false;
+        const int dst = 1 - *cur;
+        begin(prog, fxFbo_[dst], W, H);
+        bindTex(0, keep.tex[0]);
+        bindTex(1, fxTex_[*cur]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform1i(loc(prog, "uBlur"), 1);
+        glUniform4f(loc(prog, "uP"), op.p[0], op.p[1], op.p[2], op.p[3]);
+        float hueTurns = std::fmod(op.q[1], 360.f) / 360.f;
+        if (hueTurns < 0.f) hueTurns += 1.f;
+        glUniform4f(loc(prog, "uQ"), op.p[4], op.q[0], hueTurns, op.p[5]);
+        glUniform3f(loc(prog, "uCol"), ((packedCol >> 16) & 0xFF) / 255.f, ((packedCol >> 8) & 0xFF) / 255.f,
+                    (packedCol & 0xFF) / 255.f);
+        // The chromatic offset, the def's layer-norm formula applied literally in
+        // vUv (the same norm-space treatment as Drop Shadow's position offset):
+        // dir(angleee) x (strengthhh / 8) + OFT x (-1, 1) / 500.
+        glUniform2f(loc(prog, "uOff"), std::cos(rad) * (op.q[5] / 8.f) - oftX / 500.f,
+                    std::sin(rad) * (op.q[5] / 8.f) + oftY / 500.f);
+        glUniform4f(loc(prog, "uGlowOff"), posX, posY, strX, strY);
+        glUniform4f(loc(prog, "uSat"), op.q[2], op.q[3], op.q[5], 0.f);
+        glUniform4f(loc(prog, "uFlags"), (flags & 1) ? 1.f : 0.f, (flags & 2) ? 1.f : 0.f,
+                    (flags & 4) ? 1.f : 0.f, (float)((flags >> 5) & 3));
+        glUniform2f(loc(prog, "uFlags2"), (flags & 8) ? 1.f : 0.f, (flags & 16) ? 1.f : 0.f);
+        glUniform1f(loc(prog, "uBmode"), op.p[6]);
+        draw();
+        *cur = dst;
+    }
+    return true;
+}
+
+// Drop Shadow (Alight): keep the layer, blur a copy with the host gaussianblur at
+// `strength`, composite (EF_DROP_SHADOW): the blurred alpha tinted by the shadow
+// colour, sampled at the position offset, the layer over it.
+bool Renderer::fxDropShadowAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_DROP_SHADOW), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    if (!fxBlurPx(fxAmGaussianSigma(op.p[3], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;
+    const int pk = (int)std::lround(op.p[2]);
+    const float posX = (float)(pk / 4096 - 2048), posY = (float)(pk % 4096 - 2048);
+    const int packedCol = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[0])));
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform4f(loc(prog, "uShadow"), ((packedCol >> 16) & 0xFF) / 255.f, ((packedCol >> 8) & 0xFF) / 255.f,
+                (packedCol & 0xFF) / 255.f, std::min(1.f, std::max(0.f, op.p[1])));
+    glUniform2f(loc(prog, "uOff"), posX / 500.f * -1.f, posY / 500.f);
+    glUniform2f(loc(prog, "uP"), op.p[4], op.p[5]);
+    draw();
+    *cur = dst;
+    return true;
+}
+
 // Extrude / Extrude Flat (Alight): keep the layer, blur a copy for the march's alpha
 // buffer (Extrude only — its gaussianblur buffer pass, strength through the
-// applyGaussianBlur calibration), then the raymarch pass. The orientation matrix and
+// gaussianblur kernel (fxAmGaussianSigma)), then the raymarch pass. The orientation matrix and
 // the packed-slot unpacking mirror the CPU twin (fxExtrudeAmPixel) exactly.
 bool Renderer::fxExtrudeAm(const FxOp& op, int W, int H, int* cur) {
     const bool flat = op.type == FX_EXTRUDE_FLAT_AM;
@@ -2501,10 +2716,8 @@ bool Renderer::fxExtrudeAm(const FxOp& op, int W, int H, int* cur) {
         lightPos[0] = ldx / 2.f;
         lightPos[1] = -ldy / 2.f;
         lightPos[2] = -lightDepth * 2.f;
-        FxOp blurOp;
-        blurOp.type = FX_BLUR;
-        blurOp.p[0] = strength * 50.f;   // AM strength -> the app blur (the applyGaussianBlur calibration)
-        if (!fxBlur(blurOp, W, H, cur)) return false;
+        if (!fxBlurPx(fxAmGaussianSigma(strength, std::hypot((float)width(), (float)height())), W, H, cur))
+            return false;   // AM strength -> the host gaussianblur sigma (the def's kernel)
     }
     float m[9];
     fxExtrudeRotateMat(op.q[0], op.q[1], op.q[2], m);
@@ -2952,10 +3165,8 @@ bool Renderer::fxElectricEdgesAm(const FxOp& op, int W, int H, int* cur) {
     bindTex(0, fxTex_[*cur]);
     glUniform1i(loc(copy, "uTex"), 0);
     draw();
-    FxOp blurOp;
-    blurOp.type = FX_BLUR;
-    blurOp.p[0] = op.r[6] * 50.f;   // the def's strength through applyGaussianBlur's calibration
-    if (!fxBlur(blurOp, W, H, cur)) return false;
+    if (!fxBlurPx(fxAmGaussianSigma(op.r[6], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;   // the def's hblur strength through the gaussianblur kernel
     auto unpack = [](float packedF, float* r, float* g, float* b) {
         const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
         *r = ((pk >> 16) & 0xFF) / 255.f;
@@ -2986,7 +3197,7 @@ bool Renderer::fxElectricEdgesAm(const FxOp& op, int W, int H, int* cur) {
 }
 
 // Smooth Edges (Alight): keep the input and a gaussian-blurred copy of it (the
-// def's hblur, strength through the gaussianblur calibration), run the two streak
+// def's hblur, strength through the gaussianblur kernel), run the two streak
 // composites through lv_ levels, then the final alpha cut.
 bool Renderer::fxSmoothEdgesAm(const FxOp& op, int W, int H, int* cur) {
     if (fxIsIdentity(op)) return true;
@@ -3002,10 +3213,8 @@ bool Renderer::fxSmoothEdgesAm(const FxOp& op, int W, int H, int* cur) {
     bindTex(0, fxTex_[*cur]);
     glUniform1i(loc(copy, "uTex"), 0);
     draw();
-    FxOp blurOp;
-    blurOp.type = FX_BLUR;
-    blurOp.p[0] = op.p[0] * 50.f;   // the def's strength through applyGaussianBlur's calibration
-    if (!fxBlur(blurOp, W, H, cur)) return false;
+    if (!fxBlurPx(fxAmGaussianSigma(op.p[0], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;   // the def's strength through the gaussianblur kernel
     begin(copy, blurKeep.fbo[0], W, H);
     bindTex(0, fxTex_[*cur]);
     glUniform1i(loc(copy, "uTex"), 0);

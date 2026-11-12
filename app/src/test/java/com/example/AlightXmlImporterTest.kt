@@ -1876,12 +1876,15 @@ $layers
 
     @Test
     fun gaussianBlurBecomesNativeBlur() {
+        // Since v176 the standalone gaussianblur is its own op holding AM's raw
+        // strength (the renderer computes the def's resolution-aware sigma); before,
+        // it mapped onto the app's Blur at strength x 50.
         val c = onlyClip(shapeWith(
             """<effect id="com.alightcreative.effects.gaussianblur" locallyApplied="true"><property name="strength" type="float" value="0.5" /></effect>"""
         ))
         assertEquals(1, c.effects.size)
-        assertEquals(com.example.model.ClipFxLibrary.BLUR, c.effects[0].type)
-        assertEquals(25f, c.effects[0].values[0], 0.01f)   // 0.5 of Alight's 0..1 onto 0..50
+        assertEquals(com.example.model.ClipFxLibrary.GAUSSIAN_BLUR_AM, c.effects[0].type)
+        assertEquals(0.5f, c.effects[0].values[0], 0.01f)   // AM raw strength, unscaled
     }
 
     @Test
@@ -2032,8 +2035,8 @@ $layers
         ), 1080f)
         assertFalse(r.warnings.any { it.contains("keyframed") })
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
-        val fx = c.effects.first { it.type == ClipFxLibrary.BLUR }
-        assertEquals(15f, fx.values[0], 0.001f)   // 0.3 x 50
+        val fx = c.effects.first { it.type == ClipFxLibrary.GAUSSIAN_BLUR_AM }
+        assertEquals(0.3f, fx.values[0], 0.001f)   // AM raw strength at t = 0
         assertEquals(2f, fx.values[7], 0.001f)    // the tail: two keys
         val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
         assertEquals(0f, end.values[0], 0.001f)
@@ -2731,8 +2734,8 @@ $layers
 </embedScene>"""
         )
         val g = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
-        val fx = g.effects.first { it.type == com.example.model.ClipFxLibrary.BLUR }
-        assertEquals(25.25f, fx.values[0], 0.01f)
+        val fx = g.effects.first { it.type == com.example.model.ClipFxLibrary.GAUSSIAN_BLUR_AM }
+        assertEquals(0.505f, fx.values[0], 0.01f)   // AM raw strength
     }
 
     @Test

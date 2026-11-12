@@ -408,10 +408,12 @@ int main() {
         // Alpha 0 inside the band: the input (times fill) is kept.
         fxGlowScanMap(0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.1f, 2.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, &r, &g, &b, &a);
         CHECK(std::fabs(r - 0.5f) < 1e-6f, "glow scan alpha 0 keeps the input");
-        // The pre-blur calibration: AM strength x 50 (0.05 -> 2.5, 0.10 -> 5, capped at 100).
-        CHECK(std::fabs(fxGlowScanBlurriness(5.f) - 2.5f) < 1e-6f, "glow scan blurriness 0.05");
-        CHECK(std::fabs(fxGlowScanBlurriness(10.f) - 5.f) < 1e-6f, "glow scan blurriness 0.10");
-        CHECK(std::fabs(fxGlowScanBlurriness(400.f) - 100.f) < 1e-6f, "glow scan blurriness capped");
+        // The pre-blur calibration (v176): the host gaussianblur kernel at the frame
+        // diagonal — smoothing % is AM strength x 100, sigma = strength x diag x
+        // 0.04427 (diag 2202.9072 = 1920x1080). No cap any more (400% -> 390.08).
+        CHECK(std::fabs(fxGlowScanBlurSigma(5.f, 2202.9072f) - 4.876037f) < 1e-3f, "glow scan blur sigma 0.05");
+        CHECK(std::fabs(fxGlowScanBlurSigma(10.f, 2202.9072f) - 9.752073f) < 1e-3f, "glow scan blur sigma 0.10");
+        CHECK(std::fabs(fxGlowScanBlurSigma(400.f, 2202.9072f) - 390.083f) < 5e-2f, "glow scan blur sigma uncapped");
     }
     // v163: Alight's next tier (64..74). The shaded ones map to kFxWarp modes 12..14 / kFxColor
     // mode 17; Luma Key, Four Color Gradient, Turbulent Displace and Pixelate are dedicated
@@ -1130,9 +1132,12 @@ int main() {
                               &oR, &oG, &oB, &oA);
         CHECK(std::fabs(oR - 0.5f) < 1e-4f && std::fabs(oG - 0.5f) < 1e-4f && std::fabs(oB - 0.5f) < 1e-4f,
               "edge glow composite brightness (%g %g %g)", oR, oG, oB);
-        // The blur calibration: strength 0 is the identity (the Graph bars' case),
-        // 0.3 -> 15, 2 -> the app's 100 cap.
-        CHECK(fxEdgeGlowAmBlurOp(0.f) == 0.f && std::fabs(fxEdgeGlowAmBlurOp(0.3f) - 15.f) < 1e-4f && fxEdgeGlowAmBlurOp(2.f) == 100.f,
+        // The blur calibration (v176): the host gaussianblur kernel at the frame
+        // diagonal — strength 0 is the identity (the Graph bars' case), 0.3 ->
+        // sigma 29.256 at 1080p, 2 -> 195.041 (no cap; the flat x 50 gave 15 / 100).
+        CHECK(fxEdgeGlowAmBlurSigma(0.f, 2202.9072f) == 0.f &&
+              std::fabs(fxEdgeGlowAmBlurSigma(0.3f, 2202.9072f) - 29.256220f) < 1e-3f &&
+              std::fabs(fxEdgeGlowAmBlurSigma(2.f, 2202.9072f) - 195.041468f) < 1e-2f,
               "edge glow blur calibration");
         // Parse: main + EXT fold into one op; a bare EXT is dropped; never identity.
         float flatG[] = {129, 2.05f, 0.59f, 0, 0, 1.54f, 16777215, 0,
@@ -1332,6 +1337,148 @@ int main() {
         CHECK(fxIsIdentity(id) && (id.p[0] = 0.15f, !fxIsIdentity(id)), "feather identity under its floor");
         id = FxOp{}; id.type = FX_SPECTRALMAP_AM;
         CHECK(fxIsIdentity(id), "spectral alpha 0 is identity");
+    }
+    // v176: Queue 15 top batch — the host gaussianblur calibration (fxAmGaussianSigma),
+    // Deep Glow 2 (deepglow2 + deepglow_enc) and Drop Shadow. Every expected value was
+    // hand-computed from the recovered defs in double precision before the port
+    // (hunt-staging/pins-b132.txt).
+    {
+        const float D1080 = 2202.9072f;   // hypot(1920, 1080)
+        // The kernel: sigma = strength x diag x 0.04427 (the def formula).
+        CHECK(fxAmGaussianSigma(0.f, D1080) == 0.f, "gaussian sigma 0");
+        CHECK(std::fabs(fxAmGaussianSigma(0.15f, D1080) - 14.628110f) < 1e-3f, "gaussian sigma 0.15 @1080p");
+        CHECK(std::fabs(fxAmGaussianSigma(1.f, D1080) - 97.520734f) < 1e-3f, "gaussian sigma 1 @1080p");
+        CHECK(std::fabs(fxAmGaussianSigma(2.f, D1080) - 195.041468f) < 1e-2f, "gaussian sigma 2 @1080p");
+        CHECK(std::fabs(fxAmGaussianSigma(0.42f, 1468.6048f) - 27.305805f) < 1e-3f, "gaussian sigma 0.42 @720p");
+        CHECK(std::fabs(fxAmGaussianSigma(0.3f, 979.6510f) - 13.010482f) < 1e-3f, "gaussian sigma 0.3 @480p");
+        // Darkglow's sigma IS the same kernel (build 120's pins ride the delegate).
+        CHECK(std::fabs(fxDarkGlowSigma(0.3f, D1080) - fxAmGaussianSigma(0.3f, D1080)) < 1e-6f, "darkglow sigma delegates");
+        float oR, oG, oB, oA;
+        // Deep Glow 2. Common: tex (0.10, 0.20, 0.30, 0.50), blur mid (0.40, 0.30, 0.20,
+        // 0.60); strength 0.54, oalpha 0.62, low 0.1, high 1, feather 0.3, satvib (0, 1),
+        // hue 360, calpha 1, colblend #FFA800 straight (1, 0.658824, 0), alpb 0.5,
+        // bmode 2 (LINEAR), no switches.
+        auto dg = [&](float tR, float tG, float tB, float tA,
+                      float bR, float bG, float bB, float bA,
+                      float lR, float lG, float lB, float hR, float hG, float hB,
+                      float strength, float oalpha, float low, float high, float feather,
+                      float calpha, float hue, float satX, float satY, int flags, int bmode) {
+            fxDeepGlow2Pixel(tR, tG, tB, tA, bR, bG, bB, bA, lR, lG, lB, hR, hG, hB,
+                             strength, oalpha, low, high, feather, calpha, hue, satX, satY,
+                             1.f, 0.658824f, 0.f, 0.5f, flags, bmode, &oR, &oG, &oB, &oA);
+        };
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.4f, 0.3f, 0.2f, 0.6f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.62f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32, 2);
+        CHECK(std::fabs(oR - 0.347999f) < 1e-3f && std::fabs(oG - 0.385999f) < 1e-3f &&
+              std::fabs(oB - 0.424005f) < 1e-3f && std::fabs(oA - 0.872000f) < 1e-3f,
+              "deepglow linear typical (%g %g %g %g)", oR, oG, oB, oA);
+        // The gate fully closed (luma 0.01 far under the low ramp): the input returns.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.01f, 0.01f, 0.01f, 0.9f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.62f, 0.5f, 1.f, 0.05f, 1.f, 360.f, 0.f, 1.f, 32, 2);
+        CHECK(std::fabs(oR - 0.1f) < 1e-5f && std::fabs(oA - 0.5f) < 1e-5f, "deepglow gate closed");
+        // SCREEN + cblend ADD at oalpha 1.5, saturated blur.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.8f, 0.6f, 0.4f, 1.f, 0, 0, 0, 0, 0, 0,
+           0.54f, 1.5f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32 | 8, 0);
+        CHECK(std::fabs(oR - 2.269997f) < 2e-3f && std::fabs(oG - 1.425288f) < 2e-3f &&
+              std::fabs(oB - 0.555025f) < 2e-3f && std::fabs(oA - 1.625f) < 2e-3f,
+              "deepglow screen cblend add (%g %g %g %g)", oR, oG, oB, oA);
+        // cblend REPLACE + LAYER.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.8f, 0.6f, 0.4f, 1.f, 0, 0, 0, 0, 0, 0,
+           0.54f, 1.5f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32 | 8 | 16, 3);
+        CHECK(std::fabs(oR - 1.524998f) < 2e-3f && std::fabs(oG - 0.919114f) < 2e-3f &&
+              std::fabs(oB - 0.075018f) < 2e-3f && std::fabs(oA - 1.625f) < 2e-3f,
+              "deepglow cblend replace layer (%g %g %g %g)", oR, oG, oB, oA);
+        // GCE (gamma-compensated extraction: pow 1/2.2, alpha squared).
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.25f, 0.5f, 0.75f, 0.8f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.62f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32 | 2, 2);
+        CHECK(std::fabs(oR - 0.364131f) < 2e-3f && std::fabs(oG - 0.561950f) < 2e-3f &&
+              std::fabs(oB - 0.735208f) < 2e-3f && std::fabs(oA - 0.896800f) < 2e-3f,
+              "deepglow gce (%g %g %g %g)", oR, oG, oB, oA);
+        // CHROM, centre channel R (0): R from mid, G from low, B from high.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.2f, 0.8f, 0.2f, 0.6f, 0.9f, 0.1f, 0.1f, 0.1f, 0.1f, 0.9f,
+           0.54f, 0.62f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 4, 2);
+        CHECK(std::fabs(oR - 0.224002f) < 1e-3f && std::fabs(oG - 0.261999f) < 1e-3f &&
+              std::fabs(oB - 0.858002f) < 1e-3f && std::fabs(oA - 0.872f) < 1e-3f,
+              "deepglow chrom cc0 (%g %g %g %g)", oR, oG, oB, oA);
+        // CHROM, centre channel B (2): R from low, G from high, B from mid.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.2f, 0.8f, 0.2f, 0.6f, 0.9f, 0.1f, 0.1f, 0.1f, 0.1f, 0.9f,
+           0.54f, 0.62f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 4 | 64, 2);
+        CHECK(std::fabs(oR - 0.657998f) < 1e-3f && std::fabs(oG - 0.261997f) < 1e-3f &&
+              std::fabs(oB - 0.424011f) < 1e-3f && std::fabs(oA - 0.872f) < 1e-3f,
+              "deepglow chrom cc2 (%g %g %g %g)", oR, oG, oB, oA);
+        // strength 0: the input; with overd: the input times its alpha.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.4f, 0.3f, 0.2f, 0.6f, 0, 0, 0, 0, 0, 0,
+           0.f, 0.62f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32, 2);
+        CHECK(std::fabs(oR - 0.1f) < 1e-6f && std::fabs(oA - 0.5f) < 1e-6f, "deepglow strength 0");
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.4f, 0.3f, 0.2f, 0.6f, 0, 0, 0, 0, 0, 0,
+           0.f, 0.62f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32 | 1, 2);
+        CHECK(std::fabs(oR - 0.05f) < 1e-6f && std::fabs(oA - 0.25f) < 1e-6f, "deepglow strength 0 overd");
+        // COLOR dodge (a vec4 division, alpha included).
+        dg(0.2f, 0.2f, 0.2f, 1.f, 0.4f, 0.3f, 0.2f, 0.6f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.25f, 0.1f, 1.f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32, 1);
+        CHECK(std::fabs(oR - 0.222222f) < 1e-3f && std::fabs(oG - 0.216216f) < 1e-3f &&
+              std::fabs(oB - 0.210527f) < 1e-3f && std::fabs(oA - 1.176471f) < 1e-3f,
+              "deepglow color dodge (%g %g %g %g)", oR, oG, oB, oA);
+        // Hue 180 + satvib (0.5, 1.5).
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.4f, 0.3f, 0.2f, 0.6f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.62f, 0.1f, 1.f, 0.3f, 1.f, 180.f, 0.5f, 1.5f, 32, 2);
+        CHECK(std::fabs(oR - 0.192520f) < 2e-3f && std::fabs(oG - 0.421295f) < 2e-3f &&
+              std::fabs(oB - 0.650058f) < 2e-3f && std::fabs(oA - 0.872f) < 1e-3f,
+              "deepglow hue satvib (%g %g %g %g)", oR, oG, oB, oA);
+        // The gate condition quirk, verbatim: low 0 / high 0.2 -> NO gating (the glow
+        // survives at full strength); high 0.0005 -> gating applies and kills it.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.9f, 0.9f, 0.9f, 1.f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.62f, 0.f, 0.2f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32, 2);
+        CHECK(std::fabs(oR - 0.658000f) < 1e-3f && std::fabs(oA - 1.12f) < 1e-3f, "deepglow gate quirk off");
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.9f, 0.9f, 0.9f, 1.f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.62f, 0.f, 0.0005f, 0.3f, 1.f, 360.f, 0.f, 1.f, 32, 2);
+        CHECK(std::fabs(oR - 0.1f) < 1e-5f && std::fabs(oA - 0.5f) < 1e-5f, "deepglow gate quirk on");
+        // calpha 0.5 + LAYER: the base is halved, the glow laid over it.
+        dg(0.1f, 0.2f, 0.3f, 0.5f, 0.4f, 0.3f, 0.2f, 0.6f, 0, 0, 0, 0, 0, 0,
+           0.54f, 0.62f, 0.1f, 1.f, 0.3f, 0.5f, 360.f, 0.f, 1.f, 32, 3);
+        CHECK(std::fabs(oR - 0.279399f) < 1e-3f && std::fabs(oG - 0.248799f) < 1e-3f &&
+              std::fabs(oB - 0.218205f) < 1e-3f && std::fabs(oA - 0.529f) < 1e-3f,
+              "deepglow calpha layer (%g %g %g %g)", oR, oG, oB, oA);
+        // Drop Shadow: shadowb = colour x alpha x blurA under the layer at alphac.
+        fxDropShadowPixel(0.3f, 0.3f, 0.3f, 0.6f, 0.5f, 0.f, 0.f, 0.f, 186.f / 255.f, 0.75f, 1.f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.3f) < 1e-5f && std::fabs(oA - 0.709412f) < 1e-4f, "dropshadow grey (%g %g)", oR, oA);
+        fxDropShadowPixel(0.f, 0.f, 0.f, 0.f, 0.8f, 1.f, 0.f, 0.f, 1.f, 0.3f, 1.f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.24f) < 1e-5f && std::fabs(oA - 0.24f) < 1e-5f, "dropshadow red on empty");
+        fxDropShadowPixel(0.4f, 0.2f, 0.1f, 0.8f, 0.5f, 0.f, 0.f, 0.f, 186.f / 255.f, 0.75f, 0.5f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-5f && std::fabs(oG - 0.1f) < 1e-5f && std::fabs(oA - 0.564118f) < 1e-4f,
+              "dropshadow alphac (%g %g %g %g)", oR, oG, oB, oA);
+        // Parse: gaussianblur (150) plain; deepglow main + EXT + EXT2 fold into one
+        // op; a bare EXT2 / EXT is dropped; dropshadow (154) plain. All dedicated
+        // (FXG_NONE).
+        float flatDg[] = {151, 0.54f, 0.62f, 0.1f, 1, 0.3f, 0.5f, 2,
+                          152, 1, 360, 0, 1, 16711812, 0.15f, 0,
+                          153, 8392704, 8392704, 8392704, 32, 1, 0, 0};
+        FxOp vops[kFxMaxOps];
+        CHECK(fxParseOps(flatDg, 24, vops) == 1 && vops[0].type == FX_DEEP_GLOW2_AM &&
+              vops[0].q[4] == 16711812.f && vops[0].r[3] == 32.f && vops[0].r[4] == 1.f,
+              "deepglow parse folds EXT + EXT2");
+        float flatBare2[] = {153, 8392704, 8392704, 8392704, 32, 1, 0, 0};
+        CHECK(fxParseOps(flatBare2, 8, vops) == 0, "bare deepglow EXT2 dropped");
+        float flatBare1[] = {152, 1, 360, 0, 1, 16711812, 0.15f, 0};
+        CHECK(fxParseOps(flatBare1, 8, vops) == 0, "bare deepglow EXT dropped");
+        float flatGb[] = {150, 0.42f, 0, 0, 0, 0, 0, 0, 154, 0, 0.729412f, 8456192, 0.3f, 0.6f, 1, 0};
+        CHECK(fxParseOps(flatGb, 16, vops) == 2 && vops[0].type == FX_GAUSSIAN_BLUR_AM &&
+              vops[1].type == FX_DROP_SHADOW_AM && vops[1].p[2] == 8456192.f,
+              "gaussianblur + dropshadow parse");
+        CHECK(fxShaderOf(FX_GAUSSIAN_BLUR_AM).group == FXG_NONE &&
+              fxShaderOf(FX_DEEP_GLOW2_AM).group == FXG_NONE &&
+              fxShaderOf(FX_DROP_SHADOW_AM).group == FXG_NONE, "v176 types are dedicated passes");
+        FxOp id{};
+        id.type = FX_GAUSSIAN_BLUR_AM;
+        CHECK(fxIsIdentity(id) && (id.p[0] = 0.4f, !fxIsIdentity(id)), "gaussian identity at strength 0");
+        id = FxOp{}; id.type = FX_DEEP_GLOW2_AM; id.r[3] = 32.f;
+        CHECK(fxIsIdentity(id), "deepglow strength 0 (no overd) is identity");
+        id.r[3] = 33.f;
+        CHECK(!fxIsIdentity(id), "deepglow strength 0 with overd is not identity");
+        id = FxOp{}; id.type = FX_DROP_SHADOW_AM; id.p[5] = 1.f;
+        CHECK(fxIsIdentity(id), "dropshadow alphac 1 + alpha 0 is identity");
+        id.p[4] = 0.6f; id.p[1] = 0.73f;
+        CHECK(!fxIsIdentity(id), "dropshadow painting is not identity");
     }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

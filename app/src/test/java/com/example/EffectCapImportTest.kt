@@ -106,7 +106,7 @@ $layer
         val r = AlightXmlImporter.parse(scene(layer), 1080f)
         val clip = r.snapshot.tracks.flatMap { it.clips }.single()
         assertEquals(ClipFxLibrary.MAX_EFFECTS, clip.effects.size)
-        assertTrue(clip.effects.all { it.type == ClipFxLibrary.BLUR })
+        assertTrue(clip.effects.all { it.type == ClipFxLibrary.GAUSSIAN_BLUR_AM })   // v176: gaussianblur has its own op
         val capLines = r.warnings.filter { it.contains("not added") }
         assertEquals(1, capLines.size)
         assertTrue(capLines[0].contains("2 effects are not added"))

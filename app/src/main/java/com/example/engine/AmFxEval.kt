@@ -131,6 +131,9 @@ internal object AmFxEval {
         ClipFxLibrary.TURBULENCE2_AM -> listOf(
             Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f), Tracked(10, 1f)
         )  // offs x / y, parallax x / y (EXT slots 0..3, absolute 7..10)
+        // v176: AM units (scale 1). Deep Glow 2's tails start at 21 (see tailStart).
+        ClipFxLibrary.GAUSSIAN_BLUR_AM -> listOf(Tracked(0, 1f))                 // strength
+        ClipFxLibrary.DEEP_GLOW2_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))    // strength, oalpha
         else -> emptyList()
     }
 
@@ -144,7 +147,8 @@ internal object AmFxEval {
         ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
         ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM -> EXT_TAIL_START
         ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
-        ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM -> EXT2_TAIL_START
+        ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM,
+        ClipFxLibrary.DEEP_GLOW2_AM -> EXT2_TAIL_START
         else -> TAIL_START
     }
 

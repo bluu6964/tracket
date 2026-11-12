@@ -449,6 +449,36 @@ object ClipFxLibrary {
     // SMOOTH_EDGES_AM (native 149): dedicated pass (blur copy + streak composites).
     // [0] strength 0..2, [1] mask to layer 0/1.
     const val SMOOTH_EDGES_AM = "smooth_edges_am"
+    // ---- v176: Queue 15 top batch (hunt round 3, defs-batch8 — the Ultra dump and
+    // the TrueMotion conversions agree; both passed the schema acceptance test
+    // against the corpus's serialized instances). Values are AM raw units.
+    // GAUSSIAN_BLUR_AM (native 150): Alight's standalone gaussianblur as its own
+    // dedicated op. [0] strength 0..2 (AM raw). Until v175 the importer mapped it
+    // onto the app's BLUR at strength x 50 — the def's own kernel (fxAmGaussianSigma:
+    // sigma = strength x frame diagonal x 0.04427) is resolution-dependent, which
+    // the app blur's value cannot express, so the stored value is AM's and the
+    // renderer computes the sigma. Keyframed strength rides a tail from index 7.
+    // (The app's own Blur panel effect is untouched.)
+    const val GAUSSIAN_BLUR_AM = "gaussian_blur_am"
+    // DEEP_GLOW2_AM (native 151 + EXT 152 + EXT2 153): Alight's deepglow2 AND
+    // deepglow_enc (one def, two ids). A dedicated chain (renderer_effects.cpp):
+    // the host gaussianblur of the layer, then the def's composite, the whole pass
+    // list repeated `iter` times. [0] strength 0..2 (the blur), [1] oalpha 0..3,
+    // [2] lowThreshold, [3] highThreshold, [4] feather 0..10, [5] alpb,
+    // [6] bmode (0 screen, 1 color dodge, 2 linear add, 3 layer). EXT [7] calpha,
+    // [8] hue (raw degrees, def default 360), [9..10] the satvib point,
+    // [11] colblend packed 0xRRGGBB (its alpha is never read), [12] strengthhh,
+    // [13] angleee (raw degrees). EXT2 [14] position packed, [15] stretch packed,
+    // [16] OFT packed, [17] flags (overd 1 + gamma-compensated 2 + chromatic 4 +
+    // colour-blend 8 + colour-blend-replace 16 + centre channel 32/64),
+    // [18] iterations. Keyframed strength / oalpha ride tails from index 21.
+    const val DEEP_GLOW2_AM = "deep_glow2_am"
+    // DROP_SHADOW_AM (native 154): Alight's dropshadow. A dedicated chain: the
+    // host gaussianblur of the layer, tinted by its alpha, offset, the layer over
+    // it. [0] the shadow colour packed 0xRRGGBB, [1] its alpha 0..1 (it scales the
+    // shadow, so it cannot ride the packed colour), [2] position packed,
+    // [3] strength 0..5 (the blur), [4] alpha 0..5, [5] alphac.
+    const val DROP_SHADOW_AM = "drop_shadow_am"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
@@ -1300,6 +1330,38 @@ object ClipFxLibrary {
                 FxParamDef("Mask to layer", 0f, 1f, 0f, "", step = 1f)
             )
         ),
+        // ---- v176: Queue 15 top batch (values as on the consts). The panel edits
+        // the seven primary slots; the EXT / EXT2 groups ride Alight's own def
+        // defaults (extraValues) at create time and are imported verbatim. ----
+        FxDef(
+            GAUSSIAN_BLUR_AM, 150, "Gaussian Blur (Alight)", "Blur", "Alight Motion's own gaussian blur — its strength scales with the frame size, as in Alight",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.15f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            DEEP_GLOW2_AM, 151, "Deep Glow 2 (Alight)", "Light", "A deep, threshold-gated glow of the layer itself (Alight Motion's Deep Glow 2)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.54f, "", step = 0.01f),
+                FxParamDef("Glow alpha", 0f, 3f, 0.62f, "", step = 0.01f),
+                FxParamDef("Low threshold", 0f, 1f, 0.1f, "", step = 0.01f),
+                FxParamDef("High threshold", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Feather", 0f, 10f, 0.3f, "", step = 0.01f),
+                FxParamDef("Colour blend", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Blend mode", 0f, 3f, 2f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            DROP_SHADOW_AM, 154, "Drop Shadow (Alight)", "Stylize", "The layer's blurred silhouette, tinted and offset behind it (Alight Motion's Drop Shadow)",
+            listOf(
+                FxParamDef("Shadow colour", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Colour alpha", 0f, 1f, 0.73f, "", step = 0.01f),
+                FxParamDef("Position", 0f, 16777215f, packPoint(0f, 0f), "", step = 1f),
+                FxParamDef("Strength", 0f, 5f, 0.3f, "", step = 0.01f),
+                FxParamDef("Alpha", 0f, 5f, 0.5f, "", step = 0.01f),
+                FxParamDef("Layer alpha", 0f, 1f, 1f, "", step = 0.01f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -1802,6 +1864,13 @@ object ClipFxLibrary {
             0.5f, 0f, 0f, 1f, 0f, 0f, 1f,
             0f, 0xEEDD55.toFloat(), 0f, 20f, 0f, 0f, 0.42f
         )
+        // Deep Glow 2's EXT + EXT2 defaults are Alight's own def defaults: calpha 1,
+        // hue 360, satvib (0, 1), colblend #FFA800, strengthhh 0.15, angleee 0; the
+        // points at (0, 0), flags = centre channel 1 (32), iterations 1.
+        DEEP_GLOW2_AM -> listOf(
+            1f, 360f, 0f, 1f, 0xFFA800.toFloat(), 0.15f, 0f,
+            packPoint(0f, 0f), packPoint(0f, 0f), packPoint(0f, 0f), 32f, 1f, 0f, 0f
+        )
         else -> emptyList()
     }
 
@@ -1830,6 +1899,7 @@ object ClipFxLibrary {
         TURBULENCE2_AM -> 137
         CHECKER2_AM -> 140
         ELECTRIC_EDGES_AM -> 147
+        DEEP_GLOW2_AM -> 152
         else -> null
     }
 
@@ -1839,6 +1909,7 @@ object ClipFxLibrary {
         EXTRUDE_FLAT_AM -> 128
         TURBULENCE2_AM -> 138
         ELECTRIC_EDGES_AM -> 148
+        DEEP_GLOW2_AM -> 153
         else -> null
     }
 

@@ -162,6 +162,9 @@ object AlightXmlImporter {
     const val EDGEGLOW = "com.alightcreative.effects.edgeglow"
     const val DARKGLOW = "com.alightcreative.effects.darkglow"
     const val GAUSSIANBLUR = "com.alightcreative.effects.gaussianblur"
+    const val DEEPGLOW2 = "com.alightcreative.effects.deepglow2"
+    const val DEEPGLOW_ENC = "com.alightcreative.effects.deepglow_enc"
+    const val DROPSHADOW = "com.alightcreative.effects.dropshadow"
     const val SHAKE = "com.alightcreative.effects.shake2"
     const val FLIP = "com.alightcreative.effects.flip3"
     const val EXPOSURE = "com.alightcreative.effects.exposure"
@@ -2416,6 +2419,8 @@ object AlightXmlImporter {
                 EDGEGLOW -> applyEdgeGlowAm(fx, clip, ctx)
                 DARKGLOW -> applyDarkGlowAm(fx, clip, ctx)
                 GAUSSIANBLUR -> applyGaussianBlur(fx, clip, ctx)
+                DEEPGLOW2, DEEPGLOW_ENC -> applyDeepGlow2Am(fx, clip, ctx, id)
+                DROPSHADOW -> applyDropShadowAm(fx, clip, ctx)
                 SHAKE -> applyShake(fx, clip, ctx, durMs)
                 FLIP -> applyFlip(fx, clip, ctx, durMs)
                 EXPOSURE -> applyExposureFx(fx, clip, ctx)
@@ -3088,7 +3093,7 @@ object AlightXmlImporter {
      * def's: the findedges-edgeglow pass (Sobel on the layer — its def declares exactly
      * `smoothing` / `threshold` / `invert`, and AM's host wiring feeds a pass the params
      * its own def declares), the host gaussianblur of the edge buffer at `strength`
-     * (the param's def label is "Blur"; the applyGaussianBlur x50 calibration converts
+     * (the param's def label is "Blur"; the gaussianblur kernel — fxEdgeGlowAmBlurSigma — converts
      * it), then the def's composite (spread power curve, gamma, YUV brightness, tint,
      * the lum-keyed blend). No parameter is dropped, so there is no approximation note;
      * AM's own def defaults fill what an instance omits, and a keyframed param (none in
@@ -3511,20 +3516,111 @@ object AlightXmlImporter {
     }
 
     /**
-     * `gaussianblur` -> the app's Gaussian Blur. Alight's `strength` is 0..1; the app's Blurriness is
-     * 0..100 and half of it already reads as a strong blur, so strength maps onto 0..50.
+     * `gaussianblur` -> Gaussian Blur (Alight), its own op since v176: Alight's strength
+     * (0..2) is stored raw and the renderer computes the def's sigma from the frame
+     * diagonal (fxAmGaussianSigma — the gaussianblur def's kernel, hunt round 3:
+     * sigma = strength x length(previewSize) x 0.04427). Until v175 the effect mapped
+     * onto the app's Blur at strength x 50, which the resolution-aware kernel replaces
+     * (the flat mapping is ~2x too weak at 1080p). Keyframed strength rides the values
+     * tail, as before.
      */
     private fun applyGaussianBlur(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val props = fxProps(fx)
         val strengthT = props["strength"] ?: return clip0
         val strength = strengthT.scalarAtEased(0f)
         return addFx(
-            clip0, ctx, ClipFxLibrary.BLUR,
+            clip0, ctx, ClipFxLibrary.GAUSSIAN_BLUR_AM,
             withTails(
-                listOf((strength * 50f).coerceIn(0f, 100f)),
+                listOf(strength.coerceIn(0f, 2f)),
                 tailsOf(trackTail(strengthT))
             ),
             "gaussianblur"
+        )
+    }
+
+    /**
+     * `deepglow2` / `deepglow_enc` -> Deep Glow 2 (Alight): the def's composite over the
+     * host gaussianblur of the layer, the whole pass list repeated `iter` times
+     * (defs-batch8 — the Ultra dump's def passed the schema acceptance test against
+     * both ids' serialized instances, and the TrueMotion conversion maps the same
+     * source def to both; the 37-param "Deep Glow AE" def in the wild is a different
+     * effect and was rejected). Every serialized property maps; keyframed strength /
+     * oalpha ride tails from index 21, the rest take their first value with the
+     * standard note when keyframed. position / stretch / OFT are never serialized in
+     * the corpus — they take the def defaults (0, 0), as does any other absent
+     * property (Alight's own defaults).
+     */
+    private fun applyDeepGlow2Am(fx: Element, clip0: TimelineClip, ctx: Ctx, id: String): TimelineClip {
+        val w = ctx.warnings
+        val short = id.substringAfterLast('.')
+        val props = fxProps(fx)
+        val strengthT = props["strength"]
+        val oalphaT = props["oalpha"]
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val pos = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val stretch = props["stretch"]?.firstPoint(w, short, "stretch", 0f, 0f) ?: (0f to 0f)
+        val oft = props["OFT"]?.firstPoint(w, short, "OFT", 0f, 0f) ?: (0f to 0f)
+        val satvib = props["satvib"]?.firstPoint(w, short, "satvib", 0f, 1f) ?: (0f to 1f)
+        val cc = fv("centerChannel", 1f).roundToInt().coerceIn(0, 2)
+        var flags = cc * 32
+        if (boolOf(props["overd"], false) > 0.5f) flags += 1
+        if (boolOf(props["GCE"], false) > 0.5f) flags += 2
+        if (boolOf(props["CHROM"], false) > 0.5f) flags += 4
+        if (boolOf(props["cblend"], false) > 0.5f) flags += 8
+        if (boolOf(props["cmode"], false) > 0.5f) flags += 16
+        val values = listOf(
+            (strengthT?.scalarAtEased(0f) ?: 0.54f).coerceIn(0f, 2f),
+            (oalphaT?.scalarAtEased(0f) ?: 0.62f).coerceIn(0f, 3f),
+            fv("lowThreshold", 0.1f).coerceIn(0f, 1f),
+            fv("highThreshold", 1f).coerceIn(0f, 1f),
+            fv("feather", 0.3f).coerceIn(0f, 10f),
+            fv("alpb", 0.5f).coerceIn(0f, 1f),
+            fv("bmode", 2f).roundToInt().coerceIn(0, 3).toFloat(),
+            fv("calpha", 1f).coerceIn(0f, 1f),
+            fv("hue", 360f),
+            satvib.first, satvib.second,
+            props["colblend"]?.packedColor(w, short, "colblend") ?: 0xFFA800.toFloat(),
+            fv("strengthhh", 0.15f).coerceIn(-8f, 8f),
+            fv("angleee", 0f),
+            ClipFxLibrary.packPoint(pos.first, pos.second),
+            ClipFxLibrary.packPoint(stretch.first, stretch.second),
+            ClipFxLibrary.packPoint(oft.first, oft.second),
+            flags.toFloat(),
+            fv("iter", 1f).roundToInt().coerceIn(1, 3).toFloat(),
+            0f, 0f
+        ) + tailsOf(trackTail(strengthT), trackTail(oalphaT))
+        return addFx(clip0, ctx, ClipFxLibrary.DEEP_GLOW2_AM, values, short)
+    }
+
+    /**
+     * `dropshadow` -> Drop Shadow (Alight): the host gaussianblur of the layer, tinted
+     * (colorshadow x alpha) by its alpha and offset by position x (-1, 1) / 500, the
+     * layer laid over it at alphac (defs-batch8 — the Ultra def and the TrueMotion
+     * conversion agree). The colour's alpha rides its own slot (it scales the shadow;
+     * the packed colour cannot hold it). No corpus instance is keyframed; a keyframed
+     * property takes its first value with the standard note.
+     */
+    private fun applyDropShadowAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "dropshadow"
+        val props = fxProps(fx)
+        val colorT = props["colorshadow"]
+        if ((colorT?.keys?.size ?: 0) >= 2)
+            w += "Effect dropshadow: keyframed colorshadow is not supported yet: the first value is used"
+        val argb = colorT?.let { unpacked(it.first()) } ?: 0xBA000000L
+        val pos = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.DROP_SHADOW_AM,
+            listOf(
+                (argb and 0xFFFFFFL).toFloat(),
+                ((argb shr 24) and 0xFFL).toFloat() / 255f,
+                ClipFxLibrary.packPoint(pos.first, pos.second),
+                (props["strength"]?.firstValue(w, short, "strength") ?: 0.3f).coerceIn(0f, 5f),
+                (props["alpha"]?.firstValue(w, short, "alpha") ?: 0.5f).coerceIn(0f, 5f),
+                (props["alphac"]?.firstValue(w, short, "alphac") ?: 1f).coerceIn(0f, 1f)
+            ),
+            short
         )
     }
 

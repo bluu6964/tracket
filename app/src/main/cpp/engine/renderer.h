@@ -145,6 +145,7 @@ private:
     bool runMasks(const LayerFx& fx, int W, int H, int* cur);
     bool ensureMaskTargets(int w, int h);
     bool fxBlur(const FxOp& op, int W, int H, int* cur);
+    bool fxBlurPx(float sigmaPx, int W, int H, int* cur);
     bool fxGlow(const FxOp& op, int W, int H, int* cur);
     bool fxSplit(const FxOp& op, int W, int H, int* cur);
     bool fxGrain(const FxOp& op, int W, int H, int* cur, int frame);
@@ -183,6 +184,9 @@ private:
     bool fxGlowOuterAm(const FxOp& op, int W, int H, int* cur);
     bool fxElectricEdgesAm(const FxOp& op, int W, int H, int* cur);
     bool fxSmoothEdgesAm(const FxOp& op, int W, int H, int* cur);
+    bool fxGaussianBlurAm(const FxOp& op, int W, int H, int* cur);
+    bool fxDeepGlow2Am(const FxOp& op, int W, int H, int* cur);
+    bool fxDropShadowAm(const FxOp& op, int W, int H, int* cur);
     // Copy Background: the frame so far is copied into texBackdrop_ at the start of applyFx; bgRect_ = the part of the canvas
     // the picture covers (x, y from the BOTTOM, w, h as fractions), bgOk_ = the copy was made for this call.
     bool bgOk_ = false;

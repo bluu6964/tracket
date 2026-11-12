@@ -34,15 +34,16 @@ $layer
     fun brepizxCopy14VerbatimFullStack() {
         // The <shape> element below is verbatim from blxze-brepizx-pack.xml ("1719970923667.png
         // Copy 14", the corpus's largest stack): 70 effect elements, of which the hidden ones
-        // stay skipped and 29 reach the layer. Under the old cap of 12 the last 17 were dropped
+        // stay skipped and 30 reach the layer (build 134: spill-cleanup joined the stack as a
+        // native port). Under the old cap of 12 the last 18 were dropped
         // — both edge glows among them (build 128's accounting).
         val r = AlightXmlImporter.parse(scene(BREPIZX_LAYER), 1080f)
         val clip = r.snapshot.tracks.flatMap { it.clips }.single()
-        assertEquals(29, clip.effects.size)
+        assertEquals(30, clip.effects.size)
         val k = ClipFxLibrary
         assertEquals(
             listOf(
-                k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM,
+                k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.SPILL_CLEANUP_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM,
                 k.SOFT_GLOW_AM,
                 k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM,
                 k.HUE_SAT, k.COLOR_HOT_AM, k.COLORIZE_AM, k.HIGHLIGHT_SHADOW_AM, k.COLOR_HOT_AM,
@@ -53,24 +54,24 @@ $layer
             clip.effects.map { it.type }
         )
         assertFalse(r.warnings.any { it.contains("not added") })
-        // The whole stack reaches the renderer: 29 ops; the EXT groups of softglow,
-        // turbulentdisplace3 and the two edge glows ride behind their owners (33 groups of
+        // The whole stack reaches the renderer: 30 ops; the EXT groups of softglow,
+        // turbulentdisplace3 and the two edge glows ride behind their owners (34 groups of
         // 8 floats).
         val flat = ClipFxLibrary.toNative(clip.effects)!!
-        assertEquals(33 * 8, flat.size)
+        assertEquals(34 * 8, flat.size)
         fun groupType(g: Int) = flat[g * 8]
         assertEquals(k.def(k.CHROMA_KEY_AM)!!.nativeType.toFloat(), groupType(0), 0f)
-        // Group 5 = soft glow, 6 = its EXT; group 17 = turbulentdisplace3, 18 = its EXT;
-        // group 19 = first edge glow, 20 = its EXT; group 23 = second edge glow; the last
+        // Group 6 = soft glow, 7 = its EXT; group 18 = turbulentdisplace3, 19 = its EXT;
+        // group 20 = first edge glow, 21 = its EXT; group 24 = second edge glow; the last
         // group is the final hue/saturation.
-        assertEquals(k.def(k.SOFT_GLOW_AM)!!.nativeType.toFloat(), groupType(5), 0f)
-        assertEquals(k.extNativeType(k.SOFT_GLOW_AM)!!.toFloat(), groupType(6), 0f)
-        assertEquals(k.def(k.TURBULENT_DISPLACE3_AM)!!.nativeType.toFloat(), groupType(17), 0f)
-        assertEquals(k.extNativeType(k.TURBULENT_DISPLACE3_AM)!!.toFloat(), groupType(18), 0f)
-        assertEquals(k.def(k.EDGE_GLOW_AM)!!.nativeType.toFloat(), groupType(19), 0f)
-        assertEquals(k.extNativeType(k.EDGE_GLOW_AM)!!.toFloat(), groupType(20), 0f)
-        assertEquals(k.def(k.EDGE_GLOW_AM)!!.nativeType.toFloat(), groupType(23), 0f)
-        assertEquals(k.def(k.HUE_SAT)!!.nativeType.toFloat(), groupType(32), 0f)
+        assertEquals(k.def(k.SOFT_GLOW_AM)!!.nativeType.toFloat(), groupType(6), 0f)
+        assertEquals(k.extNativeType(k.SOFT_GLOW_AM)!!.toFloat(), groupType(7), 0f)
+        assertEquals(k.def(k.TURBULENT_DISPLACE3_AM)!!.nativeType.toFloat(), groupType(18), 0f)
+        assertEquals(k.extNativeType(k.TURBULENT_DISPLACE3_AM)!!.toFloat(), groupType(19), 0f)
+        assertEquals(k.def(k.EDGE_GLOW_AM)!!.nativeType.toFloat(), groupType(20), 0f)
+        assertEquals(k.extNativeType(k.EDGE_GLOW_AM)!!.toFloat(), groupType(21), 0f)
+        assertEquals(k.def(k.EDGE_GLOW_AM)!!.nativeType.toFloat(), groupType(24), 0f)
+        assertEquals(k.def(k.HUE_SAT)!!.nativeType.toFloat(), groupType(33), 0f)
     }
 
     @Test

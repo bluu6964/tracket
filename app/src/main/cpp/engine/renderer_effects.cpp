@@ -36,7 +36,9 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_EXTRUDE,
              EF_EDGE_GLOW_EDGE, EF_EDGE_GLOW_COMP,
              EF_CHANNEL_MAP, EF_MOSAIC_AM, EF_BOX_PAIR, EF_GLOW_OUTER, EF_ELECTRIC_AM,
-             EF_SMOOTH_EDGES_AM, EF_DEEP_GLOW_COMP, EF_DROP_SHADOW, EF_COUNT };  // eff_[] in renderer.h has room for 44
+             EF_SMOOTH_EDGES_AM, EF_DEEP_GLOW_COMP, EF_DROP_SHADOW,
+             EF_BBMAKER, EF_UNSHARP_COMP, EF_NEWSHARPEN_COMP, EF_AM_BLENDGEN,
+             EF_DEEP_GLOW1_COMP, EF_SPILL_STREAK, EF_SPILL_OVER, EF_SPILL_FINAL, EF_COUNT };  // eff_[] in renderer.h has room for 52
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -1030,6 +1032,553 @@ void main() {
 }
 )";
 
+// ---- v177 Queue 15(f) tier-5 programs. Each mirrors its fx_plan.cpp CPU twin
+// line by line (the twins carry the def citations); the selftest pins anchor
+// twin and shader to the same hand-computed values.
+const char* kBbMaker = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uP[7];
+uniform float uQ[7];
+in vec2 vUv;
+out vec4 oColor;
+float sstep(float e0, float e1, float x) {
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+vec3 unpackRgb(float pk) {
+    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
+    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+}
+float band(float start, float end, float feather) {
+    float rad = uP[1] * 0.0174533;
+    vec2 v = normalize(vec2(cos(rad), -sin(rad)));
+    float p = dot(vUv - 0.5, v) + 0.5;
+    return sstep(start - feather, start, p) * (1.0 - sstep(end, end + feather, p));
+}
+void main() {
+    vec4 tex = texture(uTex, vUv);
+    vec4 wipebb = vec4(unpackRgb(uP[2]), uP[3]) * tex.a;
+    wipebb *= band(uP[4], uP[5], uQ[0] / 100.0);
+    vec4 tb = tex * band((uP[0] - 20.0) / 100.0, (120.0 - uP[0]) / 100.0, 0.0);
+    vec4 layer = wipebb * (1.0 - tb.a) + tb;
+    oColor = layer * tex.a * uQ[1];
+}
+)";
+
+const char* kUnsharpComp = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+float sstep(float e0, float e1, float x) {
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+void main() {
+    vec4 base = texture(uTex, vUv);
+    vec4 blur = texture(uBlur, vUv);
+    vec3 adj = base.rgb * (1.0 + uP[1]) - blur.rgb * uP[1];
+    float baseY = dot(base.rgb, vec3(0.299, 0.587, 0.114));
+    float blurY = dot(blur.rgb, vec3(0.299, 0.587, 0.114));
+    float t = sstep(uP[2] * 0.75, (uP[2] + 1.01) / 2.0, abs(blurY - baseY) * 4.0);
+    if (uP[3] > 0.5) {
+        oColor = vec4(vec3(t), 1.0) * base.a;
+    } else {
+        oColor = vec4(mix(base.rgb, adj, t), base.a);
+    }
+}
+)";
+
+const char* kNewSharpenComp = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec2 uVel;
+uniform int uSteps;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 man = texture(uTex, vUv);
+    vec4 acc = texture(uBlur, vUv);
+    for (int i = 1; i < 100; i++) {
+        if (i >= uSteps) break;
+        vec2 off = uVel * (float(i) / float(uSteps - 1));
+        acc += texture(uBlur, vUv + off) + texture(uBlur, vUv - off);
+    }
+    vec4 result = acc / float(2 * uSteps - 1);
+    vec4 blured = (man - result) * uP[3];
+    float all = (blured.r + blured.g + blured.g) / 3.0;
+    vec4 white = uP[1] > 0.5 ? vec4(all, all, all, 1.0) * man.a : blured;
+    oColor = uP[2] > 0.5 ? white : 1.0 - (1.0 - man) * (1.0 - white);
+}
+)";
+
+const char* kSpillStreak = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec2 uAxis;
+uniform float uDist;
+uniform int uSteps;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 c = vec4(0.0);
+    for (int i = 1; i < 100; i++) {
+        if (i >= uSteps) break;
+        float o = uDist * (float(i) / float(uSteps - 1) - 0.5);
+        vec4 tc = texture(uTex, vUv + uAxis * o);
+        if (o < 0.0) c = c * (1.0 - tc.a) + tc;
+        else c = tc * (1.0 - c.a) + c;
+    }
+    oColor = c;
+}
+)";
+
+const char* kSpillOver = R"(#version 300 es
+precision highp float;
+uniform sampler2D uBottom;
+uniform sampler2D uTop;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 b = texture(uBottom, vUv);
+    vec4 t = texture(uTop, vUv);
+    oColor = b * (1.0 - t.a) + t;
+}
+)";
+
+const char* kSpillFinal = R"(#version 300 es
+precision highp float;
+uniform sampler2D uBase;
+uniform sampler2D uBlur;
+uniform sampler2D uStreak;
+in vec2 vUv;
+out vec4 oColor;
+vec3 toYuv(vec3 c) {
+    mat3 m = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+    return c * m;
+}
+vec3 toRgb(vec3 c) {
+    mat3 m = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+    return c * m;
+}
+void main() {
+    vec4 base = texture(uBase, vUv);
+    vec4 blur = texture(uBlur, vUv);
+    vec4 streak = texture(uStreak, vUv);
+    float sat = clamp((1.0 - blur.a) * 2.0, 0.0, 1.0);
+    vec4 c = streak * sat * base.a;
+    vec3 byuv = toYuv(base.rgb / max(base.a, 0.00001));
+    vec3 cyuv = toYuv(c.rgb / max(c.a, 0.00001));
+    vec4 cc = vec4(toRgb(vec3(byuv.x, cyuv.y, cyuv.z)) * c.a, c.a);
+    oColor = base * (1.0 - cc.a) + cc;
+}
+)";
+
+const char* kAmBlendGen = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uP[7];
+uniform float uQ[7];
+uniform float uR[7];
+uniform int uKind;
+uniform vec2 uPic;
+in vec2 vUv;
+out vec4 oColor;
+float sstep(float e0, float e1, float x) {
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+vec3 unpackRgb(float pk) {
+    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
+    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+}
+vec2 unpackPoint(float pk) {
+    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
+    return vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+}
+vec3 toYuv(vec3 c) {
+    mat3 m = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+    return c * m;
+}
+vec3 toRgb(vec3 c) {
+    mat3 m = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+    return c * m;
+}
+vec3 rgb2hsv(vec3 c) {
+    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+vec3 hsv2rgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+vec4 blendFull(vec4 tex, vec4 factor, float bright, int mode) {
+    float ta = max(tex.a, 0.0001);
+    vec4 F = factor * bright;
+    vec4 o = vec4(0.0);
+    if (mode == 0) {
+        o = (tex * (1.0 - F.a) + F) * tex.a;
+    } else if (mode == 1) {
+        vec4 c = F + vec4(1.0) * (1.0 - F.a);
+        o = vec4((tex.rgb / ta) * c.rgb, 1.0) * tex.a;
+    } else if (mode == 2) {
+        o = vec4((1.0 - (1.0 - tex.rgb / ta) * (1.0 - F.rgb)) * tex.a, tex.a);
+    } else if (mode == 3) {
+        vec3 res;
+        for (int k = 0; k < 3; k++) {
+            float t = sstep(0.5, 0.5, tex[k]);
+            res[k] = t * (1.0 - (1.0 - 2.0 * (tex[k] - 0.5)) * (1.0 - factor[k])) +
+                     (1.0 - t) * ((2.0 * tex[k]) * factor[k]);
+        }
+        o = vec4(res * tex.a, tex.a * tex.a);
+    } else if (mode == 4) {
+        vec3 ty = toYuv(tex.rgb);
+        vec3 fy = toYuv(factor.rgb);
+        o = vec4(toRgb(vec3(ty.x, fy.y, fy.z)) * tex.a, tex.a * tex.a);
+    } else if (mode == 5) {
+        o = max(F, tex) * tex.a;
+    } else if (mode == 6) {
+        o = (tex / (vec4(1.0) - F)) * tex.a;
+    } else if (mode == 7) {
+        o = (vec4(1.0) - (vec4(1.0) - tex) / F) * tex.a;
+    } else if (mode == 8) {
+        o = (tex + F) * tex.a;
+    } else if (mode == 9) {
+        o = (tex + F - vec4(1.0)) * tex.a;
+    } else if (mode == 10) {
+        vec3 res;
+        for (int k = 0; k < 3; k++) {
+            float t = sstep(0.5, 0.5, factor[k]);
+            res[k] = t * (tex[k] + 2.0 * (factor[k] - 0.5)) +
+                     (1.0 - t) * (tex[k] + 2.0 * factor[k] - 1.0);
+        }
+        o = vec4(res * tex.a, tex.a * tex.a);
+    } else if (mode == 11) {
+        o = min(F, tex) * tex.a;
+    } else if (mode == 12 || mode == 13) {
+        vec3 W = vec3(0.2126, 0.7152, 0.0722);
+        float fl = length(W * F.rgb);
+        float tl = length(W * tex.rgb);
+        bool pickTex = mode == 12 ? (fl > tl) : (fl <= tl);
+        o = vec4((pickTex ? tex.rgb : F.rgb) * tex.a, tex.a * tex.a);
+    } else if (mode == 14 || mode == 15) {
+        vec3 res;
+        for (int k = 0; k < 3; k++) {
+            float g = mode == 15 ? tex[k] : factor[k];
+            float t = sstep(0.5, 0.5, g);
+            res[k] = t * (1.0 - (1.0 - tex[k]) * (1.0 - (factor[k] - 0.5))) +
+                     (1.0 - t) * (tex[k] * (factor[k] + 0.5));
+        }
+        o = vec4(res * tex.a, tex.a * tex.a);
+    } else if (mode == 16) {
+        vec3 res;
+        for (int k = 0; k < 3; k++) {
+            float t = sstep(0.5, 0.5, F[k]);
+            res[k] = t * (1.0 - (1.0 - tex[k]) * (1.0 - 2.0 * (F[k] - 0.5))) +
+                     (1.0 - t) * (tex[k] * (2.0 * F[k]));
+        }
+        o = vec4(res * tex.a, tex.a * tex.a);
+    } else if (mode == 17) {
+        vec3 fh = rgb2hsv(F.rgb);
+        vec3 th = rgb2hsv(tex.rgb);
+        o = vec4(hsv2rgb(vec3(fh.x, th.y, th.z)) * tex.a, tex.a * tex.a);
+    } else if (mode == 18) {
+        o = vec4(abs(tex.rgb * tex.a - F.rgb), tex.a);
+    } else if (mode == 19) {
+        vec3 ty = toYuv(tex.rgb);
+        vec3 fy = toYuv(F.rgb);
+        o = vec4(toRgb(vec3(fy.x, ty.y, ty.z)) * tex.a, tex.a * tex.a);
+    } else if (mode == 20) {
+        vec3 fh = rgb2hsv(F.rgb);
+        vec3 th = rgb2hsv(tex.rgb);
+        o = vec4(hsv2rgb(vec3(th.x, fh.y, th.z)) * tex.a, tex.a * tex.a);
+    } else if (mode == 21) {
+        vec3 res;
+        for (int k = 0; k < 3; k++) {
+            float t = sstep(0.5, 0.5, F[k]);
+            res[k] = t * (1.0 - (1.0 - tex[k]) * (2.0 * (F[k] - 0.5))) +
+                     (1.0 - t) * (tex[k] * (1.0 - 2.0 * F[k]));
+        }
+        o = vec4(res * tex.a, tex.a * tex.a);
+    } else if (mode == 22) {
+        vec3 res;
+        for (int k = 0; k < 3; k++) {
+            float t = sstep(0.5, 0.5, F[k]);
+            res[k] = t * max(tex[k], 2.0 * (F[k] - 0.5)) +
+                     (1.0 - t) * min(tex[k], 2.0 * F[k]);
+        }
+        o = vec4(res * tex.a, tex.a * tex.a);
+    } else if (mode == 23) {
+        o = (tex / F) * tex.a;
+    } else if (mode == 24) {
+        o = (tex - F) * tex.a;
+    }
+    return o;
+}
+vec4 blendShort(vec4 tex, vec4 factor, float bright, int mode) {
+    float ta = max(tex.a, 0.0001);
+    vec4 o = vec4(0.0);
+    if (mode == 0) {
+        o = factor * bright * tex.a;
+    } else if (mode == 1) {
+        vec4 F = factor * bright;
+        vec4 c = F + vec4(1.0) * (1.0 - F.a);
+        o = vec4((tex.rgb / ta) * c.rgb, 1.0) * tex.a;
+    } else if (mode == 2) {
+        vec4 F = factor * bright;
+        o = vec4((1.0 - (1.0 - tex.rgb / ta) * (1.0 - F.rgb)) * tex.a, tex.a);
+    } else if (mode == 3) {
+        vec4 F = factor * bright;
+        o = (tex * (1.0 - F.a) + F) * bright * tex.a;
+    }
+    return o;
+}
+vec2 centred(float scale, float angleDeg, vec2 pos, vec2 stretch, bool doubleScale) {
+    vec2 p = vec2(vUv.x - 0.5, 0.5 - vUv.y);
+    p.y *= uPic.y / uPic.x;
+    p /= scale;
+    float rad = angleDeg * 0.0174533;
+    float cs = cos(rad), sn = sin(rad);
+    p = vec2(p.x * cs + p.y * sn, -p.x * sn + p.y * cs);
+    p += pos * vec2(-1.0, 1.0) / 500.0;
+    if (doubleScale) p /= scale * stretch;
+    return p;
+}
+vec2 hash22(vec2 p) {
+    return fract(sin(vec2(dot(p, vec2(2127.1, 81.17)), dot(p, vec2(1269.5, 283.37)))) * 43758.5453);
+}
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    float top = mix(dot(-1.0 + 2.0 * hash22(i + vec2(0.0, 0.0)), f - vec2(0.0, 0.0)),
+                    dot(-1.0 + 2.0 * hash22(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0)), u.x);
+    float bot = mix(dot(-1.0 + 2.0 * hash22(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0)),
+                    dot(-1.0 + 2.0 * hash22(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0)), u.x);
+    return 0.5 + 0.5 * mix(top, bot, u.y);
+}
+void main() {
+    vec4 tex = texture(uTex, vUv);
+    vec3 W = vec3(0.2126, 0.7152, 0.0722);
+    if (uKind == 0) {
+        float rad = uP[3] * 0.0174533;
+        vec2 v = normalize(vec2(cos(rad), -sin(rad)));
+        float p = dot(vUv - 0.5, v) + 0.5;
+        float feather = uP[2] / 100.0;
+        float band = sstep(uP[0] - feather, uP[0], p) * (1.0 - sstep(uP[1], uP[1] + feather, p));
+        float rs = band * tex.a * uQ[1];
+        vec4 factor = vec4(unpackRgb(uP[4]) * rs, rs * uP[5]);
+        vec4 result = blendFull(tex, factor, uP[6], int(uQ[0] + 0.5));
+        oColor = mix(factor, result, uQ[2]) * tex.a;
+        return;
+    }
+    if (uKind == 1) {
+        vec2 pos = unpackPoint(uP[2]);
+        vec2 stretch = unpackPoint(uQ[6]);
+        vec2 uv = vUv / uP[0];
+        float rad = uP[1] * 0.0174533;
+        float cs = cos(rad), sn = sin(rad);
+        uv = vec2(uv.x * cs + uv.y * sn, -uv.x * sn + uv.y * cs);
+        uv += pos * vec2(-1.0, 1.0) / 500.0;
+        uv /= uP[0] * stretch;
+        float iTime = uP[3];
+        vec2 tuv = uv - 0.5;
+        float degree = noise(vec2(iTime * 0.1, tuv.x * tuv.y));
+        float ratio = uPic.x / uPic.y;
+        tuv.y *= 1.0 / ratio;
+        float dr = radians((degree - 0.5) * 720.0 + 180.0);
+        float dcs = cos(dr), dsn = sin(dr);
+        tuv = vec2(tuv.x * dcs + tuv.y * dsn, -tuv.x * dsn + tuv.y * dcs);
+        tuv.y *= ratio;
+        tuv.x += sin(tuv.y * uQ[4] + iTime) / uQ[5];
+        tuv.y += sin(tuv.x * uQ[4] * 1.5 + iTime) / (uQ[5] * 0.5);
+        float mr = radians(-5.0);
+        float rotX = tuv.x * cos(mr) + tuv.y * sin(mr);
+        float sm = sstep(-0.3, 0.2, rotX);
+        vec3 layer1 = mix(unpackRgb(uQ[0]), unpackRgb(uQ[1]), sm);
+        vec3 layer2 = mix(unpackRgb(uQ[2]), unpackRgb(uQ[3]), sm);
+        vec4 factor = vec4(mix(layer1, layer2, sstep(0.5, -0.3, tuv.y)), 1.0);
+        vec4 result = blendShort(tex, factor, uP[5], int(uP[6] + 0.5));
+        oColor = mix(tex, result, uR[0]) * tex.a;
+        return;
+    }
+    if (uKind == 2) {
+        vec2 p = centred(uQ[1], uQ[2], unpackPoint(uQ[3]), unpackPoint(uQ[4]), true);
+        p.x *= uPic.x / uPic.y;
+        float lt = uQ[0];
+        float speed = 5.2 + sstep(0.8, 12.0, 1.0);
+        float angle0 = atan(p.y, p.x) / (2.0 * 3.14159265359);
+        float sh = fract(angle0 + 0.0002 * lt);
+        float rad = 0.4 * length(p);
+        float aF = sh * uP[4];
+        float aStep = floor(aF);
+        aF = fract(aF);
+        float aRZ = 10.0 * fract(aStep * fract(aStep * 0.7535) * 45.1);
+        float aSD = fract(aStep * fract(aStep * 0.82657) * 13.724);
+        float t = speed * lt - aRZ;
+        float angleDist = aSD + 0.1;
+        float adist = angleDist / rad * uP[5];
+        float dist = abs(fract(t * 0.1 + adist) - 0.5);
+        float white1 = max(0.0, 1.0 - dist * 100.0 / (uP[6] * speed + adist));
+        float white2 = max(0.0, (0.5 - 0.5 * cos(2.0 * 3.14159265359 * aF)) /
+                                max(0.6, 2.0 * adist * angleDist));
+        float white = white1 * white2;
+        vec4 factor = mix(vec4(unpackRgb(uP[2]), uP[3]), vec4(unpackRgb(uP[0]), uP[1]), white);
+        vec4 result = blendShort(tex, factor, uQ[5], int(uQ[6] + 0.5));
+        oColor = mix(tex, result, uR[0]);
+        return;
+    }
+    if (uKind == 3) {
+        vec2 fs = vec2(uP[0]) / uPic;
+        float w = dot(texture(uTex, vUv + vec2(-fs.x, 0.0)).rgb, W);
+        float e = dot(texture(uTex, vUv + vec2(fs.x, 0.0)).rgb, W);
+        float n = dot(texture(uTex, vUv + vec2(0.0, fs.y)).rgb, W);
+        float so = dot(texture(uTex, vUv + vec2(0.0, -fs.y)).rgb, W);
+        float nw = dot(texture(uTex, vUv + vec2(-fs.x, fs.y)).rgb, W);
+        float ne = dot(texture(uTex, vUv + vec2(fs.x, fs.y)).rgb, W);
+        float sw = dot(texture(uTex, vUv + vec2(-fs.x, -fs.y)).rgb, W);
+        float se = dot(texture(uTex, vUv + vec2(fs.x, -fs.y)).rgb, W);
+        float v = nw * 3.0 + n * 10.0 + ne * 3.0 + sw * -3.0 + so * -10.0 + se * -3.0;
+        float h = nw * -3.0 + w * -10.0 + sw * -3.0 + ne * 3.0 + e * 10.0 + se * 3.0;
+        if (uQ[2] > 0.5) { v *= v; h *= h; }
+        v *= uP[2];
+        h *= uP[2];
+        float edge = sqrt(h * h + v * v);
+        float g = clamp(edge - uP[1], 0.0, 1.0);
+        float elR = clamp(edge - uP[1], 0.0, 1.0) / (1.0 - uP[1]);
+        vec4 edgeNew = vec4(vec3(1.0 - elR), 1.0) * tex.a;
+        float luminance = dot(edgeNew.rgb, W);
+        vec4 edgeFinal = vec4(mix(unpackRgb(uP[3]), unpackRgb(uP[5]), luminance), mix(uP[4], uP[6], luminance)) * edgeNew.a;
+        vec4 newFinal, oldFinal;
+        if (uQ[4] > 0.5) {
+            newFinal = vec4(1.0 - edgeFinal.rgb, edgeFinal.a) * tex.a;
+            oldFinal = vec4(vec3(g) * tex.rgb, tex.a);
+        } else {
+            newFinal = edgeFinal * tex.a;
+            oldFinal = vec4(vec3(1.0 - g) * tex.a, tex.a);
+        }
+        vec4 factor = uQ[3] > 0.5 ? newFinal : oldFinal;
+        int mode = int(uQ[1] + 0.5);
+        vec4 result = vec4(0.0);
+        float ta = max(tex.a, 0.0001);
+        if (mode == 0) {
+            result = factor * tex.a;
+        } else if (mode == 1) {
+            vec4 c = factor + vec4(1.0) * (1.0 - factor.a);
+            result = vec4((tex.rgb / ta) * c.rgb, 1.0) * tex.a;
+        } else if (mode == 2) {
+            result = vec4((1.0 - (1.0 - tex.rgb / ta) * (1.0 - factor.rgb)) * tex.a, tex.a);
+        }
+        oColor = mix(tex, result, uQ[0]);
+        return;
+    }
+    if (uKind == 4) {
+        vec2 r = centred(uP[0], uP[1], unpackPoint(uP[2]), unpackPoint(uQ[0]), true);
+        float col = sin(r.y + r.x * uP[5] - uP[3] * 9.0) * uP[6];
+        col *= col * col * 0.6;
+        col = clamp(col, 0.0, 1.0);
+        vec4 frag = vec4(vec3(2.0 * col), col);
+        float luminance = dot(frag.rgb, W);
+        vec4 factor = vec4(mix(unpackRgb(uQ[1]), unpackRgb(uQ[3]), luminance),
+                           mix(uQ[2], uQ[4], luminance)) * frag.a;
+        vec4 result = blendShort(tex, factor, uQ[5], int(uQ[6] + 0.5));
+        oColor = mix(tex, result, uR[0]) * tex.a;
+        return;
+    }
+    vec2 p = centred(uQ[2], uQ[3], vec2(uQ[1] - 250.0, 0.0), vec2(1.0), false);
+    vec4 c1 = vec4(unpackRgb(uP[0]), uP[1]);
+    vec4 c2 = vec4(unpackRgb(uP[2]), uP[3]);
+    vec4 c3 = vec4(unpackRgb(uP[4]), uP[5]);
+    vec4 left = mix(c1, c2, p.x / uP[6]);
+    vec4 right = mix(c2, c3, (p.x - uQ[0]) / 0.5);
+    vec4 factor = mix(left, right, step(0.5, p.x));
+    vec4 result = blendFull(tex, factor, uQ[4], int(uQ[5] + 0.5));
+    vec4 xn = mix(factor, result, uR[0]) * tex.a;
+    oColor = mix(tex, xn, uQ[6]) * tex.a;
+}
+)";
+
+const char* kDeepGlow1Comp = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform sampler2D uHblur;
+uniform float uP[7];
+uniform float uQ[7];
+uniform float uR[7];
+uniform vec2 uOff;
+in vec2 vUv;
+out vec4 oColor;
+float sstep(float e0, float e1, float x) {
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+vec3 unpackRgb(float pk) {
+    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
+    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+}
+vec3 toYuv(vec3 c) {
+    mat3 m = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+    return c * m;
+}
+vec3 toRgb(vec3 c) {
+    mat3 m = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+    return c * m;
+}
+void main() {
+    vec4 base = texture(uTex, vUv) * uP[4];
+    vec4 comp = texture(uBlur, vUv + uOff);
+    vec4 hblur = texture(uHblur, vUv);
+    vec3 yuv = toYuv(comp.rgb);
+    float rad = uP[2] * 0.0174533;
+    float cs = cos(rad), sn = sin(rad);
+    vec2 huv = vec2(yuv.y * cs + yuv.z * sn, -yuv.y * sn + yuv.z * cs);
+    float origSat = min(1.0, length(huv) * 2.5);
+    vec2 suv = huv * uQ[3];
+    huv = suv + (huv - suv) * origSat;
+    huv *= (uQ[2] + 1.0);
+    vec3 nc = toRgb(vec3(yuv.x, huv));
+    float shA = comp.a * uQ[1] * comp.a;
+    vec3 crgb = vec3(1.0 - shA);
+    float rr = length(vec2(uP[1]) - vUv);
+    float ca = max(comp.a, 0.0001);
+    vec4 dbl = vec4(nc / ca, 1.0) * (rr - 0.5);
+    int flags = int(uR[3] + 0.5);
+    if ((flags & 4) != 0) {
+        float luma = dot(dbl.rgb, vec3(0.2126, 0.7152, 0.0722));
+        float feather = uR[2];
+        float lowB = uR[0] * (1.0 + feather) - 0.0001;
+        float lowA = lowB - max(feather, 0.00001);
+        float highA = uR[1] * (1.0 + feather) - feather + 0.0001;
+        float highB = highA + max(feather, 0.00001);
+        float lumafx = min(sstep(lowA, lowB, luma), 1.0 - sstep(highA, highB, luma));
+        dbl *= lumafx;
+    }
+    vec4 blendC = vec4(dbl.rgb * crgb, dbl.a);
+    vec4 rfx = vec4(unpackRgb(uP[6]), 1.0) * dbl.a;
+    rfx.a = dbl.a * dbl.a;
+    vec4 rrfinal = blendC;
+    if ((flags & 2) != 0) rrfinal = mix(blendC, rfx, uP[5]) * dbl.a;
+    vec4 L2 = (base * uQ[0] + rrfinal * uP[3]) * comp.a + base;
+    if ((flags & 1) != 0) {
+        vec4 l1 = vec4(0.0, 0.0, 0.0, hblur.a * uQ[6]);
+        oColor = l1 * (1.0 - L2.a) + L2;
+    } else {
+        oColor = L2;
+    }
+}
+)";
+
 // Displace Map (Alight Motion's displacemap3 = displacemap2, and displacemaprad; their
 // recovered shaders): the layer's own channels displace where the BACKDROP (the frame so
 // far, texBackdrop_ — the def's `comp`, srcType "comp", i.e. everything below the layer,
@@ -1885,8 +2434,10 @@ const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSpli
                                   kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp, kExtrude,
                                   kEdgeGlowEdge, kEdgeGlowComp,
                                   kChannelMapAm, kMosaicAm, kBoxPair, kGlowOuter, kElectricEdgesAm,
-                                  kSmoothEdgesAm, kDeepGlowComp, kDropShadow};
-static_assert(EF_COUNT <= 44, "eff_[] in renderer.h is too small");
+                                  kSmoothEdgesAm, kDeepGlowComp, kDropShadow,
+                                  kBbMaker, kUnsharpComp, kNewSharpenComp, kAmBlendGen,
+                                  kDeepGlow1Comp, kSpillStreak, kSpillOver, kSpillFinal};
+static_assert(EF_COUNT <= 52, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -2079,6 +2630,17 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_GAUSSIAN_BLUR_AM: ok = fxGaussianBlurAm(op, W, H, cur); break;
             case FX_DEEP_GLOW2_AM: ok = fxDeepGlow2Am(op, W, H, cur); break;
             case FX_DROP_SHADOW_AM: ok = fxDropShadowAm(op, W, H, cur); break;
+            case FX_BBMAKER_AM: ok = fxBbMakerAm(op, W, H, cur); break;
+            case FX_UNSHARP_MASK_AM: ok = fxUnsharpMaskAm(op, W, H, cur); break;
+            case FX_NEWSHARPEN_AM: ok = fxNewSharpenAm(op, W, H, cur); break;
+            case FX_GRADSHADOW_AM:
+            case FX_GRADIENTFLOW_AM:
+            case FX_PARTX_AM:
+            case FX_EDGELINE_AM:
+            case FX_LIGHTSWEEP_AM:
+            case FX_COLORGRAD3_AM: ok = fxAmBlendGenAm(op, W, H, cur); break;
+            case FX_DEEP_GLOW_AM: ok = fxDeepGlow1Am(op, W, H, cur); break;
+            case FX_SPILL_CLEANUP_AM: ok = fxSpillCleanupAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -2665,6 +3227,243 @@ bool Renderer::fxDropShadowAm(const FxOp& op, int W, int H, int* cur) {
                 (packedCol & 0xFF) / 255.f, std::min(1.f, std::max(0.f, op.p[1])));
     glUniform2f(loc(prog, "uOff"), posX / 500.f * -1.f, posY / 500.f);
     glUniform2f(loc(prog, "uP"), op.p[4], op.p[5]);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+
+// ---- v177 Queue 15(f) tier-5 passes (the fx_plan.cpp twins carry the def
+// citations; the GLSL mirrors them line by line).
+
+// BB Maker (Alight): a single band-wipe composite over the layer itself.
+bool Renderer::fxBbMakerAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_BBMAKER);
+    if (!prog) return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Unsharp Mask (Alight): keep the layer, blur a copy with the host
+// gaussianblur at the effect's strength, composite (EF_UNSHARP_COMP).
+bool Renderer::fxUnsharpMaskAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_UNSHARP_COMP), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    if (!fxBlurPx(fxAmGaussianSigma(op.p[0], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// New Sharpen (Alight): at half res, the horizontal streak average of the
+// picture (EF_BOX_PAIR mode 1, the def's +/- pair average), then the vertical
+// streak average + the sharpen composite at full res (EF_NEWSHARPEN_COMP);
+// the pass list repeats `iter` times, output feeding the next round.
+bool Renderer::fxNewSharpenAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_NEWSHARPEN_COMP), box = effProg(EF_BOX_PAIR), copy = effProg(EF_COPY);
+    if (!prog || !box || !copy) return false;
+    const int hw = halfSize(W, 0), hh = halfSize(H, 0);
+    if (!ensureLevel(0, hw, hh) || !ensureLevel(1, hw, hh) ||
+        !ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& ds = lv_[0];
+    const FxLevel& hb = lv_[1];
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    const int iter = std::min(6, std::max(1, (int)std::lround(op.p[4])));
+    const float per = op.p[0] / 4.f / (float)iter;
+    auto steps = [](float v) { return (int)std::min(100.01f, std::max(2.01f, v)); };
+    const int nX = steps(per * (float)W * 0.5f), nY = steps(per * (float)H * 0.5f);
+    for (int it = 0; it < iter; ++it) {
+        begin(copy, keep.fbo[0], W, H);
+        bindTex(0, fxTex_[*cur]);
+        glUniform1i(loc(copy, "uTex"), 0);
+        draw();
+        begin(copy, ds.fbo[0], hw, hh);
+        bindTex(0, fxTex_[*cur]);
+        glUniform1i(loc(copy, "uTex"), 0);
+        draw();
+        begin(box, hb.fbo[0], hw, hh);
+        bindTex(0, ds.tex[0]);
+        glUniform1i(loc(box, "uTex"), 0);
+        glUniform2f(loc(box, "uVel"), per, 0.f);
+        glUniform1i(loc(box, "uSteps"), nX);
+        glUniform1i(loc(box, "uMode"), 1);
+        draw();
+        const int dst = 1 - *cur;
+        begin(prog, fxFbo_[dst], W, H);
+        bindTex(0, keep.tex[0]);
+        bindTex(1, hb.tex[0]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform1i(loc(prog, "uBlur"), 1);
+        glUniform2f(loc(prog, "uVel"), 0.f, per);
+        glUniform1i(loc(prog, "uSteps"), nY);
+        glUniform1fv(loc(prog, "uP"), 7, op.p);
+        draw();
+        *cur = dst;
+    }
+    return true;
+}
+
+// The blend-generator family (Alight): Gradient Shadow, Gradient Flow, Partx,
+// Edge Line, Light Sweep, 3 Color Gradient — one program (EF_AM_BLENDGEN),
+// uKind selects the def, exactly as the CPU twin's kind.
+bool Renderer::fxAmBlendGenAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_AM_BLENDGEN);
+    if (!prog) return false;
+    const int kind = op.type == FX_GRADSHADOW_AM ? 0
+                   : op.type == FX_GRADIENTFLOW_AM ? 1
+                   : op.type == FX_PARTX_AM ? 2
+                   : op.type == FX_EDGELINE_AM ? 3
+                   : op.type == FX_LIGHTSWEEP_AM ? 4 : 5;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    glUniform1fv(loc(prog, "uR"), 7, op.r);
+    glUniform1i(loc(prog, "uKind"), kind);
+    glUniform2f(loc(prog, "uPic"), (float)W, (float)H);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Deep Glow v1 (Alight): keep the layer, gaussianblur a copy (the def's
+// vblur, sampled at the position offset) and boxblur2 a second copy (its
+// hblur, feeding only the sshadow silhouette), composite (EF_DEEP_GLOW1_COMP).
+bool Renderer::fxDeepGlow1Am(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_DEEP_GLOW1_COMP), box = effProg(EF_BOX_PAIR), copy = effProg(EF_COPY);
+    if (!prog || !box || !copy) return false;
+    for (int i = 0; i < 3; ++i) if (!ensureLevel(i, W, H)) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    const float diag = std::hypot((float)width(), (float)height());
+    if (!fxBlurPx(fxAmGaussianSigma(op.p[0], diag), W, H, cur)) return false;
+    begin(copy, lv_[0].fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    const int iter = std::min(6, std::max(1, (int)std::lround(op.r[4])));
+    const float per = op.p[0] / 4.f / (float)iter;
+    begin(box, lv_[1].fbo[0], W, H);
+    bindTex(0, keep.tex[0]);
+    glUniform1i(loc(box, "uTex"), 0);
+    glUniform2f(loc(box, "uVel"), per, 0.f);
+    glUniform1i(loc(box, "uSteps"), fxBoxSamples(per * (float)W, false));
+    glUniform1i(loc(box, "uMode"), 0);
+    draw();
+    begin(box, lv_[2].fbo[0], W, H);
+    bindTex(0, lv_[1].tex[0]);
+    glUniform1i(loc(box, "uTex"), 0);
+    glUniform2f(loc(box, "uVel"), 0.f, per);
+    glUniform1i(loc(box, "uSteps"), fxBoxSamples(per * (float)H, false));
+    glUniform1i(loc(box, "uMode"), 0);
+    draw();
+    const int pk = (int)std::lround(op.q[4]);
+    const float posX = (float)(pk / 4096 - 2048), posY = (float)(pk % 4096 - 2048);
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, lv_[0].tex[0]);
+    bindTex(2, lv_[2].tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1i(loc(prog, "uHblur"), 2);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    glUniform1fv(loc(prog, "uR"), 7, op.r);
+    glUniform2f(loc(prog, "uOff"), (posX / 15.f) * -1.f / 500.f, (posY / 15.f) / 500.f);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Spill Cleanup (Alight): gaussianblur the layer, fold the ordered streak
+// accumulation over it twice (EF_SPILL_STREAK passes composited with
+// EF_SPILL_OVER), then the luma-replaced spill composite (EF_SPILL_FINAL).
+bool Renderer::fxSpillCleanupAm(const FxOp& op, int W, int H, int* cur) {
+    const uint32_t streak = effProg(EF_SPILL_STREAK), over = effProg(EF_SPILL_OVER),
+                   fin = effProg(EF_SPILL_FINAL), copy = effProg(EF_COPY);
+    if (!streak || !over || !fin || !copy) return false;
+    for (int i = 0; i < 5; ++i) if (!ensureLevel(i, W, H)) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    if (!fxBlurPx(fxAmGaussianSigma(op.p[0], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;
+    begin(copy, lv_[0].fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    const float dist = op.p[0] * 0.05f;
+    auto steps = [](float v) { return (int)std::min(100.01f, std::max(1.01f, v)); };
+    const int nX = steps(dist * (float)W), nY = steps(dist * (float)H);
+    auto streakInto = [&](int srcLvl, int dstLvl, bool horiz) {
+        begin(streak, lv_[dstLvl].fbo[0], W, H);
+        bindTex(0, lv_[srcLvl].tex[0]);
+        glUniform1i(loc(streak, "uTex"), 0);
+        glUniform2f(loc(streak, "uAxis"), horiz ? 1.f : 0.f, horiz ? 0.f : 1.f);
+        glUniform1f(loc(streak, "uDist"), dist);
+        glUniform1i(loc(streak, "uSteps"), horiz ? nX : nY);
+        draw();
+    };
+    auto overInto = [&](int bottomLvl, int topLvl, int dstLvl) {
+        begin(over, lv_[dstLvl].fbo[0], W, H);
+        bindTex(0, lv_[bottomLvl].tex[0]);
+        bindTex(1, lv_[topLvl].tex[0]);
+        glUniform1i(loc(over, "uBottom"), 0);
+        glUniform1i(loc(over, "uTop"), 1);
+        draw();
+    };
+    streakInto(0, 1, true);
+    streakInto(0, 2, false);
+    overInto(1, 2, 3);
+    overInto(3, 0, 1);   // hpass in lv_[1]
+    streakInto(1, 2, true);
+    streakInto(1, 3, false);
+    overInto(2, 3, 4);
+    overInto(4, 0, 2);   // vpass in lv_[2]
+    const int dst = 1 - *cur;
+    begin(fin, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, lv_[0].tex[0]);
+    bindTex(2, lv_[2].tex[0]);
+    glUniform1i(loc(fin, "uBase"), 0);
+    glUniform1i(loc(fin, "uBlur"), 1);
+    glUniform1i(loc(fin, "uStreak"), 2);
     draw();
     *cur = dst;
     return true;

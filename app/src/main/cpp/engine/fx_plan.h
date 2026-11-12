@@ -453,6 +453,159 @@ enum FxType : int {
                               //      packed colour), [2] position point packed,
                               //      [3] strength 0..5 (the blur), [4] alpha 0..5,
                               //      [5] alphac 0..1
+    // v177: Queue 15(f) tier-5 batch (hunt round 3, defs-batch8; every def passed
+    // the schema acceptance test against the corpus's serialized instances).
+    FX_BBMAKER_AM = 155,  // Alight's bbmaker: two wipe bands over the layer in
+                          // layer norm — the colour band (colorbg x tex.a, gated by
+                          // the startA / endA / angleA / featherA band) under the
+                          // picture band (adjStart = (start - 20) / 100, adjEnd =
+                          // (120 - start) / 100 along `angle`, feather hardwired
+                          // 0 in the def), the sum x tex.a. Dedicated pass.
+                          //   p: [0] start (keyframed in all 17 corpus instances),
+                          //      [1] angle (raw degrees), [2] colorbg packed
+                          //      0xRRGGBB, [3] its alpha, [4] startA, [5] endA,
+                          //      [6] angleA (raw degrees)
+                          //   q: [0] featherA (raw; the def divides by 100),
+                          //      [1] opacity
+                          // Keyframed start / angle ride AmFxEval tails from 14.
+    FX_BBMAKER_AM_EXT = 156,
+    FX_UNSHARP_MASK_AM = 157,  // Alight's unsharpmask: a dedicated chain — the
+                               // host gaussianblur of the layer at `strength`
+                               // (same-name feed), then the def's composite:
+                               // adjColor = base (1 + amount) - blur amount, mixed
+                               // in by the luma-difference smoothstep gate.
+                               //   p: [0] strength 0..2, [1] amount, [2] threshold,
+                               //      [3] showMask 0/1
+    FX_NEWSHARPEN_AM = 158,  // Alight's newsharpen ("oldsharpen"): at half res,
+                             // a horizontal then vertical streak average of the
+                             // picture (velocity = strength / 4 / iter along 0 /
+                             // 90 degrees, the boxblur2 kernel form), then
+                             // screen(input, (input - streak) x brig) — the whole
+                             // pass list repeated `iter` times. Dedicated chain.
+                             //   p: [0] strength, [1] whiteonly 0/1,
+                             //      [2] bluredonly 0/1, [3] brig, [4] iter
+    FX_GRADSHADOW_AM = 159,  // The community blend-generator family (defs-batch8):
+                             // a generated fragColor run through the defs' blend
+                             // switch, per kind. gradshadow: fragColor = the
+                             // layer-norm band (start / end / feather / angle,
+                             // smoothstepRev) x tex.a x alphb x color.
+                             //   p: [0] start, [1] end, [2] feather (raw; / 100 in
+                             //      the shader), [3] angle, [4] color packed,
+                             //      [5] its alpha, [6] bright
+                             //   q: [0] blendMode, [1] alphb, [2] alphab
+                             // Output: mix(fragColor, result, alphab) x tex.a.
+    FX_GRADSHADOW_AM_EXT = 160,
+    FX_GRADIENTFLOW_AM = 161,  // gradientflow: fragColor = the Perlin-folded
+                               // 4-colour flow field in screen norm (NOT centred:
+                               // uv = sn / scale, rotated, offset, / (scale x
+                               // stretch)); alpha 1. SHORT switch; output
+                               // mix(tex, result, alpha) x tex.a.
+                               //   p: [0] scale, [1] angle, [2] position packed,
+                               //      [3] progress (iTime), [4] speed,
+                               //      [5] hardness, [6] blendMode
+                               //   q: [0..3] color1..4 packed, [4] FREQ, [5] AMP,
+                               //      [6] stretch packed
+                               //   r: [0] alpha
+                               // autop: progress = PROGRESS + time x SPEED is an
+                               // exact linear function of layer time — the
+                               // importer bakes it as a synthetic AmFxEval tail
+                               // on slot 3 (tails from 21).
+    FX_GRADIENTFLOW_AM_EXT = 162,
+    FX_GRADIENTFLOW_AM_EXT2 = 163,
+    FX_PARTX_AM = 164,  // partx: fragColor = the closed-form starfield in
+                        // layer-centred aspect coords (white1 x white2 over the
+                        // angle cells), mix(colorbg, colorfg, white). SHORT
+                        // switch; output mix(tex, result, alpha) — NO trailing
+                        // x tex.a (the def's own inconsistency, kept).
+                        //   p: [0] colorfg packed, [1] its alpha,
+                        //      [2] colorbg packed, [3] its alpha,
+                        //      [4] kNumAngles, [5] kStarDensity, [6] kMotionBlur
+                        //   q: [0] EVO (local time), [1] scale, [2] angle,
+                        //      [3] positionn packed, [4] stretch packed,
+                        //      [5] bright, [6] blendMode
+                        //   r: [0] alpha
+                        // autop: EVO + time x 0.5 baked as a synthetic tail on
+                        // slot 7 (tails from 21), like gradientflow.
+    FX_PARTX_AM_EXT = 165,
+    FX_PARTX_AM_EXT2 = 166,
+    FX_EDGELINE_AM = 167,  // edgeline: fragColor = the Scharr-like 8-tap gradient
+                           // (weights 3/10) mapped through color1 / color2 by its
+                           // luma (newMode) or the raw (1 - g) silhouette. MINI
+                           // switch (modes 0..2, no bright); output
+                           // mix(tex, result, alpha).
+                           //   p: [0] smoothing, [1] threshold, [2] amp,
+                           //      [3] color1 packed, [4] its alpha,
+                           //      [5] color2 packed, [6] its alpha
+                           //   q: [0] alpha, [1] blendMode, [2] fix 0/1,
+                           //      [3] newMode 0/1, [4] invert 0/1
+    FX_EDGELINE_AM_EXT = 168,
+    FX_LIGHTSWEEP_AM = 169,  // lightsweep: fragColor = the travelling sine band
+                             // (sin(r.y + r.x amount - iTime 9) x sharp, cubed
+                             // x 0.6) mapped through color1 / color2 by its luma,
+                             // alpha = the band. SHORT switch; output
+                             // mix(tex, result, alpha) x tex.a.
+                             //   p: [0] scale, [1] angle, [2] position packed,
+                             //      [3] progress (iTime), [4] speed, [5] amount,
+                             //      [6] sharp
+                             //   q: [0] stretch packed, [1] color1 packed,
+                             //      [2] its alpha, [3] color2 packed,
+                             //      [4] its alpha, [5] hardness, [6] blendMode
+                             //   r: [0] alpha
+                             // Keyframed progress rides a tail from 21 (autop is
+                             // false in the corpus; with autop on and a static
+                             // PROGRESS the clock bakes like gradientflow's).
+    FX_LIGHTSWEEP_AM_EXT = 170,
+    FX_LIGHTSWEEP_AM_EXT2 = 171,
+    FX_COLORGRAD3_AM = 172,  // 3colorgrad (id com.alightcreative.3colorgrad):
+                             // fragColor = the 3-colour ramp along the centred
+                             // x (progressa / progressb steps). FULL switch;
+                             // output mix(tex, mix(factor, result, alphab) x
+                             // tex.a, alpha) x tex.a.
+                             //   p: [0] color1 packed, [1] its alpha,
+                             //      [2] color2 packed, [3] its alpha,
+                             //      [4] color3 packed, [5] its alpha,
+                             //      [6] progressa
+                             //   q: [0] progressb, [1] offsetx, [2] scale,
+                             //      [3] angle, [4] bright, [5] blendMode,
+                             //      [6] alpha
+                             //   r: [0] alphab
+                             // Keyframed angle rides a tail from 21 (slot 10).
+    FX_COLORGRAD3_AM_EXT = 173,
+    FX_COLORGRAD3_AM_EXT2 = 174,
+    FX_DEEP_GLOW_AM = 175,  // Alight's deepglow (v1; the double-sourced def —
+                            // Ultra XML + TrueMotion agree): per iteration, the
+                            // host gaussianblur of the layer (vblur, `strength`
+                            // by name) + a boxblur2 of it (hblur, same-name
+                            // strength / iter), then the def's composite: the
+                            // blur hue-rotated in YUV, scaled by (rr - 0.5) with
+                            // rr = |rrr - screenNorm|, the optional threshold
+                            // gate, colour-keyed or raw, over the base.
+                            // Dedicated chain (Renderer::fxDeepGlow1Am; one
+                            // composite — `iter` only scales the hblur feed).
+                            //   p: [0] strength 0..2, [1] rrr (Intensity),
+                            //      [2] hue (raw degrees, def default 360),
+                            //      [3] oalpha, [4] calpha, [5] alpb,
+                            //      [6] color packed 0xRRGGBB
+                            //   q: [0] higsha x, [1] higsha y, [2] satvib x,
+                            //      [3] satvib y, [4] position packed,
+                            //      [5] color alpha, [6] alphaa (shadow strength)
+                            //   r: [0] lowThreshold, [1] highThreshold,
+                            //      [2] feather, [3] flags (sshadow 1 + cblend 2
+                            //      + thrs 4), [4] iter, [5] power (declared by
+                            //      the def, never read by its shader — stored
+                            //      for the panel, inert in the pass)
+    FX_DEEP_GLOW_AM_EXT = 176,
+    FX_DEEP_GLOW_AM_EXT2 = 177,
+    FX_SPILL_CLEANUP_AM = 178,  // Alight's spill-cleanup: the host gaussianblur
+                                // of the layer at `strength` (same-name feed),
+                                // two ordered over-compositing streak passes
+                                // over it (x then y folds, each composited over
+                                // the blur), then the spill composite: the
+                                // streak colour scaled by (1 - blur.a) x 2 and
+                                // base.a, its YUV luma replaced by the base's,
+                                // laid under the base. Dedicated chain.
+                                //   p: [0] strength (AM raw; the def's own
+                                //      default is 0.02, the corpus runs 0.48..2)
     FX_MAX = FX_COPY_BG
 };
 
@@ -1075,6 +1228,43 @@ int fxBoxSamples(float speed, bool symmetric);
 // op.p[1] times with the output feeding the next round (the def's <iterations>).
 void fxInnerBlurAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
                         const FxExtrudeSampler& s, float out[4]);
+// ---- v177: Queue 15(f) tier-5 twins (defs-batch8; the GLSL twins are
+// Renderer::fxBbMakerAm / fxUnsharpMaskAm / fxNewSharpenAm / fxAmBlendGenAm /
+// fxDeepGlowAm / fxSpillCleanupAm in renderer_effects.cpp). (ax, ay) is the
+// layer-norm position; all pictures premultiplied.
+// bbmaker (tex 0 = the layer): the two wipe bands of the def, line by line —
+// the colour band under the picture band, the sum x tex.a. Band projections
+// run on layer norm; the band smoothsteps use fxSstep (the def's feather is
+// hardwired 0, and its own smoothstepRev codifies step for equal edges).
+void fxBbMakerPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                    const FxExtrudeSampler& s, float out[4]);
+// unsharpmask (tex 0 = the layer, tex 1 = its gaussianblur buffer at `strength`):
+// the def's composite — adjColor mixed in by the luma-difference gate.
+void fxUnsharpMaskPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                        const FxExtrudeSampler& s, float out[4]);
+// newsharpen (tex 0 = the layer): the half-res streak averages (the boxblur2
+// kernel form; a ds sample reads the layer at the same point, the boxblur3
+// twin precedent) + the screen composite, the pass list repeated `iter` times.
+void fxNewSharpenAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         const FxExtrudeSampler& s, float out[4]);
+// The blend-generator family (tex 0 = the layer): kind 0 gradshadow, 1
+// gradientflow, 2 partx, 3 edgeline, 4 lightsweep, 5 3colorgrad — each def's
+// fragColor, then its own blend-switch variant (FULL 25 for 0 / 5, SHORT 4 for
+// 1 / 2 / 4, MINI 3 for 3) and its own output tail, line by line. Slot layouts
+// on the FX_ constants. The centred spaces anchor to the layer picture (the
+// house vUv convention): centred = (ax - 0.5, 0.5 - ay), y pre-scaled by
+// picH / picW.
+void fxAmBlendGenPixel(int kind, const FxOp& op, float ax, float ay, float picW, float picH,
+                       const FxExtrudeSampler& s, float out[4]);
+// deepglow v1 (tex 0 = the layer, tex 1 = its gaussianblur buffer sampled at
+// the position offset, tex 2 = its boxblur2 buffer): the def's composite.
+void fxDeepGlow1Pixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]);
+// spill-cleanup (tex 0 = the layer, tex 1 = its gaussianblur buffer at
+// `strength`): the ordered over-compositing streak folds (evaluated on
+// demand, the smoothedges twin pattern) + the luma-replaced spill composite.
+void fxSpillCleanupAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                           const FxExtrudeSampler& s, float out[4]);
 // CPU twin of Box Blur 3 (AM's boxblur3): the half-res symmetric averages over a
 // sampler (tex 0 = the layer; a ds sample reads the layer at the same point — the copy
 // passes are plain renders in AM, and the host test's bilinear sampler makes the two

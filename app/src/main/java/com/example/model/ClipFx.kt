@@ -479,6 +479,84 @@ object ClipFxLibrary {
     // shadow, so it cannot ride the packed colour), [2] position packed,
     // [3] strength 0..5 (the blur), [4] alpha 0..5, [5] alphac.
     const val DROP_SHADOW_AM = "drop_shadow_am"
+    // BBMAKER_AM (native 155 + EXT 156): Alight's bbmaker — two wipe bands over
+    // the layer in layer norm: the colour band (colorbg x tex.a, gated by the
+    // startA / endA / angleA / featherA band) under the picture band
+    // (adjStart = (start - 20) / 100, adjEnd = (120 - start) / 100 along angle).
+    // [0] start, [1] angle (raw degrees), [2] colorbg packed 0xRRGGBB, [3] its
+    // alpha, [4] startA, [5] endA, [6] angleA. EXT [7] featherA, [8] opacity.
+    // Keyframed start / angle ride tails from index 14.
+    const val BBMAKER_AM = "bbmaker_am"
+    // UNSHARPMASK_AM (native 157): Alight's unsharpmask — the host gaussianblur
+    // of the layer at strength, then adjColor = base (1 + amount) - blur amount
+    // mixed in by the luma-difference gate. [0] strength 0..2, [1] amount,
+    // [2] threshold, [3] showMask 0/1.
+    const val UNSHARPMASK_AM = "unsharpmask_am"
+    // NEWSHARPEN_AM (native 158): Alight's newsharpen ("oldsharpen") — at half
+    // res, a horizontal then vertical streak average of the picture, then
+    // screen(input, (input - streak) x brig); the pass list repeats iter times.
+    // [0] strength, [1] whiteonly 0/1, [2] bluredonly 0/1, [3] brig, [4] iter.
+    const val NEWSHARPEN_AM = "newsharpen_am"
+    // GRADSHADOW_AM (native 159 + EXT 160): the blend-generator family's
+    // gradient shadow — a layer-norm band x tex.a x alphb x color through the
+    // FULL 25-mode blend switch. [0] start, [1] end, [2] feather (raw, / 100 in
+    // the shader), [3] angle, [4] color packed, [5] its alpha, [6] bright.
+    // EXT [7] blendMode, [8] alphb, [9] alphab.
+    const val GRADSHADOW_AM = "gradshadow_am"
+    // GRADIENTFLOW_AM (native 161 + EXT 162 + EXT2 163): the Perlin-folded
+    // 4-colour flow field through the SHORT blend switch. [0] scale, [1] angle,
+    // [2] position packed, [3] progress (iTime), [4] speed (consumed by the
+    // importer's synthetic clock tail), [5] hardness, [6] blendMode.
+    // EXT [7..10] color1..4 packed, [11] FREQ, [12] AMP, [13] stretch packed.
+    // EXT2 [14] alpha. Keyframed / autop progress rides a tail from index 21.
+    const val GRADIENTFLOW_AM = "gradientflow_am"
+    // PARTX_AM (native 164 + EXT 165 + EXT2 166): the closed-form starfield,
+    // mix(colorbg, colorfg, white) through the SHORT switch; the output tail
+    // has NO trailing x tex.a (the def's own inconsistency, kept).
+    // [0] colorfg packed, [1] its alpha, [2] colorbg packed, [3] its alpha,
+    // [4] kNumAngles, [5] kStarDensity, [6] kMotionBlur. EXT [7] EVO (local
+    // time), [8] scale, [9] angle, [10] position packed, [11] stretch packed,
+    // [12] bright, [13] blendMode. EXT2 [14] alpha. Keyframed / autop EVO
+    // rides a tail from index 21 on slot 7.
+    const val PARTX_AM = "partx_am"
+    // EDGELINE_AM (native 167 + EXT 168): the Scharr-like 8-tap gradient mapped
+    // through color1 / color2 by its luma, through the MINI 3-mode switch.
+    // [0] smoothing, [1] threshold, [2] amp, [3] color1 packed, [4] its alpha,
+    // [5] color2 packed, [6] its alpha. EXT [7] alpha, [8] blendMode,
+    // [9] fix 0/1, [10] newMode 0/1, [11] invert 0/1.
+    const val EDGELINE_AM = "edgeline_am"
+    // LIGHTSWEEP_AM (native 169 + EXT 170 + EXT2 171): the travelling sine band
+    // mapped through color1 / color2 by its luma, through the SHORT switch.
+    // [0] scale, [1] angle, [2] position packed, [3] progress (iTime),
+    // [4] speed, [5] amount, [6] sharp. EXT [7] stretch packed, [8] color1
+    // packed, [9] its alpha, [10] color2 packed, [11] its alpha, [12] hardness,
+    // [13] blendMode. EXT2 [14] alpha. Keyframed progress rides a tail from 21.
+    const val LIGHTSWEEP_AM = "lightsweep_am"
+    // COLORGRAD3_AM (native 172 + EXT 173 + EXT2 174): Alight's 3colorgrad
+    // (id com.alightcreative.3colorgrad) — the 3-colour ramp along the centred
+    // x through the FULL switch. [0] color1 packed, [1] its alpha, [2] color2
+    // packed, [3] its alpha, [4] color3 packed, [5] its alpha, [6] progressa.
+    // EXT [7] progressb, [8] offsetx, [9] scale, [10] angle, [11] bright,
+    // [12] blendMode, [13] alpha. EXT2 [14] alphab. Keyframed angle rides a
+    // tail from index 21 on slot 10.
+    const val COLORGRAD3_AM = "colorgrad3_am"
+    // DEEP_GLOW_AM (native 175 + EXT 176 + EXT2 177): Alight's deepglow (v1;
+    // the double-sourced def). The host gaussianblur of the layer (vblur,
+    // sampled at the position offset) hue-rotated in YUV, scaled by the glow
+    // radius, optionally threshold-gated, over the base; a boxblur2 (hblur)
+    // feeds only the sshadow silhouette. [0] strength 0..2, [1] rrr
+    // (Intensity), [2] hue (raw degrees), [3] oalpha, [4] calpha, [5] alpb,
+    // [6] color packed. EXT [7] higsha x, [8] higsha y, [9] satvib x,
+    // [10] satvib y, [11] position packed, [12] color alpha, [13] alphaa.
+    // EXT2 [14] lowThreshold, [15] highThreshold, [16] feather, [17] flags
+    // (sshadow 1 + cblend 2 + thrs 4), [18] iter, [19] power (declared by the
+    // def, never read by its shader — stored, inert).
+    const val DEEP_GLOW_AM = "deep_glow_am"
+    // SPILL_CLEANUP_AM (native 178): Alight's spill-cleanup — the host
+    // gaussianblur of the layer, two ordered over-compositing streak passes
+    // over it, then the spill composite (the streak colour's luma replaced by
+    // the base's, laid under the base). [0] strength (AM raw).
+    const val SPILL_CLEANUP_AM = "spill_cleanup_am"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
@@ -1362,6 +1440,128 @@ object ClipFxLibrary {
                 FxParamDef("Layer alpha", 0f, 1f, 1f, "", step = 0.01f)
             )
         ),
+        // ---- v177: Queue 15(f) tier-5 batch (values as on the consts). ----
+        FxDef(
+            BBMAKER_AM, 155, "BB Maker (Alight)", "Stylize", "Two wipe bands over the layer — a colour band under the picture band (Alight Motion's BB Maker)",
+            listOf(
+                FxParamDef("Start", -20f, 120f, 20f, "", step = 0.01f),
+                FxParamDef("Angle", 0f, 360f, 90f, "", step = 0.1f),
+                FxParamDef("Background colour", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Colour alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Start A", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("End A", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Angle A", 0f, 360f, 0f, "", step = 0.1f)
+            )
+        ),
+        FxDef(
+            UNSHARPMASK_AM, 157, "Unsharp Mask (Alight)", "Blur", "Sharpening by the layer's difference from its own blur, gated on edges (Alight Motion's Unsharp Mask)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.05f, "", step = 0.01f),
+                FxParamDef("Amount", 0f, 5f, 0.5f, "", step = 0.01f),
+                FxParamDef("Threshold", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Show mask", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            NEWSHARPEN_AM, 158, "New Sharpen (Alight)", "Blur", "A streak-blur screen sharpen, repeated for quality (Alight Motion's New Sharpen)",
+            listOf(
+                FxParamDef("Strength", 0f, 20f, 0.15f, "", step = 0.01f),
+                FxParamDef("White only", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Only sharp", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Brightness", 0f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Quality", 1f, 5f, 2f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            GRADSHADOW_AM, 159, "Gradient Shadow (Alight)", "Stylize", "A soft gradient band blended over the layer (Alight Motion's Gradient Shadow)",
+            listOf(
+                FxParamDef("Start", 0f, 2f, 0.95f, "", step = 0.01f),
+                FxParamDef("End", 0f, 2f, 1.5f, "", step = 0.01f),
+                FxParamDef("Feather", 0f, 100f, 100f, "", step = 0.1f),
+                FxParamDef("Angle", 0f, 360f, 90f, "", step = 0.1f),
+                FxParamDef("Colour", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Colour alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Brightness", 0f, 3f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            GRADIENTFLOW_AM, 161, "Gradient Flow (Alight)", "Stylize", "A flowing four-colour noise gradient blended over the layer (Alight Motion's Gradient Flow)",
+            listOf(
+                FxParamDef("Scale", 0.1f, 5f, 1f, "", step = 0.01f),
+                FxParamDef("Angle", 0f, 360f, 0f, "", step = 0.1f),
+                FxParamDef("Position", 0f, 16777215f, packPoint(0f, 0f), "", step = 1f),
+                FxParamDef("Progress", 0f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Speed", 0f, 5f, 1f, "", step = 0.01f),
+                FxParamDef("Hardness", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Blend mode", 0f, 3f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            PARTX_AM, 164, "Partx (Alight)", "Stylize", "A procedural starfield blended over the layer (Alight Motion's Partx)",
+            listOf(
+                FxParamDef("Star colour", 0f, 16777215f, 16777215f, "", step = 1f),
+                FxParamDef("Colour alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Background colour", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Background alpha", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Angles", 1f, 400f, 200f, "", step = 1f),
+                FxParamDef("Density", 0f, 2f, 0.2f, "", step = 0.01f),
+                FxParamDef("Motion blur", 0f, 5f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            EDGELINE_AM, 167, "Edge Line (Alight)", "Stylize", "The layer's edges drawn as a two-colour line (Alight Motion's Edge Line)",
+            listOf(
+                FxParamDef("Smoothing", 0f, 5f, 1.5f, "", step = 0.01f),
+                FxParamDef("Threshold", 0f, 1f, 0.14f, "", step = 0.01f),
+                FxParamDef("Amplifier", 0f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Colour 1", 0f, 16777215f, 65535f, "", step = 1f),
+                FxParamDef("Colour 1 alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Colour 2 alpha", 0f, 1f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            LIGHTSWEEP_AM, 169, "Light Sweep (Alight)", "Light", "A travelling light band blended over the layer (Alight Motion's Light Sweep)",
+            listOf(
+                FxParamDef("Scale", 0.1f, 5f, 0.8f, "", step = 0.01f),
+                FxParamDef("Angle", -180f, 180f, -22.5f, "", step = 0.1f),
+                FxParamDef("Position", 0f, 16777215f, packPoint(0f, 0f), "", step = 1f),
+                FxParamDef("Progress", 0f, 2f, 0.53f, "", step = 0.01f),
+                FxParamDef("Speed", 0f, 5f, 1f, "", step = 0.01f),
+                FxParamDef("Amount", 0f, 10f, 3f, "", step = 0.01f),
+                FxParamDef("Sharpness", 0f, 3f, 0.79f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            COLORGRAD3_AM, 172, "3 Color Gradient (Alight)", "Color", "A three-colour gradient ramp blended over the layer (Alight Motion's 3 Color Gradient)",
+            listOf(
+                FxParamDef("Colour 1", 0f, 16777215f, 986895f, "", step = 1f),
+                FxParamDef("Colour 1 alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Colour 2 alpha", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Colour 3", 0f, 16777215f, 986895f, "", step = 1f),
+                FxParamDef("Colour 3 alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Progress A", 0f, 1f, 0.5f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            DEEP_GLOW_AM, 175, "Deep Glow (Alight)", "Light", "A deep glow of the layer itself, hue-shifted in YUV space (Alight Motion's Deep Glow)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.365f, "", step = 0.005f),
+                FxParamDef("Intensity", 0f, 3f, 1.51f, "", step = 0.01f),
+                FxParamDef("Hue", 0f, 360f, 360f, "", step = 0.1f),
+                FxParamDef("Glow alpha", 0f, 3f, 1f, "", step = 0.01f),
+                FxParamDef("Layer alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Colour blend", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Colour", 0f, 16777215f, 11141120f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            SPILL_CLEANUP_AM, 178, "Spill Cleanup (Alight)", "Color", "Cleans colour spill with the layer's own streaked blur (Alight Motion's Spill Cleanup)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.48f, "", step = 0.01f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -1871,6 +2071,30 @@ object ClipFxLibrary {
             1f, 360f, 0f, 1f, 0xFFA800.toFloat(), 0.15f, 0f,
             packPoint(0f, 0f), packPoint(0f, 0f), packPoint(0f, 0f), 32f, 1f, 0f, 0f
         )
+        // Tier-5 EXT / EXT2 defaults are Alight's own def defaults.
+        BBMAKER_AM -> listOf(0f, 1f, 0f, 0f, 0f, 0f, 0f)
+        GRADSHADOW_AM -> listOf(0f, 1f, 1f, 0f, 0f, 0f, 0f)
+        GRADIENTFLOW_AM -> listOf(
+            0x000321.toFloat(), 0x001C6B.toFloat(), 0x00135C.toFloat(), 0x000033.toFloat(), 0f, 22f, packPoint(1f, 1f),
+            1f, 0f, 0f, 0f, 0f, 0f, 0f
+        )
+        PARTX_AM -> listOf(
+            0f, 1f, 0f, packPoint(0f, 0f), packPoint(1f, 1f), 1f, 3f,
+            1f, 0f, 0f, 0f, 0f, 0f, 0f
+        )
+        EDGELINE_AM -> listOf(1f, 0f, 1f, 1f, 0f, 0f, 0f)
+        LIGHTSWEEP_AM -> listOf(
+            packPoint(1f, 1f), 0f, 1f, 0xFFFFFF.toFloat(), 1f, 1f, 0f,
+            1f, 0f, 0f, 0f, 0f, 0f, 0f
+        )
+        COLORGRAD3_AM -> listOf(
+            0.5f, 0f, 1f, 0f, 1f, 0f, 1f,
+            1f, 0f, 0f, 0f, 0f, 0f, 0f
+        )
+        DEEP_GLOW_AM -> listOf(
+            0f, 0f, 0f, 1f, packPoint(0f, 0f), 1f, 0.75f,
+            0f, 1f, 3f, 0f, 1f, 0.15f, 0f
+        )
         else -> emptyList()
     }
 
@@ -1900,6 +2124,14 @@ object ClipFxLibrary {
         CHECKER2_AM -> 140
         ELECTRIC_EDGES_AM -> 147
         DEEP_GLOW2_AM -> 152
+        BBMAKER_AM -> 156
+        GRADSHADOW_AM -> 160
+        GRADIENTFLOW_AM -> 162
+        PARTX_AM -> 165
+        EDGELINE_AM -> 168
+        LIGHTSWEEP_AM -> 170
+        COLORGRAD3_AM -> 173
+        DEEP_GLOW_AM -> 176
         else -> null
     }
 
@@ -1910,6 +2142,11 @@ object ClipFxLibrary {
         TURBULENCE2_AM -> 138
         ELECTRIC_EDGES_AM -> 148
         DEEP_GLOW2_AM -> 153
+        GRADIENTFLOW_AM -> 163
+        PARTX_AM -> 166
+        LIGHTSWEEP_AM -> 171
+        COLORGRAD3_AM -> 174
+        DEEP_GLOW_AM -> 177
         else -> null
     }
 

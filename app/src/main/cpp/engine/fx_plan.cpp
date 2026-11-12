@@ -22,6 +22,11 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                           : t == FX_TURBULENCE2_AM_EXT2 ? FX_TURBULENCE2_AM_EXT
                           : t == FX_ELECTRIC_EDGES_AM_EXT2 ? FX_ELECTRIC_EDGES_AM_EXT
                           : t == FX_DEEP_GLOW2_AM_EXT2 ? FX_DEEP_GLOW2_AM_EXT
+                          : t == FX_GRADIENTFLOW_AM_EXT2 ? FX_GRADIENTFLOW_AM_EXT
+                          : t == FX_PARTX_AM_EXT2 ? FX_PARTX_AM_EXT
+                          : t == FX_LIGHTSWEEP_AM_EXT2 ? FX_LIGHTSWEEP_AM_EXT
+                          : t == FX_COLORGRAD3_AM_EXT2 ? FX_COLORGRAD3_AM_EXT
+                          : t == FX_DEEP_GLOW_AM_EXT2 ? FX_DEEP_GLOW_AM_EXT
                                                          : FX_NONE;
         if (ext2Ext != FX_NONE) {
             if (extFoldedOp >= 0 && extFoldedType == ext2Ext) {
@@ -59,6 +64,14 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_CHECKER2_AM_EXT ? FX_CHECKER2_AM
                            : t == FX_ELECTRIC_EDGES_AM_EXT ? FX_ELECTRIC_EDGES_AM
                            : t == FX_DEEP_GLOW2_AM_EXT ? FX_DEEP_GLOW2_AM
+                           : t == FX_BBMAKER_AM_EXT ? FX_BBMAKER_AM
+                           : t == FX_GRADSHADOW_AM_EXT ? FX_GRADSHADOW_AM
+                           : t == FX_GRADIENTFLOW_AM_EXT ? FX_GRADIENTFLOW_AM
+                           : t == FX_PARTX_AM_EXT ? FX_PARTX_AM
+                           : t == FX_EDGELINE_AM_EXT ? FX_EDGELINE_AM
+                           : t == FX_LIGHTSWEEP_AM_EXT ? FX_LIGHTSWEEP_AM
+                           : t == FX_COLORGRAD3_AM_EXT ? FX_COLORGRAD3_AM
+                           : t == FX_DEEP_GLOW_AM_EXT ? FX_DEEP_GLOW_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -97,7 +110,10 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_MOSAIC_AM && t != FX_GLOW_AM && t != FX_INNER_BLUR_AM &&
             t != FX_BOX_BLUR3_AM && t != FX_FEATHER_AM && t != FX_ELECTRIC_EDGES_AM &&
             t != FX_SMOOTH_EDGES_AM && t != FX_GAUSSIAN_BLUR_AM && t != FX_DEEP_GLOW2_AM &&
-            t != FX_DROP_SHADOW_AM) {
+            t != FX_DROP_SHADOW_AM && t != FX_BBMAKER_AM && t != FX_UNSHARP_MASK_AM &&
+            t != FX_NEWSHARPEN_AM && t != FX_GRADSHADOW_AM && t != FX_GRADIENTFLOW_AM &&
+            t != FX_PARTX_AM && t != FX_EDGELINE_AM && t != FX_LIGHTSWEEP_AM &&
+            t != FX_COLORGRAD3_AM && t != FX_DEEP_GLOW_AM && t != FX_SPILL_CLEANUP_AM) {
             owner = -1;
             extFoldedOp = -1;
             extFoldedType = FX_NONE;
@@ -499,6 +515,21 @@ bool fxIsIdentity(const FxOp& o) {
             // The layer at alphac over the shadow: identity when the layer is
             // untouched at full weight and the shadow paints nothing.
             return p[5] >= 1.f && (p[4] <= 0.f || p[1] <= 0.f);
+        // v177 tier 5:
+        case FX_BBMAKER_AM: return false;   // the colour band paints even where the picture band is full
+        case FX_UNSHARP_MASK_AM: return p[1] == 0.f;   // amount 0: adjColor is the base itself
+        case FX_NEWSHARPEN_AM: return p[0] <= 0.005f;   // the def's own passthrough gate
+        case FX_GRADSHADOW_AM: return false;   // out is the band mix, never the plain layer
+        case FX_GRADIENTFLOW_AM: return false;   // alpha 0 still costs a x tex.a in the def's tail
+        case FX_PARTX_AM: return o.r[0] <= 0.f;   // alpha 0: the def's mix keeps the layer verbatim
+        case FX_EDGELINE_AM: return o.q[0] <= 0.f;   // alpha 0: the mix keeps the layer
+        case FX_LIGHTSWEEP_AM: return false;   // alpha 0 still costs a x tex.a in the def's tail
+        case FX_COLORGRAD3_AM: return false;   // alpha / alphab 0 still cost the x tex.a factors
+        case FX_DEEP_GLOW_AM:
+            // L2 collapses to the base when the glow contributes nothing and
+            // the base is unscaled: oalpha 0, higsha.x 0, no shadow branch.
+            return p[3] <= 0.f && o.q[0] == 0.f && !(std::lround(o.r[3]) & 1);
+        case FX_SPILL_CLEANUP_AM: return false;   // the spill composite reshapes alpha even at strength 0
         default: return false;
     }
 }
@@ -1476,6 +1507,727 @@ void fxDropShadowPixel(float baseR, float baseG, float baseB, float baseA, float
     *outG = sG * (1.f - tA) + tG;
     *outB = sB * (1.f - tA) + tB;
     *outA = sA * (1.f - tA) + tA;
+}
+
+// ---- v177: Queue 15(f) tier-5 twins (defs-batch8) ----
+
+namespace {
+// A packed 0xRRGGBB slot to straight r / g / b.
+void fxUnpackRgb(float packed, float* r, float* g, float* b) {
+    const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packed)));
+    *r = ((pk >> 16) & 0xFF) / 255.f;
+    *g = ((pk >> 8) & 0xFF) / 255.f;
+    *b = (pk & 0xFF) / 255.f;
+}
+// A packed point slot (ClipFxLibrary.packPoint) to its AM point.
+void fxUnpackPoint(float packed, float* x, float* y) {
+    const int pk = (int)std::lround(packed);
+    *x = (float)(pk / 4096 - 2048);
+    *y = (float)(pk % 4096 - 2048);
+}
+// The blend-generator family's newLayer (premultiplied over).
+void fxNewLayer4(const float a[4], const float b[4], float o[4]) {
+    for (int k = 0; k < 4; ++k) o[k] = a[k] * (1.f - b[3]) + b[k];
+}
+// The defs' K-formula rgb2hsv / hsv2rgb (the FULL blend switch's branches 17 / 20).
+void fxAmRgbToHsvK(float r, float g, float b, float* h, float* s, float* v) {
+    // p = mix((c.bg, K.wz), (c.gb, K.xy), step(c.b, c.g)), K = (0, -1/3, 2/3, -1):
+    float px, py, pz, pw;
+    if (g >= b) { px = g; py = b; pz = 0.f; pw = -1.f / 3.f; }
+    else { px = b; py = g; pz = -1.f; pw = 2.f / 3.f; }
+    // q = mix((p.xyw, c.r), (c.r, p.yzx), step(p.x, c.r)):
+    float qx, qy, qz, qw;
+    if (r >= px) { qx = r; qy = py; qz = pz; qw = px; }
+    else { qx = px; qy = py; qz = pw; qw = r; }
+    const float d = qx - std::min(qw, qy);
+    const float e = 1.0e-10f;
+    *h = std::fabs(qz + (qw - qy) / (6.f * d + e));
+    *s = d / (qx + e);
+    *v = qx;
+}
+void fxAmHsvToRgbK(float h, float s, float v, float* r, float* g, float* b) {
+    const float K[4] = {1.f, 2.f / 3.f, 1.f / 3.f, 3.f};
+    auto chan = [&](float kc) {
+        float f = (h - std::floor(h)) + kc;
+        f -= std::floor(f);                                           // fract(c.x + K)
+        float p = std::fabs(f * 6.f - K[3]);
+        p = std::min(1.f, std::max(0.f, p - K[0]));
+        return v * (K[0] + (p - K[0]) * s);                           // mix(K.xxx, clamp(p - K.xxx), s)
+    };
+    *r = chan(K[0]);
+    *g = chan(K[1]);
+    *b = chan(K[2]);
+}
+// FULL blend switch (gradshadow / 3colorgrad, byte-identical chains in the two
+// defs): [factor] enters as the def's factor and leaves mutated exactly where
+// the def mutates it (factor *= bright in most branches; branches 3 / 4 / 10 /
+// 15 never touch it; branch 0 uses a temporary). Out-of-range modes leave the
+// result at 0 (the def leaves resultfinal unassigned; zero is the only
+// deterministic reading). The un-premultiply divides are guarded by
+// max(a, 0.0001), the house precedent.
+void fxAmBlendFull(const float tex[4], float factor[4], float bright, int mode, float out[4]) {
+    const float ta = std::max(tex[3], 0.0001f);
+    for (int k = 0; k < 4; ++k) out[k] = 0.f;
+    auto scaled = [&](float t[4]) { for (int k = 0; k < 4; ++k) t[k] *= bright; };
+    if (mode == 0) {
+        float f[4]; for (int k = 0; k < 4; ++k) f[k] = factor[k] * bright;
+        float nl[4]; fxNewLayer4(tex, f, nl);
+        for (int k = 0; k < 4; ++k) out[k] = nl[k] * tex[3];
+    } else if (mode == 1) {
+        scaled(factor);
+        float c[4]; for (int k = 0; k < 4; ++k) c[k] = factor[k] + 1.f * (1.f - factor[3]);
+        out[0] = (tex[0] / ta) * c[0] * tex[3];
+        out[1] = (tex[1] / ta) * c[1] * tex[3];
+        out[2] = (tex[2] / ta) * c[2] * tex[3];
+        out[3] = 1.f * tex[3];
+    } else if (mode == 2) {
+        scaled(factor);
+        for (int k = 0; k < 3; ++k) out[k] = (1.f - (1.f - tex[k] / ta) * (1.f - factor[k])) * tex[3];
+        out[3] = 1.f * tex[3];
+    } else if (mode == 3) {
+        float res[3];
+        for (int k = 0; k < 3; ++k) {
+            const float t = fxSstep(0.5f, 0.5f, tex[k]);
+            res[k] = t * (1.f - (1.f - 2.f * (tex[k] - 0.5f)) * (1.f - factor[k])) +
+                     (1.f - t) * ((2.f * tex[k]) * factor[k]);
+        }
+        for (int k = 0; k < 3; ++k) out[k] = res[k] * tex[3];
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 4) {
+        float ty, tu, tv, fy, fu, fv;
+        fxAmToYuv(tex[0], tex[1], tex[2], &ty, &tu, &tv);
+        fxAmToYuv(factor[0], factor[1], factor[2], &fy, &fu, &fv);
+        fxAmToRgb(ty, fu, fv, &out[0], &out[1], &out[2]);
+        for (int k = 0; k < 3; ++k) out[k] *= tex[3];
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 5) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = std::max(factor[k], tex[k]) * tex[3];
+    } else if (mode == 6) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = tex[k] / (1.f - factor[k]) * tex[3];
+    } else if (mode == 7) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = (1.f - (1.f - tex[k]) / factor[k]) * tex[3];
+    } else if (mode == 8) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = (tex[k] + factor[k]) * tex[3];
+    } else if (mode == 9) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = (tex[k] + factor[k] - 1.f) * tex[3];
+    } else if (mode == 10) {
+        for (int k = 0; k < 3; ++k) {
+            const float t = fxSstep(0.5f, 0.5f, factor[k]);
+            out[k] = (t * (tex[k] + 2.f * (factor[k] - 0.5f)) +
+                      (1.f - t) * (tex[k] + 2.f * factor[k] - 1.f)) * tex[3];
+        }
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 11) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = std::min(factor[k], tex[k]) * tex[3];
+    } else if (mode == 12 || mode == 13) {
+        scaled(factor);
+        const float fl = std::sqrt((0.2126f * factor[0]) * (0.2126f * factor[0]) +
+                                   (0.7152f * factor[1]) * (0.7152f * factor[1]) +
+                                   (0.0722f * factor[2]) * (0.0722f * factor[2]));
+        const float tl = std::sqrt((0.2126f * tex[0]) * (0.2126f * tex[0]) +
+                                   (0.7152f * tex[1]) * (0.7152f * tex[1]) +
+                                   (0.0722f * tex[2]) * (0.0722f * tex[2]));
+        const bool pickTex = mode == 12 ? (fl > tl) : (fl <= tl);
+        for (int k = 0; k < 3; ++k) out[k] = (pickTex ? tex[k] : factor[k]) * tex[3];
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 14 || mode == 15) {
+        const bool onTex = mode == 15;
+        for (int k = 0; k < 3; ++k) {
+            const float t = fxSstep(0.5f, 0.5f, onTex ? tex[k] : factor[k]);
+            out[k] = (t * (1.f - (1.f - tex[k]) * (1.f - (factor[k] - 0.5f))) +
+                      (1.f - t) * (tex[k] * (factor[k] + 0.5f))) * tex[3];
+        }
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 16) {
+        scaled(factor);
+        for (int k = 0; k < 3; ++k) {
+            const float t = fxSstep(0.5f, 0.5f, factor[k]);
+            out[k] = (t * (1.f - (1.f - tex[k]) * (1.f - 2.f * (factor[k] - 0.5f))) +
+                      (1.f - t) * (tex[k] * (2.f * factor[k]))) * tex[3];
+        }
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 17) {
+        scaled(factor);
+        float fh, fs, fv, th, ts, tv;
+        fxAmRgbToHsvK(factor[0], factor[1], factor[2], &fh, &fs, &fv);
+        fxAmRgbToHsvK(tex[0], tex[1], tex[2], &th, &ts, &tv);
+        fxAmHsvToRgbK(fh, ts, tv, &out[0], &out[1], &out[2]);
+        for (int k = 0; k < 3; ++k) out[k] *= tex[3];
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 18) {
+        scaled(factor);
+        for (int k = 0; k < 3; ++k) out[k] = std::fabs(tex[k] * tex[3] - factor[k]);
+        out[3] = tex[3];
+    } else if (mode == 19) {
+        scaled(factor);
+        float ty, tu, tv, fy, fu, fv;
+        fxAmToYuv(tex[0], tex[1], tex[2], &ty, &tu, &tv);
+        fxAmToYuv(factor[0], factor[1], factor[2], &fy, &fu, &fv);
+        fxAmToRgb(fy, tu, tv, &out[0], &out[1], &out[2]);
+        for (int k = 0; k < 3; ++k) out[k] *= tex[3];
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 20) {
+        scaled(factor);
+        float fh, fs, fv, th, ts, tv;
+        fxAmRgbToHsvK(factor[0], factor[1], factor[2], &fh, &fs, &fv);
+        fxAmRgbToHsvK(tex[0], tex[1], tex[2], &th, &ts, &tv);
+        fxAmHsvToRgbK(th, fs, tv, &out[0], &out[1], &out[2]);
+        for (int k = 0; k < 3; ++k) out[k] *= tex[3];
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 21) {
+        scaled(factor);
+        for (int k = 0; k < 3; ++k) {
+            const float t = fxSstep(0.5f, 0.5f, factor[k]);
+            out[k] = (t * (1.f - (1.f - tex[k]) * (2.f * (factor[k] - 0.5f))) +
+                      (1.f - t) * (tex[k] * (1.f - 2.f * factor[k]))) * tex[3];
+        }
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 22) {
+        scaled(factor);
+        for (int k = 0; k < 3; ++k) {
+            const float t = fxSstep(0.5f, 0.5f, factor[k]);
+            out[k] = (t * std::max(tex[k], 2.f * (factor[k] - 0.5f)) +
+                      (1.f - t) * std::min(tex[k], 2.f * factor[k])) * tex[3];
+        }
+        out[3] = tex[3] * tex[3];
+    } else if (mode == 23) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = (tex[k] / factor[k]) * tex[3];
+    } else if (mode == 24) {
+        scaled(factor);
+        for (int k = 0; k < 4; ++k) out[k] = (tex[k] - factor[k]) * tex[3];
+    }
+}
+// SHORT blend switch (gradientflow / partx / lightsweep, byte-identical
+// chains): branch 0 is the plain (factor x B) x tex.a; branch 3 applies the
+// hardness twice. Same mutation / range / guard conventions as the FULL one.
+void fxAmBlendShort(const float tex[4], float factor[4], float bright, int mode, float out[4]) {
+    const float ta = std::max(tex[3], 0.0001f);
+    for (int k = 0; k < 4; ++k) out[k] = 0.f;
+    if (mode == 0) {
+        for (int k = 0; k < 4; ++k) out[k] = factor[k] * bright * tex[3];
+    } else if (mode == 1) {
+        for (int k = 0; k < 4; ++k) factor[k] *= bright;
+        float c[4]; for (int k = 0; k < 4; ++k) c[k] = factor[k] + 1.f * (1.f - factor[3]);
+        out[0] = (tex[0] / ta) * c[0] * tex[3];
+        out[1] = (tex[1] / ta) * c[1] * tex[3];
+        out[2] = (tex[2] / ta) * c[2] * tex[3];
+        out[3] = 1.f * tex[3];
+    } else if (mode == 2) {
+        for (int k = 0; k < 4; ++k) factor[k] *= bright;
+        for (int k = 0; k < 3; ++k) out[k] = (1.f - (1.f - tex[k] / ta) * (1.f - factor[k])) * tex[3];
+        out[3] = 1.f * tex[3];
+    } else if (mode == 3) {
+        for (int k = 0; k < 4; ++k) factor[k] *= bright;
+        float nl[4]; fxNewLayer4(tex, factor, nl);
+        for (int k = 0; k < 4; ++k) out[k] = nl[k] * bright * tex[3];
+    }
+}
+// The centred-space transform of partx / lightsweep / 3colorgrad (the defs'
+// satriyaid): centre, y aspect, / scale, rotate, + position x (-1, 1) / 500,
+// then — partx / lightsweep only — / (scale x stretch) (3colorgrad has no
+// second division; it passes stretch (1, 1) and doubleScale false). Rotation
+// uses the v * rot2m convention (the stripes port).
+void fxAmCentred(float ax, float ay, float picW, float picH, float scale, float angleDeg,
+                 float posX, float posY, float stretchX, float stretchY, bool doubleScale,
+                 float* cx, float* cy) {
+    float x = ax - 0.5f, y = 0.5f - ay;
+    y *= picH / picW;
+    x /= scale; y /= scale;
+    const float rad = angleDeg * 0.0174533f, cs = std::cos(rad), sn = std::sin(rad);
+    const float rx = x * cs + y * sn, ry = -x * sn + y * cs;
+    x = rx + posX * -1.f / 500.f;
+    y = ry + posY / 500.f;
+    if (doubleScale) {
+        x /= scale * stretchX;
+        y /= scale * stretchY;
+    }
+    *cx = x; *cy = y;
+}
+}  // namespace
+
+void fxBbMakerPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                    const FxExtrudeSampler& s, float out[4]) {
+    (void)picW; (void)picH;
+    // AM's bbmaker, line by line (defs-batch8): both bands project layer norm
+    // onto the band direction; the main band's feather is hardwired 0 in the
+    // def, so its smoothsteps run through fxSstep (equal edges -> the step the
+    // def's own smoothstepRev codifies for the colour band).
+    float tex[4];
+    s.sample(s.ctx, 0, ax, ay, tex);
+    auto band = [](float start, float end, float feather, float angleDeg, float x, float y) {
+        const float rad = angleDeg * 0.0174533f;
+        float vx = std::cos(rad), vy = -std::sin(rad);
+        const float il = 1.f / std::sqrt(vx * vx + vy * vy);
+        vx *= il; vy *= il;
+        const float p = (x - 0.5f) * vx + (y - 0.5f) * vy + 0.5f;
+        return fxSstep(start - feather, start, p) * (1.f - fxSstep(end, end + feather, p));
+    };
+    const float gA = band(op.p[4], op.p[5], op.q[0] / 100.f, op.p[6], ax, ay);
+    const float g = band((op.p[0] - 20.f) / 100.f, (120.f - op.p[0]) / 100.f, 0.f, op.p[1], ax, ay);
+    float bgR, bgG, bgB;
+    fxUnpackRgb(op.p[2], &bgR, &bgG, &bgB);
+    const float wipe[4] = {bgR * tex[3] * gA, bgG * tex[3] * gA, bgB * tex[3] * gA, op.p[3] * tex[3] * gA};
+    float band4[4];
+    for (int k = 0; k < 4; ++k) band4[k] = tex[k] * g;
+    float nl[4];
+    fxNewLayer4(wipe, band4, nl);
+    for (int k = 0; k < 4; ++k) out[k] = nl[k] * tex[3];
+}
+
+void fxUnsharpMaskPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                        const FxExtrudeSampler& s, float out[4]) {
+    (void)picW; (void)picH;
+    // AM's unsharpmask composite, line by line: the def's step() line is dead
+    // (overwritten by the smoothstep below it) and is not ported.
+    float base[4], blur[4];
+    s.sample(s.ctx, 0, ax, ay, base);
+    s.sample(s.ctx, 1, ax, ay, blur);
+    const float blurY = 0.2126f * blur[0] + 0.7152f * blur[1] + 0.0722f * blur[2];
+    const float baseY = 0.2126f * base[0] + 0.7152f * base[1] + 0.0722f * base[2];
+    const float d = std::fabs(blurY - baseY) * 4.f;
+    const float t = fxSstep(op.p[2] * 0.75f, (op.p[2] + 1.01f) / 2.f, d);
+    if (op.p[3] > 0.5f) {
+        out[0] = t * base[3]; out[1] = 0.f; out[2] = 0.f; out[3] = 1.f * base[3];
+        return;
+    }
+    for (int k = 0; k < 4; ++k) {
+        const float adj = base[k] * (1.f + op.p[1]) - blur[k] * op.p[1];
+        out[k] = base[k] + (adj - base[k]) * t;
+    }
+}
+
+void fxNewSharpenAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         const FxExtrudeSampler& s, float out[4]) {
+    // AM's newsharpen pass list, line by line (defs-batch8): at half res, the
+    // horizontal streak average of the picture, then the vertical streak
+    // average + the sharpen composite; the list repeats `iter` times with the
+    // output feeding the next round. The def's ds copies are plain renders, so
+    // a ds sample reads the picture at the same point (the boxblur3 precedent).
+    using Fn = std::function<void(float, float, float*)>;
+    Fn input = [&s](float u, float v, float* o) { s.sample(s.ctx, 0, u, v, o); };
+    const float strength = op.p[0], brig = op.p[3];
+    const int iter = std::min(6, std::max(1, (int)std::lround(op.p[4])));
+    if (strength <= 0.005f) { input(ax, ay, out); return; }
+    const float per = strength / 4.f / (float)iter;
+    auto streak = [](const Fn& from, bool horiz, float per, float picDim, float u, float v, float* o) {
+        const int n = (int)std::min(100.01f, std::max(2.01f, per * picDim * 0.5f));
+        from(u, v, o);
+        for (int i = 1; i < n; ++i) {
+            const float off = per * ((float)i / (float)(n - 1));
+            float t[4];
+            if (horiz) from(u + off, v, t); else from(u, v + off, t);
+            for (int k = 0; k < 4; ++k) o[k] += t[k];
+            if (horiz) from(u - off, v, t); else from(u, v - off, t);
+            for (int k = 0; k < 4; ++k) o[k] += t[k];
+        }
+        const float dn = (float)(2 * n - 1);
+        for (int k = 0; k < 4; ++k) o[k] /= dn;
+    };
+    Fn cur = input;
+    for (int it = 0; it < iter; ++it) {
+        Fn src = cur;
+        Fn hFn = [src, streak, per, picW](float u, float v, float* o) { streak(src, true, per, picW, u, v, o); };
+        const bool whiteonly = op.p[1] > 0.5f, bluredonly = op.p[2] > 0.5f;
+        Fn next = [src, hFn, streak, per, picH, brig, whiteonly, bluredonly](float u, float v, float* o) {
+            float res[4], man[4];
+            streak(hFn, false, per, picH, u, v, res);
+            src(u, v, man);
+            float blured[4];
+            for (int k = 0; k < 4; ++k) blured[k] = (man[k] - res[k]) * brig;
+            // The def's blue reads blured.g (a bug in the def, kept verbatim).
+            const float all = (blured[0] + blured[1] + blured[1]) / 3.f;
+            float white[4];
+            if (whiteonly) {
+                white[0] = white[1] = white[2] = all;
+                white[3] = 1.f * man[3];
+            } else {
+                for (int k = 0; k < 4; ++k) white[k] = blured[k];
+            }
+            if (bluredonly) {
+                for (int k = 0; k < 4; ++k) o[k] = white[k];
+            } else {
+                for (int k = 0; k < 4; ++k) o[k] = 1.f - (1.f - man[k]) * (1.f - white[k]);
+            }
+        };
+        cur = next;
+    }
+    cur(ax, ay, out);
+}
+
+void fxAmBlendGenPixel(int kind, const FxOp& op, float ax, float ay, float picW, float picH,
+                       const FxExtrudeSampler& s, float out[4]) {
+    // The community blend-generator family, per kind (defs-batch8): each def's
+    // fragColor, its own blend-switch variant, its own output tail. Slot
+    // layouts on the FX_ constants in fx_plan.h.
+    float tex[4];
+    s.sample(s.ctx, 0, ax, ay, tex);
+    const float W[3] = {0.2126f, 0.7152f, 0.0722f};
+    float factor[4] = {0.f, 0.f, 0.f, 0.f};
+    float result[4] = {0.f, 0.f, 0.f, 0.f};
+    if (kind == 0) {   // gradshadow
+        const float rad = op.p[3] * 0.0174533f;
+        float vx = std::cos(rad), vy = -std::sin(rad);
+        const float il = 1.f / std::sqrt(vx * vx + vy * vy);
+        vx *= il; vy *= il;
+        const float p = (ax - 0.5f) * vx + (ay - 0.5f) * vy + 0.5f;
+        const float feather = op.p[2] / 100.f;
+        const float band = fxSstep(op.p[0] - feather, op.p[0], p) *
+                           (1.f - fxSstep(op.p[1], op.p[1] + feather, p));
+        float cR, cG, cB;
+        fxUnpackRgb(op.p[4], &cR, &cG, &cB);
+        const float rs = band * tex[3] * op.q[1];
+        factor[0] = rs * cR; factor[1] = rs * cG; factor[2] = rs * cB; factor[3] = rs * op.p[5];
+        float entry[4];
+        for (int k = 0; k < 4; ++k) entry[k] = factor[k];
+        fxAmBlendFull(tex, factor, op.p[6], (int)std::lround(op.q[0]), result);
+        for (int k = 0; k < 4; ++k)
+            out[k] = (entry[k] + (result[k] - entry[k]) * op.q[2]) * tex[3];
+        return;
+    }
+    if (kind == 1) {   // gradientflow
+        float posX, posY, strX, strY;
+        fxUnpackPoint(op.p[2], &posX, &posY);
+        fxUnpackPoint(op.q[6], &strX, &strY);
+        float ux = ax / op.p[0], uy = ay / op.p[0];
+        const float rad = op.p[1] * 0.0174533f, cs = std::cos(rad), sn = std::sin(rad);
+        float rx = ux * cs + uy * sn, ry = -ux * sn + uy * cs;
+        ux = rx + posX * -1.f / 500.f;
+        uy = ry + posY / 500.f;
+        ux /= op.p[0] * strX;
+        uy /= op.p[0] * strY;
+        const float iTime = op.p[3];
+        auto hash = [](float px, float py, float* hx, float* hy) {
+            const float dx = px * 2127.1f + py * 81.17f;
+            const float dy = px * 1269.5f + py * 283.37f;
+            *hx = (std::sin(dx) * 43758.5453f);
+            *hy = (std::sin(dy) * 43758.5453f);
+            *hx -= std::floor(*hx);
+            *hy -= std::floor(*hy);
+        };
+        auto noise = [&hash](float px, float py) {
+            const float ix = std::floor(px), iy = std::floor(py);
+            const float fx = px - ix, fy = py - iy;
+            const float ux2 = fx * fx * (3.f - 2.f * fx), uy2 = fy * fy * (3.f - 2.f * fy);
+            auto g = [&hash, ix, iy, fx, fy](float cx, float cy) {
+                float hx, hy;
+                hash(ix + cx, iy + cy, &hx, &hy);
+                return (-1.f + 2.f * hx) * (fx - cx) + (-1.f + 2.f * hy) * (fy - cy);
+            };
+            const float top = g(0.f, 0.f) + (g(1.f, 0.f) - g(0.f, 0.f)) * ux2;
+            const float bot = g(0.f, 1.f) + (g(1.f, 1.f) - g(0.f, 1.f)) * ux2;
+            return 0.5f + 0.5f * (top + (bot - top) * uy2);
+        };
+        const float ratio = picW / picH;
+        float tx = ux - 0.5f, ty = uy - 0.5f;
+        const float degree = noise(iTime * 0.1f, tx * ty);
+        ty *= 1.f / ratio;
+        const float dr = (degree - 0.5f) * 720.f + 180.f, drr = dr * 0.01745329252f;
+        const float dcs = std::cos(drr), dsn = std::sin(drr);
+        float nx = tx * dcs + ty * dsn, ny = -tx * dsn + ty * dcs;
+        tx = nx; ty = ny * ratio;
+        tx += std::sin(ty * op.q[4] + iTime) / op.q[5];
+        ty += std::sin(tx * op.q[4] * 1.5f + iTime) / (op.q[5] * 0.5f);
+        const float mr = (-5.f) * 0.01745329252f, mcs = std::cos(mr), msn = std::sin(mr);
+        const float rotX = tx * mcs + ty * msn;
+        const float sm = fxSstep(-0.3f, 0.2f, rotX);
+        float c1[3], c2[3], c3[3], c4[3];
+        fxUnpackRgb(op.q[0], &c1[0], &c1[1], &c1[2]);
+        fxUnpackRgb(op.q[1], &c2[0], &c2[1], &c2[2]);
+        fxUnpackRgb(op.q[2], &c3[0], &c3[1], &c3[2]);
+        fxUnpackRgb(op.q[3], &c4[0], &c4[1], &c4[2]);
+        float layer1[3], layer2[3];
+        for (int k = 0; k < 3; ++k) {
+            layer1[k] = c1[k] + (c2[k] - c1[k]) * sm;
+            layer2[k] = c3[k] + (c4[k] - c3[k]) * sm;
+        }
+        const float sm2 = fxSstep(0.5f, -0.3f, ty);
+        for (int k = 0; k < 3; ++k) factor[k] = layer1[k] + (layer2[k] - layer1[k]) * sm2;
+        factor[3] = 1.f;
+        fxAmBlendShort(tex, factor, op.p[5], (int)std::lround(op.p[6]), result);
+        for (int k = 0; k < 4; ++k)
+            out[k] = (tex[k] + (result[k] - tex[k]) * op.r[0]) * tex[3];
+        return;
+    }
+    if (kind == 2) {   // partx
+        float posX, posY, strX, strY;
+        fxUnpackPoint(op.q[3], &posX, &posY);
+        fxUnpackPoint(op.q[4], &strX, &strY);
+        float px, py;
+        fxAmCentred(ax, ay, picW, picH, op.q[1], op.q[2], posX, posY, strX, strY, true, &px, &py);
+        px *= picW / picH;
+        const float lt = op.q[0];
+        const float speed = 5.2f + fxSstep(0.8f, 12.f, 1.f);   // getBeat() is a constant 1 in the def
+        const float A = std::atan2(py, px);
+        const float angle0 = A / (2.f * 3.14159265359f);
+        float sh = angle0 + 0.0002f * lt;
+        sh -= std::floor(sh);
+        const float rad = 0.4f * std::sqrt(px * px + py * py);
+        float aF = sh * op.p[4];
+        const float aStep = std::floor(aF);
+        aF -= std::floor(aF);
+        auto fract = [](float x) { return x - std::floor(x); };
+        const float aRZ = 10.f * fract(aStep * fract(aStep * 0.7535f) * 45.1f);
+        const float aSD = fract(aStep * fract(aStep * 0.82657f) * 13.724f);
+        const float t = speed * lt - aRZ;
+        const float angleDist = aSD + 0.1f;
+        const float adist = angleDist / rad * op.p[5];
+        const float dist = std::fabs(fract(t * 0.1f + adist) - 0.5f);
+        const float white1 = std::max(0.f, 1.f - dist * 100.f / (op.p[6] * speed + adist));
+        const float white2 = std::max(0.f, (0.5f - 0.5f * std::cos(2.f * 3.14159265359f * aF)) /
+                                               std::max(0.6f, 2.f * adist * angleDist));
+        const float white = white1 * white2;
+        float fgR, fgG, fgB, bgR, bgG, bgB;
+        fxUnpackRgb(op.p[0], &fgR, &fgG, &fgB);
+        fxUnpackRgb(op.p[2], &bgR, &bgG, &bgB);
+        factor[0] = bgR + (fgR - bgR) * white;
+        factor[1] = bgG + (fgG - bgG) * white;
+        factor[2] = bgB + (fgB - bgB) * white;
+        factor[3] = op.p[3] + (op.p[1] - op.p[3]) * white;
+        fxAmBlendShort(tex, factor, op.q[5], (int)std::lround(op.q[6]), result);
+        for (int k = 0; k < 4; ++k) out[k] = tex[k] + (result[k] - tex[k]) * op.r[0];
+        return;
+    }
+    if (kind == 3) {   // edgeline
+        const float fsx = op.p[0] / picW, fsy = op.p[0] / picH;
+        auto lum = [&s, W](float u, float v) {
+            float t[4];
+            s.sample(s.ctx, 0, u, v, t);
+            return t[0] * W[0] + t[1] * W[1] + t[2] * W[2];
+        };
+        const float w = lum(ax - fsx, ay), e = lum(ax + fsx, ay);
+        const float n = lum(ax, ay + fsy), so = lum(ax, ay - fsy);
+        const float nw = lum(ax - fsx, ay + fsy), ne = lum(ax + fsx, ay + fsy);
+        const float sw = lum(ax - fsx, ay - fsy), se = lum(ax + fsx, ay - fsy);
+        float v = nw * 3.f + n * 10.f + ne * 3.f + sw * -3.f + so * -10.f + se * -3.f;
+        float h = nw * -3.f + w * -10.f + sw * -3.f + ne * 3.f + e * 10.f + se * 3.f;
+        if (op.q[2] > 0.5f) { v *= v; h *= h; }
+        v *= op.p[2];
+        h *= op.p[2];
+        const float edge = std::sqrt(h * h + v * v);
+        const float g = std::min(1.f, std::max(0.f, edge - op.p[1]));
+        const float elR = std::min(1.f, std::max(0.f, edge - op.p[1])) / (1.f - op.p[1]);
+        const float edgeNew[4] = {(1.f - elR) * tex[3], (1.f - elR) * tex[3], (1.f - elR) * tex[3], tex[3]};
+        const float luminance = edgeNew[0] * W[0] + edgeNew[1] * W[1] + edgeNew[2] * W[2];
+        float c1[3], c2[3];
+        fxUnpackRgb(op.p[3], &c1[0], &c1[1], &c1[2]);
+        fxUnpackRgb(op.p[5], &c2[0], &c2[1], &c2[2]);
+        float edgeFinal[4];
+        for (int k = 0; k < 3; ++k)
+            edgeFinal[k] = (c1[k] + (c2[k] - c1[k]) * luminance) * edgeNew[3];
+        edgeFinal[3] = (op.p[4] + (op.p[6] - op.p[4]) * luminance) * edgeNew[3];
+        float newFinal[4], oldFinal[4];
+        if (op.q[4] > 0.5f) {
+            for (int k = 0; k < 3; ++k) newFinal[k] = (1.f - edgeFinal[k]) * tex[3];
+            newFinal[3] = edgeFinal[3] * tex[3];
+            for (int k = 0; k < 4; ++k) oldFinal[k] = g * tex[k];
+            oldFinal[3] = 1.f * tex[3];
+        } else {
+            for (int k = 0; k < 4; ++k) newFinal[k] = edgeFinal[k] * tex[3];
+            oldFinal[0] = oldFinal[1] = oldFinal[2] = (1.f - g) * tex[3];
+            oldFinal[3] = 1.f * tex[3];
+        }
+        for (int k = 0; k < 4; ++k) factor[k] = op.q[3] > 0.5f ? newFinal[k] : oldFinal[k];
+        const int mode = (int)std::lround(op.q[1]);
+        const float ta = std::max(tex[3], 0.0001f);
+        for (int k = 0; k < 4; ++k) result[k] = 0.f;
+        if (mode == 0) {
+            for (int k = 0; k < 4; ++k) result[k] = factor[k] * tex[3];
+        } else if (mode == 1) {
+            float c[4]; for (int k = 0; k < 4; ++k) c[k] = factor[k] + 1.f * (1.f - factor[3]);
+            result[0] = (tex[0] / ta) * c[0] * tex[3];
+            result[1] = (tex[1] / ta) * c[1] * tex[3];
+            result[2] = (tex[2] / ta) * c[2] * tex[3];
+            result[3] = 1.f * tex[3];
+        } else if (mode == 2) {
+            for (int k = 0; k < 3; ++k) result[k] = (1.f - (1.f - tex[k] / ta) * (1.f - factor[k])) * tex[3];
+            result[3] = 1.f * tex[3];
+        }
+        for (int k = 0; k < 4; ++k) out[k] = tex[k] + (result[k] - tex[k]) * op.q[0];
+        return;
+    }
+    if (kind == 4) {   // lightsweep
+        float posX, posY, strX, strY;
+        fxUnpackPoint(op.p[2], &posX, &posY);
+        fxUnpackPoint(op.q[0], &strX, &strY);
+        float rx, ry;
+        fxAmCentred(ax, ay, picW, picH, op.p[0], op.p[1], posX, posY, strX, strY, true, &rx, &ry);
+        const float iTime = op.p[3];
+        float col = std::sin(ry + rx * op.p[5] - iTime * 9.f) * op.p[6];
+        col *= col * col * 0.6f;
+        col = std::min(1.f, std::max(0.f, col));
+        float frag[4] = {2.f * col, 2.f * col, 2.f * col, col};
+        const float luminance = frag[0] * W[0] + frag[1] * W[1] + frag[2] * W[2];
+        float c1[3], c2[3];
+        fxUnpackRgb(op.q[1], &c1[0], &c1[1], &c1[2]);
+        fxUnpackRgb(op.q[3], &c2[0], &c2[1], &c2[2]);
+        for (int k = 0; k < 3; ++k) factor[k] = (c1[k] + (c2[k] - c1[k]) * luminance) * frag[3];
+        factor[3] = (op.q[2] + (op.q[4] - op.q[2]) * luminance) * frag[3];
+        fxAmBlendShort(tex, factor, op.q[5], (int)std::lround(op.q[6]), result);
+        for (int k = 0; k < 4; ++k)
+            out[k] = (tex[k] + (result[k] - tex[k]) * op.r[0]) * tex[3];
+        return;
+    }
+    // kind == 5: 3colorgrad
+    {
+        float px, py;
+        fxAmCentred(ax, ay, picW, picH, op.q[2], op.q[3], op.q[1] - 250.f, 0.f, 1.f, 1.f, false, &px, &py);
+        (void)py;
+        float c1[4], c2[4], c3[4];
+        fxUnpackRgb(op.p[0], &c1[0], &c1[1], &c1[2]); c1[3] = op.p[1];
+        fxUnpackRgb(op.p[2], &c2[0], &c2[1], &c2[2]); c2[3] = op.p[3];
+        fxUnpackRgb(op.p[4], &c3[0], &c3[1], &c3[2]); c3[3] = op.p[5];
+        const float stepv = px >= 0.5f ? 1.f : 0.f;
+        float left[4], right[4];
+        for (int k = 0; k < 4; ++k) {
+            left[k] = c1[k] + (c2[k] - c1[k]) * (px / op.p[6]);
+            right[k] = c2[k] + (c3[k] - c2[k]) * ((px - op.q[0]) / 0.5f);
+            factor[k] = left[k] + (right[k] - left[k]) * stepv;
+        }
+        fxAmBlendFull(tex, factor, op.q[4], (int)std::lround(op.q[5]), result);
+        float xn[4];
+        for (int k = 0; k < 4; ++k)
+            xn[k] = (factor[k] + (result[k] - factor[k]) * op.r[0]) * tex[3];
+        for (int k = 0; k < 4; ++k)
+            out[k] = (tex[k] + (xn[k] - tex[k]) * op.q[6]) * tex[3];
+        return;
+    }
+}
+
+void fxDeepGlow1Pixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]) {
+    (void)picW; (void)picH;
+    // AM's deepglow composite, line by line (the double-sourced def — Ultra
+    // XML + TrueMotion): tex 0 = the layer, tex 1 = its gaussianblur buffer
+    // (sampled at the position offset), tex 2 = its boxblur2 buffer.
+    float base[4], comp[4], hblur[4];
+    s.sample(s.ctx, 0, ax, ay, base);
+    float posX, posY;
+    fxUnpackPoint(op.q[4], &posX, &posY);
+    s.sample(s.ctx, 1, ax + (posX / 15.f) * -1.f / 500.f, ay + (posY / 15.f) / 500.f, comp);
+    s.sample(s.ctx, 2, ax, ay, hblur);
+    for (int k = 0; k < 4; ++k) base[k] *= op.p[4];   // baseColor = tex x calpha
+    float y, u, v;
+    fxAmToYuv(comp[0], comp[1], comp[2], &y, &u, &v);
+    const float rad = op.p[2] * 0.0174533f, cs = std::cos(rad), sn = std::sin(rad);
+    const float hu = u * cs + v * sn, hv = -u * sn + v * cs;
+    u = hu; v = hv;
+    const float origSat = std::min(1.f, std::sqrt(u * u + v * v) * 2.5f);
+    const float su = u * op.q[3], sv = v * op.q[3];
+    u = su + (u - su) * origSat;
+    v = sv + (v - sv) * origSat;
+    u *= (op.q[2] + 1.f);
+    v *= (op.q[2] + 1.f);
+    float nc[3];
+    fxAmToRgb(y, u, v, &nc[0], &nc[1], &nc[2]);
+    // shadow = newComp x ((0,0,0,1) x higsha.y) x comp.a; c = shadow + 1 x (1 - shadow.a)
+    const float shA = comp[3] * op.q[1] * comp[3];
+    const float cR = 1.f - shA, cG = 1.f - shA, cB = 1.f - shA;
+    const float rr = std::sqrt((op.p[1] - ax) * (op.p[1] - ax) + (op.p[1] - ay) * (op.p[1] - ay));
+    const float ca = std::max(comp[3], 0.0001f);
+    float dbl[4];
+    dbl[0] = nc[0] / ca * (rr - 0.5f);
+    dbl[1] = nc[1] / ca * (rr - 0.5f);
+    dbl[2] = nc[2] / ca * (rr - 0.5f);
+    dbl[3] = 1.f * (rr - 0.5f);
+    const int flags = (int)std::lround(op.r[3]);
+    if (flags & 4) {   // thrs: the threshold gate
+        const float luma = dbl[0] * 0.2126f + dbl[1] * 0.7152f + dbl[2] * 0.0722f;
+        const float feather = op.r[2];
+        const float lowB = op.r[0] * (1.f + feather) - 0.0001f;
+        const float lowA = lowB - std::max(feather, 0.00001f);
+        const float highA = op.r[1] * (1.f + feather) - feather + 0.0001f;
+        const float highB = highA + std::max(feather, 0.00001f);
+        const float lumafx = std::min(fxSstep(lowA, lowB, luma), 1.f - fxSstep(highA, highB, luma));
+        for (int k = 0; k < 4; ++k) dbl[k] *= lumafx;
+    }
+    // blendC = ((dblurr.rgb / dblurr.a) x c.rgb, 1) x dblurr.a — the divide and
+    // the re-multiply cancel, so it is computed directly (defined even at
+    // dblurr.a == 0, where the def's own form divides by zero).
+    float blendC[4] = {dbl[0] * cR, dbl[1] * cG, dbl[2] * cB, dbl[3]};
+    float colR, colG, colB;
+    fxUnpackRgb(op.p[6], &colR, &colG, &colB);
+    const float rfx[4] = {colR * dbl[3], colG * dbl[3], colB * dbl[3], dbl[3] * dbl[3]};
+    float rrfinal[4];
+    if (flags & 2) {   // cblend: resultfinal = mix(blendC, resultfinalx, alpb) x dblurr.a
+        for (int k = 0; k < 4; ++k)
+            rrfinal[k] = (blendC[k] + (rfx[k] - blendC[k]) * op.p[5]) * dbl[3];
+    } else {
+        for (int k = 0; k < 4; ++k) rrfinal[k] = blendC[k];
+    }
+    float L2[4];
+    for (int k = 0; k < 4; ++k)
+        L2[k] = (base[k] * op.q[0] + rrfinal[k] * op.p[3]) * comp[3] + base[k];
+    if (flags & 1) {   // sshadow: L2 over the black hblur silhouette at alphaa
+        const float l1[4] = {0.f, 0.f, 0.f, hblur[3] * op.q[6]};
+        for (int k = 0; k < 4; ++k) out[k] = l1[k] * (1.f - L2[3]) + L2[k];
+    } else {
+        for (int k = 0; k < 4; ++k) out[k] = L2[k];
+    }
+}
+
+void fxSpillCleanupAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                           const FxExtrudeSampler& s, float out[4]) {
+    // AM's spill-cleanup, line by line (defs-batch8): the streak folds over
+    // the gaussianblur buffer (pass 1), the same folds over pass 1's result
+    // (pass 2), then the luma-replaced spill composite. The folds accumulate
+    // in tap order (the over direction flips with the tap's side), so they
+    // are evaluated on demand like the smoothedges twin.
+    using Fn = std::function<void(float, float, float*)>;
+    Fn base = [&s](float u, float v, float* o) { s.sample(s.ctx, 0, u, v, o); };
+    Fn blur = [&s](float u, float v, float* o) { s.sample(s.ctx, 1, u, v, o); };
+    const float dist = op.p[0] * 0.05f;
+    auto streak = [](const Fn& src, bool horiz, float dist, float picDim, float u, float v, float* o) {
+        const int n = (int)std::min(100.01f, std::max(1.01f, dist * picDim));
+        float c[4] = {0.f, 0.f, 0.f, 0.f};
+        for (int i = 1; i < n; ++i) {
+            const float off = dist * ((float)i / (float)(n - 1) - 0.5f);
+            float tc[4];
+            if (horiz) src(u + off, v, tc); else src(u, v + off, tc);
+            if (off < 0.f) { for (int k = 0; k < 4; ++k) c[k] = c[k] * (1.f - tc[3]) + tc[k]; }
+            else { const float w = 1.f - c[3]; for (int k = 0; k < 4; ++k) c[k] = tc[k] * w + c[k]; }
+        }
+        for (int k = 0; k < 4; ++k) o[k] = c[k];
+    };
+    auto composite = [](const float a[4], const float b[4], float o[4]) {
+        for (int k = 0; k < 4; ++k) o[k] = a[k] * (1.f - b[3]) + b[k];
+    };
+    std::function<void(const Fn&, float, float, float*)> streakPass =
+        [&](const Fn& src, float u, float v, float* o) {
+            float xs[4], ys[4], t[4], bl[4];
+            streak(src, true, dist, picW, u, v, xs);
+            streak(src, false, dist, picH, u, v, ys);
+            composite(xs, ys, t);
+            blur(u, v, bl);
+            composite(t, bl, o);
+        };
+    Fn hpass = [&](float u, float v, float* o) { streakPass(blur, u, v, o); };
+    float streakV[4];
+    streakPass(hpass, ax, ay, streakV);
+    float bs[4], bl[4];
+    base(ax, ay, bs);
+    blur(ax, ay, bl);
+    const float sat = std::min(1.f, std::max(0.f, (1.f - bl[3]) * 2.f));
+    float c[4];
+    for (int k = 0; k < 4; ++k) c[k] = streakV[k] * sat * bs[3];
+    float by, bu, bv, cy, cu, cv;
+    fxAmToYuv(bs[0] / std::max(0.00001f, bs[3]), bs[1] / std::max(0.00001f, bs[3]),
+              bs[2] / std::max(0.00001f, bs[3]), &by, &bu, &bv);
+    fxAmToYuv(c[0] / std::max(0.00001f, c[3]), c[1] / std::max(0.00001f, c[3]),
+              c[2] / std::max(0.00001f, c[3]), &cy, &cu, &cv);
+    (void)bu; (void)bv;   // only the base's luma is taken
+    cy = by;
+    float cr, cg, cb;
+    fxAmToRgb(cy, cu, cv, &cr, &cg, &cb);
+    const float ca = c[3];
+    const float cc[4] = {cr * ca, cg * ca, cb * ca, ca};
+    composite(bs, cc, out);
 }
 
 void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturation,

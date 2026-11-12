@@ -165,6 +165,21 @@ object AlightXmlImporter {
     const val DEEPGLOW2 = "com.alightcreative.effects.deepglow2"
     const val DEEPGLOW_ENC = "com.alightcreative.effects.deepglow_enc"
     const val DROPSHADOW = "com.alightcreative.effects.dropshadow"
+    // v177: the tier-5 batch (defs-batch8). 3colorgrad's id has no ".effects.".
+    const val BBMAKER = "com.alightcreative.effects.bbmaker"
+    const val OPTICCOMPESATION = "com.alightcreative.effects.opticcompesation"
+    const val UNSHARPMASK = "com.alightcreative.effects.unsharpmask"
+    const val NEWSHARPEN = "com.alightcreative.effects.newsharpen"
+    const val GRADSHADOW = "com.alightcreative.effects.gradshadow"
+    const val GRADIENTFLOW = "com.alightcreative.effects.gradientflow"
+    const val PARTX = "com.alightcreative.effects.partx"
+    const val PULSEOPACITY2 = "com.alightcreative.effects.pulseopacity2"
+    const val SPILL_CLEANUP = "com.alightcreative.effects.spill-cleanup"
+    const val EDGELINE = "com.alightcreative.effects.edgeline"
+    const val LIGHTSWEEP = "com.alightcreative.effects.lightsweep"
+    const val MOBLURPLUS = "com.alightcreative.effects.moblurplus"
+    const val COLORGRAD3 = "com.alightcreative.3colorgrad"
+    const val DEEPGLOW = "com.alightcreative.effects.deepglow"
     const val SHAKE = "com.alightcreative.effects.shake2"
     const val FLIP = "com.alightcreative.effects.flip3"
     const val EXPOSURE = "com.alightcreative.effects.exposure"
@@ -2428,6 +2443,20 @@ object AlightXmlImporter {
                 GAUSSIANBLUR -> applyGaussianBlur(fx, clip, ctx)
                 DEEPGLOW2, DEEPGLOW_ENC -> applyDeepGlow2Am(fx, clip, ctx, id)
                 DROPSHADOW -> applyDropShadowAm(fx, clip, ctx)
+                BBMAKER -> applyBbMakerAm(fx, clip, ctx)
+                UNSHARPMASK -> applyUnsharpMaskAm(fx, clip, ctx)
+                NEWSHARPEN -> applyNewSharpenAm(fx, clip, ctx)
+                GRADSHADOW -> applyGradShadowAm(fx, clip, ctx)
+                GRADIENTFLOW -> applyGradientFlowAm(fx, clip, ctx, durMs)
+                PARTX -> applyPartxAm(fx, clip, ctx, durMs)
+                EDGELINE -> applyEdgeLineAm(fx, clip, ctx)
+                LIGHTSWEEP -> applyLightSweepAm(fx, clip, ctx, durMs)
+                COLORGRAD3 -> applyColorGrad3Am(fx, clip, ctx)
+                DEEPGLOW -> applyDeepGlow1Am(fx, clip, ctx)
+                SPILL_CLEANUP -> applySpillCleanupAm(fx, clip, ctx)
+                MOBLURPLUS -> applyMotionBlur(fx, clip, ctx)
+                OPTICCOMPESATION -> applyOpticCompesationParked(fx, clip, ctx)
+                PULSEOPACITY2 -> applyPulseOpacity2Parked(fx, clip, ctx)
                 SHAKE -> applyShake(fx, clip, ctx, durMs)
                 FLIP -> applyFlip(fx, clip, ctx, durMs)
                 EXPOSURE -> applyExposureFx(fx, clip, ctx)
@@ -3706,6 +3735,404 @@ object AlightXmlImporter {
     }
 
     /**
+     * `bbmaker` -> BB Maker (Alight): the def's two wipe bands in layer norm (defs-batch8):
+     * the colour band (colorbg x tex.a gated by the startA / endA / angleA / featherA band)
+     * under the picture band (adjStart = (start - 20) / 100, adjEnd = (120 - start) / 100
+     * along `angle`, feather hardwired 0 in the def), the sum x tex.a x opacity. `start` is
+     * keyframed in all 17 corpus instances and `angle` in 2 — both ride AmFxEval tails.
+     */
+    private fun applyBbMakerAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "bbmaker"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val startT = props["start"]
+        val angleT = props["angle"]
+        val (bgRgb, bgA) = props["colorbg"]?.colorParts(w, short, "colorbg") ?: (0f to 1f)
+        val values = listOf(
+            startT?.scalarAtEased(0f) ?: 0f,
+            angleT?.scalarAtEased(0f) ?: 90f,
+            bgRgb, bgA,
+            fv("startA", 0f), fv("endA", 1f), fv("angleA", 0f),
+            fv("featherA", 0f), fv("opacity", 1f),
+            0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(trackTail(startT), trackTail(angleT))
+        return addFx(clip0, ctx, ClipFxLibrary.BBMAKER_AM, values, short)
+    }
+
+    /**
+     * `unsharpmask` -> Unsharp Mask (Alight): a dedicated chain — the host gaussianblur of
+     * the layer at `strength` (the def feeds its blur pass by the same parameter name, like
+     * dropshadow / edgeglow), then adjColor = base (1 + amount) - blur amount mixed in by
+     * the luma-difference smoothstep gate (defs-batch8). `showMask` renders the gate itself.
+     */
+    private fun applyUnsharpMaskAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "unsharpmask"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        return addFx(
+            clip0, ctx, ClipFxLibrary.UNSHARPMASK_AM,
+            listOf(
+                fv("strength", 0.05f).coerceIn(0f, 2f),
+                fv("amount", 0.5f),
+                fv("threshold", 0.5f),
+                boolOf(props["showMask"], false)
+            ),
+            short
+        )
+    }
+
+    /**
+     * `newsharpen` -> New Sharpen (Alight): at half res, a horizontal then vertical streak
+     * average of the picture (velocity = strength / 4 / iter, the boxblur2 kernel form),
+     * then screen(input, (input - streak) x brig) — or the whiteonly / bluredonly variants —
+     * the whole pass list repeated `iter` times (defs-batch8; the def's own stage list,
+     * whose first two passes are plain copies, and whose whiteColour blue channel reads the
+     * streak's GREEN channel — a def bug kept in the port).
+     */
+    private fun applyNewSharpenAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "newsharpen"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        return addFx(
+            clip0, ctx, ClipFxLibrary.NEWSHARPEN_AM,
+            listOf(
+                fv("strength", 0.15f),
+                boolOf(props["whiteonly"], false),
+                boolOf(props["bluredonly"], false),
+                fv("brig", 0.1f),
+                fv("iter", 2f).roundToInt().coerceIn(1, 6).toFloat()
+            ),
+            short
+        )
+    }
+
+    /**
+     * `gradshadow` -> Gradient Shadow (Alight): the community blend-generator family
+     * (defs-batch8) — a generated fragColor (here the layer-norm band of start / end /
+     * feather / angle x tex.a x alphb x color) run through the defs' FULL 25-branch blend
+     * switch; output mix(fragColor, result, alphab) x tex.a.
+     */
+    private fun applyGradShadowAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "gradshadow"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (rgb, a) = props["color"]?.colorParts(w, short, "color") ?: (0f to 1f)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.GRADSHADOW_AM,
+            listOf(
+                fv("start", 0.95f), fv("end", 1.5f), fv("feather", 100f), fv("angle", 90f),
+                rgb, a, fv("bright", 1f),
+                fv("blendMode", 0f), fv("alphb", 1f), fv("alphab", 1f)
+            ),
+            short
+        )
+    }
+
+    /**
+     * `gradientflow` -> Gradient Flow (Alight): the Perlin-folded 4-colour flow field in
+     * screen norm through the family's SHORT blend switch (defs-batch8). With `autop` on,
+     * the shader's clock is iTime = PROGRESS + time x SPEED — an exact linear function of
+     * layer time, so the importer bakes it as a synthetic AmFxEval tail on the progress
+     * slot (the jitter / fractalwarp layer-time convention). A keyframed PROGRESS keeps its
+     * real track instead and the clock term is reported, never silently dropped.
+     */
+    private fun applyGradientFlowAm(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        val w = ctx.warnings
+        val short = "gradientflow"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val progT = props["PROGRESS"]
+        val progBase = progT?.scalarAtEased(0f) ?: 1f
+        val speed = fv("SPEED", 1f)
+        val autop = boolOf(props["autop"], true) > 0.5f
+        val tail: List<Float> = when {
+            progT != null && progT.keys.size >= 2 -> {
+                if (autop) w += "Effect gradientflow: its autop clock term is not added over a keyframed PROGRESS"
+                trackTail(progT)
+            }
+            autop -> AmFxEval.encodeTrack(
+                listOf(
+                    Triple(0f, progBase, null),
+                    Triple(1f, progBase + speed * (durMs / 1000f), null)
+                )
+            )
+            else -> emptyList()
+        }
+        val pos = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val stretch = props["stretch"]?.firstPoint(w, short, "stretch", 1f, 1f) ?: (1f to 1f)
+        val values = listOf(
+            fv("scale", 1f), fv("angle", 0f), ClipFxLibrary.packPoint(pos.first, pos.second),
+            progBase, speed, fv("hardness", 1f), fv("blendMode", 0f),
+            props["color1"]?.packedColor(w, short, "color1") ?: 0x000321.toFloat(),
+            props["color2"]?.packedColor(w, short, "color2") ?: 0x001C6B.toFloat(),
+            props["color3"]?.packedColor(w, short, "color3") ?: 0x00135C.toFloat(),
+            props["color4"]?.packedColor(w, short, "color4") ?: 0x000033.toFloat(),
+            fv("FREQ", 0f), fv("AMP", 22f), ClipFxLibrary.packPoint(stretch.first, stretch.second),
+            fv("alpha", 1f)
+        )
+        val tailBlock = tailsOf(tail)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.GRADIENTFLOW_AM,
+            if (tailBlock.isEmpty()) values
+            else values + List(AmFxEval.EXT2_TAIL_START - values.size) { 0f } + tailBlock,
+            short
+        )
+    }
+
+    /**
+     * `partx` -> Partx (Alight): the closed-form starfield in layer-centred aspect coords
+     * through the family's SHORT blend switch; output mix(tex, result, alpha) with NO
+     * trailing x tex.a (the def's own inconsistency, kept — defs-batch8). With `autop` on,
+     * the shader's local time is EVO + time x 0.5 — exact and linear, baked as a synthetic
+     * tail on the EVO slot like gradientflow's clock.
+     */
+    private fun applyPartxAm(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        val w = ctx.warnings
+        val short = "partx"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val evoT = props["EVO"]
+        val evoBase = evoT?.scalarAtEased(0f) ?: 0f
+        val autop = boolOf(props["autop"], true) > 0.5f
+        val tail: List<Float> = when {
+            evoT != null && evoT.keys.size >= 2 -> {
+                if (autop) w += "Effect partx: its autop clock term is not added over a keyframed EVO"
+                trackTail(evoT)
+            }
+            autop -> AmFxEval.encodeTrack(
+                listOf(
+                    Triple(0f, evoBase, null),
+                    Triple(1f, evoBase + 0.5f * (durMs / 1000f), null)
+                )
+            )
+            else -> emptyList()
+        }
+        val (fgRgb, fgA) = props["colorfg"]?.colorParts(w, short, "colorfg") ?: (0xFFFFFF.toFloat() to 1f)
+        val (bgRgb, bgA) = props["colorbg"]?.colorParts(w, short, "colorbg") ?: (0f to 0f)
+        val pos = (props["positionn"] ?: props["position"])?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val stretch = props["stretch"]?.firstPoint(w, short, "stretch", 1f, 1f) ?: (1f to 1f)
+        val values = listOf(
+            fgRgb, fgA, bgRgb, bgA,
+            fv("kNumAngles", 200f), fv("kStarDensity", 0.2f), fv("kMotionBlur", 1f),
+            evoBase, fv("scale", 1f), fv("angle", 0f),
+            ClipFxLibrary.packPoint(pos.first, pos.second),
+            ClipFxLibrary.packPoint(stretch.first, stretch.second),
+            fv("bright", 1f), fv("blendMode", 3f),
+            fv("alpha", 1f)
+        )
+        val tailBlock = tailsOf(tail)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.PARTX_AM,
+            if (tailBlock.isEmpty()) values
+            else values + List(AmFxEval.EXT2_TAIL_START - values.size) { 0f } + tailBlock,
+            short
+        )
+    }
+
+    /**
+     * `edgeline` -> Edge Line (Alight): the Scharr-like 8-tap gradient (weights 3/10) at
+     * smoothing x texel, mapped through color1 / color2, through the family's MINI
+     * 3-branch blend switch (no bright); output mix(tex, result, alpha) (defs-batch8).
+     */
+    private fun applyEdgeLineAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "edgeline"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (c1Rgb, c1A) = props["color1"]?.colorParts(w, short, "color1") ?: (0x00FFFF.toFloat() to 1f)
+        val (c2Rgb, c2A) = props["color2"]?.colorParts(w, short, "color2") ?: (0f to 1f)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.EDGELINE_AM,
+            listOf(
+                fv("smoothing", 1f), fv("threshold", 0f), fv("amp", 1f),
+                c1Rgb, c1A, c2Rgb, c2A,
+                fv("alpha", 1f), fv("blendMode", 0f),
+                boolOf(props["fix"], true), boolOf(props["newMode"], true),
+                boolOf(props["invert"], false)
+            ),
+            short
+        )
+    }
+
+    /**
+     * `lightsweep` -> Light Sweep (Alight): the travelling sine band mapped through
+     * color1 / color2, through the family's SHORT blend switch; output
+     * mix(tex, result, alpha) x tex.a (defs-batch8). PROGRESS is keyframed in one corpus
+     * instance and rides a tail; with `autop` on (not in the corpus) the clock
+     * PROGRESS + time x SPEED is baked synthetically like gradientflow's.
+     */
+    private fun applyLightSweepAm(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        val w = ctx.warnings
+        val short = "lightsweep"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val progT = props["PROGRESS"]
+        val progBase = progT?.scalarAtEased(0f) ?: 0f
+        val speed = fv("SPEED", 1f)
+        val autop = boolOf(props["autop"], false) > 0.5f
+        val tail: List<Float> = when {
+            progT != null && progT.keys.size >= 2 -> {
+                if (autop) w += "Effect lightsweep: its autop clock term is not added over a keyframed PROGRESS"
+                trackTail(progT)
+            }
+            autop -> AmFxEval.encodeTrack(
+                listOf(
+                    Triple(0f, progBase, null),
+                    Triple(1f, progBase + speed * (durMs / 1000f), null)
+                )
+            )
+            else -> emptyList()
+        }
+        val pos = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val stretch = props["stretch"]?.firstPoint(w, short, "stretch", 1f, 1f) ?: (1f to 1f)
+        val (c1Rgb, c1A) = props["color1"]?.colorParts(w, short, "color1") ?: (0f to 1f)
+        val (c2Rgb, c2A) = props["color2"]?.colorParts(w, short, "color2") ?: (0xFFFFFF.toFloat() to 1f)
+        val values = listOf(
+            fv("scale", 1f), fv("angle", 0f), ClipFxLibrary.packPoint(pos.first, pos.second),
+            progBase, speed, fv("amount", 1f), fv("sharp", 1f),
+            ClipFxLibrary.packPoint(stretch.first, stretch.second),
+            c1Rgb, c1A, c2Rgb, c2A, fv("hardness", 1f), fv("blendMode", 0f),
+            fv("alpha", 1f)
+        )
+        val tailBlock = tailsOf(tail)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.LIGHTSWEEP_AM,
+            if (tailBlock.isEmpty()) values
+            else values + List(AmFxEval.EXT2_TAIL_START - values.size) { 0f } + tailBlock,
+            short
+        )
+    }
+
+    /**
+     * `com.alightcreative.3colorgrad` -> 3 Color Gradient (Alight): the 3-colour ramp
+     * along the centred x through the family's FULL 25-branch blend switch; output
+     * mix(tex, mix(factor, result, alphab) x tex.a, alpha) x tex.a (defs-batch8). The
+     * centred transform adds position x (-1, 1) / 500 — with offsetx at its serialized 0
+     * the def's own +0.5 x-shift applies, exactly as ported. `angle` is keyframed in 2 of
+     * the 3 corpus instances and rides a tail on its absolute slot.
+     */
+    private fun applyColorGrad3Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "3colorgrad"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (c1Rgb, c1A) = props["color1"]?.colorParts(w, short, "color1") ?: (0x0F0F0F.toFloat() to 1f)
+        val (c2Rgb, c2A) = props["color2"]?.colorParts(w, short, "color2") ?: (0f to 0f)
+        val (c3Rgb, c3A) = props["color3"]?.colorParts(w, short, "color3") ?: (0x0F0F0F.toFloat() to 1f)
+        val angleT = props["angle"]
+        val values = listOf(
+            c1Rgb, c1A, c2Rgb, c2A, c3Rgb, c3A, fv("progressa", 0.5f),
+            fv("progressb", 0.5f), fv("offsetx", 0f), fv("scale", 1f),
+            angleT?.scalarAtEased(0f) ?: 0f,
+            fv("bright", 1f), fv("blendMode", 0f), fv("alpha", 1f),
+            fv("alphab", 1f)
+        )
+        val tailBlock = tailsOf(trackTail(angleT))
+        return addFx(
+            clip0, ctx, ClipFxLibrary.COLORGRAD3_AM,
+            if (tailBlock.isEmpty()) values
+            else values + List(AmFxEval.EXT2_TAIL_START - values.size) { 0f } + tailBlock,
+            short
+        )
+    }
+
+    /**
+     * `deepglow` (v1) -> Deep Glow (Alight): the double-sourced def (the Ultra XML and the
+     * TrueMotion conversion agree): the host gaussianblur of the layer (`strength` by name)
+     * plus a boxblur2 of it, composited with the YUV hue rotation, the (rr - 0.5) intensity
+     * scale, the optional threshold gate and the colour keying (defs-batch8). `power` is
+     * declared by the def but never read by its shader — stored for the panel, inert.
+     * `higsha` / `position` are never serialized in the corpus; the def defaults apply.
+     */
+    private fun applyDeepGlow1Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "deepglow"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val higsha = props["higsha"]?.firstPoint(w, short, "higsha", 0f, 0f) ?: (0f to 0f)
+        val satvib = props["satvib"]?.firstPoint(w, short, "satvib", 0f, 1f) ?: (0f to 1f)
+        val pos = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val (rgb, a) = props["color"]?.colorParts(w, short, "color") ?: (0xAA0000.toFloat() to 1f)
+        var flags = 0
+        if (boolOf(props["sshadow"], false) > 0.5f) flags += 1
+        if (boolOf(props["cblend"], false) > 0.5f) flags += 2
+        if (boolOf(props["thrs"], false) > 0.5f) flags += 4
+        return addFx(
+            clip0, ctx, ClipFxLibrary.DEEP_GLOW_AM,
+            listOf(
+                fv("strength", 0.365f).coerceIn(0f, 2f),
+                fv("rrr", 1.51f),
+                fv("hue", 360f),
+                fv("oalpha", 1f), fv("calpha", 1f), fv("alpb", 0.5f), rgb,
+                higsha.first, higsha.second, satvib.first, satvib.second,
+                ClipFxLibrary.packPoint(pos.first, pos.second), a, fv("alphaa", 0.75f),
+                fv("lowThreshold", 0f), fv("highThreshold", 1f), fv("feather", 3f),
+                flags.toFloat(),
+                fv("iter", 1f).roundToInt().coerceIn(1, 3).toFloat(),
+                fv("power", 0.15f), 0f
+            ),
+            short
+        )
+    }
+
+    /**
+     * `spill-cleanup` -> Spill Cleanup (Alight): the host gaussianblur of the layer at
+     * `strength` (same-name feed), two ordered over-compositing streak passes over it
+     * (x then y folds, each composited over the blur), then the spill composite
+     * (defs-batch8). The def's own default strength is 0.02; the corpus runs 0.48..2.
+     */
+    private fun applySpillCleanupAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "spill-cleanup"
+        val props = fxProps(fx)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.SPILL_CLEANUP_AM,
+            listOf(props["strength"]?.firstValue(w, short, "strength") ?: 0.02f),
+            short
+        )
+    }
+
+    /**
+     * `opticcompesation` PARKED (Queue 15(f)): the only staged definition (defs-batch8,
+     * TrueMotion conversion) delegates its work to a native pass naming the effect ITSELF
+     * (its id hex-obfuscated in the conversion) and its shader stage is an identity copy —
+     * there is no evidenced formula to port, and porting would be guessing. The corpus's
+     * 19 instances (distortion keyframed in all) stay a precise warning until a real
+     * definition surfaces.
+     */
+    private fun applyOpticCompesationParked(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        ctx.warnings += "Effect opticcompesation is not supported yet: its only available definition delegates the work to a native pass naming the effect itself and its shader stage is an identity copy, so there is no evidenced formula to port: skipped"
+        return clip0
+    }
+
+    /**
+     * `pulseopacity2` PARKED (Queue 15(f)): the only staged definition (defs-batch8,
+     * TrueMotion conversion) is a script whose env.time is assigned but never used — as
+     * written it is a constant opacity multiplier, contradicting the def's own description
+     * ("pulses the layer opacity over time, based on a sine wave or triangular wave"). The
+     * exact time law is unrecoverable from the staged evidence, so the 7 corpus instances
+     * stay a precise warning rather than a guessed pulse.
+     */
+    private fun applyPulseOpacity2Parked(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        ctx.warnings += "Effect pulseopacity2 is not supported yet: its only available definition never uses its time variable (a constant opacity multiplier), contradicting its own sine / triangle pulse description, so the exact time law cannot be recovered: skipped"
+        return clip0
+    }
+
+    /**
      * `longshadow` / `longshadow2` -> the app's Long Shadow: the layer's silhouette extruded along
      * `angle` (degrees, clockwise on screen: 45 = down-right, as in the presets) for `size` of the scene
      * height, tinted `color` at `alpha`, `solidity` between a soft and a hard extrusion, `fade` letting
@@ -3943,6 +4370,13 @@ object AlightXmlImporter {
     private fun Track.packedColor(w: MutableList<String>, short: String, prop: String): Float {
         if (keys.size >= 2) w += "Effect " + short + ": keyframed " + prop + " is not supported yet: the first value is used"
         return (unpacked(first()) and 0xFFFFFFL).toFloat()
+    }
+
+    /** A colour track's first value as (packed 0xRRGGBB, alpha 0..1) — for the effects whose colour alpha rides its own slot. */
+    private fun Track.colorParts(w: MutableList<String>, short: String, prop: String): Pair<Float, Float> {
+        if (keys.size >= 2) w += "Effect " + short + ": keyframed " + prop + " is not supported yet: the first value is used"
+        val argb = unpacked(first())
+        return ((argb and 0xFFFFFFL).toFloat()) to (((argb shr 24) and 0xFFL).toFloat() / 255f)
     }
 
     /** A bool property as a 0 / 1 fx value (its constant; bools are not keyframed in the corpus). */

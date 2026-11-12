@@ -1480,6 +1480,205 @@ int main() {
         id.p[4] = 0.6f; id.p[1] = 0.73f;
         CHECK(!fxIsIdentity(id), "dropshadow painting is not identity");
     }
+    {   // v177 Queue 15(f) tier-5 twins: pins hand-computed from the defs in
+        // double precision (the design record carries the arithmetic).
+        float o[4];
+        auto konstFn = [](const void* ctx, int, float, float, float out[4]) {
+            const float* c = (const float*)ctx;
+            out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = c[3];
+        };
+        auto konstS = [&konstFn](float (&c)[4]) { return FxExtrudeSampler{konstFn, c}; };
+        static float KC_BM[4] = {0.2f, 0.4f, 0.6f, 0.8f};
+        static float KC_NS[4] = {0.6f, 0.3f, 0.9f, 1.f};
+        static float KC_WH[4] = {1.f, 1.f, 1.f, 1.f};
+        static float KC_GS[4] = {0.9f, 0.9f, 0.9f, 1.f};
+        static float KC_GF[4] = {0.1f, 0.2f, 0.3f, 1.f};
+        static float KC_LS[4] = {0.4f, 0.2f, 0.1f, 0.5f};
+        static float KC_SP[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+        // bbmaker: opaque black background band; A: centred, start 30, angle 90
+        // (toward +y): band 1 -> tex x tex.a. B: start 32.85 at y 0.95: outside
+        // the band, only the background x tex.a remains.
+        FxOp bm{}; bm.type = FX_BBMAKER_AM;
+        bm.p[0] = 30.f; bm.p[1] = 90.f; bm.p[2] = 0.f; bm.p[3] = 1.f;
+        bm.p[4] = 0.001f; bm.p[5] = 1.f; bm.p[6] = 0.f; bm.q[0] = 0.f; bm.q[1] = 1.f;
+        FxExtrudeSampler BS = konstS(KC_BM);
+        fxBbMakerPixel(bm, 0.5f, 0.5f, 100, 100, BS, o);
+        CHECK(std::fabs(o[0] - 0.16f) < 1e-4f && std::fabs(o[3] - 0.768f) < 1e-4f,
+              "bbmaker band (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        bm.p[0] = 32.85f;
+        fxBbMakerPixel(bm, 0.5f, 0.95f, 100, 100, BS, o);
+        CHECK(o[0] == 0.f && o[1] == 0.f && o[2] == 0.f && std::fabs(o[3] - 0.64f) < 1e-4f,
+              "bbmaker outside band (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // unsharpmask: tex 0 = base, tex 1 = its gaussianblur buffer.
+        FxExtrudeSampler US; US.sample = [](const void*, int tex, float, float, float out[4]) {
+            if (tex == 0) { out[0] = 0.5f; out[1] = 0.25f; out[2] = 0.125f; out[3] = 0.8f; }
+            else { out[0] = 0.2f; out[1] = 0.2f; out[2] = 0.2f; out[3] = 0.8f; }
+        }; US.ctx = nullptr;
+        FxOp um{}; um.type = FX_UNSHARP_MASK_AM; um.p[0] = 0.05f; um.p[1] = 0.5f; um.p[2] = 0.5f;
+        fxUnsharpMaskPixel(um, 0.5f, 0.5f, 100, 100, US, o);
+        CHECK(std::fabs(o[0] - 0.5000070f) < 1e-4f && std::fabs(o[1] - 0.2500012f) < 5e-5f &&
+              std::fabs(o[2] - 0.1249983f) < 5e-5f && std::fabs(o[3] - 0.8f) < 1e-5f,
+              "unsharp flat region (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        FxExtrudeSampler UB; UB.sample = [](const void*, int tex, float, float, float out[4]) {
+            if (tex == 0) { out[0] = 0.5f; out[1] = 0.25f; out[2] = 0.125f; out[3] = 0.8f; }
+            else { out[0] = 0.f; out[1] = 0.f; out[2] = 0.f; out[3] = 0.8f; }
+        }; UB.ctx = nullptr;
+        fxUnsharpMaskPixel(um, 0.5f, 0.5f, 100, 100, UB, o);
+        CHECK(std::fabs(o[0] - 0.75f) < 1e-4f && std::fabs(o[1] - 0.375f) < 1e-4f &&
+              std::fabs(o[2] - 0.1875f) < 1e-4f, "unsharp full edge (%g %g %g)", o[0], o[1], o[2]);
+        // newsharpen on a constant field: the streak average is the field, so
+        // blured = 0 and the screen composite returns the input (the def's
+        // pass list: ds copies, H streak, V streak + composite, x iter).
+        FxOp np{}; np.type = FX_NEWSHARPEN_AM;
+        np.p[0] = 0.15f; np.p[3] = 0.1f; np.p[4] = 2.f;
+        FxExtrudeSampler NS = konstS(KC_NS);
+        fxNewSharpenAmPixel(np, 0.5f, 0.5f, 100, 100, NS, o);
+        CHECK(std::fabs(o[0] - 0.6f) < 1e-4f && std::fabs(o[1] - 0.3f) < 1e-4f &&
+              std::fabs(o[2] - 0.9f) < 1e-4f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "newsharpen constant (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        FxOp nw{}; nw.type = FX_NEWSHARPEN_AM;
+        nw.p[0] = 0.15f; nw.p[1] = 1.f; nw.p[2] = 1.f; nw.p[3] = 0.1f; nw.p[4] = 2.f;
+        fxNewSharpenAmPixel(nw, 0.5f, 0.5f, 100, 100,
+                            konstS(KC_WH), o);
+        CHECK(std::fabs(o[0]) < 1e-5f && std::fabs(o[2]) < 1e-5f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "newsharpen white only (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // A quadratic field: the streak average exceeds the centre by 2d^2/3,
+        // so blured goes slightly negative and the screen composite dips.
+        auto quad = [](const void*, int, float u, float, float out[4]) {
+            out[0] = u * u; out[1] = u * u; out[2] = u * u; out[3] = 1.f;
+        };
+        fxNewSharpenAmPixel(np, 0.5f, 0.5f, 100, 100, FxExtrudeSampler{quad, nullptr}, o);
+        CHECK(std::fabs(o[0] - 0.2499648f) < 2e-5f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "newsharpen quadratic (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // gradshadow (blend kind 0): mode 0 fill at the ramp midpoint.
+        FxOp gs{}; gs.type = FX_GRADSHADOW_AM;
+        gs.p[0] = 0.95f; gs.p[1] = 1.5f; gs.p[2] = 100.f; gs.p[3] = 90.f; gs.p[4] = 0.f;
+        gs.p[5] = 1.f; gs.p[6] = 1.f; gs.q[0] = 0.f; gs.q[1] = 1.f; gs.q[2] = 1.f;
+        fxAmBlendGenPixel(0, gs, 0.5f, 0.5f, 100, 100,
+                          konstS(KC_GS), o);
+        CHECK(std::fabs(o[0] - 0.382725f) < 5e-4f && std::fabs(o[3] - 1.f) < 1e-4f,
+              "gradshadow ramp (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // gradientflow (kind 1): the corpus dark-blue palette, iTime 1.
+        FxOp gf{}; gf.type = FX_GRADIENTFLOW_AM;
+        gf.p[0] = 1.f; gf.p[2] = 8390656.f; gf.p[3] = 1.f; gf.p[5] = 1.f;
+        gf.q[0] = 801.f; gf.q[1] = 7275.f; gf.q[2] = 4956.f; gf.q[3] = 51.f;
+        gf.q[4] = 0.f; gf.q[5] = 22.f; gf.q[6] = 8394753.f; gf.r[0] = 1.f;
+        fxAmBlendGenPixel(1, gf, 0.5f, 0.5f, 100, 100,
+                          konstS(KC_GF), o);
+        CHECK(std::fabs(o[0]) < 3e-3f && std::fabs(o[1] - 0.0489666f) < 3e-3f &&
+              std::fabs(o[2] - 0.2882808f) < 3e-3f && std::fabs(o[3] - 1.f) < 1e-4f,
+              "gradientflow palette (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // partx (kind 2): pinned at aStep-0 sample points, where the def's
+        // fract hash chains are exact (off-axis points are float-chaotic in
+        // the def itself — 10 x fract(aStep x fract(...) x 45.1) amplifies an
+        // ulp into a different star field, on any implementation).
+        FxOp px{}; px.type = FX_PARTX_AM;
+        px.p[0] = 16777215.f; px.p[1] = 1.f; px.p[2] = 0.f; px.p[3] = 0.f;
+        px.p[4] = 200.f; px.p[5] = 0.2f; px.p[6] = 1.f;
+        px.q[0] = 0.f; px.q[1] = 1.f; px.q[2] = 0.f; px.q[3] = 8390656.f;
+        px.q[4] = 8394753.f; px.q[5] = 1.f; px.q[6] = 3.f; px.r[0] = 1.f;
+        fxAmBlendGenPixel(2, px, 0.7f, 0.5f, 100, 100,
+                          konstS(KC_BM), o);
+        CHECK(std::fabs(o[0] - 0.16f) < 1e-4f && std::fabs(o[1] - 0.32f) < 1e-4f &&
+              std::fabs(o[2] - 0.48f) < 1e-4f && std::fabs(o[3] - 0.64f) < 1e-4f,
+              "partx no star on axis (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        px.p[5] = 0.72f;
+        fxAmBlendGenPixel(2, px, 0.9f, 0.49f, 100, 100,
+                          konstS(KC_BM), o);
+        CHECK(std::fabs(o[0] - 0.2031101f) < 5e-4f && std::fabs(o[1] - 0.3523326f) < 5e-4f &&
+              std::fabs(o[2] - 0.5015551f) < 5e-4f && std::fabs(o[3] - 0.6507775f) < 5e-4f,
+              "partx star (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // edgeline (kind 3): an x-luma ramp gives a pure vertical gradient.
+        FxOp el{}; el.type = FX_EDGELINE_AM;
+        el.p[0] = 1.5f; el.p[1] = 0.14f; el.p[2] = 3.99f; el.p[3] = 65535.f;
+        el.p[4] = 1.f; el.p[5] = 0.f; el.p[6] = 1.f;
+        el.q[0] = 1.f; el.q[1] = 0.f; el.q[2] = 1.f; el.q[3] = 1.f; el.q[4] = 0.f;
+        auto ramp = [](const void*, int, float u, float, float out[4]) {
+            out[0] = u; out[1] = u; out[2] = u; out[3] = 0.5f;
+        };
+        fxAmBlendGenPixel(3, el, 0.5f, 0.5f, 100, 100, FxExtrudeSampler{ramp, nullptr}, o);
+        CHECK(std::fabs(o[0]) < 1e-4f && std::fabs(o[1] - 0.1191349f) < 5e-4f &&
+              std::fabs(o[2] - 0.1191349f) < 5e-4f && std::fabs(o[3] - 0.125f) < 1e-4f,
+              "edgeline ramp (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // lightsweep (kind 4): at the centre the sweep value is sin(0)^3 = 0.
+        FxOp ls{}; ls.type = FX_LIGHTSWEEP_AM;
+        ls.p[0] = 0.8f; ls.p[1] = -22.5f; ls.p[2] = 8390656.f; ls.p[3] = 0.53f; ls.p[5] = 3.f; ls.p[6] = 0.79f;
+        ls.q[0] = 8394753.f; ls.q[1] = 0.f; ls.q[2] = 1.f; ls.q[3] = 16777215.f;
+        ls.q[4] = 1.f; ls.q[5] = 1.f; ls.q[6] = 1.f; ls.r[0] = 0.21f;
+        fxAmBlendGenPixel(4, ls, 0.5f, 0.5f, 100, 100,
+                          konstS(KC_LS), o);
+        CHECK(std::fabs(o[0] - 0.1949153f) < 5e-4f && std::fabs(o[1] - 0.0974576f) < 5e-4f &&
+              std::fabs(o[3] - 0.25f) < 1e-4f, "lightsweep centre (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // 3colorgrad (kind 5): the flat ramp midpoint colours, mode 0.
+        FxOp cg{}; cg.type = FX_COLORGRAD3_AM;
+        cg.p[0] = 986895.f; cg.p[1] = 1.f; cg.p[2] = 0.f; cg.p[3] = 0.f;
+        cg.p[4] = 986895.f; cg.p[5] = 1.f; cg.p[6] = 0.5f;
+        cg.q[0] = 0.5f; cg.q[1] = 0.f; cg.q[2] = 0.6f; cg.q[3] = 0.f;
+        cg.q[4] = 1.f; cg.q[5] = 0.f; cg.q[6] = 1.f; cg.r[0] = 1.f;
+        fxAmBlendGenPixel(5, cg, 0.75f, 0.5f, 100, 100,
+                          konstS(KC_BM), o);
+        CHECK(std::fabs(o[0] - 0.0421647f) < 5e-4f && std::fabs(o[1] - 0.0592314f) < 5e-4f &&
+              std::fabs(o[2] - 0.0762981f) < 5e-4f && std::fabs(o[3] - 0.4949330f) < 5e-4f,
+              "3colorgrad ramp (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // deepglow v1: hue 360 = no rotation; the glow radius grows the alpha.
+        FxOp d1{}; d1.type = FX_DEEP_GLOW_AM;
+        d1.p[0] = 0.365f; d1.p[1] = 1.51f; d1.p[2] = 360.f; d1.p[3] = 1.f; d1.p[4] = 1.f;
+        d1.p[5] = 0.5f; d1.p[6] = 11141120.f;
+        d1.q[3] = 1.f; d1.q[4] = 8390656.f; d1.q[6] = 0.75f; d1.r[0] = 0.f; d1.r[1] = 1.f; d1.r[2] = 3.f; d1.r[3] = 0.f;
+        FxExtrudeSampler D1; D1.sample = [](const void*, int tex, float, float, float out[4]) {
+            if (tex == 0) { out[0] = 0.2f; out[1] = 0.1f; out[2] = 0.05f; out[3] = 0.6f; }
+            else if (tex == 1) { out[0] = 0.1f; out[1] = 0.2f; out[2] = 0.3f; out[3] = 0.5f; }
+            else { out[0] = 0.f; out[1] = 0.f; out[2] = 0.f; out[3] = 0.f; }
+        }; D1.ctx = nullptr;
+        fxDeepGlow1Pixel(d1, 0.25f, 0.25f, 100, 100, D1, o);
+        CHECK(std::fabs(o[0] - 0.3281920f) < 5e-4f && std::fabs(o[1] - 0.3563814f) < 5e-4f &&
+              std::fabs(o[2] - 0.4345754f) < 5e-4f && std::fabs(o[3] - 1.2409545f) < 5e-4f,
+              "deepglow v1 (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // spill-cleanup: at a tiny strength the streaks return the blur, so the
+        // pin isolates the final spill composite.
+        FxOp sp{}; sp.type = FX_SPILL_CLEANUP_AM; sp.p[0] = 0.01f;
+        FxExtrudeSampler SP; SP.sample = [](const void*, int tex, float, float, float out[4]) {
+            if (tex == 0) { out[0] = 0.3f; out[1] = 0.6f; out[2] = 0.9f; out[3] = 0.5f; }
+            else { out[0] = 0.15f; out[1] = 0.3f; out[2] = 0.45f; out[3] = 0.25f; }
+        }; SP.ctx = nullptr;
+        fxSpillCleanupAmPixel(sp, 0.5f, 0.5f, 100, 100, SP, o);
+        CHECK(std::fabs(o[0] - 0.3375f) < 5e-4f && std::fabs(o[1] - 0.675f) < 5e-4f &&
+              std::fabs(o[2] - 1.0125f) < 5e-4f && std::fabs(o[3] - 0.5625f) < 1e-4f,
+              "spill final (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // The streak chain on a constant field: composite(blur, blur) twice.
+        FxOp sp2{}; sp2.type = FX_SPILL_CLEANUP_AM; sp2.p[0] = 0.48f;
+        fxSpillCleanupAmPixel(sp2, 0.5f, 0.5f, 100, 100,
+                              konstS(KC_SP), o);
+        CHECK(std::fabs(o[0] - 0.1583204f) < 5e-4f && std::fabs(o[1] - 0.3166408f) < 5e-4f &&
+              std::fabs(o[2] - 0.4749612f) < 5e-4f && std::fabs(o[3] - 0.6332815f) < 5e-4f,
+              "spill streak chain (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // Parse folds for the tier.
+        float flatBm[] = {155, 30, 90, 0, 1, 0.001f, 1, 0, 156, 0, 1, 0, 0, 0, 0, 0};
+        FxOp tops[kFxMaxOps];
+        CHECK(fxParseOps(flatBm, 16, tops) == 1 && tops[0].type == FX_BBMAKER_AM &&
+              tops[0].q[1] == 1.f, "bbmaker EXT folds into q");
+        float flatGf[] = {161, 1, 0, 0, 1, 0, 1, 0, 162, 801, 7275, 4956, 51, 0, 22, 8394753,
+                          163, 1, 0, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatGf, 24, tops) == 1 && tops[0].type == FX_GRADIENTFLOW_AM &&
+              tops[0].q[5] == 22.f && tops[0].r[0] == 1.f, "gradientflow folds EXT + EXT2");
+        float flatD1[] = {175, 0.365f, 1.51f, 360, 1, 1, 0.5f, 11141120,
+                          176, 0, 0, 0, 0, 0, 0, 0, 177, 0, 1, 3, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatD1, 24, tops) == 1 && tops[0].type == FX_DEEP_GLOW_AM &&
+              tops[0].r[1] == 1.f, "deepglow folds EXT + EXT2");
+        float flatPx[] = {164, 16777215, 1, 0, 0, 200, 0.2f, 1, 165, 1.39f, 1, 0, 8390656, 8394753, 1, 3,
+                          166, 1, 0, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatPx, 24, tops) == 1 && tops[0].type == FX_PARTX_AM &&
+              tops[0].q[0] == 1.39f && tops[0].r[0] == 1.f, "partx folds EXT + EXT2 (EVO in q, alpha in r)");
+        FxOp id2{};
+        id2.type = FX_NEWSHARPEN_AM; id2.p[0] = 0.005f;
+        CHECK(fxIsIdentity(id2), "newsharpen at 0.005 is identity (the def's gate)");
+        id2.p[0] = 0.15f;
+        CHECK(!fxIsIdentity(id2), "newsharpen at 0.15 is not identity");
+        id2 = FxOp{}; id2.type = FX_PARTX_AM;
+        CHECK(fxIsIdentity(id2), "partx with alpha 0 is identity");
+        id2.r[0] = 1.f;
+        CHECK(!fxIsIdentity(id2), "partx with alpha 1 is not identity");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

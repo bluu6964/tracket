@@ -134,6 +134,13 @@ internal object AmFxEval {
         // v176: AM units (scale 1). Deep Glow 2's tails start at 21 (see tailStart).
         ClipFxLibrary.GAUSSIAN_BLUR_AM -> listOf(Tracked(0, 1f))                 // strength
         ClipFxLibrary.DEEP_GLOW2_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))    // strength, oalpha
+        // v177 tier 5: AM units (scale 1). BB Maker's tails start at 14 (EXT);
+        // the four EXT2 effects' tails start at 21.
+        ClipFxLibrary.BBMAKER_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))       // start, angle
+        ClipFxLibrary.GRADIENTFLOW_AM -> listOf(Tracked(3, 1f))                  // progress (real or the synthetic clock tail)
+        ClipFxLibrary.PARTX_AM -> listOf(Tracked(7, 1f))                         // EVO (EXT slot 0, absolute 7)
+        ClipFxLibrary.LIGHTSWEEP_AM -> listOf(Tracked(3, 1f))                    // progress
+        ClipFxLibrary.COLORGRAD3_AM -> listOf(Tracked(10, 1f))                   // angle (EXT slot 3, absolute 10)
         else -> emptyList()
     }
 
@@ -145,10 +152,14 @@ internal object AmFxEval {
         ClipFxLibrary.WAVE_WARP_AM, ClipFxLibrary.FRACTAL_WARP_AM,
         ClipFxLibrary.TURBULENT_DISPLACE3_AM, ClipFxLibrary.STREAKS_AM,
         ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
-        ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM -> EXT_TAIL_START
+        ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM,
+        ClipFxLibrary.BBMAKER_AM -> EXT_TAIL_START
         ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
         ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM,
-        ClipFxLibrary.DEEP_GLOW2_AM -> EXT2_TAIL_START
+        ClipFxLibrary.DEEP_GLOW2_AM,
+        ClipFxLibrary.GRADIENTFLOW_AM, ClipFxLibrary.PARTX_AM,
+        ClipFxLibrary.LIGHTSWEEP_AM, ClipFxLibrary.COLORGRAD3_AM,
+        ClipFxLibrary.DEEP_GLOW_AM -> EXT2_TAIL_START
         else -> TAIL_START
     }
 

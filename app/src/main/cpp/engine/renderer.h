@@ -187,6 +187,12 @@ private:
     bool fxGaussianBlurAm(const FxOp& op, int W, int H, int* cur);
     bool fxDeepGlow2Am(const FxOp& op, int W, int H, int* cur);
     bool fxDropShadowAm(const FxOp& op, int W, int H, int* cur);
+    bool fxBbMakerAm(const FxOp& op, int W, int H, int* cur);
+    bool fxUnsharpMaskAm(const FxOp& op, int W, int H, int* cur);
+    bool fxNewSharpenAm(const FxOp& op, int W, int H, int* cur);
+    bool fxAmBlendGenAm(const FxOp& op, int W, int H, int* cur);
+    bool fxDeepGlow1Am(const FxOp& op, int W, int H, int* cur);
+    bool fxSpillCleanupAm(const FxOp& op, int W, int H, int* cur);
     // Copy Background: the frame so far is copied into texBackdrop_ at the start of applyFx; bgRect_ = the part of the canvas
     // the picture covers (x, y from the BOTTOM, w, h as fractions), bgOk_ = the copy was made for this call.
     bool bgOk_ = false;
@@ -231,7 +237,7 @@ private:
     };
     std::unordered_map<int, MaskSlot> masks_;
     // Effect programs (built when first used) and the small pictures of the blur / glow pyramids.
-    uint32_t eff_[44] = {0};
+    uint32_t eff_[52] = {0};
     uint32_t maskTex_[2] = {0, 0}, maskFbo_[2] = {0, 0};  // R8 coverage pictures (ping-pong)
     int maskW_ = 0, maskH_ = 0;
     struct FxLevel {

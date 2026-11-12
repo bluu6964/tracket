@@ -395,7 +395,11 @@ data class ParentLink(
     val refX: Float,
     val refY: Float,
     val refScale: Float,
-    val refRot: Float
+    val refRot: Float,
+    /** Alight's Parent Helper, scale mode Locked: the layer keeps its own scale (its position still follows). */
+    val lockScale: Boolean = false,
+    /** Alight's Parent Helper, rotate mode Locked: the layer keeps its own rotation (its position still follows). */
+    val lockRotate: Boolean = false
 )
 
 /**

@@ -3000,11 +3000,16 @@ $layers
 
     @Test
     fun liftWithOnlyZeroFillIsSilent() {
+        // v175: lift's def IS Copy Background (mix(comp * a, tex, fill)), so fill 0 is
+        // a full Copy Background at amount 100 — imported, with no warning.
         val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.lift" locallyApplied="true"><property name="fill" type="float" value="0" /></effect>"""
         ), 1080f)
         assertFalse(r.warnings.any { it.contains("lift") })
-        assertTrue(r.snapshot.tracks.flatMap { it.clips }[0].effects.isEmpty())
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects
+        assertEquals(1, fx.size)
+        assertEquals(ClipFxLibrary.COPY_BG, fx[0].type)
+        assertEquals(100f, fx[0].values[0], 0.001f)
     }
 
     @Test

@@ -48,11 +48,18 @@ class ClipFxLibraryTest {
         // a dedicated pass chain with no EXT group. Build 127 adds FX_EXTRUDE_AM (123) and
         // FX_EXTRUDE_FLAT_AM (126), dedicated raymarch passes; 124 / 127 are their EXT
         // groups and 125 / 128 their EXT2 groups. Build 128 adds FX_EDGE_GLOW_AM (129),
-        // a dedicated three-pass chain; 130 is its EXT group.
+        // a dedicated three-pass chain; 130 is its EXT group. Build 129 (v175) adds the
+        // effects tier 4: FX_THRESHOLD_AM (131), FX_SPECTRALMAP_AM (132),
+        // FX_CHANNELMAP_AM (134), FX_HALFTONE_LINES_AM (135), FX_TURBULENCE2_AM (136),
+        // FX_CHECKER2_AM (139), FX_MOSAIC_AM (141), FX_GLOW_AM (142),
+        // FX_INNER_BLUR_AM (143), FX_BOX_BLUR3_AM (144), FX_FEATHER_AM (145),
+        // FX_ELECTRIC_EDGES_AM (146) and FX_SMOOTH_EDGES_AM (149); 133 / 137 / 140 /
+        // 147 are their EXT groups and 138 / 148 their EXT2 groups.
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
-                114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126 + 129).toList(),
+                114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126 + 129 +
+                131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

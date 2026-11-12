@@ -390,6 +390,65 @@ object ClipFxLibrary {
     // 0..2, [4] spread 0..3, [5] fill color packed 0xRRGGBB, [6] blend 0..2.
     // EXT [7] gamma, [8] brightness, [9] tint color packed 0xRRGGBB, [10] tint.
     const val EDGE_GLOW_AM = "edge_glow_am"
+    // ---- v175: Alight's effects tier 4 (defs-batch7; every def recovered from two
+    // dumps, shader-identical between them). Values are AM raw units throughout.
+    // THRESHOLD_AM (native 131): kFxColor mode 25. [0] threshold 0..1, [1] feather
+    // 0..1, [2] invert 0/1, [3] blend 0 mask / 1 multiply / 2 screen. (The app's own
+    // Threshold is a different effect.)
+    const val THRESHOLD_AM = "threshold_am"
+    // SPECTRALMAP_AM (native 132 + EXT 133): kFxColor mode 26. [0] phase -99..99,
+    // [1] repeat 0.1..10, [2] alpha 0..1, [3] squeeze 0..1, [4] saturation -1..1,
+    // [5] reverse 0/1, [6] scale brightness 0/1. EXT [7..9] the red / green / blue
+    // colours packed 0xRRGGBB (their alpha never reaches the maths).
+    const val SPECTRALMAP_AM = "spectralmap_am"
+    // CHANNELMAP_AM (native 134): dedicated pass (it rewrites the alpha).
+    // [0..3] the R / G / B / A sources (0 R, 1 G, 2 B, 3 A, 4 luma, 5 zero, 6 one).
+    const val CHANNELMAP_AM = "channelmap_am"
+    // HALFTONE_LINES_AM (native 135): kFxWarp mode 27. [0] amount 0..500,
+    // [1] strength 0..1, [2] angle deg, [3] phase (AM raw -1000..1000),
+    // [4] / [5] the two colours packed 0xRRGGBB. Keyframed angle / phase ride
+    // AmFxEval tails from index 7.
+    const val HALFTONE_LINES_AM = "halftone_lines_am"
+    // TURBULENCE2_AM (native 136 + EXT 137 + EXT2 138): kFxStyle mode 19.
+    // [0] intensity, [1] scale, [2] evolution, [3] seed, [4] / [5] colours 1/2
+    // packed, [6] blend 0..2. EXT [7] / [8] offs x/y, [9] / [10] parallax x/y,
+    // [11] / [12] stretch x/y, [13] bias. EXT2 [14] alpha, [15] octaves. Keyframed
+    // offs / parallax components ride four AmFxEval tails from index 21.
+    const val TURBULENCE2_AM = "turbulence2_am"
+    // CHECKER2_AM (native 139 + EXT 140): kFxStyle mode 20. [0] amount 0.5..200,
+    // [1] angle deg, [2] colour packed, [3] punch out 0/1, [4] screen space 0/1
+    // (carried; the pattern anchors to the layer's rect), [5] / [6] position x/y.
+    // EXT [7] / [8] stretch x/y.
+    const val CHECKER2_AM = "checker2_am"
+    // MOSAIC_AM (native 141): dedicated two-pass. [0] size 1..500 (layer px),
+    // [1] / [2] phase x/y. Keyframed size rides an AmFxEval tail from index 7.
+    // (The app's own Mosaic style is a different effect.)
+    const val MOSAIC_AM = "mosaic_am"
+    // GLOW_AM (native 142): dedicated outer-glow scan. [0] radius 0..400,
+    // [1] alpha, [2] hardness, [3] colour packed, [4] colour alpha (it scales the
+    // result's alpha in blend mode 0), [5] blend 0..2. (The app's own Glow bloom
+    // is a different effect.)
+    const val GLOW_AM = "glow_am"
+    // INNER_BLUR_AM (native 143): dedicated box-chain pass. [0] strength 0..1,
+    // [1] iterations 1..6. Keyframed strength rides an AmFxEval tail from index 7.
+    const val INNER_BLUR_AM = "inner_blur_am"
+    // BOX_BLUR3_AM (native 144): dedicated half-res box pass. [0] strength 0..2.
+    const val BOX_BLUR3_AM = "box_blur3_am"
+    // FEATHER_AM (native 145): dedicated quarter-res box chain. [0] strength 0..2,
+    // [1] iterations 1..5. Keyframed strength rides an AmFxEval tail from index 7.
+    const val FEATHER_AM = "feather_am"
+    // ELECTRIC_EDGES_AM (native 146 + EXT 147 + EXT2 148): dedicated pass (blur
+    // buffer + the def's main pass). [0] distance, [1] thickness, [2] complexity,
+    // [3] disort, [4] / [5] colours 1/2 packed, [6] alpha. EXT [7] glow alpha,
+    // [8] seed, [9] evolution, [10] fill, [11] mask strength, [12] mask evolution,
+    // [13] mask scale. EXT2 [14] mask seed, [15] mask colour packed, [16] render
+    // contours, [17] contour count, [18] contour offset, [19] contour angle,
+    // [20] strength (the fixed 0.42 feeding the def's gaussianblur buffer).
+    // Keyframed evolution rides an AmFxEval tail at index 21 + 2.
+    const val ELECTRIC_EDGES_AM = "electric_edges_am"
+    // SMOOTH_EDGES_AM (native 149): dedicated pass (blur copy + streak composites).
+    // [0] strength 0..2, [1] mask to layer 0/1.
+    const val SMOOTH_EDGES_AM = "smooth_edges_am"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -1110,6 +1169,130 @@ object ClipFxLibrary {
                 FxParamDef("Blend", 0f, 2f, 0f, "", step = 0.01f)
             )
         ),
+        // ---- v175: Alight's effects tier 4 (values as on the consts) ----
+        FxDef(
+            THRESHOLD_AM, 131, "Threshold (Alight)", "Color", "A luma threshold mask, multiplied or screened (Alight Motion's Threshold)",
+            listOf(
+                FxParamDef("Threshold", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Feather", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Invert", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Blend", 0f, 2f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            SPECTRALMAP_AM, 132, "Spectral Map (Alight)", "Color", "A rainbow ramp over the brightness (Alight Motion's Spectral Map)",
+            listOf(
+                FxParamDef("Phase", -99f, 99f, 0f, "", step = 0.01f),
+                FxParamDef("Repeat", 0.1f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Squeeze", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Saturation", -1f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Reverse", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Scale brightness", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            CHANNELMAP_AM, 134, "Channel Map (Alight)", "Color", "Re-route the colour channels (Alight Motion's Channel Map)",
+            listOf(
+                FxParamDef("Red from", 0f, 6f, 0f, "", step = 1f),
+                FxParamDef("Green from", 0f, 6f, 1f, "", step = 1f),
+                FxParamDef("Blue from", 0f, 6f, 2f, "", step = 1f),
+                FxParamDef("Alpha from", 0f, 6f, 3f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            HALFTONE_LINES_AM, 135, "Halftone Lines (Alight)", "Stylize", "The picture re-drawn as two-colour bands (Alight Motion's Halftone Lines)",
+            listOf(
+                FxParamDef("Amount", 0f, 500f, 100f, "", step = 0.1f),
+                FxParamDef("Strength", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Angle", -3600f, 3600f, 45f, "°", step = 0.1f),
+                FxParamDef("Phase", -1000f, 1000f, 0f, "", step = 0.01f),
+                FxParamDef("Colour 1", 0f, 16777215f, 0x113355.toFloat(), "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0xFFEEDD.toFloat(), "", step = 1f)
+            )
+        ),
+        FxDef(
+            TURBULENCE2_AM, 136, "Turbulence (Alight)", "Stylize", "A two-colour cloud field over the layer (Alight Motion's Turbulence)",
+            listOf(
+                FxParamDef("Intensity", 0.1f, 1.5f, 1f, "", step = 0.01f),
+                FxParamDef("Scale", 0.01f, 50f, 1f, "", step = 0.01f),
+                FxParamDef("Evolution", -50f, 50f, 0f, "", step = 0.01f),
+                FxParamDef("Seed", 0f, 5f, 0f, "", step = 0.01f),
+                FxParamDef("Colour 1", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0xFFFFFF.toFloat(), "", step = 1f),
+                FxParamDef("Blend", 0f, 2f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            CHECKER2_AM, 139, "Checker (Alight)", "Stylize", "A checkerboard of one colour over the layer (Alight Motion's Checker)",
+            listOf(
+                FxParamDef("Amount", 0.5f, 200f, 10f, "", step = 0.1f),
+                FxParamDef("Angle", -3600f, 3600f, 0f, "°", step = 0.1f),
+                FxParamDef("Colour", 0f, 16777215f, 0x2D1EF6.toFloat(), "", step = 1f),
+                FxParamDef("Punch out", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Screen space", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Position X", -2048f, 2047f, 0f, "", step = 1f),
+                FxParamDef("Position Y", -2048f, 2047f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            MOSAIC_AM, 141, "Mosaic (Alight)", "Stylize", "The picture averaged into tiles (Alight Motion's Mosaic)",
+            listOf(
+                FxParamDef("Size", 1f, 500f, 10f, "", step = 0.1f),
+                FxParamDef("Phase X", -2048f, 2047f, 0f, "", step = 1f),
+                FxParamDef("Phase Y", -2048f, 2047f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            GLOW_AM, 142, "Glow (Alight)", "Light", "A coloured halo outside the layer's silhouette (Alight Motion's Glow)",
+            listOf(
+                FxParamDef("Radius", 0f, 400f, 100f, "", step = 0.1f),
+                FxParamDef("Alpha", 0f, 1f, 0.75f, "", step = 0.01f),
+                FxParamDef("Hardness", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Colour", 0f, 16777215f, 0xFFFFFF.toFloat(), "", step = 1f),
+                FxParamDef("Colour alpha", 0f, 1f, 0.67f, "", step = 0.01f),
+                FxParamDef("Blend", 0f, 2f, 2f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            INNER_BLUR_AM, 143, "Inner Blur (Alight)", "Blur", "The layer's own colours blurred inside its silhouette (Alight Motion's Inner Blur)",
+            listOf(
+                FxParamDef("Strength", 0f, 1f, 0.15f, "", step = 0.01f),
+                FxParamDef("Iterations", 1f, 6f, 2f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            BOX_BLUR3_AM, 144, "Box Blur 3 (Alight)", "Blur", "A wide box blur at half resolution (Alight Motion's Box Blur 3)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.15f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            FEATHER_AM, 145, "Feather (Alight)", "Blur", "The layer's edges feathered away (Alight Motion's Feather)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.15f, "", step = 0.01f),
+                FxParamDef("Iterations", 1f, 5f, 3f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            ELECTRIC_EDGES_AM, 146, "Electric Edges (Alight)", "Stylize", "Crackling electric outlines along the layer's edges (Alight Motion's Electric Edges)",
+            listOf(
+                FxParamDef("Distance", 0f, 1f, 0.3f, "", step = 0.01f),
+                FxParamDef("Thickness", 0f, 1f, 0.8f, "", step = 0.01f),
+                FxParamDef("Complexity", 0f, 10f, 2f, "", step = 0.01f),
+                FxParamDef("Disort", 0f, 2f, 0.5f, "", step = 0.01f),
+                FxParamDef("Colour 1", 0f, 16777215f, 0xFF77FF.toFloat(), "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0xDDBBAA.toFloat(), "", step = 1f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            SMOOTH_EDGES_AM, 149, "Smooth Edges (Alight)", "Stylize", "The silhouette smoothed and re-cut (Alight Motion's Smooth Edges)",
+            listOf(
+                FxParamDef("Strength", 0f, 2f, 0.02f, "", step = 0.01f),
+                FxParamDef("Mask to layer", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -1601,6 +1784,17 @@ object ClipFxLibrary {
         // Edge Glow's EXT defaults are Alight's own def defaults: gamma 1, brightness 0,
         // tint color black, tint 0.
         EDGE_GLOW_AM -> listOf(1f, 0f, 0f, 0f, 0f, 0f, 0f)
+        // Tier 4 EXT / EXT2 defaults are Alight's own def defaults.
+        SPECTRALMAP_AM -> listOf(0xFF0000.toFloat(), 0x00FF00.toFloat(), 0x0000FF.toFloat(), 0f, 0f, 0f, 0f)
+        TURBULENCE2_AM -> listOf(
+            0f, 0f, 0f, 0f, 1f, 1f, 0f,
+            1f, 6f, 0f, 0f, 0f, 0f, 0f
+        )
+        CHECKER2_AM -> listOf(1f, 1f, 0f, 0f, 0f, 0f, 0f)
+        ELECTRIC_EDGES_AM -> listOf(
+            0.5f, 0f, 0f, 1f, 0f, 0f, 1f,
+            0f, 0xEEDD55.toFloat(), 0f, 20f, 0f, 0f, 0.42f
+        )
         else -> emptyList()
     }
 
@@ -1625,6 +1819,10 @@ object ClipFxLibrary {
         EXTRUDE_AM -> 124
         EXTRUDE_FLAT_AM -> 127
         EDGE_GLOW_AM -> 130
+        SPECTRALMAP_AM -> 133
+        TURBULENCE2_AM -> 137
+        CHECKER2_AM -> 140
+        ELECTRIC_EDGES_AM -> 147
         else -> null
     }
 
@@ -1632,6 +1830,8 @@ object ClipFxLibrary {
     fun ext2NativeType(type: String): Int? = when (type) {
         EXTRUDE_AM -> 125
         EXTRUDE_FLAT_AM -> 128
+        TURBULENCE2_AM -> 138
+        ELECTRIC_EDGES_AM -> 148
         else -> null
     }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <vector>
 
 namespace am {
@@ -18,6 +19,8 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
         // immediately precedes it (only the extrude tier has one); anywhere else it is dropped.
         const int ext2Ext = t == FX_EXTRUDE_AM_EXT2 ? FX_EXTRUDE_AM_EXT
                           : t == FX_EXTRUDE_FLAT_AM_EXT2 ? FX_EXTRUDE_FLAT_AM_EXT
+                          : t == FX_TURBULENCE2_AM_EXT2 ? FX_TURBULENCE2_AM_EXT
+                          : t == FX_ELECTRIC_EDGES_AM_EXT2 ? FX_ELECTRIC_EDGES_AM_EXT
                                                          : FX_NONE;
         if (ext2Ext != FX_NONE) {
             if (extFoldedOp >= 0 && extFoldedType == ext2Ext) {
@@ -50,6 +53,10 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_EXTRUDE_AM_EXT ? FX_EXTRUDE_AM
                            : t == FX_EXTRUDE_FLAT_AM_EXT ? FX_EXTRUDE_FLAT_AM
                            : t == FX_EDGE_GLOW_AM_EXT ? FX_EDGE_GLOW_AM
+                           : t == FX_SPECTRALMAP_AM_EXT ? FX_SPECTRALMAP_AM
+                           : t == FX_TURBULENCE2_AM_EXT ? FX_TURBULENCE2_AM
+                           : t == FX_CHECKER2_AM_EXT ? FX_CHECKER2_AM
+                           : t == FX_ELECTRIC_EDGES_AM_EXT ? FX_ELECTRIC_EDGES_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -82,7 +89,12 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_DOTS_AM && t != FX_RIDGES_AM && t != FX_BEND_WARP_AM &&
             t != FX_DISPLACE_MAP_AM && t != FX_DISPLACE_MAP_RAD_AM && t != FX_SMOOTH_BEVEL_AM &&
             t != FX_LIGHT_GLOW_AM && t != FX_INNER_GLOW_AM && t != FX_DARK_GLOW_AM &&
-            t != FX_EXTRUDE_AM && t != FX_EXTRUDE_FLAT_AM && t != FX_EDGE_GLOW_AM) {
+            t != FX_EXTRUDE_AM && t != FX_EXTRUDE_FLAT_AM && t != FX_EDGE_GLOW_AM &&
+            t != FX_THRESHOLD_AM && t != FX_SPECTRALMAP_AM && t != FX_CHANNELMAP_AM &&
+            t != FX_HALFTONE_LINES_AM && t != FX_TURBULENCE2_AM && t != FX_CHECKER2_AM &&
+            t != FX_MOSAIC_AM && t != FX_GLOW_AM && t != FX_INNER_BLUR_AM &&
+            t != FX_BOX_BLUR3_AM && t != FX_FEATHER_AM && t != FX_ELECTRIC_EDGES_AM &&
+            t != FX_SMOOTH_EDGES_AM) {
             owner = -1;
             extFoldedOp = -1;
             extFoldedType = FX_NONE;
@@ -333,6 +345,12 @@ FxShaderRef fxShaderOf(int type) {
         case FX_SIMPLE_STARS_AM: r = {FXG_STYLE, 16}; break;
         case FX_DOTS_AM: r = {FXG_STYLE, 17}; break;
         case FX_RIDGES_AM: r = {FXG_STYLE, 18}; break;
+        // v175 tier (the dedicated passes stay FXG_NONE like FX_GLOW_SCAN).
+        case FX_THRESHOLD_AM: r = {FXG_COLOR, 25}; break;
+        case FX_SPECTRALMAP_AM: r = {FXG_COLOR, 26}; break;
+        case FX_HALFTONE_LINES_AM: r = {FXG_WARP, 27}; break;
+        case FX_TURBULENCE2_AM: r = {FXG_STYLE, 19}; break;
+        case FX_CHECKER2_AM: r = {FXG_STYLE, 20}; break;
         default: break;
     }
     return r;
@@ -451,6 +469,23 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_INNER_GLOW_AM: return p[0] < 0.5f || p[1] < 0.0005f;   // AM: radius < 0.5 is a plain copy; alpha 0 mixes nothing
         case FX_EXTRUDE_AM: return false;   // the march replaces the picture even at rotate 0 (the box shades / reframes it)
         case FX_EXTRUDE_FLAT_AM: return false;   // same
+        // v175 tier:
+        case FX_THRESHOLD_AM: return false;   // a luma posterize always bites
+        case FX_SPECTRALMAP_AM: return p[2] < 0.0005f;   // alpha 0: the mix keeps the pixel
+        case FX_CHANNELMAP_AM:
+            return p[0] < 0.5f && p[1] > 0.5f && p[1] < 1.5f && p[2] > 1.5f && p[2] < 2.5f &&
+                   p[3] > 2.5f && p[3] < 3.5f;   // the identity routing R / G / B / A
+        case FX_HALFTONE_LINES_AM: return false;   // a two-colour posterize, like dots
+        case FX_TURBULENCE2_AM: return o.r[0] < 0.0005f;   // alpha 0: the mix keeps the pixel
+        case FX_CHECKER2_AM: return false;   // the pattern always paints (or punches out)
+        case FX_MOSAIC_AM: return p[0] <= 1.f;   // tiles of a pixel or less sample the pixel itself
+        case FX_GLOW_AM: return p[1] < 0.0005f;   // alpha 0: outColor is 0 (radius < 0.5 is the def's own copy branch, checked in the pass)
+        case FX_INNER_BLUR_AM: return p[0] < 0.00005f;   // strength 0: every box tap is the centre tap, the composite the pixel
+        case FX_BOX_BLUR3_AM: return p[0] <= 0.0001f;   // the def's own passthrough
+        case FX_FEATHER_AM: return p[0] <= 0.005f;   // the def's own passthrough
+        case FX_ELECTRIC_EDGES_AM:
+            return p[6] < 0.0005f && o.q[0] < 0.0005f && std::fabs(o.q[3] - 1.f) < 0.0005f;   // no edge, no glow, fill 1: c is 0
+        case FX_SMOOTH_EDGES_AM: return false;   // the alpha cut reshapes even at strength 0 (dd = 0.05)
         default: return false;
     }
 }
@@ -2272,6 +2307,535 @@ void fxInnerGlowAmMap(float tr, float tg, float tb, float ta,
     *outG = tg + (rg * ta - tg) * m;
     *outB = tb + (rb * ta - tb) * m;
     *outA = ta;   // the result's alpha is the pixel's own (vec4(rgb, 1) * tex.a)
+}
+
+// ---- Effects tier 4 (v175) ----
+// Line-by-line ports of the defs staged in hunt-staging/defs-batch7 (recovered from two
+// dumps — the AM APK assets and DGameXO/openmotion — shader- and structure-identical
+// between them; the AM-dump copies are followed). AM texture space throughout: layer
+// norm, origin top-left, y down — the samplers read AM space directly, like the
+// extrude twin's.
+
+void fxThresholdAmMap(float pr, float pg, float pb, float pa, float threshold, float feather,
+                      bool invert, int blendMode, float* outR, float* outG, float* outB, float* outA) {
+    // AM's threshold: the luma of the PREMULTIPLIED rgb decides a smoothstepped mask.
+    const float lum = 0.2126f * pr + 0.7152f * pg + 0.0722f * pb;
+    const float f = std::max(std::min(feather / 4.f, std::fabs(0.5f - threshold)), 0.00196f);
+    const float t = (threshold - 0.5f) * (1.003f + 2.f * f) + 0.5f;
+    float p = fxSstep(t - f, t + f, lum);
+    if (invert) p = 1.f - p;
+    if (blendMode == 1) {
+        *outR = pr * p; *outG = pg * p; *outB = pb * p;
+    } else if (blendMode == 2) {
+        *outR = 1.f - (1.f - pr) * (1.f - p);
+        *outG = 1.f - (1.f - pg) * (1.f - p);
+        *outB = 1.f - (1.f - pb) * (1.f - p);
+    } else {
+        *outR = p; *outG = p; *outB = p;
+    }
+    *outA = pa;
+}
+
+float fxSpectralmapAmMapChannel(float p, float f) {
+    const float t = (p + 10.f) - std::floor(p + 10.f);   // mod(p + 10, 1)
+    return std::min(1.f, std::max(0.f, std::fabs(t - 0.5f) * 4.f - f));
+}
+
+void fxSpectralmapAmMap(float pr, float pg, float pb, float pa, float phase, float repeat,
+                        float alpha, float squeeze, float saturation, bool reverse,
+                        bool scaleBrightness, const float cols[9],
+                        float* outR, float* outG, float* outB, float* outA) {
+    // AM's spectralmap: a rainbow ramp over the luma, wrapped by mapChannel; the def's
+    // rgb2yuv / yuv2rgb matrices are the pair fxAmToYuv / fxAmToRgb already carry.
+    const float lum0 = 0.2126f * pr + 0.7152f * pg + 0.0722f * pb;
+    const float bscale = scaleBrightness ? lum0 : 1.f;
+    float lum = reverse ? 1.f - lum0 : lum0;
+    lum = lum * repeat + phase;
+    const float f = 0.333f + (0.1f - 0.333f) * squeeze;   // mix(0.333, 0.1, squeeze)
+    auto mapChannel = [f](float p) { return fxSpectralmapAmMapChannel(p, f); };
+    float rr = mapChannel(lum) * cols[0] + mapChannel(lum - 1.f / 3.f) * cols[3] +
+               mapChannel(lum - 2.f / 3.f) * cols[6];
+    float rg = mapChannel(lum) * cols[1] + mapChannel(lum - 1.f / 3.f) * cols[4] +
+               mapChannel(lum - 2.f / 3.f) * cols[7];
+    float rb = mapChannel(lum) * cols[2] + mapChannel(lum - 1.f / 3.f) * cols[5] +
+               mapChannel(lum - 2.f / 3.f) * cols[8];
+    float y, u, v;
+    fxAmToYuv(rr, rg, rb, &y, &u, &v);
+    u *= saturation + 1.f;
+    v *= saturation + 1.f;
+    fxAmToRgb(y, u, v, &rr, &rg, &rb);
+    // result * vec4(bscale x3, 1) * texColor.a, mixed over the pixel by alpha.
+    *outR = pr + (rr * bscale * pa - pr) * alpha;
+    *outG = pg + (rg * bscale * pa - pg) * alpha;
+    *outB = pb + (rb * bscale * pa - pb) * alpha;
+    *outA = pa;
+}
+
+void fxChannelmapAmMap(float pr, float pg, float pb, float pa, int srcR, int srcG, int srcB,
+                       int srcA, float* outR, float* outG, float* outB, float* outA) {
+    // AM's channelmap: the luminance is read off the PREMULTIPLIED rgb first (the
+    // def computes it before the divide), then un-premultiply (only when a > 0),
+    // re-pick, re-premultiply by the NEW alpha. The def's maskFactor is 1 over the
+    // layer's own picture.
+    const float lum = 0.2126f * pr + 0.7152f * pg + 0.0722f * pb;
+    float sr = pr, sg = pg, sb = pb;
+    if (pa > 0.f) { sr /= pa; sg /= pa; sb /= pa; }
+    auto pick = [sr, sg, sb, pa, lum](int src) {
+        switch (src) {
+            case 0: return sr; case 1: return sg; case 2: return sb;
+            case 3: return pa; case 4: return lum; case 5: return 0.f;
+            default: return 1.f;
+        }
+    };
+    const float na = pick(srcA);
+    *outR = pick(srcR) * na;
+    *outG = pick(srcG) * na;
+    *outB = pick(srcB) * na;
+    *outA = na;
+}
+
+void fxHalftoneLinesUv(float uvX, float uvY, float amount, float angleDeg, float phase,
+                       float aspect, float* outX, float* outY, float* absDist) {
+    // AM's halftonelines: dots' fold on the y axis only, the phase raw in the mod.
+    if (amount < 1e-6f) { *outX = uvX; *outY = uvY; *absDist = 0.f; return; }
+    const float rad = angleDeg * 0.0174533f;
+    const float cs = std::cos(rad), sn = std::sin(rad);
+    const float stx = uvX - 0.5f, sty = (uvY - 0.5f) / std::max(aspect, 1e-6f);
+    const float rx = stx * cs + sty * sn, ry = -stx * sn + sty * cs;   // st * rot
+    float dY = (ry * amount + phase) - std::floor(ry * amount + phase);
+    dY = dY < 0.5f ? -dY : 1.f - dY;
+    *absDist = std::fabs(dY);
+    dY /= amount;
+    const float ny = ry + dY;
+    const float c2 = std::cos(-rad), s2 = std::sin(-rad);
+    *outX = rx * c2 + ny * s2 + 0.5f;
+    *outY = (-rx * s2 + ny * c2) * std::max(aspect, 1e-6f) + 0.5f;
+}
+
+void fxHalftoneLinesMap(float sampR, float sampG, float sampB, float sampA, float absDist,
+                        float strength, const float c1[3], const float c2[3], float texA,
+                        float* outR, float* outG, float* outB, float* outA) {
+    const float lum = 0.2126f * sampR + 0.7152f * sampG + 0.0722f * sampB;
+    const float p = fxSstep(0.4f, 0.6f, lum + (1.f - sampA) + absDist + strength - 0.5f);
+    *outR = (c1[0] + (c2[0] - c1[0]) * p) * texA;
+    *outG = (c1[1] + (c2[1] - c1[1]) * p) * texA;
+    *outB = (c1[2] + (c2[2] - c1[2]) * p) * texA;
+    *outA = texA;
+}
+
+float fxTurbulence2AmField(float uvX, float uvY, float intensity, float scale, float evolution,
+                           float seed, int octaves, float offX, float offY, float parX,
+                           float parY, float stretchX, float stretchY, float aspect) {
+    // AM's turbulence2 main: the turbulence() sum at the def's st (offs / parallax /
+    // scale with the stretch components SWAPPED, verbatim), scaled by intensity; the
+    // caller clamps p + bias before mixing the colours, as the def does.
+    float stx = uvX * aspect + offX * -1.f / 500.f;
+    float sty = uvY + offY * 1.f / 500.f;
+    const float svx = scale * stretchY, svy = scale * stretchX;
+    const float p = fxTurbulence((stx - 0.5f) / svx + 0.5f, (sty - 0.5f) / svy + 0.5f, octaves,
+                                 parX * -1.f / 100.f, parY * 1.f / 100.f,
+                                 evolution + 7391.935f * seed) * intensity;
+    return p;
+}
+
+void fxTurbulence2AmMap(float tr, float tg, float tb, float ta, float colR, float colG,
+                        float colB, int blendMode, float alpha,
+                        float* outR, float* outG, float* outB, float* outA) {
+    // The field colour mixed per blend mode, as vec4(rgb, 1) * tex.a, mixed by alpha.
+    // (The bias clamp rides in the field twin's caller — see the style program, which
+    // clamps p before mixing the colours; here col* is already the mixed colour.)
+    float rr, rg, rb;
+    if (blendMode == 1) {
+        const float inv = 1.f / std::max(ta, 0.00001f);   // AM divides unguarded
+        rr = tr * inv * colR; rg = tg * inv * colG; rb = tb * inv * colB;
+    } else if (blendMode == 2) {
+        const float inv = 1.f / std::max(ta, 0.00001f);
+        rr = 1.f - (1.f - tr * inv) * (1.f - colR);
+        rg = 1.f - (1.f - tg * inv) * (1.f - colG);
+        rb = 1.f - (1.f - tb * inv) * (1.f - colB);
+    } else {
+        rr = colR; rg = colG; rb = colB;
+    }
+    *outR = tr + (rr * ta - tr) * alpha;
+    *outG = tg + (rg * ta - tg) * alpha;
+    *outB = tb + (rb * ta - tb) * alpha;
+    *outA = ta;
+}
+
+float fxChecker2AmP(float uvX, float uvY, float amount, float angleDeg, float posX, float posY,
+                    float stretchX, float stretchY, float aspect) {
+    // AM's checker2 (layer mode): centre, aspect, position, rotate by the def's matrix
+    // (mat2(sin, -cos, cos, sin) as columns), then the floored parity with the stretch
+    // components swapped between the axes, verbatim.
+    float stx = (uvX - 0.5f) * aspect - posX / 1200.f;
+    float sty = (uvY - 0.5f) - posY / 1200.f;
+    const float a = angleDeg * 0.0174533f;
+    const float s = std::sin(a), c = std::cos(a);
+    const float rx = s * stx + c * sty, ry = -c * stx + s * sty;
+    const float px = std::floor(rx * amount / stretchY);
+    const float py = std::floor(ry * amount / stretchX);
+    const float m = (px + py) - 2.f * std::floor((px + py) / 2.f);   // mod(px + py, 2)
+    return m <= 0.5f ? 1.f : 0.f;   // step(mod, 0.5)
+}
+
+void fxChecker2AmMap(float tr, float tg, float tb, float ta, float colR, float colG,
+                     float colB, float p, bool punchout,
+                     float* outR, float* outG, float* outB, float* outA) {
+    if (punchout) {
+        *outR = tr * (1.f - p); *outG = tg * (1.f - p); *outB = tb * (1.f - p);
+        *outA = ta * (1.f - p);
+        return;
+    }
+    // c = vec4(color * p, p); alpha = c.a * tex.a; out = c * alpha + tex * (1 - alpha).
+    const float alpha = p * ta;
+    *outR = colR * p * alpha + tr * (1.f - alpha);
+    *outG = colG * p * alpha + tg * (1.f - alpha);
+    *outB = colB * p * alpha + tb * (1.f - alpha);
+    *outA = p * alpha + ta * (1.f - alpha);
+}
+
+float fxMosaicAmSnap(float coord, float adjPhase, float size, float layerDim) {
+    // The def's centre-relative snap: coord - mod(coord + adjPhase / dim, size / dim).
+    const float tile = size / std::max(layerDim, 1.f);
+    const float c = coord - 0.5f;
+    const float m0 = c + adjPhase / std::max(layerDim, 1.f);
+    const float m = m0 - tile * std::floor(m0 / tile);
+    return c - m + 0.5f;
+}
+
+int fxMosaicAmSamples(float tilePx, int pass) {
+    if (pass == 0) return (int)std::min(100.01f, std::max(1.01f, tilePx / 2.f));
+    return (int)std::min(100.01f, std::max(1.01f, tilePx));
+}
+
+void fxMosaicAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                     const FxExtrudeSampler& s, float out[4]) {
+    // AM's mosaic, two passes: x-averages of the INPUT at the x-snapped coordinate,
+    // then y-averages of the H-PASS at the y-snapped coordinate — except the second
+    // pass's base tap, which reads the INPUT at the y-snapped position (the def's
+    // inputImg / hblur split, verbatim).
+    const float size = op.p[0];
+    auto hAt = [&](float x, float y, float o[4]) {
+        const float sx = fxMosaicAmSnap(x, -op.p[1], size, picW);
+        const int n = fxMosaicAmSamples(size, 0);
+        s.sample(s.ctx, 0, sx, y, o);
+        for (int i = 1; i < n; ++i) {
+            const float off = (size / picW) * ((float)i / (float)(n - 1) - 0.5f);
+            float t[4];
+            s.sample(s.ctx, 0, sx - off, y, t);
+            for (int k = 0; k < 4; ++k) o[k] += t[k];
+        }
+        for (int k = 0; k < 4; ++k) o[k] /= (float)n;
+    };
+    const float sy = fxMosaicAmSnap(ay, op.p[2], size, picH);
+    const int n = fxMosaicAmSamples(size, 1);
+    s.sample(s.ctx, 0, ax, sy, out);
+    for (int i = 1; i < n; ++i) {
+        const float off = (size / picH) * ((float)i / (float)(n - 1) - 0.5f);
+        float t[4];
+        hAt(ax, sy - off, t);
+        for (int k = 0; k < 4; ++k) out[k] += t[k];
+    }
+    for (int k = 0; k < 4; ++k) out[k] /= (float)n;
+}
+
+void fxGlowAmMap(float oR, float oG, float oB, float oA, float compR, float compG, float compB,
+                 float nearestIn, float nearestOut, float radius2, float hardness, float alpha,
+                 float colR, float colG, float colB, float colA, int blendMode,
+                 float* outR, float* outG, float* outB, float* outA) {
+    // AM's glow pass 1 tail: p runs from deep-inside (1 + pIn) to far-outside
+    // (0.5 - pOut); outColor fades to 0 as 1 - p crosses the hardness smoothstep, and
+    // the composite adds it behind the original. At p <= 0.0001 (AM's discard) the
+    // smoothstep is 1 and outColor is 0, so the identity falls out of the maths.
+    const float pIn = nearestIn / radius2, pOut = nearestOut / radius2;
+    const float p = 0.5f + pIn - pOut;
+    float br, bg, bb;
+    if (blendMode == 1) {
+        br = compR * colR; bg = compG * colG; bb = compB * colB;
+    } else if (blendMode == 2) {
+        br = 1.f - (1.f - compR) * (1.f - colR);
+        bg = 1.f - (1.f - compG) * (1.f - colG);
+        bb = 1.f - (1.f - compB) * (1.f - colB);
+    } else {
+        br = colR; bg = colG; bb = colB;
+    }
+    const float e0 = (1.f - 1.5f / radius2) * hardness;
+    const float oc = 1.f - fxSstep(e0, 1.f, 1.f - p);
+    const float ocr = br * alpha * oc, ocg = bg * alpha * oc, ocb = bb * alpha * oc;
+    const float oca = alpha * oc * (blendMode == 0 ? colA : 1.f);
+    const float w = 1.f - oA;
+    *outR = oR + ocr * w;
+    *outG = oG + ocg * w;
+    *outB = oB + ocb * w;
+    *outA = oA + oca * w;
+}
+
+int fxBoxSamples(float speed, bool symmetric) {
+    if (symmetric) return (int)std::min(150.01f, std::max(2.01f, speed));
+    return (int)std::min(100.01f, std::max(1.01f, speed));
+}
+
+namespace {
+// One boxblur2 pass of AM's defs (inner blur's host): the base tap plus n-1 taps at
+// velocity * (i / (n - 1) - 0.5), all divided by n. F is the source picture function.
+template <typename F>
+void boxBlur2Pass(const F& src, float u, float v, float velX, float velY, float picW, float picH,
+                  float o[4]) {
+    const float speed = std::sqrt((velX * picW) * (velX * picW) + (velY * picH) * (velY * picH));
+    const int n = fxBoxSamples(speed, false);
+    src(u, v, o);
+    for (int i = 1; i < n; ++i) {
+        const float f = (float)i / (float)(n - 1) - 0.5f;
+        float t[4];
+        src(u - velX * f, v - velY * f, t);
+        for (int k = 0; k < 4; ++k) o[k] += t[k];
+    }
+    for (int k = 0; k < 4; ++k) o[k] /= (float)n;
+}
+// One symmetric box pass (boxblur3 / feather): the base tap plus pairs at
+// +/- strengthNorm * i / (n - 1), all divided by 2n - 1.
+template <typename F>
+void boxSymPass(const F& src, float u, float v, bool horizontal, float strengthNorm,
+                float resDim, float o[4]) {
+    const int n = fxBoxSamples(strengthNorm * resDim, true);
+    src(u, v, o);
+    for (int i = 1; i < n; ++i) {
+        const float off = strengthNorm * (float)i / (float)(n - 1);
+        float t[4];
+        if (horizontal) { src(u + off, v, t); for (int k = 0; k < 4; ++k) o[k] += t[k]; src(u - off, v, t); }
+        else { src(u, v + off, t); for (int k = 0; k < 4; ++k) o[k] += t[k]; src(u, v - off, t); }
+        for (int k = 0; k < 4; ++k) o[k] += t[k];
+    }
+    const float d = (float)(2 * n - 1);
+    for (int k = 0; k < 4; ++k) o[k] /= d;
+}
+}  // namespace
+
+void fxInnerBlurAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                        const FxExtrudeSampler& s, float out[4]) {
+    // AM's innerblur: iter chains of boxblur2 (pass strength = strength / 4 / iter)
+    // composited back over the chain input as un-premultiplied colour at the input's
+    // alpha. Each chain's output feeds the next (the def's <iterations> element).
+    const float strength = op.p[0];
+    const int iter = std::min(6, std::max(1, (int)op.p[1]));
+    const float per = strength / 4.f / (float)iter;
+    using Fn = std::function<void(float, float, float*)>;
+    Fn cur = [&s](float u, float v, float* o) { s.sample(s.ctx, 0, u, v, o); };
+    for (int it = 0; it < iter; ++it) {
+        Fn base = cur;
+        Fn blur = [base, per, picW, picH](float u, float v, float* o) {
+            float tmp[4];
+            auto mid = [&base, per, picW, picH](float uu, float vv, float* oo) {
+                boxBlur2Pass(base, uu, vv, per, 0.f, picW, picH, oo);
+            };
+            boxBlur2Pass(mid, u, v, 0.f, -per, picW, picH, tmp);
+            for (int k = 0; k < 4; ++k) o[k] = tmp[k];
+        };
+        cur = [base, blur](float u, float v, float* o) {
+            float b[4], t[4];
+            blur(u, v, b);
+            base(u, v, t);
+            const float inv = 1.f / std::max(b[3], 0.0001f);   // AM guards only ~0
+            o[0] = b[0] * inv * t[3];
+            o[1] = b[1] * inv * t[3];
+            o[2] = b[2] * inv * t[3];
+            o[3] = t[3];
+        };
+    }
+    cur(ax, ay, out);
+}
+
+void fxBoxBlur3AmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                       const FxExtrudeSampler& s, float out[4]) {
+    // AM's boxblur3: the half-res symmetric averages, x then y (strength / 10, the
+    // speeds at the downsampled resolution). The copy pass reads the layer directly.
+    const float strength = op.p[0];
+    if (strength <= 0.0001f) { s.sample(s.ctx, 0, ax, ay, out); return; }
+    const float sn = strength / 10.f;
+    auto ds = [&s](float u, float v, float* o) { s.sample(s.ctx, 0, u, v, o); };
+    // The y pass runs over the x pass's picture; evaluate it as a function.
+    auto hAt = [&ds, sn, picW](float u, float v, float* o) { boxSymPass(ds, u, v, true, sn, picW / 2.f, o); };
+    boxSymPass(hAt, ax, ay, false, sn, picH / 2.f, out);
+}
+
+void fxFeatherAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]) {
+    // AM's feather: iter chains of the quarter-res symmetric averages (strength /
+    // 4 / iter); the output is the chain input times the blurred alpha squared.
+    const float strength = op.p[0];
+    if (strength <= 0.005f) { s.sample(s.ctx, 0, ax, ay, out); return; }
+    const int iter = std::min(5, std::max(1, (int)op.p[1]));
+    const float sn = strength / 4.f / (float)iter;
+    using Fn = std::function<void(float, float, float*)>;
+    Fn cur = [&s](float u, float v, float* o) { s.sample(s.ctx, 0, u, v, o); };
+    for (int it = 0; it < iter; ++it) {
+        Fn base = cur;
+        cur = [base, sn, picW, picH](float u, float v, float* o) {
+            auto hAt = [&base, sn, picW](float uu, float vv, float* oo) {
+                boxSymPass(base, uu, vv, true, sn, picW / 4.f, oo);
+            };
+            float r[4], t[4];
+            boxSymPass(hAt, u, v, false, sn, picH / 4.f, r);
+            base(u, v, t);
+            const float w = r[3] * r[3];
+            for (int k = 0; k < 4; ++k) o[k] = t[k] * w;
+        };
+    }
+    cur(ax, ay, out);
+}
+
+void fxElectricNoise(float x, float y, float out[2]) {
+    // AM's electricedges noise (McGuire): value noise with the SHARP interpolant.
+    auto hash = [](float px, float py, float o[2]) {
+        auto fr = [](float v) { return v - std::floor(v); };
+        const float d1 = px * 127.1f + py * 311.7f;
+        const float d2 = px * 269.5f + py * 183.3f;
+        o[0] = fr(std::sin(d1) * 43758.5453f);
+        o[1] = fr(std::sin(d2) * 43758.5453f);
+    };
+    const float ix = std::floor(x), iy = std::floor(y);
+    const float fx = x - ix, fy = y - iy;
+    float a[2], b[2], c[2], d[2];
+    hash(ix, iy, a); hash(ix + 1.f, iy, b); hash(ix, iy + 1.f, c); hash(ix + 1.f, iy + 1.f, d);
+    for (int k = 0; k < 2; ++k)
+        out[k] = (a[k] + (b[k] - a[k]) * fx) + (c[k] - a[k]) * fy * (1.f - fx) +
+                 (d[k] - b[k]) * fx * fy;
+}
+
+void fxElectricEdgesAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                            const FxExtrudeSampler& s, float out[4]) {
+    // AM's electricedges main pass, line by line (its `comp` input is dead in the def).
+    const float distance = op.p[0], thickness = op.p[1], complexity = op.p[2], disort = op.p[3];
+    const float alpha = op.p[6], glowAlpha = op.q[0], seed = op.q[1], evolution = op.q[2];
+    const float fill = op.q[3], maskStrength = op.q[4], maskEvolution = op.q[5], maskScale = op.q[6];
+    const float maskSeed = op.r[0];
+    float c1[3], c2[3], maskCol[4];
+    auto unpackColor = [](float packed, float rgb[3]) {
+        const float pk = std::floor(packed + 0.5f);
+        rgb[0] = std::fmod(std::floor(pk / 65536.f), 256.f) / 255.f;
+        rgb[1] = std::fmod(std::floor(pk / 256.f), 256.f) / 255.f;
+        rgb[2] = std::fmod(pk, 256.f) / 255.f;
+    };
+    unpackColor(op.p[4], c1);
+    unpackColor(op.p[5], c2);
+    unpackColor(op.r[1], maskCol);
+    maskCol[3] = 1.f;   // the corpus's mask colours are opaque (the packed slot drops alpha)
+    const float aspect = picW / std::max(picH, 1.f);
+    float stx = (ax - 0.5f) * aspect, sty = ay - 0.5f;
+    const float esx = 3.f * evolution + 62.5587f * seed, esy = 3.f * evolution + 137.1935f * seed;
+    auto layer = [&](float ang, float mul, float o[2]) {
+        const float cs = std::cos(ang), sn = std::sin(ang);
+        // st * rot2d(ang) (AM's row-vector product): (c x + s y, -s x + c y)
+        const float rx = cs * stx + sn * sty, ry = -sn * stx + cs * sty;
+        fxElectricNoise(esx + rx * mul * complexity, esy + ry * mul * complexity, o);
+    };
+    float l1[2], l2[2], l3[2], l4[2];
+    layer(0.1f, 2.f, l1); layer(0.3f, 4.f, l2); layer(1.42f, 8.f, l3); layer(2.534f, 16.f, l4);
+    const float offX = std::fabs(std::fabs(l1[0] - l2[0]) - std::fabs(l3[0] - l4[0]));
+    const float offY = std::fabs(std::fabs(l1[1] - l2[1]) - std::fabs(l3[1] - l4[1]));
+    const float offLen = std::sqrt(offX * offX + offY * offY);
+    float tex[4], mid[4], up[4], left[4];
+    s.sample(s.ctx, 0, ax, ay, tex);
+    s.sample(s.ctx, 1, ax, ay, mid);
+    s.sample(s.ctx, 1, ax, ay - 4.f / std::max(picH, 1.f), up);
+    s.sample(s.ctx, 1, ax - 4.f / std::max(picW, 1.f), ay, left);
+    const float dx = mid[3] - left[3], dy = mid[3] - up[3];
+    const float dl = std::sqrt(dx * dx + dy * dy);
+    const float nx = dl > 1e-6f ? dx / dl : 0.f, ny = dl > 1e-6f ? dy / dl : 0.f;
+    float blurred[4];
+    s.sample(s.ctx, 1, ax + nx * offLen * (disort * 0.055f), ay + ny * offLen * (disort * 0.055f),
+             blurred);
+    const float turbBase = fxTurbulence((stx - 0.5f) / maskScale + 0.5f,
+                                        (sty - 0.5f) / maskScale + 0.5f, 3, 0.f, 0.f,
+                                        maskEvolution + 91.935f * maskSeed);
+    const float turb = fxSstep(maskStrength - 0.22f, maskStrength - 0.12f, turbBase);
+    const float suppress = fxSstep(maskStrength - 0.12f, maskStrength - 0.02f, turbBase);
+    const float ttint = fxSstep(maskStrength - 0.02f, maskStrength - 0.001f, turbBase);
+    const float p = blurred[3];
+    const float dist = 1.f - (distance * 0.4f + 0.5f);
+    const float eBase = 1.f - thickness * 0.9f * suppress;
+    const float win = fxSstep(0.01f, 0.12f, p) * fxSstep(1.f, 0.999f, p);
+    float pp = std::pow(1.f - std::fabs(p - dist), eBase * 30.f) * win;
+    float qq = std::pow(1.f - std::fabs(p - dist), eBase * 25.f) * win;
+    if (op.r[2] > 0.5f) {
+        // Contours: st2 is st itself (the aspect-scaled centred position), y nudged
+        // by the blurred alpha, rotated by the offs-weighted angle — as the def writes.
+        float s2x = stx, s2y = sty;
+        s2y += mid[3] * 0.1f;
+        const float ca = offLen * disort * 1.1f * 0.2f + op.r[5] * 0.0174533f;
+        const float cs = std::cos(ca), sn = std::sin(ca);
+        const float rx = cs * s2x + sn * s2y, ry = -sn * s2x + cs * s2y;
+        s2x = rx; s2y = ry;
+        s2y += mid[3] * 0.1f;
+        float lines = std::sin((s2y + op.r[4] + offY * disort * 0.015f) * op.r[3]);
+        lines = std::min(1.f, std::max(0.f, lines)) * fxSstep(0.1f, 0.2f, mid[3]);
+        pp += std::pow(lines, eBase * 30.f);
+        qq += std::pow(lines, eBase * 25.f);
+    }
+    float c[4];
+    c[0] = std::pow(pp, c1[0] > 0.f ? 1.f / c1[0] : 1e30f) * alpha;
+    c[1] = std::pow(pp, c1[1] > 0.f ? 1.f / c1[1] : 1e30f) * alpha;
+    c[2] = std::pow(pp, c1[2] > 0.f ? 1.f / c1[2] : 1e30f) * alpha;
+    c[3] = pp * alpha;
+    float g[4];
+    g[0] = std::pow(qq, c2[0] > 0.f ? 1.f / c2[0] : 1e30f) * glowAlpha;
+    g[1] = std::pow(qq, c2[1] > 0.f ? 1.f / c2[1] : 1e30f) * glowAlpha;
+    g[2] = std::pow(qq, c2[2] > 0.f ? 1.f / c2[2] : 1e30f) * glowAlpha;
+    g[3] = qq * glowAlpha;
+    for (int k = 0; k < 4; ++k) c[k] = std::min(1.f, std::max(0.f, c[k] + g[k]));
+    for (int k = 0; k < 4; ++k) c[k] *= (maskCol[k] * (1.f - ttint) + ttint) * turb;
+    for (int k = 0; k < 4; ++k) out[k] = tex[k] * fill * (1.f - c[3]) + c[k];
+}
+
+void fxSmoothEdgesAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                          const FxExtrudeSampler& s, float out[4]) {
+    // AM's smoothedges: the directional streak composites (premultiplied over, the
+    // accumulation direction flipping with the tap's side), x/y passes at acPass 1
+    // reading the input, at acPass 2 reading HSTREAK (the def's y-pass quirk kept),
+    // then the final alpha cut against the gaussian-blurred copy.
+    const float strength = op.p[0];
+    using Fn = std::function<void(float, float, float*)>;
+    Fn input = [&s](float u, float v, float* o) { s.sample(s.ctx, 0, u, v, o); };
+    auto streak = [](const Fn& src, bool horizontal, float dist, float picDim,
+                     float u, float v, float* o) {
+        const int n = (int)std::min(100.01f, std::max(1.01f, dist * picDim));
+        float c[4] = {0.f, 0.f, 0.f, 0.f};
+        for (int i = 1; i < n; ++i) {
+            const float off = dist * ((float)i / (float)(n - 1) - 0.5f);
+            float tc[4];
+            if (horizontal) src(u + off, v, tc); else src(u, v + off, tc);
+            if (off < 0.f) { for (int k = 0; k < 4; ++k) c[k] = c[k] * (1.f - tc[3]) + tc[k]; }
+            else { const float w = 1.f - c[3]; for (int k = 0; k < 4; ++k) c[k] = tc[k] * w + c[k]; }
+        }
+        for (int k = 0; k < 4; ++k) o[k] = c[k];
+    };
+    auto composite = [](const float a[4], const float b[4], float o[4]) {
+        for (int k = 0; k < 4; ++k) o[k] = a[k] * (1.f - b[3]) + b[k];
+    };
+    const float dist = strength * 0.05f;
+    Fn hpass = [&](float u, float v, float* o) {
+        float xs[4], ys[4], t[4], base[4];
+        streak(input, true, dist, picW, u, v, xs);
+        streak(input, false, dist, picH, u, v, ys);
+        composite(xs, ys, t);
+        input(u, v, base);
+        composite(t, base, o);
+    };
+    Fn vpass = [&](float u, float v, float* o) {
+        float xs[4], ys[4], t[4], base[4];
+        streak(hpass, true, dist, picW, u, v, xs);
+        streak(hpass, false, dist, picH, u, v, ys);
+        composite(xs, ys, t);
+        input(u, v, base);
+        composite(t, base, o);
+    };
+    float base[4];
+    if (op.p[1] > 0.5f) input(ax, ay, base); else vpass(ax, ay, base);
+    float bl[4];
+    s.sample(s.ctx, 1, ax, ay, bl);
+    const float dd = 0.05f / ((1.f + strength) * (1.f + strength));
+    const float w = fxSstep(0.5f - dd, 0.5f + dd, bl[3]);
+    for (int k = 0; k < 4; ++k) out[k] = base[k] * w;
 }
 
 // ---- Extrude / Extrude Flat (v173) ----

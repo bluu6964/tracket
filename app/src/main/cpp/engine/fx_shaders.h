@@ -4,13 +4,16 @@
 //   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
 //               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize,
 //               15 colour tune (Alight), 16 solid colour (Alight), 17 replace colour (Alight), 18 colour balance (Alight), 19 colour temperature (Alight),
-//               20 colour tint (Alight), 21 colour hot (Alight), 22 colorize (Alight), 23 highlights & shadows (Alight), 24 spot colour (Alight)
+//               20 colour tint (Alight), 21 colour hot (Alight), 22 colorize (Alight), 23 highlights & shadows (Alight), 24 spot colour (Alight),
+//               25 threshold (Alight), 26 spectral map (Alight)
 //   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake,
 //               11 Alight mirror (whole-layer flip + blend), 12 stretch segment (Alight), 13 swirl (Alight), 14 halftone dots (Alight), 15 offset (Alight),
 //               16 radial wipe (Alight), 17 hex shift (Alight), 18 wave warp 2 (Alight), 19 circular ripple (Alight), 20 stretch (Alight), 21 squeeze (Alight),
-//               22 fractal warp (Alight), 23 stripes (Alight), 24 turbulent displace 3 (Alight), 25 roughen edges (Alight), 26 bend warp (Alight)
+//               22 fractal warp (Alight), 23 stripes (Alight), 24 turbulent displace 3 (Alight), 25 roughen edges (Alight), 26 bend warp (Alight),
+//               27 halftone lines (Alight)
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare,
-//               14 find edges (Alight), 15 dissolve (Alight), 16 simple stars (Alight), 17 dots (Alight), 18 ridges (Alight)
+//               14 find edges (Alight), 15 dissolve (Alight), 16 simple stars (Alight), 17 dots (Alight), 18 ridges (Alight),
+//               19 clouds / turbulence 2 (Alight), 20 checkerboard 2 (Alight)
 // All of them work on the premultiplied picture the layer shader uses (top of the picture at v = 1), take the raw slider
 // values in uP[0..6] (documented at FxType in fx_plan.h) and write a premultiplied picture. Texture reads inside loops
 // and branches use textureLod (the pictures have no mip levels), so there are no undefined derivatives.
@@ -368,6 +371,12 @@ float amSstep(float e0, float e1, float x) {
 vec3 amHsv(float hDeg, float s, float v) {
     return v * mix(vec3(1.0), hueRgb(hDeg), s);
 }
+// Spectral Map's channel ramp (AM's spectralmap mapChannel): a triangle over the
+// wrapped phase, floored by f. fxSpectralmapAmMap in fx_plan.cpp is its twin.
+float amMapChannel(float p, float f) {
+    float t = mod(p + 10.0, 1.0);
+    return clamp(abs(t - 0.5) * 4.0 - f, 0.0, 1.0);
+}
 // hue of a colour in degrees 0..360 (0 for a grey)
 float hueOf(vec3 c) {
     float mx = max(c.r, max(c.g, c.b));
@@ -715,6 +724,50 @@ void main() {
         desatYuv.yz *= uP[3] / 2.0;
         vec3 desat = desatYuv * yuv2rgb;
         o = mix(desat, c.rgb, p) / c.a;
+    } else if (uMode == 25) {
+        // v175: Alight's Threshold (defs-batch7), verbatim: the mask p from the luma of
+        // the PREMULTIPLIED pixel (c.rgb as sampled), AM's feather floor 0.00196 and
+        // the (1.003 + 2f) recentring included; uP = (threshold, feather, invert,
+        // blend mode 0 mask / 1 multiply / 2 screen). The result is divided by c.a
+        // like every AM mode here, so a translucent pixel's mask clamps to its alpha
+        // instead of AM's overbright write; opaque pixels (the corpus) are exact.
+        // fxThresholdAmMap in fx_plan.cpp is the twin.
+        float lum = dot(c.rgb, LW);
+        float f = max(min(uP[1] * 0.25, abs(0.5 - uP[0])), 0.00196);
+        float t = (uP[0] - 0.5) * (1.003 + 2.0 * f) + 0.5;
+        float p = smoothstep(t - f, t + f, lum);
+        if (uP[2] > 0.5) p = 1.0 - p;
+        vec3 r = vec3(p);
+        if (uP[3] > 1.5) r = 1.0 - (1.0 - c.rgb) * (1.0 - p);
+        else if (uP[3] > 0.5) r = c.rgb * p;
+        o = r / c.a;
+    } else if (uMode == 26) {
+        // v175: Alight's Spectral Map (defs-batch7), verbatim: a three-colour ramp
+        // over the premultiplied luma (repeat + phase, reversed on request),
+        // saturation through AM's YUV matrices, the result scaled by the luma when
+        // scale-brightness is on, premultiplied by the pixel alpha and mixed over
+        // the pixel by alpha. uP = (phase, repeat, alpha, squeeze, saturation,
+        // reverse, scale brightness); uQ[0..2] pack the red / green / blue colours
+        // 0xRRGGBB. fxSpectralmapAmMap in fx_plan.cpp is the twin.
+        mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+        mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+        float lum0 = dot(c.rgb, LW);
+        float bscale = uP[6] > 0.5 ? lum0 : 1.0;
+        float lum = (uP[5] > 0.5 ? 1.0 - lum0 : lum0) * uP[1] + uP[0];
+        float f = mix(0.333, 0.1, uP[3]);
+        float pkR = floor(clamp(uQ[0], 0.0, 16777215.0) + 0.5);
+        float pkG = floor(clamp(uQ[1], 0.0, 16777215.0) + 0.5);
+        float pkB = floor(clamp(uQ[2], 0.0, 16777215.0) + 0.5);
+        vec3 cR = vec3(mod(floor(pkR / 65536.0), 256.0), mod(floor(pkR / 256.0), 256.0), mod(pkR, 256.0)) / 255.0;
+        vec3 cG = vec3(mod(floor(pkG / 65536.0), 256.0), mod(floor(pkG / 256.0), 256.0), mod(pkG, 256.0)) / 255.0;
+        vec3 cB = vec3(mod(floor(pkB / 65536.0), 256.0), mod(floor(pkB / 256.0), 256.0), mod(pkB, 256.0)) / 255.0;
+        vec3 res = amMapChannel(lum, f) * cR + amMapChannel(lum - 1.0 / 3.0, f) * cG
+                 + amMapChannel(lum - 2.0 / 3.0, f) * cB;
+        res = res * rgb2yuv;
+        res.yz *= uP[4] + 1.0;
+        res = res * yuv2rgb;
+        vec4 rp = vec4(res * bscale * c.a, c.a);
+        o = (c + (rp - c) * uP[2]).rgb / c.a;
     }
     o = clamp(o + amDither(), 0.0, 1.0);
     oColor = vec4(o * c.a, c.a);
@@ -734,6 +787,7 @@ uniform int uFrame;
 uniform int uMode;
 uniform float uP[7];
 uniform float uQ[7];
+uniform float uR[7];
 in vec2 vUv;
 out vec4 oColor;
 
@@ -1388,6 +1442,41 @@ void main() {
             ? textureLod(uTex, suv, 0.0) : vec4(0.0);
         return;
     }
+    if (uMode == 27) {
+        // v175: Halftone Lines (Alight Motion's halftonelines, its recovered shader):
+        // halftone dots' sibling — the cell fold runs on the rotated y axis only, the
+        // band distance is the scalar fold, and the phase enters the mod RAW (its
+        // spinner range is -1000..1000, not a percent). uP: amount (AM units),
+        // strength (AM 0..1), angle (deg), phase (raw), colour 1 / colour 2 packed
+        // 0xRRGGBB. The same maths lives in fx_plan.cpp (fxHalftoneLinesUv /
+        // fxHalftoneLinesMap).
+        float amount = clamp(uP[0], 0.0, 500.0);
+        vec4 tex = textureLod(uTex, vUv, 0.0);
+        if (amount < 0.01) { oColor = tex; return; }   // AM would divide by ~0; a no-op instead
+        float rad = uP[2] * 0.0174533;
+        mat2 rot = mat2(cos(rad), -sin(rad), sin(rad), cos(rad));
+        mat2 invrot = mat2(cos(-rad), -sin(-rad), sin(-rad), cos(-rad));
+        vec2 st = vUv - 0.5;
+        st.y *= (1.0 / uAspect);
+        st = st * rot;
+        float distY = mod(st.y * amount + uP[3], 1.0);
+        if (distY < 0.5) distY = -distY; else distY = 1.0 - distY;
+        float absDist = abs(distY);
+        st.y += distY / amount;
+        st = st * invrot;
+        st.y /= (1.0 / uAspect);
+        st += 0.5;
+        vec4 samp = (all(greaterThanEqual(st, vec2(0.0))) && all(lessThanEqual(st, vec2(1.0))))
+            ? textureLod(uTex, st, 0.0) : vec4(0.0);
+        float lum = dot(samp.rgb, vec3(0.2126, 0.7152, 0.0722));
+        float p = smoothstep(0.4, 0.6, lum + (1.0 - samp.a) + absDist + uP[1] - 0.5);
+        float pk1 = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
+        float pk2 = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
+        vec3 c1 = vec3(mod(floor(pk1 / 65536.0), 256.0), mod(floor(pk1 / 256.0), 256.0), mod(pk1, 256.0)) / 255.0;
+        vec3 c2 = vec3(mod(floor(pk2 / 65536.0), 256.0), mod(floor(pk2 / 256.0), 256.0), mod(pk2, 256.0)) / 255.0;
+        oColor = vec4(mix(c1, c2, p), 1.0) * tex.a;
+        return;
+    }
     vec2 p = toP(vUv);
     vec2 q = p;
     vec2 qr = q, qb = q;  // the red / blue sample positions of the lens distortion colour fringes
@@ -1542,6 +1631,7 @@ uniform int uFrame;
 uniform int uMode;
 uniform float uP[7];
 uniform float uQ[7];
+uniform float uR[7];
 in vec2 vUv;
 out vec4 oColor;
 
@@ -1698,6 +1788,20 @@ float amRidge(float h) {
     h = abs(h);
     h = 0.9 - h;
     return h * h;
+}
+// AM's turbulence(): the plain octave sum of |snoise| (ridges' unfolded sibling;
+// the warp program carries the same helper). fxTurbulence in fx_plan.cpp is the twin.
+float amTurbulence(vec2 st, int octaves, vec2 parallax, float evolution) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 9; i++) {
+        if (i >= octaves) break;
+        value += amplitude * abs(amSnoise3(vec3(st, evolution)));
+        st *= 2.0;
+        st += parallax;
+        amplitude *= 0.5;
+    }
+    return value;
 }
 float amRidgedMF(vec2 p, int octaves, vec2 parallax, float evo) {
     float sum = 0.0;
@@ -2154,6 +2258,54 @@ void main() {
         float p = amRidgedMF(arg, oct, par, uP[2]) * uP[0];
         vec4 rcolor = vec4(mix(amUnpackColor(uP[5]), amUnpackColor(uP[6]), p), 1.0) * c0.a;
         oColor = rcolor + c0 * (1.0 - rcolor.a);
+    } else if (uMode == 19) {
+        // v175: Turbulence / Clouds (Alight Motion's turbulence2, its recovered
+        // shader): the plain turbulence sum (ridges' unfolded sibling) mixed between
+        // two colours, composed per blend mode and mixed over the layer by alpha.
+        // uP: intensity, scale, evolution, seed, colours 1/2 packed 0xRRGGBB, blend
+        // mode; uQ: offs x / y, parallax x / y, stretch x / y (SWAPPED into the scale
+        // vector, verbatim), bias; uR: alpha, octaves. fxTurbulence2AmField /
+        // fxTurbulence2AmMap in fx_plan.cpp are the twins.
+        vec2 st = vUv;
+        st.x *= uAspect;
+        st += vec2(uQ[0], uQ[1]) * vec2(-1.0, 1.0) / 500.0;
+        vec2 par = vec2(uQ[2], uQ[3]) * vec2(-1.0, 1.0) / 100.0;
+        vec2 scaleVec = vec2(uP[1] * uQ[5], uP[1] * uQ[4]);
+        int oct = int(clamp(uR[1], 1.0, 9.0) + 0.5);
+        float p = amTurbulence((st - 0.5) / scaleVec + 0.5, oct, par, uP[2] + 7391.935 * uP[3]) * uP[0];
+        p = clamp(p + uQ[6], 0.0, 1.0);
+        vec3 rcolor = mix(amUnpackColor(uP[4]), amUnpackColor(uP[5]), p);
+        vec3 res = rcolor;
+        int bm = int(uP[6] + 0.5);
+        if (bm == 1) res = (c0.rgb / max(c0.a, 0.00001)) * rcolor;
+        else if (bm == 2) res = 1.0 - (1.0 - c0.rgb / max(c0.a, 0.00001)) * (1.0 - rcolor);
+        vec4 result = vec4(res, 1.0) * c0.a;
+        oColor = mix(c0, result, clamp(uR[0], 0.0, 1.0));
+    } else if (uMode == 20) {
+        // v175: Checker (Alight Motion's checker2, its recovered shader, layer mode):
+        // the floored parity of the centred, aspect-scaled, position-shifted, rotated
+        // position — the stretch components divide the OPPOSITE axes, verbatim — then
+        // AM's composite (the colour weighted by p * tex.a; punchout erases the p
+        // cells). uP: amount, angle (deg), colour packed 0xRRGGBB, punch out, screen
+        // space (carried; the pattern anchors to the layer's rect either way here),
+        // position x / y; uQ: stretch x / y. fxChecker2AmP / fxChecker2AmMap in
+        // fx_plan.cpp are the twins.
+        vec2 st = vUv - 0.5;
+        st.x *= uAspect;
+        st -= vec2(uP[5], uP[6]) / 1200.0;
+        float ang = uP[1] * 0.0174533;
+        mat2 m = mat2(sin(ang), -cos(ang), cos(ang), sin(ang));
+        st = m * st;
+        float px = floor(st.x * uP[0] / uQ[1]);
+        float py = floor(st.y * uP[0] / uQ[0]);
+        float p = step(mod(px + py, 2.0), 0.5);
+        if (uP[3] > 0.5) {
+            oColor = c0 * (1.0 - p);
+        } else {
+            vec4 c = vec4(amUnpackColor(uP[2]) * p, p);
+            float alpha = c.a * c0.a;
+            oColor = c * alpha + (c0 * (1.0 - alpha));
+        }
     } else {
         // Lens flare: a bright core, halo, horizontal streak and ghost discs along the line through the picture's centre.
         vec2 cen = vec2(uP[0] / 100.0, 1.0 - uP[1] / 100.0);

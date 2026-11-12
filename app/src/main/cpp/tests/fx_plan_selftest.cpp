@@ -1130,6 +1130,191 @@ int main() {
         CHECK(!fxIsIdentity(go), "edge glow is never identity");
         CHECK(fxShaderOf(FX_EDGE_GLOW_AM).group == FXG_NONE, "edge glow is a dedicated pass");
     }
+    // ---- Tier 4 (build 129): the def-backed round-2 ids; pins are hand-computed
+    // from the staged defs (hunt-staging/defs-batch7). ----
+    {
+        float oR, oG, oB, oA;
+        // Threshold: luma 0.8 over threshold 0.71 lands past the band (t = 0.7115);
+        // 0.2 under it; the band's exact midpoint at threshold 0.5 returns 0.5;
+        // invert flips.
+        fxThresholdAmMap(0.8f, 0.8f, 0.8f, 1.f, 0.71f, 0.f, false, 0, &oR, &oG, &oB, &oA);
+        CHECK(oR == 1.f, "threshold above -> 1 (%g)", oR);
+        fxThresholdAmMap(0.2f, 0.2f, 0.2f, 1.f, 0.71f, 0.f, false, 0, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f, "threshold below -> 0 (%g)", oR);
+        fxThresholdAmMap(0.5f, 0.5f, 0.5f, 1.f, 0.5f, 0.f, false, 0, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.5f) < 1e-4f, "threshold midpoint (%g)", oR);
+        fxThresholdAmMap(0.8f, 0.8f, 0.8f, 1.f, 0.71f, 0.f, true, 0, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f, "threshold invert (%g)", oR);
+        // Spectral map: the channel curve and the full map of (0.2, 0.4, 0.6) with
+        // the def's RGB colours (lum 0.37192 -> r 0.179, g 1, b 0.488; the twin
+        // keeps the pixel's own alpha, like every colour-program mode).
+        CHECK(std::fabs(fxSpectralmapAmMapChannel(0.25f, 1.f / 3.f) - 2.f / 3.f) < 1e-4f,
+              "spectral channel curve");
+        CHECK(fxSpectralmapAmMapChannel(0.5f, 1.f / 3.f) == 0.f, "spectral channel peak");
+        const float cols[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+        fxSpectralmapAmMap(0.2f, 0.4f, 0.6f, 1.f, 0.f, 1.f, 1.f, 0.f, 0.f, false, false,
+                           cols, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.179f) < 0.002f && std::fabs(oG - 1.f) < 0.002f &&
+              std::fabs(oB - 0.488f) < 0.002f && std::fabs(oA - 1.f) < 0.004f,
+              "spectral map (%g %g %g %g)", oR, oG, oB, oA);
+        // Channel map: constants / luma picks, re-premultiplied by the new alpha.
+        // The luma is of the PREMULTIPLIED rgb (0.37192), read before the divide.
+        fxChannelmapAmMap(0.2f, 0.4f, 0.6f, 0.8f, 6, 5, 4, 3, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.8f) < 1e-4f && oG == 0.f &&
+              std::fabs(oB - 0.8f * 0.37192f) < 1e-3f && std::fabs(oA - 0.8f) < 1e-4f,
+              "channelmap picks (%g %g %g %g)", oR, oG, oB, oA);
+        fxChannelmapAmMap(0.2f, 0.4f, 0.6f, 0.f, 0, 1, 2, 3, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f && oA == 0.f, "channelmap transparent stays transparent");
+        // Halftone lines: the displaced sample at a half-band point moves half a
+        // band; the colour decision mixes at the band fold.
+        float ux, uy, ad;
+        fxHalftoneLinesUv(0.5f, 0.605f, 100.f, 0.f, 0.f, 1.f, &ux, &uy, &ad);
+        CHECK(std::fabs(ux - 0.5f) < 1e-4f && std::fabs(uy - 0.61f) < 1e-4f &&
+              std::fabs(ad - 0.5f) < 1e-4f, "halftone lines uv (%g %g %g)", ux, uy, ad);
+        const float c1[3] = {0, 0, 0}, c2[3] = {1, 0.27f, 0.27f};
+        fxHalftoneLinesMap(0.f, 0.f, 0.f, 1.f, 0.5f, 0.5f, c1, c2, 1.f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.5f) < 1e-4f, "halftone lines mid mix (%g)", oR);
+        fxHalftoneLinesMap(0.9f, 0.9f, 0.9f, 0.f, 0.f, 0.5f, c1, c2, 0.8f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.8f) < 1e-4f, "halftone lines outside -> colour 2 (%g)", oR);
+        // Turbulence 2: the field is deterministic and bounded; alpha 0 composes to
+        // the pixel itself; blend 0 paints the field colour at the pixel's alpha.
+        float f1 = fxTurbulence2AmField(0.3f, 0.7f, 1.f, 1.f, 0.f, 0.f, 6,
+                                        0.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f);
+        float f2 = fxTurbulence2AmField(0.3f, 0.7f, 1.f, 1.f, 0.f, 0.f, 6,
+                                        0.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f);
+        CHECK(f1 == f2 && f1 >= 0.f && f1 < 2.f, "turbulence2 field (%g)", f1);
+        fxTurbulence2AmMap(0.2f, 0.4f, 0.6f, 0.8f, 0.5f, 0.5f, 0.5f, 0, 0.f, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.2f && oA == 0.8f, "turbulence2 alpha 0 is the pixel");
+        fxTurbulence2AmMap(0.2f, 0.4f, 0.6f, 0.8f, 0.5f, 0.5f, 0.5f, 0, 1.f, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.4f) < 1e-4f && std::fabs(oA - 0.8f) < 1e-4f,
+              "turbulence2 blend 0 premultiplies (%g %g)", oR, oA);
+        // Checker 2: parity flips between neighbouring cells; the compose is the
+        // def's c*alpha + tex*(1-alpha); punchout erases the coloured cells.
+        CHECK(fxChecker2AmP(0.1f, 0.1f, 10.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f) == 1.f, "checker2 cell on");
+        CHECK(fxChecker2AmP(0.2f, 0.1f, 10.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f) == 0.f, "checker2 cell off");
+        fxChecker2AmMap(0.5f, 0.5f, 0.5f, 0.8f, 0.f, 0.f, 0.f, 1.f, false, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.1f) < 1e-4f && std::fabs(oA - 0.96f) < 1e-4f,
+              "checker2 compose (%g %g)", oR, oA);
+        fxChecker2AmMap(0.5f, 0.5f, 0.5f, 0.8f, 0.f, 0.f, 0.f, 1.f, true, &oR, &oG, &oB, &oA);
+        CHECK(oA == 0.f, "checker2 punchout (%g)", oA);
+        // Mosaic: the snap, the per-pass sample counts, and the gradient average.
+        // The def's average is asymmetric, verbatim: the base tap sits at the
+        // snapped tile edge and the loop taps centre on that same point, so a
+        // linear field averages to 0.496 / 0.495 here, not the tile centre.
+        CHECK(std::fabs(fxMosaicAmSnap(0.055f, 0.f, 10.f, 1000.f) - 0.05f) < 1e-5f, "mosaic snap");
+        CHECK(fxMosaicAmSamples(10.f, 0) == 5 && fxMosaicAmSamples(10.f, 1) == 10,
+              "mosaic sample counts");
+        auto grad = [](const void*, int, float u, float v, float out[4]) {
+            out[0] = u; out[1] = v; out[2] = 0.f; out[3] = 1.f;
+        };
+        FxExtrudeSampler GS; GS.sample = grad; GS.ctx = nullptr;
+        FxOp mo{}; mo.type = FX_MOSAIC_AM; mo.p[0] = 10.f;
+        float mout[4];
+        fxMosaicAmPixel(mo, 0.55f, 0.55f, 100, 100, GS, mout);
+        CHECK(std::fabs(mout[0] - 0.496f) < 0.002f && std::fabs(mout[1] - 0.495f) < 0.002f,
+              "mosaic gradient average (%g %g)", mout[0], mout[1]);
+        // Glow: deep inside (nearestIn = radius) the colour lands at full alpha;
+        // far outside it vanishes and the pixel is its own.
+        fxGlowAmMap(0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 100.f, 0.f, 100.f, 0.5f, 0.75f,
+                    1.f, 1.f, 1.f, 1.f, 0, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.75f) < 1e-4f && std::fabs(oA - 0.75f) < 1e-4f,
+              "glow inside (%g %g)", oR, oA);
+        fxGlowAmMap(0.2f, 0.2f, 0.2f, 1.f, 0.f, 0.f, 0.f, 0.f, 100.f, 100.f, 0.5f, 0.75f,
+                    1.f, 1.f, 1.f, 1.f, 0, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.2f && oA == 1.f, "glow far outside is the pixel (%g %g)", oR, oA);
+        // Box sample counts.
+        CHECK(fxBoxSamples(0.5f, false) == 1 && fxBoxSamples(30.7f, false) == 30 &&
+              fxBoxSamples(30.7f, true) == 30 && fxBoxSamples(500.f, true) == 150 &&
+              fxBoxSamples(1.2f, true) == 2, "box sample counts");
+        // The blur-family twins on a constant field: inner blur and box blur 3 are
+        // the identity (the composite un-premultiplies and re-applies the alpha);
+        // feather squares the averaged alpha.
+        auto konst = [](const void*, int, float, float, float out[4]) {
+            out[0] = 0.2f; out[1] = 0.4f; out[2] = 0.6f; out[3] = 0.8f;
+        };
+        FxExtrudeSampler KS; KS.sample = konst; KS.ctx = nullptr;
+        FxOp ib{}; ib.type = FX_INNER_BLUR_AM; ib.p[0] = 0.4f; ib.p[1] = 2.f;
+        fxInnerBlurAmPixel(ib, 0.3f, 0.3f, 16, 16, KS, mout);
+        CHECK(std::fabs(mout[0] - 0.2f) < 1e-4f && std::fabs(mout[3] - 0.8f) < 1e-4f,
+              "inner blur constant field (%g %g)", mout[0], mout[3]);
+        FxOp bb{}; bb.type = FX_BOX_BLUR3_AM; bb.p[0] = 1.589f;
+        fxBoxBlur3AmPixel(bb, 0.3f, 0.3f, 16, 16, KS, mout);
+        CHECK(std::fabs(mout[0] - 0.2f) < 1e-4f && std::fabs(mout[3] - 0.8f) < 1e-4f,
+              "box blur 3 constant field (%g %g)", mout[0], mout[3]);
+        FxOp fe{}; fe.type = FX_FEATHER_AM; fe.p[0] = 0.15f; fe.p[1] = 1.f;  // one round: one a^2 composite
+        fxFeatherAmPixel(fe, 0.3f, 0.3f, 16, 16, KS, mout);
+        CHECK(std::fabs(mout[3] - 0.512f) < 1e-3f && std::fabs(mout[0] - 0.128f) < 1e-3f,
+              "feather alpha squared (%g %g)", mout[0], mout[3]);
+        // Electric edges: no edge, no glow — deep inside and far outside both
+        // return the pixel (the smoothstep gates at both ends of the alpha).
+        FxOp ee{}; ee.type = FX_ELECTRIC_EDGES_AM;
+        ee.p[0] = 0.613f; ee.p[1] = 0.526f; ee.p[2] = 3.15f; ee.p[3] = -0.7f;
+        ee.p[4] = 16711812.f; ee.p[5] = 16777215.f; ee.p[6] = 1.f;
+        ee.q[0] = 0.5f; ee.q[3] = 1.f; ee.q[6] = 1.f; ee.r[5] = 20.f; ee.r[6] = 0.42f;
+        auto edgeSamp = [](const void*, int tex, float, float, float out[4]) {
+            if (tex == 0) { out[0] = 0.3f; out[1] = 0.3f; out[2] = 0.3f; out[3] = 0.9f; }
+            else { out[0] = 0.f; out[1] = 0.f; out[2] = 0.f; out[3] = 1.f; }  // blurred: deep inside
+        };
+        FxExtrudeSampler ES; ES.sample = edgeSamp; ES.ctx = nullptr;
+        fxElectricEdgesAmPixel(ee, 0.5f, 0.5f, 64, 64, ES, mout);
+        CHECK(std::fabs(mout[0] - 0.3f) < 1e-4f && std::fabs(mout[3] - 0.9f) < 1e-4f,
+              "electric edges deep inside is the pixel (%g %g)", mout[0], mout[3]);
+        float nz[2];
+        fxElectricNoise(3.7f, 9.1f, nz);
+        CHECK(nz[0] >= -1.5f && nz[0] <= 1.5f && nz[1] >= -1.5f && nz[1] <= 1.5f,
+              "electric noise range (%g %g)", nz[0], nz[1]);
+        // Smooth edges: a blurred alpha past the cut keeps the pixel whole; under
+        // it, the pixel is cut away.
+        FxOp se{}; se.type = FX_SMOOTH_EDGES_AM; se.p[0] = 0.07f;
+        auto seIn = [](float, float, float o[4]) { o[0] = 0.3f; o[1] = 0.3f; o[2] = 0.3f; o[3] = 0.6f; };
+        auto seBlurHi = [](float, float, float o[4]) { o[0] = 0.f; o[1] = 0.f; o[2] = 0.f; o[3] = 0.6f; };
+        auto seBlurLo = [](float, float, float o[4]) { o[0] = 0.f; o[1] = 0.f; o[2] = 0.f; o[3] = 0.4f; };
+        fxSmoothEdgesAmPixel(se, 0.5f, 0.5f, 32, 32,
+                             FxExtrudeSampler{[](const void*, int, float u, float v, float o[4]) {
+                                 o[0] = 0.3f; o[1] = 0.3f; o[2] = 0.3f; o[3] = 0.6f; (void)u; (void)v; }, nullptr},
+                             mout);
+        (void)seIn; (void)seBlurHi; (void)seBlurLo;
+        CHECK(std::fabs(mout[3] - 0.6f) < 1e-3f, "smooth edges keeps a solid pixel (%g)", mout[3]);
+        // Parse + shader routing for the tier.
+        float flatS[] = {132, 0, 1, 1, 0, 0, 0, 1, 133, 16777215, 65280, 255, 0, 0, 0, 0};
+        FxOp tops[kFxMaxOps];
+        CHECK(fxParseOps(flatS, 16, tops) == 1 && tops[0].type == FX_SPECTRALMAP_AM &&
+              tops[0].q[0] == 16777215.f, "spectral EXT folds into q");
+        float flatT[] = {136, 1, 1, 0, 0, 0, 16711812, 0,
+                         137, 1, 2, 3, 4, 1, 1, 0,
+                         138, 1, 6, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatT, 24, tops) == 1 && tops[0].type == FX_TURBULENCE2_AM &&
+              tops[0].q[0] == 1.f && tops[0].r[1] == 6.f, "turbulence EXT + EXT2 fold");
+        float flatE[] = {146, 0.6f, 0.5f, 3, -0.7f, 16711812, 16777215, 1,
+                         147, 0.5f, 0, 0, 1, 0, 0, 1,
+                         148, 0, 15654357, 0, 20, 0, 0, 0.42f};
+        CHECK(fxParseOps(flatE, 24, tops) == 1 && tops[0].type == FX_ELECTRIC_EDGES_AM &&
+              tops[0].r[6] == 0.42f, "electric EXT + EXT2 fold");
+        float flatC[] = {139, 10, 0, 2882406, 0, 0, 0, 0, 140, 1, 1, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatC, 16, tops) == 1 && tops[0].type == FX_CHECKER2_AM &&
+              tops[0].q[0] == 1.f, "checker EXT folds into q");
+        float flatX[] = {138, 1, 6, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatX, 8, tops) == 0, "bare EXT2 is dropped");
+        CHECK(fxShaderOf(FX_THRESHOLD_AM).group == FXG_COLOR && fxShaderOf(FX_THRESHOLD_AM).mode == 25 &&
+              fxShaderOf(FX_SPECTRALMAP_AM).mode == 26 &&
+              fxShaderOf(FX_HALFTONE_LINES_AM).group == FXG_WARP && fxShaderOf(FX_HALFTONE_LINES_AM).mode == 27 &&
+              fxShaderOf(FX_TURBULENCE2_AM).group == FXG_STYLE && fxShaderOf(FX_TURBULENCE2_AM).mode == 19 &&
+              fxShaderOf(FX_CHECKER2_AM).mode == 20 &&
+              fxShaderOf(FX_CHANNELMAP_AM).group == FXG_NONE && fxShaderOf(FX_MOSAIC_AM).group == FXG_NONE &&
+              fxShaderOf(FX_GLOW_AM).group == FXG_NONE, "tier 4 shader routing");
+        FxOp id{};
+        id.type = FX_CHANNELMAP_AM;
+        id.p[0] = 0.f; id.p[1] = 1.f; id.p[2] = 2.f; id.p[3] = 3.f;   // the identity selectors
+        CHECK(fxIsIdentity(id), "channelmap identity selectors are identity");
+        id.p[2] = 1.f;
+        CHECK(!fxIsIdentity(id), "channelmap swapped selectors are not identity");
+        id = FxOp{}; id.type = FX_MOSAIC_AM;
+        CHECK(fxIsIdentity(id) && (id.p[0] = 2.f, !fxIsIdentity(id)), "mosaic identity at size <= 1");
+        id = FxOp{}; id.type = FX_FEATHER_AM;
+        CHECK(fxIsIdentity(id) && (id.p[0] = 0.15f, !fxIsIdentity(id)), "feather identity under its floor");
+        id = FxOp{}; id.type = FX_SPECTRALMAP_AM;
+        CHECK(fxIsIdentity(id), "spectral alpha 0 is identity");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

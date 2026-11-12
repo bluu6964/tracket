@@ -41,6 +41,10 @@ internal class ParentRig(clips: List<TimelineClip>, private val render: (Timelin
         val link = c.parent ?: return
         val ds = scaleRatio(link.refScale, n.scalePercent)
         val dr = n.rotationDeg - link.refRot
+        // Parent Helper locks: the position follows in full (the layer stays attached
+        // to the parent), only the layer's OWN scale / rotation stop inheriting.
+        val dsOwn = if (link.lockScale) 1f else ds
+        val drOwn = if (link.lockRotate) 0f else dr
         val (x, y) = move(fp[0], fp[1], link.refX * k, link.refY * k, n.transformX * k, n.transformY * k, ds, dr)
         fp[0] = x
         fp[1] = y
@@ -48,9 +52,9 @@ internal class ParentRig(clips: List<TimelineClip>, private val render: (Timelin
         val (bx, by) = move(fp[14], fp[15], link.refX * k, link.refY * k, n.transformX * k, n.transformY * k, ds, dr)
         fp[14] = bx
         fp[15] = by
-        fp[2] *= ds
-        fp[3] *= ds
-        fp[4] += dr
+        fp[2] *= dsOwn
+        fp[3] *= dsOwn
+        fp[4] += drOwn
         // Group: its eye reaches the layers inside (its opacity does not: the group is drawn as one picture).
         if (hiddenByGroup(c)) fp[5] = 0f
     }
@@ -113,11 +117,15 @@ internal class ParentRig(clips: List<TimelineClip>, private val render: (Timelin
         val link = r.parent ?: return r
         val ds = scaleRatio(link.refScale, n.scalePercent)
         val dr = n.rotationDeg - link.refRot
+        // Parent Helper locks (see applyToFp): position follows in full; the layer's
+        // own scale / rotation stop inheriting under lockScale / lockRotate.
+        val dsOwn = if (link.lockScale) 1f else ds
+        val drOwn = if (link.lockRotate) 0f else dr
         val (x, y) = move(r.transformX, r.transformY, link.refX * k, link.refY * k, n.transformX * k, n.transformY * k, ds, dr)
         return r.copy(
             transformX = x, transformY = y,
-            scalePercent = r.scalePercent * ds,
-            rotationDeg = r.rotationDeg + dr,
+            scalePercent = r.scalePercent * dsOwn,
+            rotationDeg = r.rotationDeg + drOwn,
             opacity = if (hiddenByGroup(r)) 0f else r.opacity
         )
     }

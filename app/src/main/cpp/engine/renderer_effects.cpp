@@ -34,7 +34,9 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_CHROMA_KEY_AM, EF_SOFT_GLOW, EF_FILL_BEHIND,
              EF_DISPLACE_MAP, EF_SMOOTH_BEVEL, EF_LIGHT_GLOW, EF_INNER_GLOW,
              EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_EXTRUDE,
-             EF_EDGE_GLOW_EDGE, EF_EDGE_GLOW_COMP, EF_COUNT };  // eff_[] in renderer.h has room for 36
+             EF_EDGE_GLOW_EDGE, EF_EDGE_GLOW_COMP,
+             EF_CHANNEL_MAP, EF_MOSAIC_AM, EF_BOX_PAIR, EF_GLOW_OUTER, EF_ELECTRIC_AM,
+             EF_SMOOTH_EDGES_AM, EF_COUNT };  // eff_[] in renderer.h has room for 44
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -1365,12 +1367,415 @@ void main() {
 }
 )";
 
+// ---- v175: Alight's effects tier 4 dedicated passes (defs-batch7; fx_plan.cpp carries
+// the CPU twins) ----
+
+// Channel Map (Alight's channelmap): un-premultiply, re-pick the channels (sources
+// 0 R, 1 G, 2 B, 3 A, 4 luma, 5 zero, 6 one), re-premultiply by the NEW alpha. The
+// def's maskFactor is 1 over the layer's own picture, which is exactly this target.
+const char* kChannelMapAm = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+float pickCh(int src, vec3 s, float a, float lum) {
+    if (src == 0) return s.r;
+    if (src == 1) return s.g;
+    if (src == 2) return s.b;
+    if (src == 3) return a;
+    if (src == 4) return lum;
+    if (src == 5) return 0.0;
+    return 1.0;
+}
+void main() {
+    vec4 t = texture(uTex, vUv);
+    float lum = dot(t.rgb, vec3(0.2126, 0.7152, 0.0722));
+    vec3 s = t.rgb;
+    if (t.a > 0.0) s /= t.a;
+    float na = pickCh(int(uP[3] + 0.5), s, t.a, lum);
+    oColor = vec4(vec3(pickCh(int(uP[0] + 0.5), s, t.a, lum),
+                       pickCh(int(uP[1] + 0.5), s, t.a, lum),
+                       pickCh(int(uP[2] + 0.5), s, t.a, lum)) * na, na);
+}
+)";
+
+// Mosaic (Alight's mosaic): pass 0 averages the input along x at the x-snapped
+// coordinate into an lv_ level, pass 1 averages along y at the y-snapped coordinate —
+// of the H buffer, except the base tap, which reads the INPUT (the def's
+// inputImg / hblur split, verbatim). All coordinate maths runs in AM's layer space
+// (y down), so texture reads flip y. uP: size, phase x, phase y; uSize: layer px.
+const char* kMosaicAm = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uHbuf;
+uniform int uPass;
+uniform vec3 uP;
+uniform vec2 uSize;
+in vec2 vUv;
+out vec4 oColor;
+vec4 texAt(vec2 am) { return texture(uTex, vec2(am.x, 1.0 - am.y)); }
+vec4 hAt(vec2 am) { return texture(uHbuf, vec2(am.x, 1.0 - am.y)); }
+float snapC(float c, float adj, float dim) {
+    float tile = uP.x / dim;
+    float cc = c - 0.5;
+    float m0 = cc + adj / dim;
+    float m = m0 - tile * floor(m0 / tile);
+    return cc - m + 0.5;
+}
+void main() {
+    vec2 am = vec2(vUv.x, 1.0 - vUv.y);
+    if (uPass == 0) {
+        float sx = snapC(am.x, -uP.y, uSize.x);
+        int n = int(clamp(uP.x / 2.0, 1.01, 100.01));
+        vec4 acc = texAt(vec2(sx, am.y));
+        for (int i = 1; i < 100; i++) {
+            if (i >= n) break;
+            float off = (uP.x / uSize.x) * (float(i) / float(n - 1) - 0.5);
+            acc += texAt(vec2(sx - off, am.y));
+        }
+        oColor = acc / float(n);
+        return;
+    }
+    float sy = snapC(am.y, uP.z, uSize.y);
+    int n = int(clamp(uP.x, 1.01, 100.01));
+    vec4 acc = texAt(vec2(am.x, sy));
+    for (int i = 1; i < 100; i++) {
+        if (i >= n) break;
+        float off = (uP.x / uSize.y) * (float(i) / float(n - 1) - 0.5);
+        acc += hAt(vec2(am.x, sy - off));
+    }
+    oColor = acc / float(n);
+}
+)";
+
+// The box passes of AM's blur defs, one program:
+//   uMode 0: boxblur2 (inner blur's host) — base tap + n-1 taps at -vel * (i/(n-1) - 0.5), / n.
+//   uMode 1: the symmetric box (boxblur3 / feather) — base + pairs at +/- vel * i/(n-1), / (2n-1).
+//   uMode 2: inner blur's composite — vec4(blur.rgb / blur.a, 1) * base.a.
+//   uMode 3: feather's final — the symmetric V box over uTex, then base * (result.a)^2.
+// uVel carries the pass velocity in norm units (its magnitude is the def's per-pass
+// strength); both tap spans are symmetric, so the engine's y-up targets need no flip.
+const char* kBoxPair = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBase;
+uniform vec2 uVel;
+uniform int uSteps;
+uniform int uMode;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    if (uMode == 2) {
+        vec4 b = texture(uTex, vUv);
+        vec4 base = texture(uBase, vUv);
+        oColor = vec4(b.rgb / max(b.a, 0.0001), 1.0) * base.a;
+        return;
+    }
+    vec4 acc = texture(uTex, vUv);
+    if (uMode == 0) {
+        for (int i = 1; i < 100; i++) {
+            if (i >= uSteps) break;
+            float f = float(i) / float(uSteps - 1) - 0.5;
+            acc += texture(uTex, vUv - uVel * f);
+        }
+        oColor = acc / float(uSteps);
+        return;
+    }
+    for (int i = 1; i < 150; i++) {
+        if (i >= uSteps) break;
+        vec2 off = uVel * (float(i) / float(uSteps - 1));
+        acc += texture(uTex, vUv + off) + texture(uTex, vUv - off);
+    }
+    vec4 r = acc / float(2 * uSteps - 1);
+    if (uMode == 3) {
+        vec4 base = texture(uBase, vUv);
+        oColor = base * (r.a * r.a);
+    } else {
+        oColor = r;
+    }
+}
+)";
+
+// Glow (Alight's glow — the OUTER glow): Inner Glow's distance-scan machinery with
+// both distances kept, and the composite inverted: pass 0 writes the X nearest
+// distances (rg = nearest outside, a > 0; ba = nearest inside, a < 0.003), pass 1
+// folds the Y scan in and adds the glow colour behind the original by (1 - tex.a).
+// Blend modes 1 / 2 read the backdrop (uComp at the uRect-mapped position, the
+// Copy Background idiom); the renderer falls back to mode 0 when no backdrop was
+// captured. uP: [alpha, hardness, blend mode]; fxGlowAmMap is the CPU twin.
+const char* kGlowOuter = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBuf;
+uniform sampler2D uComp;
+uniform vec4 uRect;
+uniform vec2 uTexel;
+uniform float uRadius2;
+uniform float uStride;
+uniform int uPass;
+uniform float uP[7];
+uniform vec3 uColor;
+uniform float uColorA;
+in vec2 vUv;
+out vec4 oColor;
+vec2 encF(float v) {
+    vec2 enc = fract(vec2(1.0, 255.0) * v);
+    enc.x -= enc.y / 255.0;
+    return enc;
+}
+float decF(vec2 v) { return dot(v, vec2(1.0, 1.0 / 255.0)); }
+float sstep(float e0, float e1, float x) {
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+void main() {
+    int steps = int(clamp(uRadius2 / max(uStride, 0.001), 1.0, 48.0));
+    if (uPass == 0) {
+        float nearOut = 16383.0;
+        float nearIn = 16383.0;
+        for (int i = -48; i < 48; i++) {
+            if (i < -steps || i >= steps) continue;
+            float x = float(i) * uStride;
+            vec4 t = texture(uTex, vUv + vec2(x * uTexel.x, 0.0));
+            nearOut = min(nearOut, t.a > 0.0 ? abs(x) : uRadius2 * 2.0);
+            nearIn = min(nearIn, t.a < 0.003 ? abs(x) : uRadius2 * 2.0);
+        }
+        oColor = vec4(encF(nearOut / 16383.0), encF(nearIn / 16383.0));
+        return;
+    }
+    float nearOut = 16383.0;
+    float nearIn = 16383.0;
+    for (int i = -48; i < 48; i++) {
+        if (i < -steps || i >= steps) continue;
+        float y = float(i) * uStride;
+        vec4 b = texture(uBuf, vUv + vec2(0.0, y * uTexel.y));
+        float xOut = decF(b.rg) * 16383.0;
+        float xIn = decF(b.ba) * 16383.0;
+        nearOut = min(nearOut, length(vec2(xOut, abs(y))));
+        nearIn = min(nearIn, length(vec2(xIn, abs(y))));
+    }
+    vec4 tex = texture(uTex, vUv);
+    float p = 0.5 + nearIn / uRadius2 - nearOut / uRadius2;
+    if (p <= 0.0001) { oColor = tex; return; }   // AM discards here; the twin is continuous with it
+    vec3 blend = uColor;
+    int bm = int(uP[2] + 0.5);
+    if (bm == 1 || bm == 2) {
+        vec3 comp = texture(uComp, uRect.xy + vUv * uRect.zw).rgb;
+        blend = bm == 1 ? comp * uColor : 1.0 - (1.0 - comp) * (1.0 - uColor);
+    }
+    float e0 = (1.0 - 1.5 / uRadius2) * uP[1];
+    float oc = 1.0 - sstep(e0, 1.0, 1.0 - p);
+    vec4 outC = vec4(blend * uP[0] * oc, uP[0] * oc * (bm == 0 ? uColorA : 1.0));
+    oColor = tex + outC * (1.0 - tex.a);
+}
+)";
+
+// Electric Edges (Alight's electricedges main pass; its blurBuf is produced by
+// fxBlur at the def's fixed strength 0.42 through the gaussianblur calibration, and
+// its `comp` input is sampled but never used in the def, so none is bound). All
+// field maths runs in AM's layer space (y down): st is built flipped, the blur taps
+// flip back. fxElectricEdgesAmPixel in fx_plan.cpp is the CPU twin.
+const char* kElectricEdgesAm = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec2 uTexel;
+uniform float uAspect;
+uniform float uP[7];
+uniform float uQ[7];
+uniform float uR[7];
+uniform vec3 uC1;
+uniform vec3 uC2;
+uniform vec3 uMaskCol;
+in vec2 vUv;
+out vec4 oColor;
+vec3 amMod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 amMod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 amPermute(vec4 x) { return amMod289(((x * 34.0) + 1.0) * x); }
+vec4 amTaylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+float amSnoise3(vec3 v) {
+    const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+    vec3 i = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+    vec3 g = step(x0.yzx, x0.xyz);
+    vec3 l = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+    i = amMod289(i);
+    vec4 p = amPermute(amPermute(amPermute(
+        i.z + vec4(0.0, i1.z, i2.z, 1.0))
+        + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+        + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+    float n_ = 0.142857142857;
+    vec3 ns = n_ * D.wyz - D.xzx;
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+    vec4 s0 = floor(b0) * 2.0 + 1.0;
+    vec4 s1 = floor(b1) * 2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+    vec4 norm = amTaylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+    p0 *= norm.x;
+    p1 *= norm.y;
+    p2 *= norm.z;
+    p3 *= norm.w;
+    vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+}
+float amTurbulence(vec2 st, int octaves, vec2 parallax, float evolution) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 9; i++) {
+        if (i >= octaves) break;
+        value += amplitude * abs(amSnoise3(vec3(st, evolution)));
+        st *= 2.0;
+        st += parallax;
+        amplitude *= 0.5;
+    }
+    return value;
+}
+vec2 random2(vec2 p) {
+    return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453);
+}
+vec2 vnoise2(vec2 st) {
+    vec2 i = floor(st);
+    vec2 f = fract(st);
+    vec2 a = random2(i);
+    vec2 b = random2(i + vec2(1.0, 0.0));
+    vec2 c = random2(i + vec2(0.0, 1.0));
+    vec2 d = random2(i + vec2(1.0, 1.0));
+    vec2 u = f;
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+}
+mat2 rot2d(float a) {
+    float c = cos(a), s = sin(a);
+    return mat2(c, s, -s, c);
+}
+float sstep(float e0, float e1, float x) {
+    float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+void main() {
+    vec2 st = vec2(vUv.x - 0.5, 0.5 - vUv.y);
+    st.x *= uAspect;
+    vec2 evoseed = 3.0 * uQ[2] + vec2(62.5587, 137.1935) * uQ[1];
+    vec2 l1 = vnoise2(evoseed + (st * rot2d(0.1)) * 2.0 * uP[2]);
+    vec2 l2 = vnoise2(evoseed + (st * rot2d(0.3)) * 4.0 * uP[2]);
+    vec2 l3 = vnoise2(evoseed + (st * rot2d(1.42)) * 8.0 * uP[2]);
+    vec2 l4 = vnoise2(evoseed + (st * rot2d(2.534)) * 16.0 * uP[2]);
+    vec2 offs = abs(abs(l1 - l2) - abs(l3 - l4));
+    vec4 texColor = texture(uTex, vUv);
+    float midA = texture(uBlur, vUv).a;
+    float upA = texture(uBlur, vUv + vec2(0.0, 4.0 * uTexel.y)).a;
+    float leftA = texture(uBlur, vUv + vec2(-4.0 * uTexel.x, 0.0)).a;
+    vec2 dxy = vec2(midA - leftA, midA - upA);
+    float dl = length(dxy);
+    vec2 norm = dl > 0.000001 ? dxy / dl : vec2(0.0);
+    vec2 doff = norm * length(offs) * (uP[3] * 0.055);
+    vec4 blurred = texture(uBlur, vUv + vec2(doff.x, -doff.y));
+    float turbBase = amTurbulence((st - 0.5) / uQ[6] + 0.5, 3, vec2(0.0), uQ[5] + 91.935 * uR[0]);
+    float turb = sstep(uQ[4] - 0.22, uQ[4] - 0.12, turbBase);
+    float suppress = sstep(uQ[4] - 0.12, uQ[4] - 0.02, turbBase);
+    float ttint = sstep(uQ[4] - 0.02, uQ[4] - 0.001, turbBase);
+    float p = blurred.a;
+    float dist = 1.0 - (uP[0] * 0.4 + 0.5);
+    float eb = 1.0 - uP[1] * 0.9 * suppress;
+    float win = sstep(0.01, 0.12, p) * sstep(1.0, 0.999, p);
+    float pp = pow(1.0 - abs(p - dist), eb * 30.0) * win;
+    float qq = pow(1.0 - abs(p - dist), eb * 25.0) * win;
+    if (uR[2] > 0.5) {
+        float arad = uR[5] * 0.0174533;
+        vec2 st2 = st;
+        st2.y += midA * 0.1;
+        st2 = st2 * rot2d(length(offs * uP[3] * 1.1) * 0.2 + arad);
+        st2.y += midA * 0.1;
+        float lines = clamp(sin((st2.y + uR[4] + offs.y * uP[3] * 0.015) * uR[3]), 0.0, 1.0)
+                      * sstep(0.1, 0.2, midA);
+        pp += pow(lines, eb * 30.0);
+        qq += pow(lines, eb * 25.0);
+    }
+    vec4 c = vec4(pow(vec3(pp), 1.0 / max(uC1, vec3(0.000001))), pp) * uP[6]
+           + vec4(pow(vec3(qq), 1.0 / max(uC2, vec3(0.000001))), qq) * uQ[0];
+    c = clamp(c, 0.0, 1.0);
+    c *= mix(vec4(uMaskCol, 1.0), vec4(1.0), ttint) * turb;
+    oColor = texColor * uQ[3] * (1.0 - c.a) + c;
+}
+)";
+
+// Smooth Edges (Alight's smoothedges): uPass 0 / 1 run the def's streak composites
+// (x and y directional over-accumulations, composited over the input) — pass 1 reads
+// HSTREAK for BOTH streaks, the def's own quirk (its y pass names hstreak where
+// vstreak was meant); uPass 2 cuts the base (vstreak, or the input when maskToLayer)
+// by the blurred alpha's smoothstep. The streak offsets are AM's (y down): the y
+// taps flip into the engine's y-up targets, the accumulation side keeps AM's sign.
+// uP: strength, mask to layer, dist (= strength * 0.05). fxSmoothEdgesAmPixel is
+// the CPU twin.
+const char* kSmoothEdgesAm = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uAux;
+uniform sampler2D uBlur;
+uniform int uPass;
+uniform vec3 uP;
+uniform vec2 uSize;
+in vec2 vUv;
+out vec4 oColor;
+vec4 streak(bool fromAux, bool horizontal) {
+    float dist = uP.z;
+    int n = int(clamp(dist * (horizontal ? uSize.x : uSize.y), 1.01, 100.01));
+    vec4 c = vec4(0.0);
+    for (int i = 1; i < 100; i++) {
+        if (i >= n) break;
+        float off = dist * (float(i) / float(n - 1) - 0.5);
+        vec2 duv = horizontal ? vec2(off, 0.0) : vec2(0.0, -off);
+        vec4 tc = fromAux ? texture(uAux, vUv + duv) : texture(uTex, vUv + duv);
+        if (off < 0.0) c = c * (1.0 - tc.a) + tc;
+        else c = tc * (1.0 - c.a) + c;
+    }
+    return c;
+}
+vec4 over(vec4 a, vec4 b) { return a * (1.0 - b.a) + b; }
+void main() {
+    if (uPass == 2) {
+        vec4 base = uP.y > 0.5 ? texture(uTex, vUv) : texture(uAux, vUv);
+        float ba = texture(uBlur, vUv).a;
+        float dd = 0.05 / ((1.0 + uP.x) * (1.0 + uP.x));
+        float t = clamp((ba - (0.5 - dd)) / (2.0 * dd), 0.0, 1.0);
+        oColor = base * (t * t * (3.0 - 2.0 * t));
+        return;
+    }
+    bool fromAux = uPass == 1;
+    vec4 cx = streak(fromAux, true);
+    vec4 cy = streak(fromAux, false);
+    oColor = over(over(cx, cy), texture(uTex, vUv));
+}
+)";
+
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
                                   kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
                                   kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp, kExtrude,
-                                  kEdgeGlowEdge, kEdgeGlowComp};
-static_assert(EF_COUNT <= 36, "eff_[] in renderer.h is too small");
+                                  kEdgeGlowEdge, kEdgeGlowComp,
+                                  kChannelMapAm, kMosaicAm, kBoxPair, kGlowOuter, kElectricEdgesAm,
+                                  kSmoothEdgesAm};
+static_assert(EF_COUNT <= 44, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -1552,6 +1957,14 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_INNER_GLOW_AM: ok = fxInnerGlowAm(op, W, H, cur); break;
             case FX_EXTRUDE_AM:
             case FX_EXTRUDE_FLAT_AM: ok = fxExtrudeAm(op, W, H, cur); break;
+            case FX_CHANNELMAP_AM: ok = fxChannelMapAm(op, W, H, cur); break;
+            case FX_MOSAIC_AM: ok = fxMosaicAm(op, W, H, cur); break;
+            case FX_BOX_BLUR3_AM: ok = fxBoxBlur3Am(op, W, H, cur); break;
+            case FX_INNER_BLUR_AM: ok = fxInnerBlurAm(op, W, H, cur); break;
+            case FX_FEATHER_AM: ok = fxFeatherAm(op, W, H, cur); break;
+            case FX_GLOW_AM: ok = fxGlowOuterAm(op, W, H, cur); break;
+            case FX_ELECTRIC_EDGES_AM: ok = fxElectricEdgesAm(op, W, H, cur); break;
+            case FX_SMOOTH_EDGES_AM: ok = fxSmoothEdgesAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -2308,6 +2721,328 @@ bool Renderer::fxInnerGlowAm(const FxOp& op, int W, int H, int* cur) {
     return true;
 }
 
+// ---- v175 tier-4 dedicated passes ----
+
+// Channel Map (Alight): one pass; op.p[0..3] are the R / G / B / A channel sources.
+bool Renderer::fxChannelMapAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_CHANNEL_MAP);
+    if (!prog) return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Mosaic (Alight): the x-average pass into the keep level, then the y pass.
+// op.p = [size, phase x, phase y].
+bool Renderer::fxMosaicAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_MOSAIC_AM);
+    if (!prog) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& hb = lv_[kFxGlowLevels - 1];
+    auto setCommon = [&]() {
+        glUniform3f(loc(prog, "uP"), op.p[0], op.p[1], op.p[2]);
+        glUniform2f(loc(prog, "uSize"), (float)W, (float)H);
+    };
+    begin(prog, hb.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 0);
+    setCommon();
+    draw();
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    bindTex(1, hb.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uHbuf"), 1);
+    glUniform1i(loc(prog, "uPass"), 1);
+    setCommon();
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Box Blur 3 (Alight): half-res symmetric averages, x then y. op.p = [strength].
+bool Renderer::fxBoxBlur3Am(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_BOX_PAIR), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    const int hw = halfSize(W, 0), hh = halfSize(H, 0);
+    if (!ensureLevel(0, hw, hh) || !ensureLevel(1, hw, hh)) return false;
+    const FxLevel& ds = lv_[0];
+    const FxLevel& hb = lv_[1];
+    const float sn = op.p[0] / 10.f;
+    begin(copy, ds.fbo[0], hw, hh);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    begin(prog, hb.fbo[0], hw, hh);
+    bindTex(0, ds.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uVel"), sn, 0.f);
+    glUniform1i(loc(prog, "uSteps"), fxBoxSamples(sn * (float)hw, true));
+    glUniform1i(loc(prog, "uMode"), 1);
+    draw();
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, hb.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uVel"), 0.f, sn);
+    glUniform1i(loc(prog, "uSteps"), fxBoxSamples(sn * (float)hh, true));
+    glUniform1i(loc(prog, "uMode"), 1);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Inner Blur (Alight): iter chains of boxblur2 (per-pass strength / 4 / iter) over
+// the fx ping-pong, each chain composited over its kept input. op.p = [strength, iter].
+bool Renderer::fxInnerBlurAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_BOX_PAIR), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    const int iter = std::min(6, std::max(1, (int)op.p[1]));
+    const float per = op.p[0] / 4.f / (float)iter;
+    const int nX = fxBoxSamples(per * (float)W, false);
+    const int nY = fxBoxSamples(per * (float)H, false);
+    for (int it = 0; it < iter; ++it) {
+        begin(copy, keep.fbo[0], W, H);
+        bindTex(0, fxTex_[*cur]);
+        glUniform1i(loc(copy, "uTex"), 0);
+        draw();
+        int dst = 1 - *cur;   // horizontal boxblur2 pass
+        begin(prog, fxFbo_[dst], W, H);
+        bindTex(0, keep.tex[0]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform2f(loc(prog, "uVel"), per, 0.f);
+        glUniform1i(loc(prog, "uSteps"), nX);
+        glUniform1i(loc(prog, "uMode"), 0);
+        draw();
+        *cur = dst;
+        dst = 1 - *cur;       // vertical boxblur2 pass (velocity (0, -per) in AM; the span is symmetric)
+        begin(prog, fxFbo_[dst], W, H);
+        bindTex(0, fxTex_[*cur]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform2f(loc(prog, "uVel"), 0.f, per);
+        glUniform1i(loc(prog, "uSteps"), nY);
+        glUniform1i(loc(prog, "uMode"), 0);
+        draw();
+        *cur = dst;
+        dst = 1 - *cur;       // composite over the chain input
+        begin(prog, fxFbo_[dst], W, H);
+        bindTex(0, fxTex_[*cur]);
+        bindTex(1, keep.tex[0]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform1i(loc(prog, "uBase"), 1);
+        glUniform1i(loc(prog, "uMode"), 2);
+        draw();
+        *cur = dst;
+    }
+    return true;
+}
+
+// Feather (Alight): iter chains of the quarter-res symmetric averages; each chain's
+// output is its input times the blurred alpha squared. op.p = [strength, iter].
+bool Renderer::fxFeatherAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_BOX_PAIR), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    const int qw = halfSize(W, 1), qh = halfSize(H, 1);
+    if (!ensureLevel(0, qw, qh) || !ensureLevel(1, qw, qh)) return false;
+    const FxLevel& ds = lv_[0];
+    const FxLevel& hb = lv_[1];
+    const int iter = std::min(5, std::max(1, (int)op.p[1]));
+    const float sn = op.p[0] / 4.f / (float)iter;
+    const int nX = fxBoxSamples(sn * (float)qw, true);
+    const int nY = fxBoxSamples(sn * (float)qh, true);
+    for (int it = 0; it < iter; ++it) {
+        begin(copy, ds.fbo[0], qw, qh);
+        bindTex(0, fxTex_[*cur]);
+        glUniform1i(loc(copy, "uTex"), 0);
+        draw();
+        begin(prog, hb.fbo[0], qw, qh);
+        bindTex(0, ds.tex[0]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform2f(loc(prog, "uVel"), sn, 0.f);
+        glUniform1i(loc(prog, "uSteps"), nX);
+        glUniform1i(loc(prog, "uMode"), 1);
+        draw();
+        const int dst = 1 - *cur;   // vertical pass + the alpha-squared composite
+        begin(prog, fxFbo_[dst], W, H);
+        bindTex(0, hb.tex[0]);
+        bindTex(1, fxTex_[*cur]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform1i(loc(prog, "uBase"), 1);
+        glUniform2f(loc(prog, "uVel"), 0.f, sn);
+        glUniform1i(loc(prog, "uSteps"), nY);
+        glUniform1i(loc(prog, "uMode"), 3);
+        draw();
+        *cur = dst;
+    }
+    return true;
+}
+
+// Glow (Alight, the outer glow): Inner Glow's scan with the inverted composite.
+// Blend modes 1 / 2 read the backdrop; when none was captured they fall back to
+// mode 0 (the colour unmodulated) rather than dropping the glow. op.p = [radius,
+// alpha, hardness, colour packed, colour alpha, blend mode].
+bool Renderer::fxGlowOuterAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_GLOW_OUTER);
+    if (!prog) return false;
+    const float radius2 = op.p[0] * std::sqrt((float)W * (float)W + (float)H * (float)H) /
+                          std::sqrt(2.f * 1024.f * 1024.f);
+    if (radius2 < 0.5f) return true;   // AM: a plain copy
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& buf = lv_[kFxGlowLevels - 1];
+    const float stride = fxInnerGlowAmStride(radius2);
+    begin(prog, buf.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1f(loc(prog, "uRadius2"), radius2);
+    glUniform1f(loc(prog, "uStride"), stride);
+    glUniform1i(loc(prog, "uPass"), 0);
+    draw();
+    const int bm = (int)op.p[5];
+    const int effBm = (bm == 1 || bm == 2) && bgOk_ ? bm : 0;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    bindTex(1, buf.tex[0]);
+    bindTex(2, effBm == 0 ? fxTex_[*cur] : texBackdrop_);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBuf"), 1);
+    glUniform1i(loc(prog, "uComp"), 2);
+    glUniform4f(loc(prog, "uRect"), bgRect_[0], bgRect_[1], bgRect_[2], bgRect_[3]);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1f(loc(prog, "uRadius2"), radius2);
+    glUniform1f(loc(prog, "uStride"), stride);
+    glUniform1i(loc(prog, "uPass"), 1);
+    const float pp[7] = {op.p[1], op.p[2], (float)effBm, 0.f, 0.f, 0.f, 0.f};
+    glUniform1fv(loc(prog, "uP"), 7, pp);
+    const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, op.p[3])));
+    glUniform3f(loc(prog, "uColor"), ((pk >> 16) & 0xFF) / 255.f, ((pk >> 8) & 0xFF) / 255.f,
+                (pk & 0xFF) / 255.f);
+    glUniform1f(loc(prog, "uColorA"), op.p[4]);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Electric Edges (Alight): keep the layer, blur the current target at the def's
+// fixed strength (0.42 through the gaussianblur calibration) for blurBuf, then the
+// main pass. Slots per fx_plan.h (p / q / r tiers).
+bool Renderer::fxElectricEdgesAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_ELECTRIC_AM), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    FxOp blurOp;
+    blurOp.type = FX_BLUR;
+    blurOp.p[0] = op.r[6] * 50.f;   // the def's strength through applyGaussianBlur's calibration
+    if (!fxBlur(blurOp, W, H, cur)) return false;
+    auto unpack = [](float packedF, float* r, float* g, float* b) {
+        const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
+        *r = ((pk >> 16) & 0xFF) / 255.f;
+        *g = ((pk >> 8) & 0xFF) / 255.f;
+        *b = (pk & 0xFF) / 255.f;
+    };
+    float c1r, c1g, c1b, c2r, c2g, c2b, mcr, mcg, mcb;
+    unpack(op.p[4], &c1r, &c1g, &c1b);
+    unpack(op.p[5], &c2r, &c2g, &c2b);
+    unpack(op.r[1], &mcr, &mcg, &mcb);
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1f(loc(prog, "uAspect"), (float)W / (float)H);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    glUniform1fv(loc(prog, "uR"), 7, op.r);
+    glUniform3f(loc(prog, "uC1"), c1r, c1g, c1b);
+    glUniform3f(loc(prog, "uC2"), c2r, c2g, c2b);
+    glUniform3f(loc(prog, "uMaskCol"), mcr, mcg, mcb);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Smooth Edges (Alight): keep the input and a gaussian-blurred copy of it (the
+// def's hblur, strength through the gaussianblur calibration), run the two streak
+// composites through lv_ levels, then the final alpha cut.
+bool Renderer::fxSmoothEdgesAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_SMOOTH_EDGES_AM), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(0, W, H) || !ensureLevel(1, W, H) || !ensureLevel(2, W, H) ||
+        !ensureLevel(3, W, H)) return false;
+    const FxLevel& hs = lv_[0];
+    const FxLevel& vs = lv_[1];
+    const FxLevel& inKeep = lv_[2];
+    const FxLevel& blurKeep = lv_[3];
+    begin(copy, inKeep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    FxOp blurOp;
+    blurOp.type = FX_BLUR;
+    blurOp.p[0] = op.p[0] * 50.f;   // the def's strength through applyGaussianBlur's calibration
+    if (!fxBlur(blurOp, W, H, cur)) return false;
+    begin(copy, blurKeep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    auto setP = [&]() {
+        glUniform3f(loc(prog, "uP"), op.p[0], op.p[1], op.p[0] * 0.05f);
+        glUniform2f(loc(prog, "uSize"), (float)W, (float)H);
+    };
+    begin(prog, hs.fbo[0], W, H);   // streak pass 1 (from the input)
+    bindTex(0, inKeep.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 0);
+    setP();
+    draw();
+    begin(prog, vs.fbo[0], W, H);   // streak pass 2 (from hstreak)
+    bindTex(0, inKeep.tex[0]);
+    bindTex(1, hs.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uAux"), 1);
+    glUniform1i(loc(prog, "uPass"), 1);
+    setP();
+    draw();
+    const int dst = 1 - *cur;       // final cut
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, inKeep.tex[0]);
+    bindTex(1, vs.tex[0]);
+    bindTex(2, blurKeep.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uAux"), 1);
+    glUniform1i(loc(prog, "uBlur"), 2);
+    glUniform1i(loc(prog, "uPass"), 2);
+    setP();
+    draw();
+    *cur = dst;
+    return true;
+}
+
 // Light Glow (Alight): four passes through half-size lv_ buffers (the def's downImg /
 // hblur / vblur chain). op.p = [strength, threshold, intensity, colour packed, blend,
 // halo, alpha].
@@ -2407,6 +3142,7 @@ bool Renderer::fxShaded(const FxOp& op, int W, int H, int* cur, int frame) {
     glUniform1i(loc(prog, "uMode"), ref.mode);
     glUniform1fv(loc(prog, "uP"), 7, op.p);
     glUniform1fv(loc(prog, "uQ"), 7, op.q);   // only the v164 colour / warp modes read it; -1 elsewhere
+    glUniform1fv(loc(prog, "uR"), 7, op.r);   // v175: only the style program's turbulence2 mode declares it
     draw();
     *cur = dst;
     return true;

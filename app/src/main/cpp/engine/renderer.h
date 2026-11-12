@@ -171,6 +171,18 @@ private:
     bool fxLightGlowAm(const FxOp& op, int W, int H, int* cur);
     bool fxInnerGlowAm(const FxOp& op, int W, int H, int* cur);
     bool fxExtrudeAm(const FxOp& op, int W, int H, int* cur);
+    // Tier 4 dedicated passes (v175): Channel Map (one pass), Mosaic (two passes),
+    // Box Blur 3 / Inner Blur / Feather (the shared box-pair program), Glow (the
+    // outer-glow distance scan), Electric Edges (blur buffer + main pass), Smooth
+    // Edges (blur copy + streak composites).
+    bool fxChannelMapAm(const FxOp& op, int W, int H, int* cur);
+    bool fxMosaicAm(const FxOp& op, int W, int H, int* cur);
+    bool fxBoxBlur3Am(const FxOp& op, int W, int H, int* cur);
+    bool fxInnerBlurAm(const FxOp& op, int W, int H, int* cur);
+    bool fxFeatherAm(const FxOp& op, int W, int H, int* cur);
+    bool fxGlowOuterAm(const FxOp& op, int W, int H, int* cur);
+    bool fxElectricEdgesAm(const FxOp& op, int W, int H, int* cur);
+    bool fxSmoothEdgesAm(const FxOp& op, int W, int H, int* cur);
     // Copy Background: the frame so far is copied into texBackdrop_ at the start of applyFx; bgRect_ = the part of the canvas
     // the picture covers (x, y from the BOTTOM, w, h as fractions), bgOk_ = the copy was made for this call.
     bool bgOk_ = false;
@@ -215,7 +227,7 @@ private:
     };
     std::unordered_map<int, MaskSlot> masks_;
     // Effect programs (built when first used) and the small pictures of the blur / glow pyramids.
-    uint32_t eff_[36] = {0};
+    uint32_t eff_[44] = {0};
     uint32_t maskTex_[2] = {0, 0}, maskFbo_[2] = {0, 0};  // R8 coverage pictures (ping-pong)
     int maskW_ = 0, maskH_ = 0;
     struct FxLevel {

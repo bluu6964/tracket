@@ -121,6 +121,16 @@ internal object AmFxEval {
             Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f),
             Tracked(10, 1f), Tracked(11, 1f), Tracked(12, 1f)
         )  // rotate x/y/z, position x/y/z
+        // v175 tier 4: AM units everywhere (scale 1). The plain effects' tails start
+        // at 7; the two EXT2 effects' tails start at 21 (see tailStart).
+        ClipFxLibrary.MOSAIC_AM -> listOf(Tracked(0, 1f))                        // size
+        ClipFxLibrary.HALFTONE_LINES_AM -> listOf(Tracked(2, 1f), Tracked(3, 1f))  // angle, phase
+        ClipFxLibrary.INNER_BLUR_AM -> listOf(Tracked(0, 1f))                    // strength
+        ClipFxLibrary.FEATHER_AM -> listOf(Tracked(0, 1f))                       // strength
+        ClipFxLibrary.ELECTRIC_EDGES_AM -> listOf(Tracked(9, 1f))                // evolution (EXT slot 2, absolute 9)
+        ClipFxLibrary.TURBULENCE2_AM -> listOf(
+            Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f), Tracked(10, 1f)
+        )  // offs x / y, parallax x / y (EXT slots 0..3, absolute 7..10)
         else -> emptyList()
     }
 
@@ -133,7 +143,8 @@ internal object AmFxEval {
         ClipFxLibrary.TURBULENT_DISPLACE3_AM, ClipFxLibrary.STREAKS_AM,
         ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
         ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM -> EXT_TAIL_START
-        ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM -> EXT2_TAIL_START
+        ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
+        ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM -> EXT2_TAIL_START
         else -> TAIL_START
     }
 

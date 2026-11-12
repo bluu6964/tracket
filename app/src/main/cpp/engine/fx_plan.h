@@ -336,6 +336,79 @@ enum FxType : int {
     //   q: [0] gamma, [1] brightness -1..1, [2] tintColor packed 0xRRGGBB, [3] tint 0..1
     FX_EDGE_GLOW_AM = 129,
     FX_EDGE_GLOW_AM_EXT = 130,
+    // v175: Alight's effects tier 4 (corpus round 2; hunt-staging/defs-batch7 — every def
+    // recovered from TWO dumps, the AM APK assets and DGameXO/openmotion, shader- and
+    // structure-identical between them; the AM-dump copies are followed). All values are
+    // AM's own units. The shaded three ride the shared programs; the rest are dedicated
+    // passes in renderer_effects.cpp (they need buffers, a backdrop, an alpha rewrite or
+    // a multi-tap loop the shared programs cannot express).
+    FX_THRESHOLD_AM = 131,  // p0 threshold 0..1, p1 feather 0..1, p2 invert 0/1,
+                            // p3 blend mode (0 mask, 1 multiply, 2 screen). NOT
+                            // FX_THRESHOLD (the app's own level cut). kFxColor mode 25.
+    FX_SPECTRALMAP_AM = 132,  // p0 phase -99..99, p1 repeat 0.1..10, p2 alpha 0..1,
+                              // p3 squeeze 0..1, p4 saturation -1..1, p5 reverse 0/1,
+                              // p6 scale brightness 0/1; q0/q1/q2 the red / green / blue
+                              // colours packed 0xRRGGBB (their alpha never reaches the
+                              // maths: the def multiplies them into rgb only).
+                              // kFxColor mode 26.
+    FX_SPECTRALMAP_AM_EXT = 133,
+    FX_CHANNELMAP_AM = 134,  // p0..p3 the R / G / B / A channel sources (0 R, 1 G, 2 B,
+                             // 3 A, 4 luma, 5 zero, 6 one). Dedicated pass: it rewrites
+                             // the alpha, which the colour program's epilogue cannot.
+    FX_HALFTONE_LINES_AM = 135,  // p0 amount 0..500, p1 strength 0..1, p2 angle (deg),
+                                 // p3 phase (AM raw, -1000..1000), p4/p5 colours 1/2
+                                 // packed 0xRRGGBB. NOT the app's HALFTONE. kFxWarp
+                                 // mode 27 (halftone dots' sibling: a y-only fold).
+    FX_TURBULENCE2_AM = 136,  // p0 intensity, p1 scale, p2 evolution, p3 seed,
+                              // p4/p5 colours 1/2 packed 0xRRGGBB, p6 blend mode
+                              // (0 normal, 1 multiply, 2 screen); q0/q1 the offs point
+                              // components, q2/q3 the parallax point components,
+                              // q4/q5 stretch x/y, q6 bias; r0 alpha, r1 octaves.
+                              // kFxStyle mode 19 (ridges' sibling: the plain turbulence
+                              // sum, no ridged fold).
+    FX_TURBULENCE2_AM_EXT = 137,
+    FX_TURBULENCE2_AM_EXT2 = 138,
+    FX_CHECKER2_AM = 139,  // p0 amount 0.5..200, p1 angle (deg), p2 colour packed
+                           // 0xRRGGBB, p3 punch out 0/1, p4 screen space 0/1 (carried;
+                           // the pattern is layer-anchored, the importer reports a
+                           // screen-space instance), p5/p6 the position point components;
+                           // q0/q1 stretch x/y. kFxStyle mode 20.
+    FX_CHECKER2_AM_EXT = 140,
+    FX_MOSAIC_AM = 141,  // p0 size 1..500 (layer px), p1/p2 the phase point components.
+                         // NOT FX_MOSAIC (the app's own blocky posterize). Dedicated
+                         // two-pass (the def's snapped box averages, x then y).
+    FX_GLOW_AM = 142,  // p0 radius 0..400, p1 alpha 0..1, p2 hardness 0..1, p3 colour
+                       // packed 0xRRGGBB, p4 colour alpha 0..1 (it scales the result's
+                       // alpha in blend mode 0, so it cannot ride the packed colour),
+                       // p5 blend mode (0 normal, 1 multiply, 2 screen; 1/2 read the
+                       // backdrop like FX_DISPLACE_MAP_AM). NOT FX_GLOW (the app's own
+                       // bloom). Dedicated two-pass distance scan (FX_INNER_GLOW_AM's
+                       // machinery, composite inverted: the glow sits OUTSIDE the layer).
+    FX_INNER_BLUR_AM = 143,  // p0 strength 0..1, p1 iterations 1..6. Dedicated pass:
+                             // the def's boxblur2 chain (per-pass strength / 4 / iter,
+                             // chained iter times) + the un-premultiply composite.
+    FX_BOX_BLUR3_AM = 144,  // p0 strength 0..2. Dedicated pass: the def's half-res
+                            // symmetric box average (strength / 10), x then y.
+    FX_FEATHER_AM = 145,  // p0 strength 0..2, p1 iterations 1..5. Dedicated pass: the
+                          // def's quarter-res box averages (strength / 4 / iter, chained
+                          // iter times); the output is the layer times the blurred
+                          // alpha squared — colour untouched.
+    FX_ELECTRIC_EDGES_AM = 146,  // p0 distance, p1 thickness, p2 complexity, p3 disort,
+                                 // p4/p5 colours 1/2 packed 0xRRGGBB, p6 alpha;
+                                 // q0 glow alpha, q1 seed, q2 evolution, q3 fill,
+                                 // q4 mask strength, q5 mask evolution, q6 mask scale;
+                                 // r0 mask seed, r1 mask colour packed 0xRRGGBB,
+                                 // r2 render contours, r3 contour count, r4 contour
+                                 // offset, r5 contour angle, r6 strength (the fixed 0.42
+                                 // the def feeds its gaussianblur buffer pass).
+                                 // Dedicated pass (blur buffer + the def's main pass;
+                                 // the def's `comp` input is sampled but never used).
+    FX_ELECTRIC_EDGES_AM_EXT = 147,
+    FX_ELECTRIC_EDGES_AM_EXT2 = 148,
+    FX_SMOOTH_EDGES_AM = 149,  // p0 strength 0..2, p1 mask to layer 0/1. Dedicated
+                               // pass: a gaussianblur buffer (strength through the
+                               // applyGaussianBlur calibration) + the def's directional
+                               // streak composites, then the alpha smoothstep cut.
     FX_MAX = FX_COPY_BG
 };
 
@@ -816,6 +889,114 @@ struct FxExtrudeSampler {
 // the blur texture read as the layer itself).
 void fxExtrudeAmPixel(const FxOp& op, bool flat, float ax, float ay, float picW, float picH,
                       const FxExtrudeSampler& s, float out[4]);
+
+// ---- v175: Alight's effects tier 4 (defs-batch7; the GLSL twins live in fx_shaders.h
+// colour modes 25/26, warp mode 27, style modes 19/20 and in renderer_effects.cpp's
+// dedicated passes) ----
+// CPU reference of Threshold (AM's threshold): the pixel is PREMULTIPLIED in and out;
+// the luma is AM's (of the premultiplied rgb). feather / threshold are AM raw; the
+// def's feather floor 0.00196 and the (1.003 + 2f) recentring are part of the maths.
+void fxThresholdAmMap(float pr, float pg, float pb, float pa, float threshold, float feather,
+                      bool invert, int blendMode, float* outR, float* outG, float* outB, float* outA);
+// Spectral Map's channel curve (AM's mapChannel): the wrapped triangle over the
+// luma with the squeeze-mixed floor f.
+float fxSpectralmapAmMapChannel(float p, float f);
+// CPU reference of Spectral Map (AM's spectralmap): PREMULTIPLIED in and out. The three
+// colours are straight r / g / b triples (cols[9]); the output alpha is the pixel's own.
+void fxSpectralmapAmMap(float pr, float pg, float pb, float pa, float phase, float repeat,
+                        float alpha, float squeeze, float saturation, bool reverse,
+                        bool scaleBrightness, const float cols[9],
+                        float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Channel Map (AM's channelmap): PREMULTIPLIED in and out; the
+// luminance is read off the premultiplied rgb (the def computes it before dividing),
+// the pixel is un-premultiplied, its channels re-picked (src 0..6: R, G, B, A, luma
+// 709, 0, 1), and re-premultiplied by the NEW alpha.
+void fxChannelmapAmMap(float pr, float pg, float pb, float pa, int srcR, int srcG, int srcB,
+                       int srcA, float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Halftone Lines (AM's halftonelines): the sample position for a
+// fragment at (uvX, uvY) and its in-band distance *absDist (0..0.5). amount / angleDeg /
+// phase are AM units (phase raw), aspect = picture width / height.
+void fxHalftoneLinesUv(float uvX, float uvY, float amount, float angleDeg, float phase,
+                       float aspect, float* outX, float* outY, float* absDist);
+// Halftone Lines' colour decision: samp is the displaced sample (premultiplied), c1 / c2
+// the two straight colours, texA the fragment's own alpha (AM scales the result by it).
+void fxHalftoneLinesMap(float sampR, float sampG, float sampB, float sampA, float absDist,
+                        float strength, const float c1[3], const float c2[3], float texA,
+                        float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Turbulence / Clouds (AM's turbulence2): the field value p at a
+// fragment after the intensity scale (the caller clamps p + bias to 0..1 before the
+// colour mix, exactly where the def does it; the mix is fxTurbulence2AmMap).
+// offs / parallax / stretch are AM points; aspect = picture width / height.
+float fxTurbulence2AmField(float uvX, float uvY, float intensity, float scale, float evolution,
+                           float seed, int octaves, float offX, float offY, float parX,
+                           float parY, float stretchX, float stretchY, float aspect);
+// Turbulence's compose: T is the fragment's pixel (premultiplied); rcolor the field
+// colour (straight); blendMode AM's (0..2), alpha the final mix.
+void fxTurbulence2AmMap(float tr, float tg, float tb, float ta, float colR, float colG,
+                        float colB, int blendMode, float alpha,
+                        float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Checker (AM's checker2): the cell parity p (0 or 1) at a fragment, and
+// its compose (T premultiplied; the colour straight, its alpha 1 — AM declares it
+// alpha="false"; the def's c*alpha + tex*(1-alpha) with alpha = p * tex.a is verbatim,
+// squared p and all).
+float fxChecker2AmP(float uvX, float uvY, float amount, float angleDeg, float posX, float posY,
+                    float stretchX, float stretchY, float aspect);
+void fxChecker2AmMap(float tr, float tg, float tb, float ta, float colR, float colG,
+                     float colB, float p, bool punchout,
+                     float* outR, float* outG, float* outB, float* outA);
+// CPU references of Mosaic (AM's mosaic): one axis' snapped coordinate (the def's
+// centre-relative mod snap in layer norm) and the sample count of a pass
+// (pass 0 averages tilePx / 2 taps, pass 1 tilePx). The full two-pass pixel twin runs
+// off a sampler (tex 0 = the layer, AM layer space like FxExtrudeSampler's): pass 1's
+// base tap reads the INPUT at the y-snapped position, exactly like the def (not the
+// x-averaged buffer — an AM quirk the pin holds).
+float fxMosaicAmSnap(float coord, float phase, float size, float layerDim);
+int fxMosaicAmSamples(float tilePx, int pass);
+void fxMosaicAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                     const FxExtrudeSampler& s, float out[4]);
+// CPU references of Glow (AM's glow): the composite of the final pass given the two
+// nearest distances (in px of the layer picture). radius2 is the def's scaled radius
+// (fxInnerGlowAmStride gives its scan stride q — the same formula). The def's
+// p <= 0.0001 discard is the identity here: the composite is continuous there
+// (outColor -> 0), so the twin returns the original pixel. comp is the backdrop pixel
+// (premultiplied; only its rgb is read, for blend modes 1/2).
+void fxGlowAmMap(float oR, float oG, float oB, float oA, float compR, float compG, float compB,
+                 float nearestIn, float nearestOut, float radius2, float hardness, float alpha,
+                 float colR, float colG, float colB, float colA, int blendMode,
+                 float* outR, float* outG, float* outB, float* outA);
+// The box-average sample count of the defs' box passes: symmetric passes (boxblur3,
+// feather) clamp the speed to 2.01..150.01 and take 2n-1 taps; boxblur2 (inner blur)
+// clamps to 1.01..100.01 and takes n taps (the centre tap plus n-1 offset taps).
+int fxBoxSamples(float speed, bool symmetric);
+// CPU twin of Inner Blur (AM's innerblur): the chained boxblur2 passes + composite over
+// a sampler (tex 0 = the layer). One composite per full chain, the chain repeated
+// op.p[1] times with the output feeding the next round (the def's <iterations>).
+void fxInnerBlurAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                        const FxExtrudeSampler& s, float out[4]);
+// CPU twin of Box Blur 3 (AM's boxblur3): the half-res symmetric averages over a
+// sampler (tex 0 = the layer; a ds sample reads the layer at the same point — the copy
+// passes are plain renders in AM, and the host test's bilinear sampler makes the two
+// agree on the pinned fields).
+void fxBoxBlur3AmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                       const FxExtrudeSampler& s, float out[4]);
+// CPU twin of Feather (AM's feather): the chained quarter-res averages + the
+// alpha-squared composite over a sampler (tex 0 = the layer, read like boxblur3's ds).
+void fxFeatherAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]);
+// McGuire value noise (AM's electricedges helper, line by line): the vec2 noise at
+// (x, y) written to out[2].
+void fxElectricNoise(float x, float y, float out[2]);
+// CPU twin of Electric Edges (AM's electricedges): the main pass over a sampler
+// (tex 0 = the layer, tex 1 = its gaussian-blurred copy — the def's blurBuf, fed by
+// op.r[6] through the renderer's blur), AM layer space.
+void fxElectricEdgesAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                            const FxExtrudeSampler& s, float out[4]);
+// CPU twin of Smooth Edges (AM's smoothedges): the streak passes + final cut over a
+// sampler (tex 0 = the layer, tex 1 = its gaussian-blurred copy at op.p[0] through the
+// renderer's blur). hstreakAt / vstreakAt are evaluated on demand, so a pinned pixel
+// costs a few hundred samples — the host test uses tiny pictures.
+void fxSmoothEdgesAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                          const FxExtrudeSampler& s, float out[4]);
 
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);

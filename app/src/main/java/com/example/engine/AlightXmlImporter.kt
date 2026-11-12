@@ -254,6 +254,24 @@ object AlightXmlImporter {
     const val INNERGLOW = "com.alightcreative.inner-glow"
     const val EXTRUDE = "com.alightcreative.effects.extrude"
     const val EXTRUDEFLAT = "com.alightcreative.effects.extrudeflat"
+    // v175: effects tier 4 (defs-batch7).
+    const val THRESHOLDFX = "com.alightcreative.effects.threshold"
+    const val SPECTRALMAP = "com.alightcreative.spectralmap"
+    const val CHANNELMAP = "com.alightcreative.effects.channelmap"
+    const val HALFTONELINES = "com.alightcreative.effects.halftonelines"
+    const val TURBULENCE2 = "com.alightcreative.effects.turbulence2"
+    const val CHECKER2 = "com.alightcreative.effects.checker2"
+    const val MOSAICFX = "com.alightcreative.effects.mosaic"
+    const val GLOWFX = "com.alightcreative.glow"
+    const val INNERBLUR = "com.alightcreative.effects.innerblur"
+    const val BOXBLUR3 = "com.alightcreative.effects.boxblur3"
+    const val FEATHERFX = "com.alightcreative.effects.feather"
+    const val ELECTRICEDGES = "com.alightcreative.effects.electricedges"
+    const val SMOOTHEDGES = "com.alightcreative.effects.smoothedges"
+    const val OSCILLATE2 = "com.alightcreative.effects.oscillate2"
+    const val FLICKER2 = "com.alightcreative.effects.flicker2"
+    const val PARENTHELPER = "com.alightcreative.effects.parenthelper"
+    const val REPEATPATH = "com.alightcreative.effects.repeat.path"
 
     /** Effect ids the text reader stores as [TextAnimator] itself (the effect pass must not warn about them). */
     private val TEXT_STORED = setOf(TEXTTRANSFORM, TEXTPROGRESS, COUNTER)
@@ -2240,7 +2258,51 @@ object AlightXmlImporter {
             }
             link(child, anchor)
         }
+        applyParentHelpers(elements, directSlots, ctx, ::replace)
         return anchors
+    }
+
+    /**
+     * `parenthelper` post-pass: the effect has no shader and no script — it rewrites
+     * how its layer's parent link inherits (the def's scale / rotate modes: 0 Normal,
+     * 1 Locked, 2 Weighted; autoRotate is a separate 3D behaviour). It runs here,
+     * after [resolveParentLinks], because the layer's effects are read before its
+     * link exists. Locked modes set the link's flags (ParentRig keeps the position
+     * following in full and stops only the layer's own scale / rotation inheriting);
+     * Weighted modes and autoRotate have no counterpart in the link model and are
+     * reported, not faked. A helper on a layer with no parent is a no-op in Alight
+     * too and stays silent.
+     */
+    private fun applyParentHelpers(
+        elements: List<Element>, directSlots: ArrayList<TimelineClip?>, ctx: Ctx,
+        replace: (TimelineClip, TimelineClip) -> Unit
+    ) {
+        val w = ctx.warnings
+        for (i in elements.indices) {
+            val child = directSlots.getOrNull(i) ?: continue
+            val link = child.parent ?: continue
+            for (fx in elementChildren(elements[i]).filter { it.tagName == "effect" }) {
+                if (fx.getAttribute("id") != PARENTHELPER) continue
+                if (fx.getAttribute("hidden") == "true") continue
+                val props = fxProps(fx)
+                val scaleMode = props["scaleMode"]?.scalarAt(0f)?.toInt() ?: 0
+                val rotateMode = props["rotateMode"]?.scalarAt(0f)?.toInt() ?: 0
+                val autoRotate = props["autoRotate"]?.scalarAt(0f)?.toInt() ?: 0
+                var newLink = link
+                if (scaleMode == 1) newLink = newLink.copy(lockScale = true)
+                if (rotateMode == 1) newLink = newLink.copy(lockRotate = true)
+                if (scaleMode == 2 || rotateMode == 2) {
+                    val parts = ArrayList<String>()
+                    if (scaleMode == 2) parts += "scale weight " + (props["scaleWeight"]?.scalarAt(0f) ?: 1f)
+                    if (rotateMode == 2) parts += "rotate weight " + (props["rotateWeight"]?.scalarAt(0f) ?: 1f)
+                    w += "Layer \"" + child.name + "\": Parent Helper's weighted mode (" +
+                        parts.joinToString(", ") + ") is not reproduced: the link inherits in full"
+                }
+                if (autoRotate != 0)
+                    w += "Layer \"" + child.name + "\": Parent Helper's auto-rotate is not reproduced"
+                if (newLink != link) replace(child, child.copy(parent = newLink))
+            }
+        }
     }
 
     /** A clip of a nested scene, in the parent timeline: [inT] .. [outT] of the nested time is stretched onto [startMs] .. [endMs], and the clip is cut at the group's ends. */
@@ -2421,6 +2483,26 @@ object AlightXmlImporter {
                 INNERGLOW -> applyInnerGlowAm(fx, clip, ctx)
                 EXTRUDE -> applyExtrudeAm(fx, clip, ctx)
                 EXTRUDEFLAT -> applyExtrudeFlatAm(fx, clip, ctx)
+                THRESHOLDFX -> applyThresholdAm(fx, clip, ctx)
+                SPECTRALMAP -> applySpectralmapAm(fx, clip, ctx)
+                CHANNELMAP -> applyChannelmapAm(fx, clip, ctx)
+                HALFTONELINES -> applyHalftoneLinesAm(fx, clip, ctx)
+                TURBULENCE2 -> applyTurbulence2Am(fx, clip, ctx)
+                CHECKER2 -> applyChecker2Am(fx, clip, ctx)
+                MOSAICFX -> applyMosaicAm(fx, clip, ctx)
+                GLOWFX -> applyGlowAm(fx, clip, ctx)
+                INNERBLUR -> applyInnerBlurAm(fx, clip, ctx)
+                BOXBLUR3 -> applyBoxBlur3Am(fx, clip, ctx)
+                FEATHERFX -> applyFeatherAm(fx, clip, ctx)
+                ELECTRICEDGES -> applyElectricEdgesAm(fx, clip, ctx)
+                SMOOTHEDGES -> applySmoothEdgesAm(fx, clip, ctx)
+                OSCILLATE2 -> applyOscillate2(fx, clip, ctx, durMs)
+                FLICKER2 -> applyFlicker2(fx, clip, ctx, durMs)
+                PARENTHELPER -> clip   // a parenting-behaviour modifier, applied by resolveParentLinks' post-pass
+                REPEATPATH -> {
+                    ctx.warnings += "Effect repeat.path: copies along the layer's own path are not reproduced yet: skipped"
+                    clip
+                }
                 COUNTER -> {
                     // A text effect (its number counts the layer's characters): on any other
                     // layer Alight shows nothing either, so this is a note, not a gap.
@@ -3009,6 +3091,374 @@ object AlightXmlImporter {
                 gamma, brightness, tintColor, tint, 0f, 0f, 0f),
             short
         )
+    }
+
+    // ---- v175: effects tier 4 (defs-batch7; every def recovered from two dumps,
+    // shader- and structure-identical between them — the AM-dump copies are followed).
+    // Values stay in AM units (see the ClipFxLibrary consts); AM's def defaults fill
+    // what an instance omits, keyframed primaries ride AmFxEval tails where the fx
+    // slots can carry them, and the rest take first values with the pass-2 note.
+
+    /** `threshold` -> Threshold (Alight): a smoothstepped luma mask of the premultiplied pixel. */
+    private fun applyThresholdAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "threshold"
+        val props = fxProps(fx)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.THRESHOLD_AM,
+            listOf(
+                (props["threshold"]?.firstValue(w, short, "threshold") ?: 0.5f).coerceIn(0f, 1f),
+                (props["feather"]?.firstValue(w, short, "feather") ?: 0f).coerceIn(0f, 1f),
+                if ((props["invert"]?.firstValue(w, short, "invert") ?: 0f) > 0.5f) 1f else 0f,
+                (props["blendMode"]?.firstValue(w, short, "blendMode") ?: 0f).coerceIn(0f, 2f)
+            ),
+            short
+        )
+    }
+
+    /** `spectralmap` -> Spectral Map (Alight): a three-colour ramp over the luma. */
+    private fun applySpectralmapAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "spectralmap"
+        val props = fxProps(fx)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.SPECTRALMAP_AM,
+            listOf(
+                (props["phase"]?.firstValue(w, short, "phase") ?: 0f).coerceIn(-99f, 99f),
+                (props["repeat"]?.firstValue(w, short, "repeat") ?: 1f).coerceIn(0.1f, 10f),
+                (props["alpha"]?.firstValue(w, short, "alpha") ?: 1f).coerceIn(0f, 1f),
+                (props["squeeze"]?.firstValue(w, short, "squeeze") ?: 0f).coerceIn(0f, 1f),
+                (props["saturation"]?.firstValue(w, short, "saturation") ?: 0f).coerceIn(-1f, 1f),
+                if ((props["reverse"]?.firstValue(w, short, "reverse") ?: 0f) > 0.5f) 1f else 0f,
+                if ((props["scaleBrightness"]?.firstValue(w, short, "scaleBrightness") ?: 0f) > 0.5f) 1f else 0f,
+                props["redColor"]?.packedColor(w, short, "redColor") ?: 0xFF0000.toFloat(),
+                props["greenColor"]?.packedColor(w, short, "greenColor") ?: 0x00FF00.toFloat(),
+                props["blueColor"]?.packedColor(w, short, "blueColor") ?: 0x0000FF.toFloat(),
+                0f, 0f, 0f, 0f
+            ),
+            short
+        )
+    }
+
+    /** `channelmap` -> Channel Map (Alight): the four channel-source selectors. */
+    private fun applyChannelmapAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "channelmap"
+        val props = fxProps(fx)
+        fun src(name: String, def: Float) =
+            (props[name]?.firstValue(w, short, name) ?: def).coerceIn(0f, 6f)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.CHANNELMAP_AM,
+            listOf(src("red", 0f), src("green", 1f), src("blue", 2f), src("alpha", 3f)),
+            short
+        )
+    }
+
+    /** `halftonelines` -> Halftone Lines (Alight): keyframed angle / phase ride tails. */
+    private fun applyHalftoneLinesAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "halftonelines"
+        val props = fxProps(fx)
+        val angleT = props["angle"]
+        val phaseT = props["phase"]
+        val values = listOf(
+            (props["amount"]?.firstValue(w, short, "amount") ?: 100f).coerceIn(0f, 500f),
+            (props["strength"]?.firstValue(w, short, "strength") ?: 0.5f).coerceIn(0f, 1f),
+            (angleT?.scalarAtEased(0f) ?: 45f).coerceIn(-3600f, 3600f),
+            phaseT?.scalarAtEased(0f) ?: 0f,
+            props["color1"]?.packedColor(w, short, "color1") ?: 0x113355.toFloat(),
+            props["color2"]?.packedColor(w, short, "color2") ?: 0xFFEEDD.toFloat(),
+            0f
+        ) + tailsOf(trackTail(angleT), trackTail(phaseT))
+        return addFx(clip0, ctx, ClipFxLibrary.HALFTONE_LINES_AM, values, short)
+    }
+
+    /** `turbulence2` -> Turbulence (Alight): keyframed offs / parallax components ride tails. */
+    private fun applyTurbulence2Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "turbulence2"
+        val props = fxProps(fx)
+        val offsT = props["offs"]
+        val parrT = props["parr"]
+        val offs = offsT?.valueAtEased(0f)
+        val parr = parrT?.valueAtEased(0f)
+        val stretch = props["stretch"]?.valueAtEased(0f)
+        val values = listOf(
+            (props["intensity"]?.firstValue(w, short, "intensity") ?: 1f).coerceIn(0.1f, 1.5f),
+            (props["scale"]?.firstValue(w, short, "scale") ?: 1f).coerceIn(0.01f, 50f),
+            (props["evolution"]?.firstValue(w, short, "evolution") ?: 0f).coerceIn(-50f, 50f),
+            (props["seed"]?.firstValue(w, short, "seed") ?: 0f).coerceIn(0f, 5f),
+            props["color1"]?.packedColor(w, short, "color1") ?: 0f,
+            props["color2"]?.packedColor(w, short, "color2") ?: 0xFFFFFF.toFloat(),
+            (props["blendMode"]?.firstValue(w, short, "blendMode") ?: 0f).coerceIn(0f, 2f),
+            offs?.getOrNull(0) ?: 0f, offs?.getOrNull(1) ?: 0f,
+            parr?.getOrNull(0) ?: 0f, parr?.getOrNull(1) ?: 0f,
+            stretch?.getOrNull(0) ?: 1f, stretch?.getOrNull(1) ?: 1f,
+            (props["bias"]?.firstValue(w, short, "bias") ?: 0f).coerceIn(-1f, 1f),
+            (props["alpha"]?.firstValue(w, short, "alpha") ?: 1f).coerceIn(0f, 1f),
+            (props["octaves"]?.firstValue(w, short, "octaves") ?: 6f).coerceIn(1f, 9f),
+            0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(
+            pointTail(offsT, 0) { it }, pointTail(offsT, 1) { it },
+            pointTail(parrT, 0) { it }, pointTail(parrT, 1) { it }
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.TURBULENCE2_AM, values, short)
+    }
+
+    /** `checker2` -> Checker (Alight). A screen-space instance is reported: the pattern anchors to the layer here. */
+    private fun applyChecker2Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "checker2"
+        val props = fxProps(fx)
+        val pos = props["position"]?.valueAtEased(0f)
+        if ((props["position"]?.keys?.size ?: 0) >= 2)
+            w += "Effect checker2: keyframed position is not supported yet: the first value is used"
+        val stretch = props["stretch"]?.valueAtEased(0f)
+        val screenSpace = (props["screenSpace"]?.firstValue(w, short, "screenSpace") ?: 0f) > 0.5f
+        if (screenSpace)
+            w += "Effect checker2: a screen-space pattern is anchored to the layer here"
+        return addFx(
+            clip0, ctx, ClipFxLibrary.CHECKER2_AM,
+            listOf(
+                (props["amount"]?.firstValue(w, short, "amount") ?: 10f).coerceIn(0.5f, 200f),
+                (props["angle"]?.firstValue(w, short, "angle") ?: 0f).coerceIn(-3600f, 3600f),
+                props["color"]?.packedColor(w, short, "color") ?: 0x2D1EF6.toFloat(),
+                if ((props["punchout"]?.firstValue(w, short, "punchout") ?: 0f) > 0.5f) 1f else 0f,
+                if (screenSpace) 1f else 0f,
+                pos?.getOrNull(0) ?: 0f, pos?.getOrNull(1) ?: 0f,
+                stretch?.getOrNull(0) ?: 1f, stretch?.getOrNull(1) ?: 1f,
+                0f, 0f, 0f, 0f, 0f
+            ),
+            short
+        )
+    }
+
+    /** `mosaic` -> Mosaic (Alight): keyframed size rides a tail; a keyframed phase takes its first value. */
+    private fun applyMosaicAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "mosaic"
+        val props = fxProps(fx)
+        val sizeT = props["size"]
+        val phaseT = props["phase"]
+        val phase = phaseT?.valueAtEased(0f)
+        if ((phaseT?.keys?.size ?: 0) >= 2)
+            w += "Effect mosaic: keyframed phase is not supported yet: the first value is used"
+        val values = withTails(
+            listOf(
+                (sizeT?.scalarAtEased(0f) ?: 10f).coerceIn(1f, 500f),
+                phase?.getOrNull(0) ?: 0f, phase?.getOrNull(1) ?: 0f
+            ),
+            tailsOf(trackTail(sizeT))
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.MOSAIC_AM, values, short)
+    }
+
+    /**
+     * `glow` -> Glow (Alight), the outer glow: AM's def colour carries an alpha
+     * (#FFFFFFAA by default), which the packed slot cannot hold, so it rides its own
+     * slot (it scales the result's alpha in blend mode 0). A keyframed colour takes
+     * its first value with the note.
+     */
+    private fun applyGlowAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "glow"
+        val props = fxProps(fx)
+        val colorT = props["color"]
+        if ((colorT?.keys?.size ?: 0) >= 2)
+            w += "Effect glow: keyframed color is not supported yet: the first value is used"
+        val argb = colorT?.let { unpacked(it.first()) } ?: 0xFFFFFFAAL
+        return addFx(
+            clip0, ctx, ClipFxLibrary.GLOW_AM,
+            listOf(
+                (props["radius"]?.firstValue(w, short, "radius") ?: 100f).coerceIn(0f, 400f),
+                (props["alpha"]?.firstValue(w, short, "alpha") ?: 0.75f).coerceIn(0f, 1f),
+                (props["hardness"]?.firstValue(w, short, "hardness") ?: 0.5f).coerceIn(0f, 1f),
+                (argb and 0xFFFFFFL).toFloat(),
+                ((argb shr 24) and 0xFF) / 255f,
+                (props["blendMode"]?.firstValue(w, short, "blendMode") ?: 2f).coerceIn(0f, 2f)
+            ),
+            short
+        )
+    }
+
+    /** `innerblur` -> Inner Blur (Alight): keyframed strength rides a tail. */
+    private fun applyInnerBlurAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "innerblur"
+        val props = fxProps(fx)
+        val strT = props["strength"]
+        val values = withTails(
+            listOf(
+                (strT?.scalarAtEased(0f) ?: 0.15f).coerceIn(0f, 1f),
+                (props["iter"]?.firstValue(w, short, "iter") ?: 2f).coerceIn(1f, 6f)
+            ),
+            tailsOf(trackTail(strT))
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.INNER_BLUR_AM, values, short)
+    }
+
+    /** `boxblur3` -> Box Blur 3 (Alight). */
+    private fun applyBoxBlur3Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.BOX_BLUR3_AM,
+            listOf((props["strength"]?.firstValue(w, "boxblur3", "strength") ?: 0.15f).coerceIn(0f, 2f)),
+            "boxblur3"
+        )
+    }
+
+    /** `feather` -> Feather (Alight): keyframed strength rides a tail. */
+    private fun applyFeatherAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "feather"
+        val props = fxProps(fx)
+        val strT = props["strength"]
+        val values = withTails(
+            listOf(
+                (strT?.scalarAtEased(0f) ?: 0.15f).coerceIn(0f, 2f),
+                (props["iter"]?.firstValue(w, short, "iter") ?: 3f).coerceIn(1f, 5f)
+            ),
+            tailsOf(trackTail(strT))
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.FEATHER_AM, values, short)
+    }
+
+    /** `electricedges` -> Electric Edges (Alight): keyframed evolution rides a tail (EXT slot 2). */
+    private fun applyElectricEdgesAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "electricedges"
+        val props = fxProps(fx)
+        val evoT = props["evolution"]
+        val values = listOf(
+            (props["distance"]?.firstValue(w, short, "distance") ?: 0.3f).coerceIn(0f, 1f),
+            (props["thickness"]?.firstValue(w, short, "thickness") ?: 0.8f).coerceIn(0f, 1f),
+            (props["complexity"]?.firstValue(w, short, "complexity") ?: 2f).coerceIn(0f, 20f),
+            (props["disort"]?.firstValue(w, short, "disort") ?: 0.5f).coerceIn(-1f, 1f),
+            props["color1"]?.packedColor(w, short, "color1") ?: 0xFF77FF.toFloat(),
+            props["color2"]?.packedColor(w, short, "color2") ?: 0xDDBBAA.toFloat(),
+            (props["alpha"]?.firstValue(w, short, "alpha") ?: 1f).coerceIn(0f, 1f),
+            (props["glowAlpha"]?.firstValue(w, short, "glowAlpha") ?: 0.5f).coerceIn(0f, 1f),
+            (props["seed"]?.firstValue(w, short, "seed") ?: 0f).coerceIn(0f, 5f),
+            evoT?.scalarAtEased(0f) ?: 0f,
+            (props["fill"]?.firstValue(w, short, "fill") ?: 1f).coerceIn(0f, 1f),
+            (props["maskStrength"]?.firstValue(w, short, "maskStrength") ?: 0f).coerceIn(0f, 1f),
+            (props["maskEvolution"]?.firstValue(w, short, "maskEvolution") ?: 0f).coerceIn(-50f, 50f),
+            (props["maskScale"]?.firstValue(w, short, "maskScale") ?: 1f).coerceIn(0.01f, 50f),
+            (props["maskSeed"]?.firstValue(w, short, "maskSeed") ?: 0f).coerceIn(0f, 5f),
+            props["maskColor"]?.packedColor(w, short, "maskColor") ?: 0xEEDD55.toFloat(),
+            if ((props["renderContours"]?.firstValue(w, short, "renderContours") ?: 0f) > 0.5f) 1f else 0f,
+            (props["contourCount"]?.firstValue(w, short, "contourCount") ?: 20f).coerceIn(0f, 200f),
+            (props["contourOffset"]?.firstValue(w, short, "contourOffset") ?: 0f).coerceIn(-999f, 999f),
+            (props["contourAngle"]?.firstValue(w, short, "contourAngle") ?: 0f).coerceIn(-3600f, 3600f),
+            (props["strength"]?.firstValue(w, short, "strength") ?: 0.42f).coerceIn(0f, 2f)
+        ) + tailsOf(trackTail(evoT))
+        return addFx(clip0, ctx, ClipFxLibrary.ELECTRIC_EDGES_AM, values, short)
+    }
+
+    /** `smoothedges` -> Smooth Edges (Alight). */
+    private fun applySmoothEdgesAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "smoothedges"
+        val props = fxProps(fx)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.SMOOTH_EDGES_AM,
+            listOf(
+                (props["strength"]?.firstValue(w, short, "strength") ?: 0.02f).coerceIn(0f, 2f),
+                if ((props["maskToLayer"]?.firstValue(w, short, "maskToLayer") ?: 0f) > 0.5f) 1f else 0f
+            ),
+            short
+        )
+    }
+
+    /**
+     * `oscillate2` -> a POSITION bake, like [applyOscillate] (the phase machinery is
+     * shared, including its reading of the host's `p.freq` shorthand) — but the def's
+     * direction is (sin a, cos a), NOT oscillate's (cos a, sin a), and its def angle
+     * default is 45. Type 1 (triangle) takes the same sine fallback note as oscillate.
+     */
+    private fun applyOscillate2(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val typeV = props["type"]?.scalarAt(0f)?.toInt() ?: 0
+        if (typeV != 0) w += "Effect oscillate2: waveform type " + typeV + " is not supported yet: a sine wave is used"
+        val magT = props["mag"] ?: return clip0
+        val magMax = (magT.keys.map { abs(it.v.firstOrNull() ?: 0f) } +
+            listOf(abs(magT.constant.firstOrNull() ?: 0f), abs(magT.first().firstOrNull() ?: 0f))).maxOrNull() ?: 0f
+        if (magMax < 1e-4f) return clip0
+        val angleT = props["angle"]
+        val freqT = props["freq"]
+        val phase0 = (props["phase"]?.scalarAt(0f) ?: 0f).toDouble() * 2.0 * Math.PI
+        val extra = (magT.keys + (angleT?.keys ?: emptyList()) + (freqT?.keys ?: emptyList()))
+            .map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }
+        return bakeDelta(clip0, AnimProp.POSITION, durMs, ctx, phase0, { n -> freqT?.scalarAt(n) ?: 0f }, extra) { phase, norm ->
+            val mag = magT.scalarAt(norm)
+            val ang = angleT?.scalarAt(norm) ?: 45f
+            val s = sin(phase).toFloat() * mag
+            val rad = Math.toRadians(ang.toDouble())
+            (s * sin(rad).toFloat() * ctx.k) to (s * cos(rad).toFloat() * ctx.k)
+        }
+    }
+
+    /**
+     * `flicker2` -> an OPACITY bake: the def's script multiplies the layer's alpha by
+     * three simplex-noise factors (Ashima snoise, [simplexNoise3]) running off
+     * t = freq * time / 4; the script's `p.mag /= 2` lines write a local that never
+     * changes, so m = mag / 2 throughout (the halved value is what the factors use).
+     * Basis 1 noises the layer's own location (read from its POSITION track, in AM
+     * units) instead of the time. The bake samples like [bakeDelta] and multiplies
+     * the layer's own opacity keys, the [composeAlpha] pattern.
+     */
+    private fun applyFlicker2(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        val w = ctx.warnings
+        val short = "flicker2"
+        val props = fxProps(fx)
+        if (durMs <= 0L) return clip0
+        val magT = props["mag"] ?: return clip0
+        val magMax = (magT.keys.map { abs(it.v.firstOrNull() ?: 0f) } +
+            listOf(abs(magT.constant.firstOrNull() ?: 0f), abs(magT.first().firstOrNull() ?: 0f))).maxOrNull() ?: 0f
+        if (magMax < 1e-4f) return clip0
+        val freqT = props["freq"]
+        val seed = (props["seed"]?.firstValue(w, short, "seed") ?: 0f).toDouble()
+        val basis = (props["basis"]?.firstValue(w, short, "basis") ?: 0f).toInt()
+        var freqMax = 0f
+        for (i in 0..16) freqMax = maxOf(freqMax, abs(freqT?.scalarAt(i / 16f) ?: 7f))
+        val baseKeys = clip0.keyframes[AnimProp.OPACITY]
+        val posKeys = clip0.keyframes[AnimProp.POSITION]
+        val extras = ((freqT?.keys ?: emptyList()) + magT.keys)
+            .map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } +
+            (baseKeys?.map { it.timeMs } ?: emptyList()) + (posKeys?.map { it.timeMs } ?: emptyList())
+        val times = sampleTimes(durMs, ctx.fps, freqMax, extras)
+        fun mult(t: Long): Float {
+            val norm = t.toFloat() / durMs
+            val m = (magT.scalarAt(norm) / 2f).toDouble()
+            val f = (freqT?.scalarAt(norm) ?: 7f).toDouble()
+            val da: Double
+            val db: Double
+            val dc: Double
+            if (basis == 1) {
+                val pv = posKeys?.valueAt(t) ?: clip0.propValues(AnimProp.POSITION)
+                val lx = (pv.first / ctx.k).toDouble() * f / 500.0
+                val ly = (pv.second / ctx.k).toDouble() * f / 500.0
+                da = simplexNoise3(lx, ly, seed)
+                db = simplexNoise3(lx * 2.0, ly * 2.0, seed + 7468.329)
+                dc = simplexNoise3(lx * 4.0, ly * 4.0, seed + 3668.789)
+            } else {
+                val tt = f * (t / 1000.0) / 4.0
+                da = simplexNoise3(tt, 0.0, seed)
+                db = simplexNoise3(0.0, 2.0 * tt, seed)
+                dc = simplexNoise3(4.0 * tt + 234.34, 4.0 * tt + 547.931, seed)
+            }
+            return ((1.0 - m + m * da / 2.0) * (1.0 - m + m * db) * (1.0 - m + m * dc)).toFloat()
+        }
+        val raw = times.map { t ->
+            val base = baseKeys?.valueAt(t)?.first ?: clip0.opacity
+            Keyframe(t, (base * mult(t)).coerceIn(0f, 100f), 0f, Easing.LINEAR)
+        }
+        val keys = simplifyKeys(raw, 0.05f, 0.05f)
+        var clip = clip0.copy(keyframes = clip0.keyframes + (AnimProp.OPACITY to keys))
+        keys.firstOrNull()?.let { clip = clip.copy(opacity = it.a) }
+        return clip
     }
 
     /**
@@ -5570,13 +6020,21 @@ object AlightXmlImporter {
      * `lift`: in every exported sample the effect carries nothing but `fill` = 0 (no lift amount at all),
      * so there is nothing to map; an export that actually lifts (a fill or any other property) is reported.
      */
+    /**
+     * `lift` -> the app's Copy Background: the effect's def (its name is literally
+     * "Copy Background", defs-batch7) is `mix(comp * texColor.a, texColor, fill)`,
+     * so AM's fill is the app's amount inverted: amount = (1 - fill) * 100. (Before
+     * the def was recovered, any fill != 0 was warned as unsupported.)
+     */
     private fun applyLift(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
         val props = fxProps(fx)
-        val fill = props["fill"]?.scalarAt(0f) ?: 0f
-        if (abs(fill) > 1e-4f || props.keys.any { it != "fill" }) {
-            ctx.warnings += "Effect lift is not supported yet: skipped"
-        }
-        return clip0
+        val fill = (props["fill"]?.firstValue(w, "lift", "fill") ?: 0f).coerceIn(0f, 1f)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.COPY_BG,
+            listOf(((1f - fill) * 100f).coerceIn(0f, 100f)),
+            "lift"
+        )
     }
 
     // ---- move along path ------------------------------------------------------------------------------------------

@@ -1777,10 +1777,14 @@ object AlightXmlImporter {
         val nTotal = nested.getAttribute("totalTime").toLongOrNull() ?: 0L
         if (abs(nW - ctx.sceneW) > 1f || abs(nH - ctx.sceneH) > 1f) {
             // Positions and sizes inside are exact (an embedded scene draws 1:1, centre at the
-            // embed's location — see Ctx.shapeBoxPx); what is NOT reproduced is Alight's clipping
-            // of the content to the embedded scene's own canvas rect.
+            // embed's location — see Ctx.shapeBoxPx), and the content IS clipped to the embedded
+            // scene's own canvas rect in the native renderers (the precomposition rule, Queue
+            // 12a: the group pass cuts the composed picture to the embed's box before the
+            // group's own effects — see OverlayMasks.embedCanvasClipOps). The note stays so the
+            // importer reports the size change; only the Compose fallback preview, which draws
+            // no group picture, still shows the overflow.
             w += "Group" + labelOf(el) + ": its canvas (" + nW.toInt() + "x" + nH.toInt() +
-                ") differs from the canvas it sits in: layers inside are not clipped to it"
+                ") differs from the canvas it sits in: layers inside are clipped to it"
         }
         val content = readSceneContent(nested, Ctx(nW, nH, ctx.previewW, ctx.rootW, nTotal,
             nested.getAttribute("fps").toFloatOrNull()?.takeIf { it > 0f } ?: ctx.fps, w))

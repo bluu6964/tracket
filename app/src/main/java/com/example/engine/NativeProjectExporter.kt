@@ -610,23 +610,52 @@ class NativeProjectExporter(private val context: Context) {
                         if (tex == 0) return
                         val blendId = BlendModes.find(clip.blendMode).shaderId
                         val fxOps = fxOpsOf(clip, timeMs)
+                        // The children's parent link to this group (its ref = the embed's pivot):
+                        // the embed's own box in the frame is read off it, for the canvas clip
+                        // below and the mask remap.
+                        val embedLink = if (clip.embedW > 0f) {
+                            all.firstOrNull { it.parent?.id == clip.id }?.parent
+                        } else null
+                        var drawTex = tex
+                        // An imported embed's canvas clip (Queue 12a): Alight rasterises an
+                        // embedded scene on its own canvas — content outside that rect never
+                        // reaches the parent scene. The composed picture is cut to the embed's
+                        // box FIRST, before the group's own effects (parent-scene effects in
+                        // Alight, fed by the clipped picture) and before any mask layer's cut —
+                        // exactly like the preview. A user-made group (embedW == 0) has no canvas
+                        // and is never clipped. (In the beginGroup fallback above there is no
+                        // group picture, so — like a mask on such a group — the clip cannot
+                        // apply there.)
+                        if (embedLink != null) {
+                            val clipOps = OverlayMasks.embedCanvasClipOps(
+                                g.transformX, g.transformY, embedLink.refX, embedLink.refY,
+                                g.scalePercent, g.rotationDeg, g.isFlippedH, g.isFlippedV,
+                                clip.embedW, clip.embedH, if (previewW > 0f) w / previewW else 1f, w, h
+                            )
+                            if (clipOps != null) {
+                                val clipped = renderer.applyFx(
+                                    drawTex, false, IDENTITY_TEX_MATRIX, w, h, 0,
+                                    0, 0f, 0, false, canvasRgb, null, ClipFxLibrary.grainFrame(timeMs), clipOps, null, true
+                                )
+                                if (clipped == 0) error("Embed canvas clip failed on group '${clip.name}'.")
+                                drawTex = clipped
+                            }
+                        }
                         val rawMaskOps = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                         // An imported group's own masks (a wipe on an embedScene — Graph round 6 G1)
                         // are fractions of the EMBED's box, not of the frame the composed picture
                         // fills: remap them onto the frame (see OverlayMasks). A user-authored
                         // group's masks were written against the picture itself (embedW == 0).
                         val maskOps = if (rawMaskOps != null && clip.embedW > 0f) {
-                            val link = all.firstOrNull { it.parent?.id == clip.id }?.parent
-                            if (link != null) {
+                            if (embedLink != null) {
                                 val box = OverlayMasks.groupBox(
-                                    g.transformX, g.transformY, link.refX, link.refY, g.scalePercent, g.rotationDeg,
+                                    g.transformX, g.transformY, embedLink.refX, embedLink.refY, g.scalePercent, g.rotationDeg,
                                     g.isFlippedH, g.isFlippedV, clip.embedW, clip.embedH,
                                     if (previewW > 0f) w / previewW else 1f, w, h
                                 )
                                 OverlayMasks.remap(rawMaskOps, box, 0f, 0f, w.toFloat(), h.toFloat())
                             } else rawMaskOps
                         } else rawMaskOps
-                        var drawTex = tex
                         // A mask layer sitting on this group (Alight style) cuts the composed picture,
                         // before the group's own effects — the same order as a masked shape / text
                         // layer's picture. Each mask is drawn with the same painter as every overlay

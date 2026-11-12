@@ -657,23 +657,49 @@ class NativePreviewEngine(context: Context) {
             if (tex == 0) return
             val blendId = BlendModes.find(c.blendMode).shaderId
             val fxOps = fxOpsOf(c, t)
+            // The children's parent link to this group (its ref = the embed's pivot): the embed's
+            // own box in the frame is read off it, for the canvas clip below and the mask remap.
+            val embedLink = if (c.embedW > 0f) {
+                liveTracks.flatMap { it.clips }.firstOrNull { it.parent?.id == c.id }?.parent
+            } else null
+            var drawTex = tex
+            // An imported embed's canvas clip (Queue 12a): Alight rasterises an embedded scene on
+            // its own canvas — content outside that rect never reaches the parent scene. The
+            // composed picture is cut to the embed's box FIRST, before the group's own effects
+            // (parent-scene effects in Alight, fed by the clipped picture) and before any mask
+            // layer's cut. A user-made group (embedW == 0) has no canvas and is never clipped.
+            // In the beginGroup fallback above there is no group picture, so — like a mask on
+            // such a group — the clip cannot apply there.
+            if (embedLink != null) {
+                val clipOps = OverlayMasks.embedCanvasClipOps(
+                    g.transformX, g.transformY, embedLink.refX, embedLink.refY,
+                    g.scalePercent, g.rotationDeg, g.isFlippedH, g.isFlippedV,
+                    c.embedW, c.embedH, if (previewW > 0f) outW / previewW else 1f, outW, outH
+                )
+                if (clipOps != null) {
+                    val clipped = r.applyFx(
+                        drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0,
+                        0, 0f, 0, false, canvasRgb, null, ClipFxLibrary.grainFrame(t), clipOps, null, true
+                    )
+                    if (clipped != 0) drawTex = clipped
+                    else Log.w(TAG, "embed canvas clip failed on group '${c.name}', drawn unclipped")
+                }
+            }
             val rawMaskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
             // An imported group's own masks (a wipe on an embedScene — Graph round 6 G1) are
             // fractions of the EMBED's box, not of the frame the composed picture fills: remap
             // them onto the frame (see OverlayMasks). A user-authored group's masks were written
             // against the picture itself (embedW == 0) and keep their meaning.
             val maskOps = if (rawMaskOps != null && c.embedW > 0f) {
-                val link = liveTracks.flatMap { it.clips }.firstOrNull { it.parent?.id == c.id }?.parent
-                if (link != null) {
+                if (embedLink != null) {
                     val box = OverlayMasks.groupBox(
-                        g.transformX, g.transformY, link.refX, link.refY, g.scalePercent, g.rotationDeg,
+                        g.transformX, g.transformY, embedLink.refX, embedLink.refY, g.scalePercent, g.rotationDeg,
                         g.isFlippedH, g.isFlippedV, c.embedW, c.embedH,
                         if (previewW > 0f) outW / previewW else 1f, outW, outH
                     )
                     OverlayMasks.remap(rawMaskOps, box, 0f, 0f, outW.toFloat(), outH.toFloat())
                 } else rawMaskOps
             } else rawMaskOps
-            var drawTex = tex
             // A mask layer sitting on this group (Alight style) cuts the composed picture, before the
             // group's own effects — the same order as a masked shape / text layer's picture. Each mask
             // is evaluated like every layer, so the cut follows its own animation; outside a mask

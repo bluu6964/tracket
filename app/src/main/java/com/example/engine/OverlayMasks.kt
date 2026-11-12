@@ -1,8 +1,11 @@
 package com.example.engine
 
+import com.example.model.ClipMask
 import com.example.model.ClipMaskLibrary
 import com.example.model.LayerType
+import com.example.model.MaskMode
 import com.example.model.MaskShape
+import com.example.model.MaskState
 import com.example.model.TimelineClip
 import com.example.model.depthX
 import com.example.model.depthY
@@ -184,6 +187,35 @@ internal object OverlayMasks {
             o += stride
         }
         return out
+    }
+
+    /**
+     * The canvas clip of an imported embed group as native mask ops: ONE rect op (INTERSECT,
+     * feather 0) covering exactly the embed's box as [groupBox] places it in the frame. Run on
+     * the group's composed picture it reproduces Alight's precomposition rule — the embedded
+     * scene is rasterised on its OWN canvas, so content outside that rect does not exist in the
+     * picture the parent scene sees (Queue 12a; the corpus census found 52 of 211 embeds whose
+     * content crosses the canvas, 7 visibly inside the root frame). A lone INTERSECT op folds
+     * from a base of 1 (see mask_plan's maskInitial), so the pass is just "multiply by the rect".
+     * Null when the group is not an imported embed (embedW / embedH <= 0) or the box is empty.
+     * The pose arguments are [groupBox]'s: the ADJUSTED group clip's stored position (anchor),
+     * the children's link reference (pivot), scale / rotation / flips, and [k] = frame px per
+     * stored unit.
+     */
+    fun embedCanvasClipOps(
+        anchorX: Float, anchorY: Float, refX: Float, refY: Float,
+        scalePct: Float, rotDeg: Float, flipH: Boolean, flipV: Boolean,
+        embedW: Float, embedH: Float, k: Float, frameW: Int, frameH: Int
+    ): FloatArray? {
+        if (embedW <= 0f || embedH <= 0f || frameW <= 0 || frameH <= 0) return null
+        val box = groupBox(anchorX, anchorY, refX, refY, scalePct, rotDeg, flipH, flipV, embedW, embedH, k, frameW, frameH)
+        if (box.w <= 0f || box.h <= 0f) return null
+        val clip = ClipMask(
+            shape = MaskShape.RECT, mode = MaskMode.INTERSECT,
+            state = MaskState(cx = 0.5f, cy = 0.5f, w = 1f, h = 1f, rot = 0f, feather = 0f, expand = 0f, opacity = 100f)
+        )
+        val raw = ClipMaskLibrary.toNative(listOf(clip), 0L) ?: return null
+        return remap(raw, box, 0f, 0f, frameW.toFloat(), frameH.toFloat())
     }
 
     /** True when [clip] carries an enabled own mask the native pass can run. */

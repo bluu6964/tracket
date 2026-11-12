@@ -334,8 +334,17 @@ object AlightXmlImporter {
         val totalMs: Long, val fps: Float, val warnings: MutableList<String>
     ) {
         val k: Float get() = previewW / rootW
-        /** The app's shape box (130 dp) in this scene's pixels. */
-        val shapeBoxPx: Float get() = sceneW * APP_SHAPE_BOX_DP / CANVAS_DP
+        /**
+         * The app's shape box (130 dp) in scene pixels. Anchored to the ROOT scene, not to the
+         * scene the layer sits in: an embedded scene's pixels are the project's pixels (Alight
+         * draws a precomp 1:1, its centre at the embed's location — positions already convert
+         * with [k], which is root-based), so a size read against a nested scene's own width came
+         * back scaled by rootW / sceneW when the renderers drew it against the project canvas.
+         * The Graph preset's card lives in a 2005-wide scene inside a 1920 project and rendered
+         * 4.2 % small while the 1920-scene bars and lines around it stayed exact — its texts
+         * looked pushed out of the card on every side (Graph round 6, G3).
+         */
+        val shapeBoxPx: Float get() = rootW * APP_SHAPE_BOX_DP / CANVAS_DP
 
         fun posX(v: List<Float>) = ((v.getOrNull(0) ?: sceneW / 2f) - sceneW / 2f) * k
         fun posY(v: List<Float>) = ((v.getOrNull(1) ?: sceneH / 2f) - sceneH / 2f) * k
@@ -513,16 +522,22 @@ object AlightXmlImporter {
         val rot = tr.rot
         val opa = tr.opa ?: child(el, "opacity")?.let { readTrack(it) }
 
-        // Alight's font height in scene pixels: size x scale, in units of sceneWidth / 640 px.
-        val fontBase = APP_FONT_FRACTION * ctx.sceneW
+        // Alight's font height in scene pixels: size x scale, in units of sceneWidth / 640 px —
+        // the width of the scene the TEXT sits in (its em is that many of the project's pixels:
+        // embedded scenes draw 1:1). The app's font base is the ROOT canvas's, so a text read in
+        // a differently-sized nested scene keeps its physical size (the Graph counter, in a
+        // 2005-wide scene of a 1920 project, rendered 4.2 % small while its position stayed
+        // exact — Graph round 6, G3). Root-scene texts are unchanged: the two widths agree.
+        val fontBase = APP_FONT_FRACTION * ctx.rootW
         fun scalePct(v: List<Float>): Float {
             if (v.size >= 2 && abs(v[0] - v[1]) > 1e-3f) w += "Non-uniform scale: only the horizontal scale is used"
             val emPx = size * (v.firstOrNull() ?: 1f) * ctx.sceneW / TEXT_REF_UNITS
             return emPx / fontBase * 100f
         }
-        // wrapWidth is in scene pixels: the widest line Alight allows before wrapping.
+        // wrapWidth is in scene pixels: the widest line Alight allows before wrapping. The stored
+        // fraction is of the frame the renderers lay out on — the root canvas.
         val wrapFrac = el.getAttribute("wrapWidth").toFloatOrNull()?.takeIf { it > 0f }
-            ?.let { (it / ctx.sceneW).coerceIn(0.05f, 1f) } ?: 0f
+            ?.let { (it / ctx.rootW).coerceIn(0.05f, 1f) } ?: 0f
 
         val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
         fun keys(prop: AnimProp, t: Track?, map: (List<Float>) -> Pair<Float, Float>) {
@@ -595,7 +610,7 @@ object AlightXmlImporter {
             if (n.isEmpty()) continue
             val type = p.getAttribute("type").ifEmpty { "float" }
             val t = readTrack(p, type)
-            props[n] = AnimValue(type, if (t.keys.isEmpty()) t.constant else emptyList(), t.keys.map { AnimKey(it.t, it.v) })
+            props[n] = AnimValue(type, if (t.keys.isEmpty()) t.constant else emptyList(), t.keys.map { AnimKey(it.t, it.v, it.easing) })
         }
         return TextAnimator(id, props, refSize)
     }
@@ -721,7 +736,7 @@ object AlightXmlImporter {
         val strokeWidth = when {
             strokeSz <= 0f -> 0f
             rendW > 0f -> APP_SHAPE_BOX_DP * strokeSz * (sclV.getOrNull(0) ?: 1f) / rendW
-            else -> strokeSz * CANVAS_DP / ctx.sceneW
+            else -> strokeSz * CANVAS_DP / ctx.rootW
         }
 
         val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
@@ -985,7 +1000,7 @@ object AlightXmlImporter {
         val strokeWidth = when {
             strokeSz <= 0f -> 0f
             rendW > 0f -> APP_SHAPE_BOX_DP * strokeSz * sclX / rendW
-            else -> strokeSz * CANVAS_DP / ctx.sceneW
+            else -> strokeSz * CANVAS_DP / ctx.rootW
         }
 
         // The app's anchor is the clip position; the stored outline is centred on the path's box, so
@@ -1477,8 +1492,11 @@ object AlightXmlImporter {
         val nH = nested.getAttribute("height").toFloatOrNull()?.takeIf { it > 0f } ?: ctx.sceneH
         val nTotal = nested.getAttribute("totalTime").toLongOrNull() ?: 0L
         if (abs(nW - ctx.sceneW) > 1f || abs(nH - ctx.sceneH) > 1f) {
+            // Positions and sizes inside are exact (an embedded scene draws 1:1, centre at the
+            // embed's location — see Ctx.shapeBoxPx); what is NOT reproduced is Alight's clipping
+            // of the content to the embedded scene's own canvas rect.
             w += "Group" + labelOf(el) + ": its canvas (" + nW.toInt() + "x" + nH.toInt() +
-                ") differs from the project canvas: positions inside are approximate"
+                ") differs from the canvas it sits in: layers inside are not clipped to it"
         }
         val content = readSceneContent(nested, Ctx(nW, nH, ctx.previewW, ctx.rootW, nTotal,
             nested.getAttribute("fps").toFloatOrNull()?.takeIf { it > 0f } ?: ctx.fps, w))
@@ -1544,6 +1562,8 @@ object AlightXmlImporter {
             color = GROUP_COLOR,
             transformX = ctx.posX(tr.loc?.first() ?: emptyList()) + pivotX,
             transformY = ctx.posY(tr.loc?.first() ?: emptyList()) + pivotY,
+            embedW = nW * ctx.k,
+            embedH = nH * ctx.k,
             scalePercent = scalePct(tr.scl?.first() ?: listOf(1f, 1f)),
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),

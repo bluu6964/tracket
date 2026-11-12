@@ -15,8 +15,9 @@ class CounterEvalTest {
 
     // The counter of the animated-graph file (7e363d75…xml), as the importer stores it: on the text
     // "0", offset keyframed 0 -> 12 over the first ~29 % of the 7032 ms layer, scale constant 0.14.
-    // (The file's offset keys carry a cubicBezier easing, which AnimKey does not store — animator
-    // evaluation is linear, so the counts below are the linear pacing of the same 0 -> 12 run.)
+    // (This fixture's keys carry NO easing, so the counts below are the linear pacing of the same
+    // 0 -> 12 run; the file's own keys carry a cubicBezier easing, which AnimKey keeps since the
+    // Graph round-6 link — the eased pacing is pinned in GraphParityTest.)
     private val graphCounter = TextAnimator(
         AlightXmlImporter.COUNTER,
         mapOf(

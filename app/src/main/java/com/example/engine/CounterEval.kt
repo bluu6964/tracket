@@ -48,9 +48,10 @@ import kotlin.math.pow
  *  - a leading '-' directly attached to a number is part of it ("-5" × 2 -> "-10"); a dash after a
  *    digit is text ("5-3" × 2 -> "10-6").
  *
- * Known shared limits: animator keyframes are interpolated LINEARLY by [TextAnimEval.valueAt] (the
- * importer's [com.example.model.AnimKey] stores no easing), so the graph counter's cubicBezier-paced
- * count runs at a steady pace here — same start and end values, different pacing. When a layer also
+ * Easing: animator keyframes carry their Alight easing (the `e` attribute of the keyframe a
+ * segment ends at) through [AnimKey] into [TextAnimEval.valueAt], which applies it — the graph
+ * counter's cubicBezier-paced count is fast-start here exactly as in Alight (11 of 12 at 1.0 s;
+ * it ran linear, showing 6, until the Graph round-6 link). When a layer also
  * carries `textprogress` / `texttransform`, the counter substitutes FIRST and those effects operate
  * on the counted string (no corpus layer combines them; it is the only order in which they see the
  * text that is actually shown).

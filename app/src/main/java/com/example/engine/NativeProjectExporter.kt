@@ -23,6 +23,7 @@ import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
 import com.example.model.exportSpeed
+import com.example.model.effectiveScalePercent
 import com.example.model.isBehindCamera
 import com.example.model.opacityFraction
 import com.example.model.renderAt
@@ -136,9 +137,12 @@ class NativeProjectExporter(private val context: Context) {
     private class ImageLayer(val textureId: Int, val width: Int, val height: Int)
 
     /** Text / shape / sticker layers drawn into one picture; [blendId] != 0 = one layer with a blend mode. */
-    private class OverlayGroup(val clips: List<TimelineClip>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false, val mask: List<TimelineClip> = emptyList(), val mediaFill: Boolean = false) {
+    private class OverlayGroup(val clips: List<TimelineClip>, val blendId: Int, val pose: Boolean = false, val fx: Boolean = false, val mask: List<TimelineClip> = emptyList(), val mediaFill: Boolean = false, val ownMask: Boolean = false) {
         // fx = a layer with effects (Effects panel): its own picture, the C++ effects run on it before it is drawn.
         // mask = the mask layers cutting this layer (Alight style; several when masks are stacked): the layer has a picture of its own, cut before upload.
+        // ownMask = the layer carries its OWN masks (Masks panel; an imported wipe2 lands there): its own picture,
+        // cut by the remapped mask pass after the effects (see OverlayMasks). textBoxW / textBoxH = the drawn box of
+        // a text layer (frame px), captured when its picture is redrawn, for that remap.
         // mediaFill = one shape filled with a playing video (build 104): its own picture holds only the
         // shape's outline; the video is composited under it, cut by the silhouette in silBmp / silTex.
         // pose = a layer turned in 3D / with its own pivot (OverlayPose.kt): drawn upright into its own picture and
@@ -155,6 +159,8 @@ class NativeProjectExporter(private val context: Context) {
         var silUploaded = false
         // fx layers that are not placed by the renderer: the box of the layer inside the picture (the effects run on it).
         var region: FxRegion? = null
+        var textBoxW = 0f
+        var textBoxH = 0f
     }
 
     private fun runExport(
@@ -269,12 +275,13 @@ class NativeProjectExporter(private val context: Context) {
                         if (cur.isNotEmpty() && mediaBetween(cur.last(), c)) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                         val spec = BlendModes.find(c.blendMode)
                         val hasFx = ClipFxLibrary.hasEffects(c.effects)
+                        val hasOwnMasks = OverlayMasks.hasOwnMasks(c)
                         if (mediaFillClipOf(listOf(c)) != null && !overlayNeedsPose(c) && !cam.affects(c)) {
                             // A shape filled with a playing video (build 104): always a picture of its
                             // own — the outline raster the video is composited under. Pose / camera
                             // layers keep the poster path below.
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
-                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id].orEmpty(), mediaFill = true)
+                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id].orEmpty(), mediaFill = true, ownMask = hasOwnMasks)
                         } else if (overlayNeedsPose(c) || cam.affects(c)) {
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                             level += OverlayGroup(listOf(c), spec.shaderId, pose = true, fx = hasFx)
@@ -282,7 +289,11 @@ class NativeProjectExporter(private val context: Context) {
                             // Cut by a mask layer: a picture of its own, or the cut would also take the
                             // layers it shares the picture with.
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
-                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id].orEmpty())
+                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id].orEmpty(), ownMask = hasOwnMasks)
+                        } else if (hasOwnMasks) {
+                            // Cut by its own masks (an imported wipe2): also a picture of its own.
+                            if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
+                            level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, ownMask = true)
                         } else if (hasFx) {
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
                             level += OverlayGroup(listOf(c), spec.shaderId, fx = true)
@@ -599,7 +610,22 @@ class NativeProjectExporter(private val context: Context) {
                         if (tex == 0) return
                         val blendId = BlendModes.find(clip.blendMode).shaderId
                         val fxOps = fxOpsOf(clip, timeMs)
-                        val maskOps = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
+                        val rawMaskOps = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
+                        // An imported group's own masks (a wipe on an embedScene — Graph round 6 G1)
+                        // are fractions of the EMBED's box, not of the frame the composed picture
+                        // fills: remap them onto the frame (see OverlayMasks). A user-authored
+                        // group's masks were written against the picture itself (embedW == 0).
+                        val maskOps = if (rawMaskOps != null && clip.embedW > 0f) {
+                            val link = all.firstOrNull { it.parent?.id == clip.id }?.parent
+                            if (link != null) {
+                                val box = OverlayMasks.groupBox(
+                                    g.transformX, g.transformY, link.refX, link.refY, g.scalePercent, g.rotationDeg,
+                                    g.isFlippedH, g.isFlippedV, clip.embedW, clip.embedH,
+                                    if (previewW > 0f) w / previewW else 1f, w, h
+                                )
+                                OverlayMasks.remap(rawMaskOps, box, 0f, 0f, w.toFloat(), h.toFloat())
+                            } else rawMaskOps
+                        } else rawMaskOps
                         var drawTex = tex
                         // A mask layer sitting on this group (Alight style) cuts the composed picture,
                         // before the group's own effects — the same order as a masked shape / text
@@ -725,12 +751,27 @@ class NativeProjectExporter(private val context: Context) {
                                     .sortedBy { overlayKey(it) }
                                 if (rendered.isEmpty()) continue
                                 drawMediaUpTo(overlayKey(rendered.first()), laneIdx[rendered.first().id] ?: 0)  // pictures behind this group go first
+                                // Repeat copies of a layer inside a group / under a Null: the
+                                // ancestors' scale / turn act on the copy offsets (Alight places
+                                // the copies in the layer's own scene) — see RepeatEval, Graph G4.
+                                val outerById = HashMap<String, Pair<Float, Float>>()
+                                if (rig.hasLinks) {
+                                    for (orig in g.clips) {
+                                        if (RepeatEval.anyRepeatOf(orig) == null) continue
+                                        val adj = rendered.firstOrNull { it.id == orig.id } ?: continue
+                                        outerById[orig.id] = RepeatEval.outerOf(orig.renderAt(timeMs), adj)
+                                    }
+                                }
+                                fun copiesOfAdj(c: TimelineClip): List<TimelineClip> {
+                                    val o = outerById[c.id]
+                                    return RepeatEval.copiesOf(c, timeMs = timeMs, outerScale = o?.first ?: 1f, outerRotDeg = o?.second ?: 0f)
+                                }
                                 // A video-filled shape (build 104): the fill is sought to this frame —
                                 // a fill NEVER fails the export; any trouble leaves the poster raster.
                                 // The live composite runs for a single repeat copy; several copies
                                 // rasterise the poster like any repeated layer.
                                 val fillClip = if (g.mediaFill) mediaFillClipOf(g.clips) else null
-                                val fillCopies = if (fillClip != null) RepeatEval.copiesOf(rendered[0], timeMs = timeMs) else null
+                                val fillCopies = if (fillClip != null) copiesOfAdj(rendered[0]) else null
                                 var fillSrc: VideoLayerSource? = null
                                 var useVideo = false
                                 if (fillClip != null && fillCopies != null && fillCopies.size == 1) {
@@ -764,7 +805,7 @@ class NativeProjectExporter(private val context: Context) {
                                 } else if (g.pose) rendered.flatMap { c ->
                                     val upright = if (cam.activeFor(c, timeMs)) uprightForCamera(c) else uprightForPose(c)
                                     RepeatEval.copiesOf(upright, undoRotationDeg = c.rotationDeg, timeMs = timeMs)
-                                } else rendered.flatMap { RepeatEval.copiesOf(it, timeMs = timeMs) }
+                                } else rendered.flatMap { copiesOfAdj(it) }
                                 // The mask layers cutting this picture (a masked layer always has a picture of
                                 // its own): each is evaluated like every layer and part of the key, so the
                                 // cuts follow the masks' own animation. Outside a mask's span there is no
@@ -790,6 +831,15 @@ class NativeProjectExporter(private val context: Context) {
                                     // A blended layer's opacity is applied by the blend shader, not in the picture.
                                     painter.nativeTarget = g.bmp
                                     for (r in drawn) painter.draw(cv, r, applyOpacity = g.blendId == 0, timeMs = timeMs)
+                                    // A text layer with its own masks: remember the box it was just
+                                    // drawn in (the layout box at scale 1 times the layer's effective
+                                    // scale), for the own-mask pass below (see OverlayMasks).
+                                    if (g.ownMask && rendered.isNotEmpty() && rendered[0].type == LayerType.TEXT && drawn.isNotEmpty()) {
+                                        val s = (rendered[0].effectiveScalePercent / 100f).coerceAtLeast(0.01f)
+                                        val (tbw, tbh) = painter.boxOf(drawn[0])
+                                        g.textBoxW = tbw * s
+                                        g.textBoxH = tbh * s
+                                    }
                                     // The layer masks cut the finished picture: each mask layer is drawn
                                     // into the scratch picture and multiplied over this one (alpha only,
                                     // DST_IN), in turn — the picture keeps only where every mask is.
@@ -871,6 +921,42 @@ class NativeProjectExporter(private val context: Context) {
                                             contW = reg.w
                                             contH = reg.h
                                             boxLp = reg.place(w, h)
+                                        }
+                                    }
+                                }
+                                // The layer's OWN masks (Masks panel; an imported wipe2 lands here —
+                                // Graph round 6 G1): photos run theirs inside the fx pass on their own
+                                // texture, but an overlay's picture is frame-sized, so the masks are
+                                // remapped from the layer's box into the picture's space (OverlayMasks)
+                                // and run as their own pass, on the effects' result when effects ran.
+                                // Pose pictures keep the pre-Graph behaviour; the live video fill is
+                                // already on the frame and is not cut (no imported wipe combines with
+                                // a video fill).
+                                if (g.ownMask && !g.pose && !fillDrawn) {
+                                    val orig = g.clips.singleOrNull()
+                                    val eval = rendered.firstOrNull()
+                                    if (orig != null && eval != null) {
+                                        val raw = ClipMaskLibrary.toNative(orig.masks, timeMs - orig.startMs, CutoutMasks.sourceMs(orig, timeMs))
+                                        if (raw != null) {
+                                            val stickerBm = if (eval.type == LayerType.STICKER) StickerLibrary.frameFor(eval.uri, eval.sourceOffsetMs(timeMs - eval.startMs)) else null
+                                            val box = OverlayMasks.boxOf(
+                                                eval,
+                                                textDrawn = if (g.textBoxW > 0f) g.textBoxW to g.textBoxH else null,
+                                                stickerSize = stickerBm?.let { it.width to it.height },
+                                                w, h, if (previewW > 0f) w / previewW else 1f, PreviewFrameRef.density
+                                            )
+                                            if (box != null) {
+                                                val reg = if (drawTex != g.tex) g.region else null
+                                                val tx = reg?.x?.toFloat() ?: 0f
+                                                val ty = reg?.y?.toFloat() ?: 0f
+                                                val tw = reg?.w?.toFloat() ?: w.toFloat()
+                                                val th = reg?.h?.toFloat() ?: h.toFloat()
+                                                val ops = OverlayMasks.remap(raw, box, tx, ty, tw, th)
+                                                val maskTex = renderer.applyFx(drawTex, false, drawMat, contW, contH, 0, 0, 0f, 0, false, canvasRgb, null, 0, ops, null, false)
+                                                if (maskTex == 0) error("Own masks failed on '${eval.name}'.")
+                                                drawTex = maskTex
+                                                drawMat = IDENTITY_TEX_MATRIX
+                                            }
                                         }
                                     }
                                 }

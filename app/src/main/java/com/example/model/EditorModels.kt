@@ -333,6 +333,17 @@ data class TimelineClip(
     /** Id of the real Group layer this layer is inside (it follows that group, see [GroupOps]), null = not in a group. */
     val groupId: String? = null,
     /**
+     * Group layers imported from an Alight `<embedScene>`: the embedded scene's own canvas size,
+     * in stored (preview) units like every other size (0 = not an imported embed, or an older
+     * project). The group path needs it to place the group's OWN masks: an imported `wipe2` on the
+     * embed is written against the embed's box (this rect, as the group's transform places it),
+     * not against the frame the composed picture happens to fill. A user-made group keeps 0 and
+     * its masks stay in picture units, as authored.
+     */
+    val embedW: Float = 0f,
+    /** See [embedW]. */
+    val embedH: Float = 0f,
+    /**
      * Group layers only: true after the person trimmed the group's edge. The group then keeps its own length (the layers
      * inside are cut at its ends) instead of always covering its layers, see [GroupOps.fitGroups].
      */

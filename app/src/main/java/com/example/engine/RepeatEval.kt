@@ -118,6 +118,17 @@ internal object RepeatEval {
                 it.type == ClipFxLibrary.REPEAT_SCATTER)
         }
 
+    /**
+     * The ancestor similarity between a layer's own evaluated pose ([local] — what the render
+     * loops' evaluation produces before parent composition) and its fully-composed pose
+     * ([composed] — ParentRig's result): the (scale ratio, added rotation) to hand [copiesOf].
+     * (1, 0) when there is nothing above the layer.
+     */
+    fun outerOf(local: TimelineClip, composed: TimelineClip): Pair<Float, Float> {
+        val s = if (local.scalePercent > 0.01f) composed.scalePercent / local.scalePercent else 1f
+        return s to (composed.rotationDeg - local.rotationDeg)
+    }
+
     /** Copy count of a repeat-family effect: values[0], 1..[MAX_COUNT]. */
     fun countOf(fx: ClipFx): Int = (fx.values.getOrNull(0) ?: 1f).roundToInt().coerceIn(1, MAX_COUNT)
 
@@ -125,13 +136,39 @@ internal object RepeatEval {
      * The layer drawn once per copy (for the plain repeat the first entry is always [clip] itself).
      * No repeat-family effect, or a disabled one, returns just the layer. [timeMs] is the frame
      * time: only the scatter field reads it (its evolution); the other arrangements are static.
+     *
+     * [outerScale] / [outerRotDeg] = the similarity the layer's ANCESTORS apply on top of the
+     * layer's own pose (the ratio / difference between the fully-composed pose the render loops
+     * hand in and the layer's own evaluated pose). Alight places the copies inside the layer's
+     * own scene, so ancestor transforms act on the copy offsets too: the position delta of every
+     * copy is turned / scaled by them. The render loops used to add the offsets AFTER composing
+     * the layer to the top level, in top-level units — inside the Graph preset's Group 1 (scale
+     * ~0.75) the Vertical Lines' copies stepped the full 146 px instead of 109, and the last two
+     * marched out of the card (Graph round 6, G4). Copy rotation / scale increments are local
+     * and compose unchanged, so only the position deltas are transformed here.
      */
-    fun copiesOf(clip: TimelineClip, undoRotationDeg: Float = 0f, timeMs: Long = Long.MIN_VALUE): List<TimelineClip> {
+    fun copiesOf(
+        clip: TimelineClip, undoRotationDeg: Float = 0f, timeMs: Long = Long.MIN_VALUE,
+        outerScale: Float = 1f, outerRotDeg: Float = 0f
+    ): List<TimelineClip> {
         val fx = anyRepeatOf(clip) ?: return listOf(clip)
-        return when (fx.type) {
+        val copies = when (fx.type) {
             ClipFxLibrary.REPEAT_RADIAL -> radialCopiesOf(clip, fx, undoRotationDeg)
             ClipFxLibrary.REPEAT_SCATTER -> scatterCopiesOf(clip, fx, undoRotationDeg, timeMs)
             else -> plainCopiesOf(clip, fx, undoRotationDeg)
+        }
+        if ((outerScale == 1f && outerRotDeg == 0f) || copies.size <= 1) return copies
+        val rad = outerRotDeg * PI.toFloat() / 180f
+        val c = cos(rad)
+        val s = sin(rad)
+        return copies.map { cp ->
+            val dx = cp.transformX - clip.transformX
+            val dy = cp.transformY - clip.transformY
+            if (dx == 0f && dy == 0f) cp
+            else cp.copy(
+                transformX = clip.transformX + (dx * c - dy * s) * outerScale,
+                transformY = clip.transformY + (dx * s + dy * c) * outerScale
+            )
         }
     }
 

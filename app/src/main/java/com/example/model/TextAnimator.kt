@@ -4,10 +4,14 @@ import kotlinx.serialization.Serializable
 
 /**
  * One keyframe of an imported animator value. [t] is NORMALIZED: 0..1 of the layer's length
- * (this is how Alight Motion XML writes the keyframes of effect properties).
+ * (this is how Alight Motion XML writes the keyframes of effect properties). [easing] is the
+ * easing of the segment ENDING at this keyframe (the XML `e` attribute sits on that keyframe),
+ * null = none written (linear). Carried since the Graph round-6 link: before that the importer
+ * dropped it, so every keyframed animator property (the counter's `offset` above all) ran at a
+ * steady pace where Alight eases — the Graph preset's counter showed 6 at 1.0 s instead of 11.
  */
 @Serializable
-data class AnimKey(val t: Float, val v: List<Float>)
+data class AnimKey(val t: Float, val v: List<Float>, val easing: Easing? = null)
 
 /**
  * One value of an animator: a constant ([value]) or keyframes ([keys], sorted by t).

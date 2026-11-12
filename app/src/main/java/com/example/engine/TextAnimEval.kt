@@ -78,7 +78,12 @@ internal object TextAnimEval {
         val k1 = ks[i + 1]
         if (v.type == "color" || v.type == "bool" || v.type == "int") return k0.v
         val span = (k1.t - k0.t).coerceAtLeast(1e-6f)
-        val f = ((p - k0.t) / span).coerceIn(0f, 1f)
+        val raw = ((p - k0.t) / span).coerceIn(0f, 1f)
+        // The segment's easing sits on the keyframe it ENDS at (Alight's `e` attribute), the same
+        // convention the fx tails (AmFxEval) and the layer tracks use. Before the Graph round-6
+        // link AnimKey stored no easing and this ran linear — the Graph counter's fast-start
+        // cubicBezier count (11 of 12 at 1.0 s in Alight) came out a steady 6 here.
+        val f = k1.easing?.apply(raw) ?: raw
         return List(minOf(k0.v.size, k1.v.size)) { j -> k0.v[j] + (k1.v[j] - k0.v[j]) * f }
     }
 }

@@ -226,7 +226,7 @@ class NativeProjectExporter(private val context: Context) {
                         SolidColorEval.resolve(
                             MotionBlurEval.resolve(AmFxEval.resolve(c.effects, c, timeMs), { ms ->
                                 NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
-                            }, timeMs, frameMs, canvasH),
+                            }, timeMs, frameMs, canvasH, sample.pivotX * 100f, sample.pivotY * 100f),
                             c, timeMs
                         )
                     )

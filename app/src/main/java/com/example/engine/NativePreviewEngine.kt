@@ -434,7 +434,8 @@ class NativePreviewEngine(context: Context) {
             SolidColorEval.resolve(
                 MotionBlurEval.resolve(AmFxEval.resolve(c.effects, c, timeMs), { ms ->
                     NativeRenderAt.renderAt(sample, ms).let { MotionBlurEval.Pose(it.transformX, it.transformY, it.rotationDeg, it.scalePercent) }
-                }, timeMs, 33L, MotionBlurEval.canvasHeightPx(PreviewFrameRef.widthPx, outW, outH)),
+                }, timeMs, 33L, MotionBlurEval.canvasHeightPx(PreviewFrameRef.widthPx, outW, outH),
+                    sample.pivotX * 100f, sample.pivotY * 100f),
                 c, timeMs
             )
         )

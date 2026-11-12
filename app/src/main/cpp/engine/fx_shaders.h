@@ -1,6 +1,6 @@
 // GLSL ES 3.00 sources of the v140 effects. Four programs, each with a `uMode` branch (see fxShaderOf in fx_plan.cpp):
 //   kFxBlur2  : 0 directional blur, 1 radial blur (spin / zoom), 2 sharpen, 3 lens blur, 4 tilt-shift, 5 surface blur, 6 light rays,
-//               7 long shadow, 8 spin blur (Alight), 9 streaks (Alight)
+//               7 long shadow, 8 spin blur (Alight), 9 streaks (Alight), 10 / 11 / 12 motion blur 4 position / scale / angle (Alight)
 //   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
 //               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize,
 //               15 colour tune (Alight), 16 solid colour (Alight), 17 replace colour (Alight), 18 colour balance (Alight), 19 colour temperature (Alight),
@@ -290,6 +290,77 @@ void main() {
                          uP[6] > 2.5 ? float(nSamples) : 1.0, uQ[0] > 2.5 ? float(nSamples) : 1.0);
         outColor.rgb *= outColor.a;
         oColor = mix(c0, outColor, clamp(uP[3], 0.0, 1.0));
+    } else if (uMode == 10) {
+        // Motion Blur 4, position stage (Alight Motion's motionblur4, its recovered def):
+        // a plain average of taps along the layer's velocity over one frame — the pixel
+        // itself plus taps at velocity * (i / (n - 1) - 0.5) — their count from the
+        // trail's length in texels: n = int(clamp(speed, samplesMin + 0.01,
+        // samplesMax + 0.01)) (fxMb4Samples in fx_plan.cpp is the CPU twin of the count).
+        // uP[0..1] is the picture-space velocity as fractions of the canvas height per
+        // frame (MotionBlurEval resolves it), uP[2] the tune, uP[3..4] the sample bounds.
+        // The loop bound is the def's samplesMax ceiling (256).
+        vec2 vel = vec2(uP[0], uP[1]) * uP[2] / uTexel.y;   // texels per frame, y down in the picture
+        int nSamples = int(clamp(length(vel), uP[3] + 0.01, uP[4] + 0.01));
+        vec4 acc = c0;
+        for (int i = 1; i < 256; i++) {
+            if (i >= nSamples) break;
+            vec2 off = vel * (float(i) / float(nSamples - 1) - 0.5);   // texels, picture space
+            acc += tap(vUv - vec2(off.x * uTexel.x, -off.y * uTexel.y));
+        }
+        oColor = acc / float(max(nSamples, 1));
+    } else if (uMode == 11) {
+        // Motion Blur 4, scale stage: taps along the ray from the layer's pivot through
+        // the pixel, spread over the frame's scale change (total span |svel * tune| *
+        // dist, taps at span * (i / (n - 1) - 0.5) like the def), the count from
+        // |svel * tune| * dist / 2 — motionblur4's own stage-1 count omits the texel
+        // factor its sibling stages carry; moblurplus's hybrid stage (the same def
+        // family) pins the restored law (fxMb4ScaleSpeed). uP[0] is the relative scale
+        // change per frame, uP[1] the tune, uP[2..3] the pivot (%), uP[4..5] the bounds.
+        vec2 cen = vec2(uP[2] / 100.0, 1.0 - uP[3] / 100.0);
+        vec2 vp = vec2((vUv.x - cen.x) / uTexel.x, -(vUv.y - cen.y) / uTexel.y);   // texels, picture space (y down)
+        float dist = length(vp);
+        float svel = abs(uP[0] * uP[1]);
+        int nSamples = int(clamp(svel * dist / 2.0, uP[4] + 0.01, uP[5] + 0.01));
+        vec4 acc = c0;
+        if (dist > 0.001) {
+            vec2 dir = vp / dist;
+            float span = svel * dist;
+            for (int i = 1; i < 256; i++) {
+                if (i >= nSamples) break;
+                vec2 off = dir * span * (float(i) / float(nSamples - 1) - 0.5);
+                acc += tap(vUv - vec2(off.x * uTexel.x, -off.y * uTexel.y));
+            }
+        }
+        oColor = acc / float(max(nSamples, 1));
+    } else if (uMode == 12) {
+        // Motion Blur 4, angle stage: taps rotated over [-angle / 2, +angle / 2] around
+        // the layer's pivot, angle = |angularVelocity * tune| (degrees per frame), the
+        // count from the arc length at the fragment's own radius — spin blur's form
+        // (mode 8) with motionblur4's pivot, tune and sample bounds (fxMb4AngleSpeed /
+        // fxMb4Samples). uP[0] is the rotation change per frame (degrees, signed: the
+        // tap set is symmetric, so the sign cannot matter), uP[1] the tune, uP[2..3]
+        // the pivot (%), uP[4..5] the bounds.
+        float angDeg = abs(uP[0] * uP[1]);
+        vec2 cen = vec2(uP[2] / 100.0, 1.0 - uP[3] / 100.0);
+        vec2 v = vUv - cen;
+        v.y /= uAspect;
+        float r = length(v);
+        float l = 6.283185 * r * angDeg / 360.0;
+        float a = angDeg * 0.0174533;
+        float amin = a / 2.0;
+        int nSamples = int(clamp(l / uTexel.x, uP[4] + 0.01, uP[5] + 0.01));
+        vec4 acc = c0;
+        for (int i = 1; i < 256; i++) {
+            if (i >= nSamples) break;
+            float sampleAngle = -amin + a * float(i) / float(nSamples);
+            float s = sin(sampleAngle);
+            float c = cos(sampleAngle);
+            mat2 rot = mat2(c, -s, s, c);
+            vec2 temp = v * rot;
+            temp.y *= uAspect;
+            acc += tap(cen + temp);
+        }
+        oColor = acc / float(max(nSamples, 1));
     } else {
         // Long shadow: the layer's own silhouette, extruded along the angle and laid UNDER the layer in
         // the shadow colour. Coverage at a pixel = the source alpha found marching from the pixel back

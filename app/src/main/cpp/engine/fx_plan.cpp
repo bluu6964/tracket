@@ -113,7 +113,8 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_DROP_SHADOW_AM && t != FX_BBMAKER_AM && t != FX_UNSHARP_MASK_AM &&
             t != FX_NEWSHARPEN_AM && t != FX_GRADSHADOW_AM && t != FX_GRADIENTFLOW_AM &&
             t != FX_PARTX_AM && t != FX_EDGELINE_AM && t != FX_LIGHTSWEEP_AM &&
-            t != FX_COLORGRAD3_AM && t != FX_DEEP_GLOW_AM && t != FX_SPILL_CLEANUP_AM) {
+            t != FX_COLORGRAD3_AM && t != FX_DEEP_GLOW_AM && t != FX_SPILL_CLEANUP_AM &&
+            t != FX_MB4_POS && t != FX_MB4_SCALE && t != FX_MB4_ANGLE) {
             owner = -1;
             extFoldedOp = -1;
             extFoldedType = FX_NONE;
@@ -356,6 +357,10 @@ FxShaderRef fxShaderOf(int type) {
         case FX_ROUGHEN_EDGES_AM: r = {FXG_WARP, 25}; break;
         case FX_BEND_WARP_AM: r = {FXG_WARP, 26}; break;
         case FX_STREAKS_AM: r = {FXG_BLUR2, 9}; break;
+        // v178 (build 136): motionblur4's three stages (see FxType 180..182).
+        case FX_MB4_POS: r = {FXG_BLUR2, 10}; break;
+        case FX_MB4_SCALE: r = {FXG_BLUR2, 11}; break;
+        case FX_MB4_ANGLE: r = {FXG_BLUR2, 12}; break;
         case FX_COLOR_HOT_AM: r = {FXG_COLOR, 21}; break;
         case FX_COLORIZE_AM: r = {FXG_COLOR, 22}; break;
         case FX_HIGHLIGHT_SHADOW_AM: r = {FXG_COLOR, 23}; break;
@@ -454,6 +459,11 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_COLOR_TEMP_AM: return p[1] < 0.5f;   // strength 0: the mix keeps the pixel
         case FX_COLOR_TINT_AM: return p[1] < 0.5f;   // strength 0: the chroma mix is a no-op
         case FX_SPIN_BLUR_AM: return std::fabs(p[0]) < 0.005f;   // angle 0: every tap is the pixel
+        // v178: the motionblur4 passes' counts are per-fragment / size-dependent (the
+        // resolver already drops a motionless stage), so no slot-only identity exists.
+        case FX_MB4_POS: return false;
+        case FX_MB4_SCALE: return false;
+        case FX_MB4_ANGLE: return false;
         case FX_OFFSET_AM: return std::fabs(p[0]) < 0.005f && std::fabs(p[1]) < 0.005f;   // no shift
         case FX_RADIAL_WIPE_AM: return p[0] <= 0.f;   // progress <= 0: fully visible, every direction
         case FX_FIND_EDGES_AM: return false;   // always a posterize of the gradient
@@ -2586,6 +2596,20 @@ float fxStreaksAmFinish(float acc, int mode, int nSamples) {
     return mode == 3 && nSamples > 0 ? acc / (float)nSamples : acc;
 }
 
+int fxMb4Samples(float speedTexels, float samplesMin, float samplesMax) {
+    // The def's count, verbatim in all three stages: int(clamp(speed, min + 0.01, max + 0.01)).
+    const float c = std::min(std::max(speedTexels, samplesMin + 0.01f), samplesMax + 0.01f);
+    return (int)c;
+}
+
+float fxMb4ScaleSpeed(float scaleVel, float tune, float distPx) {
+    return std::fabs(scaleVel * tune) * distPx / 2.f;
+}
+
+float fxMb4AngleSpeed(float angularVelDeg, float tune, float radiusPx) {
+    return 6.283185f * radiusPx * std::fabs(angularVelDeg * tune) / 360.f;
+}
+
 void fxColorHotAmMap(float r, float g, float b, const float colorDisc[3], const float tintDisc[3],
                      float* outR, float* outG, float* outB) {
     // AM's colorhot shader, line by line: the luminance is read off the sampled
@@ -3780,6 +3804,7 @@ struct ExtrudeCtx {
     float lightColor[3];
     float lightIntensity, shine, spec, ambient;
     bool flat;
+    bool inton = true;   // extrudeflat only: gates the interior / fade mixes (its def)
     const FxExtrudeSampler* sampler;
 };
 
@@ -3804,7 +3829,9 @@ inline void extrudeSd(const ExtrudeCtx& c, const float p[3], float* outStep, flo
     sampleTex(c, 0, st[0], st[1], texC);
     if (c.flat) { blurC[0] = texC[0]; blurC[1] = texC[1]; blurC[2] = texC[2]; blurC[3] = texC[3]; }
     else sampleTex(c, 1, st[0], st[1], blurC);
-    const float t = std::max(saturatef(blurC[3] * 2.f), texC[3]);
+    // extrudeflat's def synthesises its blur colour from the same sample with a 1.5
+    // factor; s3d-extrude's def reads a real blur buffer with a 2.0 factor.
+    const float t = std::max(saturatef(blurC[3] * (c.flat ? 1.5f : 2.f)), texC[3]);
     const float z = (p[2] / c.depth + 1.f) / 2.f;
     const float maxdim = std::sqrt(c.width * c.width + c.height * c.height + c.depth * c.depth);
     const float td = (1.f - t) * (maxdim * 2.f * (1.f + c.strength)) / (float)c.iter;
@@ -3853,7 +3880,8 @@ void fxExtrudeAmPixel(const FxOp& op, bool flat, float ax, float ay, float picW,
     unpackColor(op.q[6], c.interior);
     unpackColor(op.r[0], c.fade);
     if (flat) {
-        c.strength = 0.1f;  // unused by the flat march except the step size: the def default
+        c.strength = 0.f;   // extrudeflat's def has no strength: its step-size factor is 1.0
+        c.inton = op.p[6] >= 0.5f;
         c.iter = std::max(1, (int)std::lround(op.r[1]));
         c.lightIntensity = c.shine = c.spec = c.ambient = 0.f;
         c.lightPos[0] = c.lightPos[1] = c.lightPos[2] = 0.f;
@@ -3885,8 +3913,8 @@ void fxExtrudeAmPixel(const FxOp& op, bool flat, float ax, float ay, float picW,
     if (picW < picH) stx *= picW / picH; else sty *= picH / picW;
     stx /= c.scale;
     sty /= c.scale;
-    stx /= 5.8f;
-    sty /= 5.8f;
+    stx /= c.flat ? 6.f : 5.8f;   // each def's own ray spread (extrudeflat 6.0, extrude 5.8)
+    sty /= c.flat ? 6.f : 5.8f;
     const float ro[3] = {0.f, 1.f, -1.f};
     float rd[3] = {stx, sty, 1.f};
     const float rl = std::sqrt(rd[0] * rd[0] + rd[1] * rd[1] + rd[2] * rd[2]);
@@ -3940,7 +3968,7 @@ void fxExtrudeAmPixel(const FxOp& op, bool flat, float ax, float ay, float picW,
     } else {
         for (int k = 0; k < 4; ++k) tex[k] = baseC[k];
     }
-    if (dz > 0.001f && dz < 0.999f) {
+    if (dz > 0.001f && dz < 0.999f && (!c.flat || c.inton)) {
         for (int k = 0; k < 3; ++k) tex[k] = tex[k] + (c.interior[k] * tex[3] - tex[k]) * c.interiorBlend;
         for (int k = 0; k < 3; ++k) tex[k] = tex[k] + (c.fade[k] * tex[3] - tex[k]) * (c.fadeBlend * dz);
     }

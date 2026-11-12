@@ -189,14 +189,19 @@ $layers
     }
 
     @Test
-    fun groupParentIsParkedWithWarning() {
+    fun groupParentLinksTheChild() {
+        // Build 136: parenting TO a group is reproduced (a group clip's stored pose
+        // is its anchor, like a null's); before this build it was parked with the
+        // "parented to a group" warning asserted here in its place.
         val embed = """<embedScene id="5" label="Group 1" startTime="0" endTime="2000" fillType="intrinsic" mediaFillMode="stretch"><transform><location value="540.000000,960.000000,0.000000" /></transform><scene title="" width="1080" height="1920" totalTime="2000" fps="30"></scene></embedScene>"""
         val r = AlightXmlImporter.parse(
             scene(embed + rectEl("2", "Kid", """<location value="540.000000,960.000000,0.000000" />""", parent = "5")), 1080f
         )
-        val kid = r.snapshot.tracks.flatMap { it.clips }.first { it.name == "Kid" }
-        assertNull(kid.parent)
-        assertTrue(r.warnings.any { it.contains("parented to a group") })
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val group = clips.first { it.type == LayerType.GROUP }
+        val kid = clips.first { it.name == "Kid" }
+        assertEquals(group.id, kid.parent!!.id)
+        assertTrue(r.warnings.none { it.contains("parented to a group") })
     }
 
     // ---- verbatim corpus instances ---------------------------------------------------------------------------
@@ -271,5 +276,80 @@ $layers
         assertEquals(-1.25f, adj.transformX, 2f)
         assertEquals(149.94f, adj.transformY, 2f)
         assertEquals(0.4081f, adj.scalePercent / shape1.renderAt(2016L).scalePercent, 0.01f)
+    }
+
+    // ---- Parenting TO a group (build 136) -------------------------------------
+    // The round-3 corpus has 7 instances (omniframe-hardtrekk-hero: a group parented
+    // to its copy; omniframe-mi-mi-mi-pf: a mask shape parented to the group it
+    // follows; omniframe-onyankopon: five "Group and Mask" embeds parented to their
+    // mask partners). A group clip's stored pose is its anchor, so the child links
+    // exactly like a null's child and ParentRig composes it.
+
+    private fun embedEl(id: String, label: String, loc: String, parent: String? = null, innerId: String): String {
+        val p = if (parent != null) """ parent="$parent"""" else ""
+        return """<embedScene id="$id" label="$label"$p startTime="0" endTime="2000" fillType="intrinsic" mediaFillMode="stretch"><transform>$loc<pivot value="0.000000,0.000000,0.000000" /></transform><fillColor value="#ff000000" /><scene title="" width="1080" height="1920" totalTime="2000" fps="30"><shape id="$innerId" label="Inner $id" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="540.000000,960.000000,0.000000" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape></scene></embedScene>"""
+    }
+
+    @Test
+    fun groupParentedToGroupLinksAndComposes() {
+        // The hardtrekk shape: "text animation" parented to "text animation Copy",
+        // its location (2.5, 20) local to the parent's anchor at the frame centre;
+        // the parent group slides +100 px over the span.
+        val xml = scene(
+            embedEl(
+                "1", "G",
+                """<location><kf t="0" v="540.000000,960.000000,0.000000" /><kf t="2" v="640.000000,960.000000,0.000000" /></location>""",
+                innerId = "3"
+            ) +
+                embedEl("2", "ChildG", """<location value="2.500000,20.000000,0.000000" />""", parent = "1", innerId = "4")
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertTrue(r.warnings.none { it.contains("parented to a group") })
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val g = clips.first { it.name == "G" }
+        val child = clips.first { it.name == "ChildG" }
+        assertEquals(g.id, child.parent!!.id)
+        assertEquals(-540f, child.parent!!.refX, 0.5f)
+        assertEquals(-960f, child.parent!!.refY, 0.5f)
+        val rig = rig(clips)
+        val at0 = rig.adjusted(child, 0L)
+        assertEquals(2.5f, at0.transformX, 0.5f)     // the anchor plus the local offset
+        assertEquals(20f, at0.transformY, 0.5f)
+        val atEnd = rig.adjusted(child, 2000L)
+        assertEquals(102.5f, atEnd.transformX, 0.5f) // rides the parent group's move
+        assertEquals(20f, atEnd.transformY, 0.5f)
+    }
+
+    @Test
+    fun shapeParentedToGroupComposes() {
+        // The mi-mi-mi shape: a layer outside the group, parented to it; its stored
+        // location is local to the group's anchor.
+        val xml = scene(
+            embedEl("1", "G", """<location value="540.000000,960.000000,0.000000" />""", innerId = "3") +
+                rectEl("5", "Kid", """<location value="10.000000,20.000000,0.000000" />""", parent = "1")
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertTrue(r.warnings.none { it.contains("parented to a group") })
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val g = clips.first { it.name == "G" }
+        val kid = clips.first { it.name == "Kid" }
+        assertEquals(g.id, kid.parent!!.id)
+        val adj = rig(clips).adjusted(kid, 0L)
+        assertEquals(10f, adj.transformX, 0.5f)
+        assertEquals(20f, adj.transformY, 0.5f)
+    }
+
+    @Test
+    fun hiddenGroupParentHidesTheChild() {
+        val xml = scene(
+            embedEl("1", "G", """<location value="540.000000,960.000000,0.000000" />""", innerId = "3") +
+                embedEl("2", "ChildG", """<location value="2.500000,20.000000,0.000000" />""", parent = "1", innerId = "4")
+        )
+        val clips = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }
+        val g = clips.first { it.name == "G" }
+        val child = clips.first { it.name == "ChildG" }
+        val hidden = clips.map { if (it.id == g.id) it.copy(isVisible = false) else it }
+        assertEquals(0f, rig(hidden).adjusted(child, 0L).opacity, 0.001f)
+        assertTrue(rig(clips).adjusted(child, 0L).opacity > 0f)
     }
 }

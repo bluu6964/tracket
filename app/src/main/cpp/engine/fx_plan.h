@@ -313,9 +313,10 @@ enum FxType : int {
     FX_EXTRUDE_AM_EXT2 = 125,
     // Extrudeflat shares the march with flat shading and no light model:
     //   p: [0] depth, [1] scale, [2] stretch x, [3] stretch y, [4] interiorBlend,
-    //      [5] fadeBlend, [6] inton (0/1; semantics unpinned — no def exists anywhere;
-    //      all 16 corpus instances carry true with interiorBlend 1, applied as
-    //      serialized)
+    //      [5] fadeBlend, [6] inton (0/1 — its def, recovered in hunt round 3
+    //      (defs-batch8), gates the interior / fade colour mixes on it: with inton
+    //      off the extruded sides keep the surface colour; pinned in build 136.
+    //      All 16 corpus instances carry true with interiorBlend 1)
     //   q: like extrude's. r: [0] fadeColor packed, [1] MAX_ITER, [2..6] unused.
     // In both, keyframed rotate / position components ride AmFxEval tails from index 21.
     FX_EXTRUDE_FLAT_AM = 126,
@@ -606,6 +607,25 @@ enum FxType : int {
                                 // laid under the base. Dedicated chain.
                                 //   p: [0] strength (AM raw; the def's own
                                 //      default is 0.02, the corpus runs 0.48..2)
+    // v178 (build 136): Alight's motionblur4, ported faithfully from its recovered def
+    // (hunt-staging/defs-batch8 — the TrueMotion conversion of AM's own motionblur4.xml:
+    // three shader stages gated by the def's animate() script). The stored effect is
+    // resolved per frame by Kotlin (MotionBlurEval) into the three passes below, so —
+    // like FX_MOTION_BLUR (55) — it must never reach the shaders: fxParseOps skips it
+    // and ClipFxLibrary.toNative never emits it.
+    FX_MOTION_BLUR4 = 179,  // p0 tune x100 (a keyframed tune rides an AmFxEval tail,
+                            // slot 0, raw), p1..p3 usePos / useScale / useAngle (0/1),
+                            // p4 samplesMin (def 1..32), p5 samplesMax (def 8..256)
+    // The def's three stages as kFxBlur2 modes 10 / 11 / 12 (fxShaderOf), emitted per
+    // frame by MotionBlurEval in the def's own group order: position, scale, angle.
+    // The slots hold the RESOLVED frame's host quantities (units in MotionBlurEval).
+    FX_MB4_POS = 180,   // p0/p1 the picture-space velocity (fractions of the canvas
+                        // height per frame), p2 tune (raw, def 0..4), p3 samplesMin,
+                        // p4 samplesMax
+    FX_MB4_SCALE = 181, // p0 the relative scale change per frame, p1 tune, p2/p3 the
+                        // layer pivot (0..100 %), p4 samplesMin, p5 samplesMax
+    FX_MB4_ANGLE = 182, // p0 the rotation change per frame (degrees, signed), p1 tune,
+                        // p2/p3 the layer pivot (%), p4 samplesMin, p5 samplesMax
     FX_MAX = FX_COPY_BG
 };
 
@@ -1004,6 +1024,18 @@ void fxRoughenEdgesAmUv(float uvX, float uvY, float strength, float detail, floa
 // per-channel finish (mode 3 divides by the sample count), AM's per-channel modes.
 void fxStreaksAmVelocity(float strength, float angleDeg, float texelX, float texelY,
                          float aspectYX, float* outVx, float* outVy, int* outSamples);
+// Motion Blur 4 (AM's motionblur4; kFxBlur2 modes 10..12 are the GLSL twins): the def's
+// sample-count law, shared by its three stages — the count is the trail's length in
+// texels, taken as an int after clamping: int(clamp(speed, samplesMin + 0.01,
+// samplesMax + 0.01)).
+int fxMb4Samples(float speedTexels, float samplesMin, float samplesMax);
+// The scale stage's speed: |scaleVel * tune| * distPx / 2 (distPx = the fragment's
+// distance from the pivot in texels). motionblur4's own stage-1 formula omits the
+// texel factor its sibling stages carry; moblurplus's hybrid stage (same def family,
+// defs-batch8) computes the count exactly this way, which is the restored law.
+float fxMb4ScaleSpeed(float scaleVel, float tune, float distPx);
+// The angle stage's speed at radiusPx texels: the arc length of |angularVelDeg * tune|.
+float fxMb4AngleSpeed(float angularVelDeg, float tune, float radiusPx);
 float fxStreaksAmCombine(float acc, float tap, int mode);
 float fxStreaksAmFinish(float acc, int mode, int nSamples);
 // CPU reference of Colour Hot (AM's colorhot): the pixel is PREMULTIPLIED in and out (AM

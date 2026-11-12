@@ -2342,9 +2342,21 @@ object AlightXmlImporter {
      * A parent that is itself a VISIBLE layer (the 5 corpus shapes) cannot be a ParentRig parent, so an
      * invisible Null anchor mirroring its evaluated transform (plain pose + position / scale / rotation
      * keyframes, after its effects baked) is created and the children link to that; the visible layer
-     * renders as before, and the anchor inherits the layer's own parent link / group membership. A parent
-     * naming a GROUP is not reproduced (no corpus instance does it) and a parent that was not imported
-     * leaves the child unlinked — both are reported, not guessed.
+     * renders as before, and the anchor inherits the layer's own parent link / group membership.
+     * A parent that was not imported leaves the child unlinked — reported, not guessed.
+     *
+     * A parent naming a GROUP (build 136): the 58-file census had no instance and the case was
+     * parked with a warning; the round-3 corpus (105 files) has 7, in omniframe-hardtrekk-hero
+     * (a group parented to its copy), omniframe-mi-mi-mi-pf (a mask shape parented to the
+     * group it follows) and omniframe-onyankopon (five "Group and Mask" embeds parented to
+     * their mask partners). A group IS a ParentRig parent kind: the group clip's stored pose
+     * is its anchor (location + pivot — [readGroup]), so the same link and the same ref
+     * compose it, and ParentRig's hidden-group rule already reaches a child whose parent
+     * group is switched off. Every pair shares one span, and parenting never retimes the
+     * child (its own span stands, like a null's child). The hardtrekk pair pins the local
+     * frame: the child stores location (2.5, 20) — the parent's anchor plus that offset is
+     * the frame centre its text animation plays at, so the stored values are local to the
+     * group's anchor exactly as a null's children are (the dys-prst-126 algebra).
      *
      * Returns the anchor clips created (they join the scene's direct clips so an enclosing group treats
      * them like the layers they mirror).
@@ -2373,7 +2385,9 @@ object AlightXmlImporter {
         }
         val wanted = elements.indices.filter { elements[it].getAttribute("parent").isNotEmpty() }
         if (wanted.isEmpty()) return emptyList()
-        // Pass 1: parents ParentRig can follow directly (Null layers). Groups are parked with a warning.
+        // Pass 1: parents ParentRig can follow directly (Null layers and Groups — a group
+        // clip's stored pose is its anchor, location + pivot, and ParentRig composes a
+        // group parent exactly like a null; see the census note above).
         for (i in wanted) {
             val child = directSlots.getOrNull(i) ?: continue   // a skipped layer needs no link
             val parentAmId = elements[i].getAttribute("parent")
@@ -2384,10 +2398,7 @@ object AlightXmlImporter {
                         ") was not imported: the layer keeps its own motion"
                 parentClip.id == child.id ->
                     w += "Layer \"" + child.name + "\" is its own parent in Alight: ignored"
-                parentClip.type == LayerType.NULL -> link(child, parentClip)
-                parentClip.type == LayerType.GROUP ->
-                    w += "Layer \"" + child.name + "\" is parented to a group in Alight: parenting to a " +
-                        "group is not reproduced yet: the layer keeps its own motion"
+                parentClip.type == LayerType.NULL || parentClip.type == LayerType.GROUP -> link(child, parentClip)
                 else -> Unit   // a visible layer as parent: pass 2
             }
         }
@@ -2604,7 +2615,8 @@ object AlightXmlImporter {
                 VIGNETTE -> applyVignette(fx, clip, ctx)
                 ZOOMBLUR2, ZOOMBLUR3 -> applyZoomBlur(fx, clip, ctx)
                 DBLUR -> applyDirectionalBlur(fx, clip, ctx)
-                MOTIONBLUR, MOTIONBLUR2, MOTIONBLUR3, MOTIONBLUR4 -> applyMotionBlur(fx, clip, ctx)
+                MOTIONBLUR, MOTIONBLUR2, MOTIONBLUR3 -> applyMotionBlur(fx, clip, ctx)
+                MOTIONBLUR4 -> applyMotionBlur4(fx, clip, ctx)
                 LENSBLUR2 -> applyLensBlur(fx, clip, ctx)
                 SHARPENFX -> applySharpenFx(fx, clip, ctx)
                 PINCHBULGE, PINCHBULGE2 -> applyPinchBulge(fx, clip, ctx)
@@ -5871,27 +5883,29 @@ object AlightXmlImporter {
     }
 
     /**
-     * `extrudeflat` -> the app's Extrude Flat (Alight): no def for it exists in either
-     * recovered dump, so the port is built from its serialised schema (16 instances, all
-     * in khanbh-op02): the same raymarch as `extrude` (rotate / position / depth /
-     * scale / MAX_ITER all present, position's default the same (0, 100, 500)) with
-     * flat shading — it carries NO light parameters — `stretch` in place of the
-     * width/height ratios, and interior/fade colouring at blend 1. Its `inton` bool is
-     * true in all 16 instances; what it switches is unpinned by any def, so a false
-     * value is reported rather than guessed. Keyframed rotate / position ride the same
-     * six tails as Extrude's.
+     * `extrudeflat` -> the app's Extrude Flat (Alight): build 127 ported it from its
+     * serialised schema (no def was recovered then); hunt round 3 recovered the def
+     * itself (defs-batch8) and build 136 verified the port against it parameter by
+     * parameter (see ROADMAP Queue 15(g)): the same raymarch as `extrude` (rotate /
+     * position / depth / scale / MAX_ITER all present, position's default the same
+     * (0, 100, 500)) with flat shading — it carries NO light parameters — `stretch` in
+     * place of the width/height ratios, and interior/fade colouring at blend 1. Its
+     * `inton` bool (true in all 16 corpus instances, all in khanbh-op02) gates the
+     * interior / fade colour mixes in the def — with it off the extruded sides keep
+     * the surface colour — and is reproduced as such since build 136. The def's own
+     * defaults apply (depth 0.005). Keyframed rotate / position ride the same six
+     * tails as Extrude's.
      */
     private fun applyExtrudeFlatAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
         val short = "extrudeflat"
-        val depth = (props["depth"]?.firstValue(w, short, "depth") ?: 0.05f).coerceIn(0f, 10f)
+        val depth = (props["depth"]?.firstValue(w, short, "depth") ?: 0.005f).coerceIn(0f, 10f)
         val scale = (props["scale"]?.firstValue(w, short, "scale") ?: 1f).coerceIn(0.05f, 10f)
         val stretch = props["stretch"]?.firstPoint(w, short, "stretch", 1f, 1f) ?: (1f to 1f)
         val inBlend = (props["interiorBlend"]?.firstValue(w, short, "interiorBlend") ?: 1f).coerceIn(0f, 1f)
         val faBlend = (props["fadeBlend"]?.firstValue(w, short, "fadeBlend") ?: 1f).coerceIn(0f, 1f)
         val inton = boolOf(props["inton"], true)
-        if (inton < 0.5f) w += "Effect extrudeflat: an inton of false is not reproduced"
         val rotT = props["rotate"]
         val rot = rotT?.first() ?: emptyList()
         val posT = props["position"]
@@ -6579,7 +6593,7 @@ object AlightXmlImporter {
     }
 
     /**
-     * `motionblur` / `motionblur2` / `motionblur3` / `motionblur4` -> the app's Motion Blur (see MotionBlurEval for
+     * `motionblur` / `motionblur2` / `motionblur3` -> the app's Motion Blur (see MotionBlurEval for
      * the per-frame maths: a directional blur along the layer's position velocity plus a radial
      * blur around the layer centre for its scale / rotation velocity, `tune` as the strength).
      * The three `use*` flags are stored as values[1..3] so the resolver only blurs the kinds
@@ -6619,6 +6633,46 @@ object AlightXmlImporter {
                 tailsOf(trackTail(tuneT))
             ),
             short
+        )
+    }
+
+    /**
+     * `motionblur4` -> the app's Motion Blur 4 (build 136): the def was recovered in hunt
+     * round 3 (defs-batch8 — AM's own motionblur4.xml via the TrueMotion conversion), so
+     * this id no longer takes the approximation above: the stored effect resolves per
+     * frame into the def's three stages (see MotionBlurEval.mb4). The full def schema is
+     * stored: tune (keyframed instances ride the tail RAW like the older ids), the three
+     * use* flags (all default true in the def; a missing flag here also reads as the
+     * def's default), and samplesMin / samplesMax at the def's defaults (1 / 100) when
+     * unserialised — the corpus serialises them only at those defaults. An effect with
+     * all three flags off has no stage to run and is skipped, as before.
+     */
+    private fun applyMotionBlur4(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val tuneT = props["tune"]
+        val tune = tuneT?.scalarAtEased(0f) ?: 1f
+        val usePos = (props["usePos"]?.scalarAt(0f) ?: 1f) >= 0.5f
+        val useScale = (props["useScale"]?.scalarAt(0f) ?: 1f) >= 0.5f
+        val useAngle = (props["useAngle"]?.scalarAt(0f) ?: 1f) >= 0.5f
+        if (!usePos && !useScale && !useAngle) {
+            w += "Effect motionblur4 is not supported yet: all of usePos / useScale / useAngle are off: skipped"
+            return clip0
+        }
+        val sMin = (props["samplesMin"]?.scalarAt(0f) ?: 1f).coerceIn(1f, 32f)
+        val sMax = (props["samplesMax"]?.scalarAt(0f) ?: 100f).coerceIn(8f, 256f)
+        return addFx(
+            clip0, ctx, ClipFxLibrary.MOTION_BLUR4,
+            withTails(
+                listOf(
+                    (tune * 100f).coerceIn(0f, 400f),
+                    if (usePos) 1f else 0f, if (useScale) 1f else 0f, if (useAngle) 1f else 0f,
+                    sMin, sMax
+                ),
+                // The tail holds tune RAW, exactly like the older ids (see applyMotionBlur).
+                tailsOf(trackTail(tuneT))
+            ),
+            "motionblur4"
         )
     }
 

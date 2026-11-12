@@ -1053,6 +1053,51 @@ int main() {
         FxOp eo;
         eo.type = FX_EXTRUDE_AM;
         CHECK(!fxIsIdentity(eo), "extrude is never identity");
+        // Extrude Flat against its own def (build 136, defs-batch8): the flat march at
+        // identity hits the box face (opaque white), and `inton` gates the interior
+        // colour on the side faces — off, the side keeps the surface colour.
+        FxOp fl;
+        fl.type = FX_EXTRUDE_FLAT_AM;
+        fl.p[0] = 0.1f; fl.p[1] = 1.f; fl.p[2] = 1.f; fl.p[3] = 1.f;   // depth, scale, stretch
+        fl.p[4] = 1.f; fl.p[5] = 1.f; fl.p[6] = 1.f;                   // blends, inton ON
+        fl.q[4] = 100.f; fl.q[5] = 500.f; fl.q[6] = 0x00FF00;          // position, interior green
+        fl.r[0] = 0x00FF00; fl.r[1] = 300.f;                           // fade green too, MAX_ITER
+        fxExtrudeAmPixel(fl, true, 0.5f, 0.5f, 1000, 1000, S, out);
+        CHECK(std::fabs(out[0] - 1) < 0.01f && std::fabs(out[3] - 1) < 0.01f,
+              "extrudeflat centre is the box face, opaque white");
+        fl.q[1] = 90.f;   // side face at dz = 0.5, like the extrude pin above
+        fxExtrudeAmPixel(fl, true, 0.5f, 0.5f, 1000, 1000, S, out);
+        CHECK(std::fabs(out[1] - 1) < 0.03f && out[0] < 0.03f && std::fabs(out[3] - 1) < 0.03f,
+              "extrudeflat side face is interior green (inton on)");
+        fl.p[6] = 0.f;   // inton OFF: the def applies neither interior nor fade mix
+        fxExtrudeAmPixel(fl, true, 0.5f, 0.5f, 1000, 1000, S, out);
+        CHECK(out[0] > 0.9f && std::fabs(out[0] - out[1]) < 0.03f && std::fabs(out[1] - out[2]) < 0.03f &&
+              std::fabs(out[3] - 1) < 0.03f,
+              "extrudeflat side face keeps the surface colour (inton off)");
+    }
+    {   // Motion Blur 4 (AM's motionblur4 def; build 136): the sample-count law and the
+        // scale / angle speeds, hand-computed from the def's three stages.
+        CHECK(fxMb4Samples(40.f, 1.f, 100.f) == 40, "mb4 samples: speed 40 -> 40");
+        CHECK(fxMb4Samples(0.4f, 1.f, 100.f) == 1, "mb4 samples: sub-texel speed -> samplesMin");
+        CHECK(fxMb4Samples(500.f, 1.f, 100.f) == 100, "mb4 samples: speed clamps at samplesMax");
+        CHECK(fxMb4Samples(1.99f, 1.f, 100.f) == 1, "mb4 samples: the count truncates like the def's int()");
+        CHECK(fxMb4Samples(3.f, 2.f, 8.f) == 3, "mb4 samples: inside custom bounds");
+        CHECK(fxMb4Samples(1.f, 2.f, 8.f) == 2, "mb4 samples: custom samplesMin floors the count");
+        CHECK(std::fabs(fxMb4ScaleSpeed(0.2f, 1.f, 300.f) - 30.f) < 1e-4f, "mb4 scale speed: |svel*tune|*dist/2");
+        CHECK(std::fabs(fxMb4ScaleSpeed(-0.2f, 2.f, 300.f) - 60.f) < 1e-4f, "mb4 scale speed: sign-free, tune scales");
+        CHECK(std::fabs(fxMb4AngleSpeed(12.f, 1.f, 200.f) - 41.8879f) < 0.01f, "mb4 angle speed: arc length in texels");
+        CHECK(fxMb4AngleSpeed(0.f, 1.f, 200.f) == 0.f, "mb4 angle speed: still layer");
+        CHECK(fxShaderOf(FX_MB4_POS).group == FXG_BLUR2 && fxShaderOf(FX_MB4_POS).mode == 10 &&
+              fxShaderOf(FX_MB4_SCALE).mode == 11 && fxShaderOf(FX_MB4_ANGLE).mode == 12,
+              "mb4 passes are kFxBlur2 modes 10..12");
+        float mb4[] = {180, 0.1f, -0.2f, 1.f, 1.f, 100.f, 0, 0,
+                       181, 0.05f, 1.f, 50.f, 50.f, 1.f, 100.f, 0,
+                       182, 12.f, 1.f, 50.f, 50.f, 1.f, 100.f, 0,
+                       179, 100.f, 1, 1, 1, 1, 100, 0};
+        FxOp mops[kFxMaxOps];
+        CHECK(fxParseOps(mb4, 32, mops) == 3, "mb4 passes parse, the stored 179 is skipped");
+        CHECK(mops[0].type == FX_MB4_POS && mops[1].type == FX_MB4_SCALE && mops[2].type == FX_MB4_ANGLE,
+              "mb4 pass order is position, scale, angle");
     }
     {   // Edge Glow (AM's edgeglow def): the findedges-edgeglow output stage, the final
         // composite, and the blur calibration — hand-computed from the def's shader.

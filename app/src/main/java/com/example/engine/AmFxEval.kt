@@ -77,6 +77,7 @@ internal object AmFxEval {
         ClipFxLibrary.RGB_SPLIT -> listOf(Tracked(0, 100f), Tracked(1, 1f))    // strength, angle (degrees)
         ClipFxLibrary.RADIAL_BLUR -> listOf(Tracked(0, 100f))                  // strength
         ClipFxLibrary.MOTION_BLUR -> listOf(Tracked(0, 100f))                  // tune (MotionBlurEval reads the resolved slot)
+        ClipFxLibrary.MOTION_BLUR4 -> listOf(Tracked(0, 100f))                 // tune (same: MotionBlurEval reads the resolved slot)
         ClipFxLibrary.BULGE -> listOf(Tracked(0, 100f))                        // strength
         ClipFxLibrary.BRIGHT_CONTRAST -> listOf(Tracked(0, 100f), Tracked(1, 100f))  // brightness, contrast
         ClipFxLibrary.LONG_SHADOW -> listOf(Tracked(0, 1f))                    // length (the tail is pre-converted to the slot's %)

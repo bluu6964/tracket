@@ -1916,8 +1916,15 @@ void main() {
 // orientation, and the only serialised orient in the corpus is the identity quaternion).
 // The maths runs in AM's layer space (layer-norm, y down); texture fetches flip y back
 // to this engine's vUv. Extrude Flat (uBlend.w = 1) is the same march with the Flat
-// shading branch and uBlur = the layer itself (no def exists for it anywhere; its
-// serialised schema — rotate / position / depth / scale / MAX_ITER — is the march's).
+// shading branch and uBlur = the layer itself; its def was recovered in hunt round 3
+// (defs-batch8) and build 136 aligned the flat branch to it parameter by parameter:
+// its own ray spread (st / 6.0, not extrude's 5.8), its own step-size alpha factor
+// (1.5 on the same-sample alpha, not 2.0 on a blur buffer), no strength term in the
+// step size, and `inton` (carried in uBlend.z for flat ops) gating the interior /
+// fade colour mixes. The def's texCoord projection step (its vecToVec rotation of
+// the local coordinate) remains the one shared simplification of build 127's march:
+// both defs carry it identically and the march here projects the local coordinate
+// directly — recorded in ROADMAP Queue 15(g).
 const char* kExtrude = R"(#version 300 es
 precision highp float;
 uniform sampler2D uTex;
@@ -1945,7 +1952,7 @@ vec2 sdExtrude(vec3 p) {
     vec2 st = (p.xy / uBox.xy + 1.0) / 2.0;
     vec4 texColor = texAt(st);
     vec4 blurColor = blurAt(st);
-    float t = max(clamp(blurColor.a * 2.0, 0.0, 1.0), texColor.a);
+    float t = max(clamp(blurColor.a * (uBlend.w > 0.5 ? 1.5 : 2.0), 0.0, 1.0), texColor.a);
     float z = (p.z / uBox.z + 1.0) / 2.0;
     float maxdim = length(uBox);
     float td = (1.0 - t) * (maxdim * 2.0 * (1.0 + uMisc.y)) / uMisc.z;
@@ -1986,7 +1993,7 @@ void main() {
     vec2 st = layerNorm - 0.5;
     if (uSize.x < uSize.y) st.x *= uSize.x / uSize.y; else st.y *= uSize.y / uSize.x;
     st /= uMisc.x;
-    st /= 5.8;
+    st /= (uBlend.w > 0.5 ? 6.0 : 5.8);
     vec3 ro = vec3(0.0, 1.0, -1.0);
     vec3 rd = normalize(vec3(st, 1.0));
     float d = 0.0;
@@ -2019,7 +2026,7 @@ void main() {
     } else {
         texColor = baseColor;
     }
-    if (dz > 0.001 && dz < 0.999) {
+    if (dz > 0.001 && dz < 0.999 && (uBlend.w < 0.5 || uBlend.z > 0.5)) {
         texColor = mix(texColor, uInterior * texColor.a, uBlend.x);
         texColor = mix(texColor, uFade * texColor.a, uBlend.y * dz);
     }
@@ -3498,6 +3505,7 @@ bool Renderer::fxExtrudeAm(const FxOp& op, int W, int H, int* cur) {
     liR = liG = liB = 0.f;
     if (flat) {
         iter = std::max(1.f, op.r[1]);
+        strength = 0.f;   // extrudeflat's def has no strength: its step-size factor is 1.0
     } else {
         unpack(op.r[1], &liR, &liG, &liB);
         const int pq = (int)std::lround(std::min(16777215.f, std::max(0.f, op.r[2])));

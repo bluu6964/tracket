@@ -98,6 +98,16 @@ object ClipFxLibrary {
     // Motion Blur: resolved per frame by MotionBlurEval into a directional blur (see engine/MotionBlurEval.kt);
     // its native type (55) never reaches the shaders (fxParseOps skips it: it is above FX_MAX).
     const val MOTION_BLUR = "motion_blur"
+    // Motion Blur 4 (Alight's motionblur4, build 136): resolved per frame by MotionBlurEval
+    // into its def's three stages (the MB4_* passes below), never into the approximation
+    // the older ids get. Its native type (179) never reaches the shaders either
+    // (fxParseOps skips it; toNative skips it like Motion Blur).
+    const val MOTION_BLUR4 = "motion_blur4"
+    // The three motionblur4 stages, emitted per frame by MotionBlurEval in the def's
+    // group order (position, scale, angle); kFxBlur2 modes 10..12 in the engine.
+    const val MB4_POS = "mb4_pos"
+    const val MB4_SCALE = "mb4_scale"
+    const val MB4_ANGLE = "mb4_angle"
     // Repeat: resolved in the draw loops by RepeatEval (see engine/RepeatEval.kt) — the layer is
     // drawn once per copy with a shifted / turned / scaled pose: overlay layers as copy clips,
     // video / photo and group layers as per-copy placements of their one picture (RepeatDraw).
@@ -373,12 +383,13 @@ object ClipFxLibrary {
     // ((depth+100)*2 + iter*2048). Keyframed rotate / position components ride six
     // AmFxEval tails from index 21.
     const val EXTRUDE_AM = "extrude_am"
-    // EXTRUDE_FLAT_AM (native 126 + EXT 127 + EXT2 128): Alight's extrudeflat — no def
-    // exists in either recovered dump; the port shares Extrude's march with flat
-    // shading and no light model (its serialised schema carries no light params).
-    // Values [0] depth, [1] scale, [2] stretch x, [3] stretch y, [4] interior blend,
-    // [5] fade blend, [6] inton (1 in all 16 corpus instances, with interior blend 1;
-    // its exact role is unpinned — the interior colouring is applied as serialized).
+    // EXTRUDE_FLAT_AM (native 126 + EXT 127 + EXT2 128): Alight's extrudeflat — the
+    // port shares Extrude's march with flat shading and no light model (its schema
+    // carries no light params); its def was recovered in hunt round 3 (defs-batch8)
+    // and build 136 verified the port against it. Values [0] depth, [1] scale,
+    // [2] stretch x, [3] stretch y, [4] interior blend, [5] fade blend, [6] inton
+    // (1 in all 16 corpus instances, with interior blend 1; the def gates the
+    // interior / fade colour mixes on it).
     // EXT like Extrude's; EXT2 [14] the fade colour packed, [15] MAX_ITER.
     // Keyframed rotate / position ride tails from index 21, like Extrude's.
     const val EXTRUDE_FLAT_AM = "extrude_flat_am"
@@ -636,6 +647,43 @@ object ClipFxLibrary {
         FxDef(
             MOTION_BLUR, 55, "Motion Blur", "Blur", "Smears the layer along its own motion, like a camera shutter (position, scale and rotation)",
             listOf(FxParamDef("Strength", 0f, 100f, 100f, "%"))
+        ),
+        // Motion Blur 4 (Alight's motionblur4): values [0] is the tune x100 (a keyframed
+        // tune rides the AmFxEval tail RAW, like Motion Blur's), [1..3] the usePos /
+        // useScale / useAngle flags, [4..5] samplesMin / samplesMax — all written by the
+        // Alight importer only. MotionBlurEval resolves it per frame into the three
+        // MB4_* passes; it is never edited in the panel.
+        FxDef(
+            MOTION_BLUR4, 179, "Motion Blur 4 (Alight)", "Blur", "Alight Motion's Motion Blur: the layer smeared by its own position, scale and rotation motion, sampled exactly as its def computes",
+            listOf(FxParamDef("Tune", 0f, 400f, 100f, "%"))
+        ),
+        // The motionblur4 stages as MotionBlurEval emits them per frame (never stored on
+        // a clip, never panel-made): POS values [0..1] the picture-space velocity as
+        // fractions of the canvas height per frame, [2] the tune (raw), [3..4] the
+        // sample bounds; SCALE / ANGLE values [0] the scale / rotation change per frame,
+        // [1] the tune, [2..3] the pivot %, [4..5] the sample bounds.
+        FxDef(
+            MB4_POS, 180, "Motion Blur 4: Position", "Blur", "One resolved stage of Motion Blur 4 (per-frame, not editable)",
+            listOf(
+                FxParamDef("Velocity X", -10f, 10f, 0f), FxParamDef("Velocity Y", -10f, 10f, 0f),
+                FxParamDef("Tune", 0f, 4f, 1f), FxParamDef("Min Samples", 1f, 32f, 1f), FxParamDef("Max Samples", 8f, 256f, 100f)
+            )
+        ),
+        FxDef(
+            MB4_SCALE, 181, "Motion Blur 4: Scale", "Blur", "One resolved stage of Motion Blur 4 (per-frame, not editable)",
+            listOf(
+                FxParamDef("Scale Velocity", -10f, 10f, 0f), FxParamDef("Tune", 0f, 4f, 1f),
+                FxParamDef("Pivot X", 0f, 100f, 50f, "%"), FxParamDef("Pivot Y", 0f, 100f, 50f, "%"),
+                FxParamDef("Min Samples", 1f, 32f, 1f), FxParamDef("Max Samples", 8f, 256f, 100f)
+            )
+        ),
+        FxDef(
+            MB4_ANGLE, 182, "Motion Blur 4: Angle", "Blur", "One resolved stage of Motion Blur 4 (per-frame, not editable)",
+            listOf(
+                FxParamDef("Angle Velocity", -720f, 720f, 0f, "°"), FxParamDef("Tune", 0f, 4f, 1f),
+                FxParamDef("Pivot X", 0f, 100f, 50f, "%"), FxParamDef("Pivot Y", 0f, 100f, 50f, "%"),
+                FxParamDef("Min Samples", 1f, 32f, 1f), FxParamDef("Max Samples", 8f, 256f, 100f)
+            )
         ),
         // Repeat is resolved in the draw loop, not a shader: values[0] is the copy count, [1..2] the
         // offset in preview px between copies, [3] the turn per copy, [4] the scale per copy (%),
@@ -2166,14 +2214,14 @@ object ClipFxLibrary {
      * The enabled effects as the flat array the C++ engine reads (groups of 8 floats: type, p0..p6), or null when there
      * is nothing to run. Max [MAX_EFFECTS] effects. Motion Blur is NOT emitted here: it needs the layer's motion at
      * the frame time, so [com.example.engine.MotionBlurEval.resolve] rewrites it to directional / radial blurs first
-     * (use that at every per-frame call site); the Repeat family is NOT emitted either: the draw
+     * (Motion Blur 4 to its def's three MB4_* stages); (use that at every per-frame call site); the Repeat family is NOT emitted either: the draw
      * loops draw the layer once per copy ([com.example.engine.RepeatEval.copiesOf] for overlay
      * layers, per-copy placements for picture / group layers). A layer with only Motion Blur or only a Repeat still counts
      * in [hasEffects].
      */
     fun toNative(effects: List<ClipFx>): FloatArray? {
         val on = effects.filter {
-            it.enabled && def(it.type) != null && it.type != MOTION_BLUR && it.type != REPEAT &&
+            it.enabled && def(it.type) != null && it.type != MOTION_BLUR && it.type != MOTION_BLUR4 && it.type != REPEAT &&
                 it.type != REPEAT_RADIAL && it.type != REPEAT_SCATTER
         }.take(MAX_EFFECTS)
         if (on.isEmpty()) return null

@@ -270,6 +270,50 @@ $layers
     }
 
     @Test
+    fun extrudeFlatIntonFalseIsReproduced() {
+        // Build 136: the recovered def gates the interior / fade colour mixes on
+        // inton (hunt-staging/defs-batch8), so a false value imports silently into
+        // values[6] = 0 — before the def arrived it was reported as unreproduced.
+        val fxXml = """<effect id="com.alightcreative.effects.extrudeflat" locallyApplied="true">
+      <property name="rotate" type="vec3" value="0.000000,90.000000,0.000000" />
+      <property name="position" type="vec3" value="0.000000,100.000000,500.000000" />
+      <property name="stretch" type="vec2" value="1.000000,1.000000" />
+      <property name="depth" type="float" value="0.100000" />
+      <property name="scale" type="float" value="1.000000" />
+      <property name="MAX_ITER" type="float" value="300.000000" />
+      <property name="inton" type="bool" value="false" />
+      <property name="interiorColor" type="color" value="#ff00ff00" />
+      <property name="interiorBlend" type="float" value="1.000000" />
+      <property name="fadeColor" type="color" value="#ff00ff00" />
+      <property name="fadeBlend" type="float" value="1.000000" />
+    </effect>"""
+        val r = AlightXmlImporter.parse(shapeWith(fxXml), 1080f)
+        assertTrue(r.warnings.none { it.contains("inton") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects.single { it.type == ClipFxLibrary.EXTRUDE_FLAT_AM }
+        assertEquals(0f, fx.values[6], 0.0001f)          // inton false
+    }
+
+    @Test
+    fun extrudeFlatMissingDepthUsesTheDefDefault() {
+        // Build 136: the recovered def's depth default is 0.005 (the serialised-schema
+        // port used 0.05); no corpus instance omits depth, so this pins the default.
+        val fxXml = """<effect id="com.alightcreative.effects.extrudeflat" locallyApplied="true">
+      <property name="rotate" type="vec3" value="0.000000,0.000000,0.000000" />
+      <property name="position" type="vec3" value="0.000000,100.000000,500.000000" />
+      <property name="stretch" type="vec2" value="1.000000,1.000000" />
+      <property name="scale" type="float" value="1.000000" />
+      <property name="MAX_ITER" type="float" value="300.000000" />
+      <property name="inton" type="bool" value="true" />
+      <property name="interiorColor" type="color" value="#ff000000" />
+      <property name="interiorBlend" type="float" value="1.000000" />
+      <property name="fadeColor" type="color" value="#ff000000" />
+      <property name="fadeBlend" type="float" value="1.000000" />
+    </effect>"""
+        val fx = onlyClip(shapeWith(fxXml)).effects.single { it.type == ClipFxLibrary.EXTRUDE_FLAT_AM }
+        assertEquals(0.005f, fx.values[0], 0.0001f)
+    }
+
+    @Test
     fun extrudePanelCreateCarriesAmDefaults() {
         val fx = ClipFxLibrary.create(ClipFxLibrary.EXTRUDE_AM)!!
         assertEquals(21, fx.values.size)

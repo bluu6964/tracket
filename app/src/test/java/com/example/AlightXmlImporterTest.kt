@@ -788,7 +788,9 @@ $layers
     }
 
     @Test
-    fun motionblur4BecomesMotionBlurWithTuneAsStrength() {
+    fun motionblur4BecomesMotionBlur4WithTuneAsStrength() {
+        // Build 136: motionblur4 has its own effect now (its def was recovered and
+        // ported); before, it took the Motion Blur approximation below.
         val xml = scene(
             """<shape id="9" label="Box" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".rect">
   <transform><location><kf t="0.000000" v="340,960,0" /><kf t="1.000000" v="740,960,0" /></location><scale value="1,1" /></transform>
@@ -803,14 +805,15 @@ $layers
         val r = AlightXmlImporter.parse(xml, 1080f)
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
         assertEquals(1, c.effects.size)
-        assertEquals(ClipFxLibrary.MOTION_BLUR, c.effects[0].type)
-        assertEquals(20f, c.effects[0].values[0], 0.01f)   // tune 0.2 -> Strength 20
+        assertEquals(ClipFxLibrary.MOTION_BLUR4, c.effects[0].type)
+        assertEquals(20f, c.effects[0].values[0], 0.01f)   // tune 0.2 -> 20 (x100, def range 0..4)
         assertEquals(1f, c.effects[0].values[1], 0f)   // usePos
         assertEquals(1f, c.effects[0].values[2], 0f)   // useScale
         assertEquals(1f, c.effects[0].values[3], 0f)   // useAngle
-        // Position blur is reproduced; scale / rotation blur is reported, not guessed.
-        assertTrue(r.warnings.any { it.contains("motionblur4") && it.contains("approximately") })
-        assertTrue(r.warnings.any { it.contains("scale") && it.contains("rotation") })
+        assertEquals(1f, c.effects[0].values[4], 0f)   // samplesMin (def default)
+        assertEquals(100f, c.effects[0].values[5], 0f) // samplesMax (def default)
+        // The def is ported: no approximation verdict, nothing skipped.
+        assertFalse(r.warnings.any { it.contains("motionblur4") && it.contains("approximately") })
         assertFalse(r.warnings.any { it.contains("motionblur4") && it.contains("skipped") })
     }
 
@@ -2094,7 +2097,7 @@ $layers
         ), 1080f)
         assertFalse(r.warnings.any { it.contains("keyframed tune") })
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
-        val fx = c.effects.first { it.type == ClipFxLibrary.MOTION_BLUR }
+        val fx = c.effects.first { it.type == ClipFxLibrary.MOTION_BLUR4 }
         assertEquals(100f, fx.values[0], 0.001f)   // clamped to the first key at t = 0
         val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
         assertEquals(170f, end.values[0], 0.001f)

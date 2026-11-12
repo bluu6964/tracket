@@ -36,6 +36,24 @@ import kotlin.math.hypot
  * speedFrac * 675` (the texture height cancels: the same formula holds for canvas-sized overlay
  * pictures and for media textures). The strength multiplies it (`tune`).
  *
+ * `motionblur4` is NOT resolved through that approximation (build 136): its def was recovered
+ * (hunt-staging/defs-batch8) and [mb4] resolves it into the def's own three stages —
+ * FX_MB4_POS / FX_MB4_SCALE / FX_MB4_ANGLE, kFxBlur2 modes 10..12 — in the def's group order
+ * (its animate() script pushes position, then scale, then angle, each gated on the matching
+ * use* flag and a |velocity| > 0.0001 test). The host quantities the def's uniforms name are
+ * computed from the same pose pair as above, in the units the def family pins (moblurplus's
+ * shutter scaling cross-checks them): velocity = the anchor's displacement in px per frame,
+ * angularVelocity = the rotation change in degrees per frame, scaleVelocity = the RELATIVE
+ * scale change per frame. The stages run on the layer's own picture, so the position velocity
+ * is expressed in picture space (the draw rotation undone with the frame-end pose, divided by
+ * the mid-frame scale — the bitmap shift a screen displacement corresponds to) and as a
+ * fraction of the canvas height, the pipeline's standing unit (the shader multiplies by the
+ * texture height, the uUnit convention of the directional blur above). The scale stage's
+ * sample-count law is the one dimensional point the converted def loses (its stage-1 speed
+ * never reaches texels); it is restored from moblurplus's hybrid stage — see fxMb4ScaleSpeed.
+ * `tune` is read RAW here (the def's range is 0..4 and the corpus runs to 2.2; the older
+ * ids' approximation clamps its strength to 0..1 as before).
+ *
  * Angle: the shader's angle is counter-clockwise on screen (its direction is (cos a, -sin a) with
  * screen y down), so the canvas velocity (vx, vy, y down) is `atan2(-vy, vx)`; the picture is
  * turned clockwise by `rotationDeg` before it is drawn, which subtracts from a counter-clockwise
@@ -138,20 +156,27 @@ internal object MotionBlurEval {
      * shutter centred on the frame) and / or a radial blur around the layer centre for its scale /
      * rotation velocity, following the flags stored in values[1..3] (usePos / useScale / useAngle;
      * a Motion Blur made in the app's own Effects panel has only values[0], so all three default
-     * to on). A Motion Blur on a still layer is dropped for that frame. Anything else passes
+     * to on). A Motion Blur on a still layer is dropped for that frame. An enabled Motion Blur 4
+     * becomes the def's own three stages instead (see [mb4]). Anything else passes
      * through unchanged, and a list with no Motion Blur is returned as-is (no sampling at all).
-     * Feed the result to [ClipFxLibrary.toNative].
+     * Feed the result to [ClipFxLibrary.toNative]. [pivotXPct] / [pivotYPct] are the layer's
+     * pivot as percents of its own frame (Motion Blur 4's scale / angle stages turn about it).
      */
     fun resolve(
         effects: List<ClipFx>,
         poseAt: (Long) -> Pose?,
         timeMs: Long,
         frameMs: Long,
-        canvasHeightPx: Float
+        canvasHeightPx: Float,
+        pivotXPct: Float = 50f,
+        pivotYPct: Float = 50f
     ): List<ClipFx> {
-        if (effects.none { it.enabled && it.type == ClipFxLibrary.MOTION_BLUR }) return effects
+        if (effects.none { it.enabled && (it.type == ClipFxLibrary.MOTION_BLUR || it.type == ClipFxLibrary.MOTION_BLUR4) }) return effects
         return effects.flatMap { fx ->
-            if (!fx.enabled || fx.type != ClipFxLibrary.MOTION_BLUR) return@flatMap listOf(fx)
+            if (!fx.enabled) return@flatMap listOf(fx)
+            if (fx.type == ClipFxLibrary.MOTION_BLUR4)
+                return@flatMap mb4(fx, poseAt, timeMs, frameMs, canvasHeightPx, pivotXPct, pivotYPct)
+            if (fx.type != ClipFxLibrary.MOTION_BLUR) return@flatMap listOf(fx)
             val tune = (fx.values.getOrNull(0) ?: 100f) / 100f
             val usePos = (fx.values.getOrNull(1) ?: 1f) >= 0.5f
             val useScale = (fx.values.getOrNull(2) ?: 1f) >= 0.5f
@@ -169,6 +194,70 @@ internal object MotionBlurEval {
             }
             out
         }
+    }
+
+    /**
+     * One Motion Blur 4 as the renderer should run it at [timeMs]: the def's three stages in
+     * its own group order (position, scale, angle), each present only when its use* flag is on
+     * and the frame's motion of that kind passes the def's animate() gate (|v| > 0.0001 in the
+     * quantity's own units). The pose pair is the same central difference [resolve] uses.
+     * A stage whose count would clamp to the minimum still runs in the shader (it is the
+     * identity there), exactly as the def's group runs it.
+     */
+    private fun mb4(
+        fx: ClipFx,
+        poseAt: (Long) -> Pose?,
+        timeMs: Long,
+        frameMs: Long,
+        canvasHeightPx: Float,
+        pivotXPct: Float,
+        pivotYPct: Float
+    ): List<ClipFx> {
+        if (frameMs <= 0L) return emptyList()
+        val tune = ((fx.values.getOrNull(0) ?: 100f) / 100f).coerceIn(0f, 4f)
+        val usePos = (fx.values.getOrNull(1) ?: 1f) >= 0.5f
+        val useScale = (fx.values.getOrNull(2) ?: 1f) >= 0.5f
+        val useAngle = (fx.values.getOrNull(3) ?: 1f) >= 0.5f
+        val sMin = fx.values.getOrNull(4) ?: 1f
+        val sMax = fx.values.getOrNull(5) ?: 100f
+        val h = frameMs / 2
+        val p0 = poseAt(timeMs - h) ?: return emptyList()
+        val p1 = poseAt(timeMs + h) ?: return emptyList()
+        val out = ArrayList<ClipFx>(3)
+        if (usePos) {
+            val vx = p1.x - p0.x
+            val vy = p1.y - p0.y
+            if (kotlin.math.abs(vx) > 0.0001f || kotlin.math.abs(vy) > 0.0001f) {
+                // Picture space: the screen displacement undone by the frame-end draw
+                // rotation and the mid-frame scale, as a fraction of the canvas height.
+                val sMid = (p0.scalePercent + p1.scalePercent) / 2f / 100f
+                if (sMid > 0.001f && canvasHeightPx > 0f) {
+                    val th = Math.toRadians(p1.rotationDeg.toDouble())
+                    val c = kotlin.math.cos(th).toFloat()
+                    val s = kotlin.math.sin(th).toFloat()
+                    val px = (vx * c + vy * s) / sMid / canvasHeightPx
+                    val py = (-vx * s + vy * c) / sMid / canvasHeightPx
+                    out += fx.copy(type = ClipFxLibrary.MB4_POS, values = listOf(px, py, tune, sMin, sMax))
+                }
+            }
+        }
+        if (useScale) {
+            val sMid = (p0.scalePercent + p1.scalePercent) / 2f
+            if (sMid > 0f) {
+                val svel = (p1.scalePercent - p0.scalePercent) / sMid
+                if (kotlin.math.abs(svel) > 0.0001f) {
+                    out += fx.copy(type = ClipFxLibrary.MB4_SCALE, values = listOf(svel, tune, pivotXPct, pivotYPct, sMin, sMax))
+                }
+            }
+        }
+        if (useAngle) {
+            // Shortest signed rotation change this frame (179 -> -179 is +2 degrees).
+            val dDeg = ((p1.rotationDeg - p0.rotationDeg) % 360f + 540f) % 360f - 180f
+            if (kotlin.math.abs(dDeg) > 0.0001f) {
+                out += fx.copy(type = ClipFxLibrary.MB4_ANGLE, values = listOf(dDeg, tune, pivotXPct, pivotYPct, sMin, sMax))
+            }
+        }
+        return out
     }
 
     /**

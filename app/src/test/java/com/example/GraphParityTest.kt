@@ -10,6 +10,7 @@ import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.renderAt
 import com.example.model.shapeDrawScaleX
+import com.example.model.shapeDrawScaleY
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,25 +41,29 @@ class GraphParityTest {
 
     // ---- G1: the bars' wipe masks carry the data heights ------------------------------------
 
-    /** Visible fraction of a wipe state along the layer's vertical axis (the states here are
-     *  turned 90°, so the band is the state's width about its centre). */
-    private fun visFrac(m: com.example.model.ClipMask, relMs: Long): Float {
+    /** Visible fraction of a wipe state along the layer's vertical axis. The states here are
+     *  turned 90°, so the band's thickness is the state's width — a fraction of the box's WIDTH,
+     *  measured in pixels — so the fraction of the box's HEIGHT it covers is w * boxW / boxH
+     *  (the round-7 correction: the importer stores the band pixel-true; reading w as a height
+     *  fraction directly is the unit-box fallacy that hid the native plan's 9.9 % band). */
+    private fun visFrac(m: com.example.model.ClipMask, relMs: Long, boxAspect: Float): Float {
         val s = m.stateAt(relMs)
-        return (minOf(1f, s.cy + s.w / 2) - maxOf(0f, s.cy - s.w / 2)).coerceAtLeast(0f)
+        val t = s.w * boxAspect
+        return (minOf(1f, s.cy + t / 2) - maxOf(0f, s.cy - t / 2)).coerceAtLeast(0f)
     }
 
     @Test
     fun barWipesSettleAtTheAlightHeights() {
         val bars = clips().filter { it.type == LayerType.SHAPE && it.masks.isNotEmpty() }
         assertEquals(28, bars.size)   // 7 bars x the four embedded copies of the bar set
-        val settled = bars.map { visFrac(it.masks[0], 3000L) }
+        val settled = bars.map { visFrac(it.masks[0], 3000L, it.shapeDrawScaleX / it.shapeDrawScaleY) }
         // Alight's settled frame, bottom-up fractions of the grid (frame evidence, findings doc):
         for (e in listOf(0.279f, 0.556f, 0.356f, 0.627f, 0.934f, 0.515f, 0.772f)) {
             assertEquals("settled fraction $e x4", 4, settled.count { abs(it - e) < 0.01f })
         }
         // Bar "1" opens from nothing: closed at its first key, settled window centred low.
         val bar1 = bars.first { it.name == "1" }
-        assertEquals(0f, visFrac(bar1.masks[0], 0L), 1e-6f)
+        assertEquals(0f, visFrac(bar1.masks[0], 0L, bar1.shapeDrawScaleX / bar1.shapeDrawScaleY), 1e-6f)
         val st = bar1.masks[0].stateAt(3000L)
         assertEquals(0.8605f, st.cy, 0.01f)
         assertEquals(90f, st.rot, 0.01f)

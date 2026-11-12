@@ -429,6 +429,17 @@ struct FxOp {
 // Reads `n` floats (groups of kFxStride) into `out` (room for kFxMaxOps). Unknown types are skipped.
 int fxParseOps(const float* flat, int n, FxOp* out);
 
+// Which of the two fx targets an applyFx / applyTexMask pass stages its source picture into.
+// The pass chain ping-pongs between the targets, and a pass's INPUT can itself be a previous
+// pass's result — since build 121 an overlay layer's own masks run as a second applyFx chained
+// after its effect pass. When the input is fx target 0, staging into target 0 too would clear
+// and then sample the very texture being rendered into (a GL feedback loop): the picture comes
+// out erased. The Graph bars hit exactly this (their only op, Edge Glow, returns the picture
+// to the target it started in). Start in target 1 whenever the input is target 0.
+inline int fxFirstTarget(uint32_t inputTex, uint32_t tex0) {
+    return (tex0 != 0 && inputTex == tex0) ? 1 : 0;
+}
+
 // ---- Gaussian blur ----
 // Blurriness 0..100 -> sigma in picture pixels. `unit` = picture height / 1080, so the look does not depend
 // on the resolution of the source (preview = export).

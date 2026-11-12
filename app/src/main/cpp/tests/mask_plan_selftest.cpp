@@ -178,6 +178,33 @@ int main(int argc, char** argv) {
         // junk input
         CHECK(maskParseOps(nullptr, 0, W, H, ops) == 0 && maskParseOps(f.data(), 10, W, H, ops) == 0, "junk input");
     }
+    // 11b. the Graph bar wipe, end to end (round-7 regression): the flat array below is the
+    // verbatim output of the real importer + OverlayMasks.remap for bar "1" of the Graph preset
+    // (7e363d75) at its settled time, against a simulated fx region of 316 x 435 — the array the
+    // engines hand this parser on device. Alight's settled bar shows the bottom 0.279 of the
+    // bar's box; the unit-box wipe state (pre-fix) covered only 0.098 of it here.
+    {
+        const float ops[] = {0.f, 0.f, 0.f, 0.5f, 0.6522781f, 0.16208549f, 0.7831157f, 90.f,
+                             0.f, 0.f, 100.f, 0.f, 5.f, 45.f, 0.f, 0.f};
+        MaskOp mo[kMaskMax];
+        const int n = maskParseOps(ops, 48, 316, 435, mo);
+        CHECK(n == 1, "graph bar: one mask parsed, got %d", n);
+        // the bar's box inside that region (fractions from the same audit)
+        const double bx = 0.39719102 * 316, by = 0.28879613 * 435, bw = 0.20561787 * 316, bh = 0.4224078 * 435;
+        int covered = 0, total = 0;
+        double ySum = 0;
+        for (int y = 0; y < 435; ++y)
+            for (int x = 0; x < 316; ++x) {
+                if (x < bx || x >= bx + bw || y < by || y >= by + bh) continue;
+                ++total;
+                if (maskEvaluate(mo, n, x + 0.5f, y + 0.5f) > 0.5f) { ++covered; ySum += (y - by) / bh; }
+            }
+        const double frac = (double)covered / total;
+        CHECK(std::fabs(frac - 0.279) < 0.01, "graph bar: covered fraction %g, want ~0.279", frac);
+        CHECK(std::fabs(ySum / covered - 0.86) < 0.02, "graph bar: band centroid %g, want ~0.86", ySum / covered);
+        CHECK(maskEvaluate(mo, n, (float)(bx + bw / 2), (float)(by + bh - 2)) > 0.99f, "graph bar: bottom covered");
+        CHECK(maskEvaluate(mo, n, (float)(bx + bw / 2), (float)(by + 2)) < 0.01f, "graph bar: top open");
+    }
     // 12. optional dump for the GPU comparison (one config per line group, see tests/mask_gpu_check.js)
     if (argc >= 3 && std::strcmp(argv[1], "dump") == 0) {
         FILE* fp = std::fopen(argv[2], "w");

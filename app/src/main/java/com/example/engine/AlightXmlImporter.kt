@@ -3048,9 +3048,20 @@ object AlightXmlImporter {
         if (feather > 0f) w += "Effect wipe: its feather is mapped approximately"
         fun state(s: Float, e: Float): MaskState {
             val d = projMin + (s + e) / 2f * len - projC
+            // The band's extents are measured in the box's real pixels, not the unit box: a mask
+            // state's w / h are fractions of the box's WIDTH / HEIGHT and the native plan turns
+            // the rectangle in pixel space (hw = w * picture W), so a unit-box width understates
+            // a vertical wipe's thickness on a non-square box by boxW / boxH — the Graph preset's
+            // bars (126 x 356 px) settled 0.279 of the height in Alight but only 0.279 of the
+            // width = 9.9 % of the height through the old state (round-7 hunt, plan-level audit).
+            // extent is the box's projection span along the wipe (px); across is its span across
+            // it. On a square box both formulas reduce to the unit-box ones.
+            val across = boxW * abs(sn) + boxH * abs(c)
             return MaskState(
                 cx = 0.5f + c * d, cy = 0.5f + sn * d,
-                w = ((e - s) * len).coerceAtLeast(0f), h = len + 1.5f,
+                w = if (boxW > 1f) ((e - s) * extent / boxW).coerceAtLeast(0f)
+                    else ((e - s) * len).coerceAtLeast(0f),
+                h = if (boxH > 1f) (across + 1.5f * extent) / boxH else len + 1.5f,
                 rot = angle, feather = featherPct, opacity = 100f
             )
         }

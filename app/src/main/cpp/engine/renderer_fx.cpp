@@ -348,8 +348,11 @@ bool Renderer::applyFx(const LayerDraw& d, const LayerFx& fx, LayerDraw* out) {
         bgOk_ = true;
     }
 
-    // 0) the source picture, upright and at its own size, into target 0
-    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[0]);
+    // 0) the source picture, upright and at its own size, into a target — never the target the
+    // source itself lives in (fxFirstTarget: a chained pass whose input is a previous result
+    // would otherwise clear and sample the same texture, erasing the picture).
+    const int start = fxFirstTarget(d.texture, fxTex_[0]);
+    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[start]);
     glViewport(0, 0, W, H);
     glClearColor(0.f, 0.f, 0.f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -375,7 +378,7 @@ bool Renderer::applyFx(const LayerDraw& d, const LayerFx& fx, LayerDraw* out) {
 
     glDisable(GL_BLEND);
     glBindVertexArray(vao_);
-    int cur = 0;  // index of the target that holds the current picture
+    int cur = start;  // index of the target that holds the current picture
 
     if (fx.faceMask) {
         // 1) box-reduce the frame to the small picture
@@ -479,8 +482,12 @@ bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, LayerDraw* out
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, vp);
 
-    // 0) the source picture, upright and at its own size, into target 0 (same copy as applyFx).
-    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[0]);
+    // 0) the source picture, upright and at its own size, into a target (same copy as applyFx) —
+    // never the target the source itself lives in (fxFirstTarget: the group path hands this
+    // pass a post-effects picture, which can be fx target 0).
+    const int start = fxFirstTarget(d.texture, fxTex_[0]);
+    const int dst = 1 - start;
+    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[start]);
     glViewport(0, 0, W, H);
     glClearColor(0.f, 0.f, 0.f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -504,14 +511,14 @@ bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, LayerDraw* out
         h_ = sh;
     }
 
-    // 1) the mask multiply into target 1: the picture keeps only where the mask layer is.
+    // 1) the mask multiply into the other target: the picture keeps only where the mask layer is.
     glDisable(GL_BLEND);
     glBindVertexArray(vao_);
-    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[1]);
+    glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[dst]);
     glViewport(0, 0, W, H);
     glUseProgram(fxLayerMask_);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, fxTex_[0]);
+    glBindTexture(GL_TEXTURE_2D, fxTex_[start]);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, maskTex);
     glUniform1i(glGetUniformLocation(fxLayerMask_, "uTex"), 0);
@@ -529,7 +536,7 @@ bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, LayerDraw* out
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
-    out->texture = fxTex_[1];
+    out->texture = fxTex_[dst];
     out->oes = false;
     for (int i = 0; i < 16; ++i) out->texMatrix[i] = (i % 5 == 0) ? 1.f : 0.f;  // identity
     out->contentRotation = 0;  // the picture is already upright

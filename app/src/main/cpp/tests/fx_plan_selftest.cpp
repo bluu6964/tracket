@@ -18,6 +18,14 @@ static double bilinear(const std::vector<double>& s, double x) {  // x in texel 
 }
 
 int main() {
+    // 0. fxFirstTarget: a chained pass must never stage into the target its input lives in
+    // (round-7 regression: an overlay's own-mask pass chained after its effect pass erased
+    // every layer whose chain returned the picture to fx target 0 — the Graph bars).
+    CHECK(fxFirstTarget(7, 7) == 1, "input is target 0 -> stage into 1");
+    CHECK(fxFirstTarget(8, 7) == 0, "input is target 1 -> stage into 0");
+    CHECK(fxFirstTarget(42, 7) == 0, "input is a plain texture -> stage into 0");
+    CHECK(fxFirstTarget(0, 7) == 0, "no input -> stage into 0");
+    CHECK(fxFirstTarget(7, 0) == 0, "no target 0 yet -> stage into 0");
     // 1. linear-sampling kernel == discrete Gaussian
     for (float sigma : {0.6f, 1.f, 2.5f, 4.f, 8.f}) {
         GaussKernel k = fxGaussKernel(sigma);

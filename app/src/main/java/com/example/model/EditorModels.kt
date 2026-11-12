@@ -253,6 +253,19 @@ data class TimelineClip(
      * replay the segments scaled by their usual box. Empty for every built-in kind.
      */
     val pathSegments: List<PathSeg> = emptyList(),
+    /**
+     * An imported `.pie` wedge's animation: the wedge's outline is parametric (its start / end
+     * angles are keyframed in Alight), so the engines rebuild [pathSegments] per frame from these
+     * tracks (see [PieOutline] and `pieSegmentsAt`); the stored [pathSegments] are only the
+     * outline at the layer's most open instant, for consumers that never evaluate the layer.
+     * Angles are Alight's own degrees (they run past 360 and below 0 — the wrap rule lives in
+     * [PieOutline]); each keyframe's `a` is one angle. [pieRadius] is the wedge's radius in
+     * Alight units — the normalisation basis of the segments (the raw outline divided by it).
+     * Empty tracks = not a pie.
+     */
+    val pieStartKeys: List<Keyframe> = emptyList(),
+    val pieEndKeys: List<Keyframe> = emptyList(),
+    val pieRadius: Float = 0f,
     // Transform parameters (2D, Pivot, 3D, Warp)
     val transformX: Float = 0f,
     val transformY: Float = 0f,

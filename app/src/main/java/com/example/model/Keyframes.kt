@@ -261,13 +261,33 @@ fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when 
     AnimProp.STROKE_TRIM -> copy(strokeTrimStart = a.coerceIn(0f, 1f), strokeTrimEnd = b.coerceIn(0f, 1f))
 }
 
+/** True for an imported `.pie` wedge: its outline is rebuilt per frame from its angle tracks. */
+val TimelineClip.hasPie: Boolean
+    get() = pieStartKeys.isNotEmpty() && pieEndKeys.isNotEmpty() && pieRadius > 0f
+
+/**
+ * The pie wedge's normalised outline at [relMs] (ms from the layer's start): both angle tracks
+ * are sampled with the ordinary keyframe sampler (the segment easings ride along) and the
+ * outline is rebuilt from the evaluated angles by [PieOutline]. Empty when the def's wrap rule
+ * closes the wedge at that instant — the layer draws nothing then, exactly as in Alight.
+ * A non-pie layer keeps its stored segments.
+ */
+fun TimelineClip.pieSegmentsAt(relMs: Long): List<PathSeg> {
+    if (!hasPie) return pathSegments
+    val s = pieStartKeys.valueAt(relMs).first
+    val e = pieEndKeys.valueAt(relMs).first
+    return PieOutline.normalisedSegments(s.toDouble(), e.toDouble())
+}
+
 /**
  * The layer as it looks at project time [timeMs]: every keyframed property is replaced by its
  * animated value. Layers without keyframes are returned as they are (no copy).
  * Preview, selection frame and export all draw from this.
  */
 fun TimelineClip.at(timeMs: Long): TimelineClip {
-    if (keyframes.isEmpty()) return this
+    if (keyframes.isEmpty()) {
+        return if (hasPie) copy(pathSegments = pieSegmentsAt(timeMs - startMs)) else this
+    }
     val rel = timeMs - startMs
     var c = this
     for ((p, list) in keyframes) {
@@ -275,6 +295,7 @@ fun TimelineClip.at(timeMs: Long): TimelineClip {
         val (a, b) = if (p.isColor) list.colorValueAt(rel) else list.valueAt(rel)
         c = c.withProp(p, a, b)
     }
+    if (c.hasPie) c = c.copy(pathSegments = c.pieSegmentsAt(rel))
     return c
 }
 
@@ -315,25 +336,30 @@ fun TimelineClip.withEasing(p: AnimProp, index: Int, easing: Easing): TimelineCl
 
 /** Moves every keyframe by [deltaMs] (the layer start moved: left trim / split). */
 fun TimelineClip.withShiftedKeyframes(deltaMs: Long): TimelineClip {
-    if ((keyframes.isEmpty() && masks.isEmpty()) || deltaMs == 0L) return this
+    if ((keyframes.isEmpty() && masks.isEmpty() && !hasPie) || deltaMs == 0L) return this
     return copy(
         keyframes = keyframes.mapValues { (_, l) -> l.map { it.copy(timeMs = it.timeMs + deltaMs) } },
-        masks = masks.shiftedKeys(deltaMs)
+        masks = masks.shiftedKeys(deltaMs),
+        pieStartKeys = pieStartKeys.map { it.copy(timeMs = it.timeMs + deltaMs) },
+        pieEndKeys = pieEndKeys.map { it.copy(timeMs = it.timeMs + deltaMs) }
     )
 }
 
 /** Stretches the keyframe times (speed change: the layer got longer / shorter). */
 fun TimelineClip.withScaledKeyframes(factor: Float): TimelineClip {
-    if ((keyframes.isEmpty() && masks.isEmpty()) || abs(factor - 1f) < 1e-4f) return this
+    if ((keyframes.isEmpty() && masks.isEmpty() && !hasPie) || abs(factor - 1f) < 1e-4f) return this
     return copy(
         keyframes = keyframes.mapValues { (_, l) -> l.map { it.copy(timeMs = (it.timeMs * factor).toLong()) } },
-        masks = masks.scaledKeys(factor)
+        masks = masks.scaledKeys(factor),
+        pieStartKeys = pieStartKeys.map { it.copy(timeMs = (it.timeMs * factor).toLong()) },
+        pieEndKeys = pieEndKeys.map { it.copy(timeMs = (it.timeMs * factor).toLong()) }
     )
 }
 
 /** Every distinct keyframe time of the layer (relative), for the diamonds on the layer strip. */
 fun TimelineClip.keyframeTimes(): List<Long> =
-    (keyframes.values.flatten().map { it.timeMs } + masks.flatMap { m -> m.keys.map { it.timeMs } }).distinct().sorted()
+    (keyframes.values.flatten().map { it.timeMs } + masks.flatMap { m -> m.keys.map { it.timeMs } } +
+        pieStartKeys.map { it.timeMs } + pieEndKeys.map { it.timeMs }).distinct().sorted()
 
 // =====================================================================================
 // Speed: time remapping

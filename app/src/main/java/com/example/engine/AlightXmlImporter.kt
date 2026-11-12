@@ -33,6 +33,7 @@ import com.example.model.PATH_OP_LINE
 import com.example.model.PATH_OP_MOVE
 import com.example.model.PATH_OP_QUAD
 import com.example.model.PathSeg
+import com.example.model.PieOutline
 import com.example.model.ProjectSnapshot
 import com.example.model.flattenPathSegments
 import com.example.model.TextAnimator
@@ -627,6 +628,7 @@ object AlightXmlImporter {
         if (kind == ".triangle" || kind == ".penta") return readPointShape(el, ctx, kind)
         if (kind == ".poly") return readPolyShape(el, ctx)
         if (kind == ".star") return readStarShape(el, ctx)
+        if (kind == ".pie") return readPieShape(el, ctx)
         val pattern = when (kind) {
             ".rect" -> "RECT"
             ".circle" -> "CIRCLE"
@@ -990,6 +992,106 @@ object AlightXmlImporter {
         return finishPathShape(el, ctx, segs)
     }
 
+    /**
+     * A `.pie` shape: a wedge whose outline Alight's own shape definition builds from its
+     * startAngle / endAngle / radius parameters ([PieOutline] is the line-by-line port of that
+     * def's script). The wedge is centred on the layer's own origin by construction, so — unlike
+     * the bounding-box kinds above — its normalisation divides by the RADIUS and folds no centre
+     * offset into the position.
+     *
+     * All 128 corpus instances (shared-preset-likenya's loader) keyframe BOTH angles, so the
+     * outline cannot be baked: the angle tracks are stored on the clip (as ordinary keyframes,
+     * with the segment easings shifted the way [trackKeys] shifts them) and the engines rebuild
+     * the outline from the evaluated angles per frame (see `pieSegmentsAt`). The stored segments
+     * are the outline at the layer's most open sampled instant, for consumers that never
+     * evaluate. A keyframed radius rides the composed SCALE keyframes like a shape's keyframed
+     * size (the outline itself is radius-free once normalised); the radius's first value is the
+     * normalisation basis. A wedge the wrap rule keeps closed at every sampled instant draws
+     * nothing in Alight either — it is skipped with that said, like a single-point path.
+     */
+    private fun readPieShape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
+        val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
+        val durMs = (endMs - startMs).coerceAtLeast(250L)
+        val startT = shapeParam(el, "startAngle")
+        val endT = shapeParam(el, "endAngle")
+        val radiusT = shapeParam(el, "radius")
+        val radius = radiusT?.first()?.firstOrNull() ?: 100f
+        if (radius == 0f) {
+            w += "Layer <shape>" + labelOf(el) + ": its radius is 0: skipped"
+            return null
+        }
+        if (radius < 0f) {
+            w += "Layer <shape>" + labelOf(el) + ": its radius is negative: skipped"
+            return null
+        }
+        val startKeys = angleKeys(startT, durMs, 45f)
+        val endKeys = angleKeys(endT, durMs, 90f)
+        // The stored outline: the most open instant among the tracks' key times and the segment
+        // midpoints between them, sampled through the app's own keyframe sampler (easings in).
+        val times = (startKeys.map { it.timeMs } + endKeys.map { it.timeMs }).distinct().sorted()
+        val samples = ArrayList<Long>()
+        samples += times
+        for (i in 0 until times.size - 1) samples += (times[i] + times[i + 1]) / 2L
+        samples += 0L
+        samples += durMs
+        var bestT = -1L
+        var bestSweep = 0.0
+        for (t in samples.distinct()) {
+            val sweep = PieOutline.sweepDegrees(
+                startKeys.valueAt(t).first.toDouble(), endKeys.valueAt(t).first.toDouble()
+            )
+            if (sweep > bestSweep) {
+                bestSweep = sweep
+                bestT = t
+            }
+        }
+        if (bestT < 0L || bestSweep < 0.01) {
+            w += "Layer <shape>" + labelOf(el) +
+                ": its start and end angles keep the wedge closed at every keyframe: skipped"
+            return null
+        }
+        val raw = PieOutline.segments(
+            startKeys.valueAt(bestT).first.toDouble(), endKeys.valueAt(bestT).first.toDouble(),
+            radius.toDouble()
+        )
+        if (raw.isEmpty()) {
+            w += "Layer <shape>" + labelOf(el) +
+                ": its start and end angles keep the wedge closed at every keyframe: skipped"
+            return null
+        }
+        val norm = PathNorm(
+            raw.map { seg -> PathSeg(seg.op, seg.pts.map { v -> v / radius }) },
+            radius, 0f, 0f, flattenPathSegments(raw)
+        )
+        // A keyframed radius composes into the SCALE keyframes as the shape's size track:
+        // (radius, radius) pairs at the radius track's own key times.
+        val sizeTrack = if (radiusT != null && radiusT.keys.size >= 2) {
+            Track(
+                listOf(radius, radius),
+                radiusT.keys.map { k ->
+                    val r = k.v.firstOrNull() ?: radius
+                    TKey(k.t, listOf(r, r), k.easing)
+                }
+            )
+        } else null
+        return finishPathShapeWithNorm(el, ctx, raw, norm, sizeTrack) { clip ->
+            clip.copy(pieStartKeys = startKeys, pieEndKeys = endKeys, pieRadius = radius)
+        }
+    }
+
+    /**
+     * One angle track of a `.pie`, as app keyframes: [trackKeys]' easing shift (a segment takes
+     * the easing of the Alight keyframe it ends at), the angle in `a`. A constant or single-key
+     * track becomes one keyframe at the layer start.
+     */
+    private fun angleKeys(t: Track?, durMs: Long, def: Float): List<Keyframe> {
+        val ks = trackKeys(t, durMs) { (it.firstOrNull() ?: def) to 0f }
+        if (ks.isNotEmpty()) return ks
+        return listOf(Keyframe(0L, t?.first()?.firstOrNull() ?: def))
+    }
+
     /** A raw outline normalised for storage (see [normalisePathSegs]): the stored segments, the bounding box's centre and larger half extent, and the flattened outline points. */
     private class PathNorm(
         val segments: List<PathSeg>, val half: Float, val cx: Float, val cy: Float,
@@ -1057,14 +1159,29 @@ object AlightXmlImporter {
      * element's fill / stroke / transform, exactly as [readPathShape] documents.
      */
     private fun finishPathShape(el: Element, ctx: Ctx, raw: List<PathSeg>): TimelineClip? {
-        val w = ctx.warnings
         val norm = normalisePathSegs(raw)
         if (norm == null) {
-            w += "Layer <shape>" + labelOf(el) +
+            ctx.warnings += "Layer <shape>" + labelOf(el) +
                 if (flattenPathSegments(raw).isEmpty()) ": its path has no points: skipped"
                 else ": its path is a single point: skipped"
             return null
         }
+        return finishPathShapeWithNorm(el, ctx, raw, norm, null) { it }
+    }
+
+    /**
+     * [finishPathShape] with the outline's normalisation already in hand — a `.pie` wedge's
+     * outline is centred on the layer's own origin by construction, so its [norm] divides by the
+     * radius instead of the bounding box, and its centre offset is zero. [sizeTrack] overrides
+     * the constant (half, half) size track the SCALE keyframes are composed from (a pie with a
+     * keyframed radius rides it); [decorate] adjusts the built clip before its effects are read
+     * (the pie's angle tracks ride there).
+     */
+    private fun finishPathShapeWithNorm(
+        el: Element, ctx: Ctx, raw: List<PathSeg>, norm: PathNorm,
+        sizeTrack: Track?, decorate: (TimelineClip) -> TimelineClip
+    ): TimelineClip? {
+        val w = ctx.warnings
         val flat = norm.flat
         val cx = norm.cx
         val cy = norm.cy
@@ -1172,14 +1289,15 @@ object AlightXmlImporter {
         }
         keys(AnimProp.ROTATION, tr.rot) { (it.firstOrNull() ?: 0f) to 0f }
         keys(AnimProp.OPACITY, tr.opa) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
-        // The box in the role of `size`: a constant (half, half) track composed with the layer scale.
-        val sizeKeys = composedSizeKeys(Track(listOf(half, half), emptyList()), tr.scl, durMs, box)
+        // The box in the role of `size`: a constant (half, half) track composed with the layer scale,
+        // unless the caller hands over its own size track (a pie's keyframed radius).
+        val sizeKeys = composedSizeKeys(sizeTrack ?: Track(listOf(half, half), emptyList()), tr.scl, durMs, box)
         if (sizeKeys.isNotEmpty()) keyframes[AnimProp.SCALE] = sizeKeys
 
         val a0 = anchorAt(0f)
         val posX = (a0.first - ctx.sceneW / 2f) * ctx.k
         val posY = (a0.second - ctx.sceneH / 2f) * ctx.k
-        val built = TimelineClip(
+        val built = decorate(TimelineClip(
             id = UUID.randomUUID().toString(),
             name = el.getAttribute("label").ifBlank { "Shape" },
             type = LayerType.SHAPE,
@@ -1211,7 +1329,7 @@ object AlightXmlImporter {
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             blendMode = blendMode,
             keyframes = keyframes
-        )
+        ))
         // The layer's own outline, lent to a `movealongpath3` on the layer above it (see PathSpec):
         // the raw flattened points, still in the layer's own (anchor-relative) frame.
         ctx.outlineSpecs[built.id] = PathSpec(

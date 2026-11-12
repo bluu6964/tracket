@@ -12,6 +12,9 @@ import com.example.model.at
 import com.example.model.ClipFxLibrary
 import com.example.model.LayerType
 import com.example.model.effectiveScalePercent
+import com.example.model.PieOutline
+import com.example.model.flattenPathSegments
+import com.example.model.hasPie
 import com.example.model.packColor
 import com.example.model.TimelineClip
 import com.example.model.renderAt
@@ -3555,6 +3558,216 @@ $layers
     <property name="radius" type="float" value="0.000000" />
   </shape>""", 1920, 1080), 1920f)
         assertTrue(r.warnings.any { it.contains("radius is 0") && it.contains("skipped") })
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
+    }
+
+    // ---- .pie wedges (build 123) ----
+    // Every expectation is computed from AM's own shape definition (hunt-staging/shape-defs/
+    // def_pie.xml) — the wrap rule and the Riskus arc — not from the app's output.
+
+    @Test
+    fun pieOutlineDefaultsFollowTheWrapRule() {
+        // start 45 / end 90: the wedge is the disc MINUS the 45..90 slice — a 315 deg sweep
+        // (four Riskus cubics) starting at the LARGER angle's point (90 deg = the top).
+        val segs = PieOutline.segments(45.0, 90.0, 100.0)
+        assertEquals(7, segs.size)   // MOVE + 4 CUBIC + LINE + CLOSE
+        assertEquals(com.example.model.PATH_OP_MOVE, segs[0].op)
+        assertEquals(0f, segs[0].pts[0], 0.001f)
+        assertEquals(-100f, segs[0].pts[1], 0.001f)                       // the top point
+        assertEquals(0f, segs[2].pts[4], 0.001f)
+        assertEquals(100f, segs[2].pts[5], 0.001f)                        // second cubic ends at the bottom
+        assertEquals(70.7107f, segs[4].pts[4], 0.001f)
+        assertEquals(-70.7107f, segs[4].pts[5], 0.001f)                   // last arc vertex: the 45 deg point
+        assertEquals(com.example.model.PATH_OP_LINE, segs[5].op)
+        assertEquals(0f, segs[5].pts[0], 0.001f)
+        assertEquals(0f, segs[5].pts[1], 0.001f)                          // the radii close at the centre
+        assertEquals(com.example.model.PATH_OP_CLOSE, segs[6].op)
+        assertEquals(315.0, PieOutline.sweepDegrees(45.0, 90.0), 1e-9)
+        // The flattened outline spans the full disc on both axes (Riskus error is ~0.03 px here).
+        val flat = flattenPathSegments(segs)
+        assertEquals(-100f, flat.minOf { it.first }, 0.6f)
+        assertEquals(100f, flat.maxOf { it.first }, 0.6f)
+        assertEquals(-100f, flat.minOf { it.second }, 0.6f)
+        assertEquals(100f, flat.maxOf { it.second }, 0.6f)
+    }
+
+    @Test
+    fun pieOutlineWrapRuleEdges() {
+        // Angles a full turn apart (the likenya loader's rest state) and equal angles both
+        // close the wedge completely: no arc at all.
+        assertTrue(PieOutline.segments(810.0, 450.0, 100.0).isEmpty())
+        assertTrue(PieOutline.segments(45.0, 45.0, 100.0).isEmpty())
+        assertTrue(PieOutline.segments(0.0, 360.0, 100.0).isEmpty())
+        assertEquals(0.0, PieOutline.sweepDegrees(810.0, 450.0), 1e-9)
+        assertEquals(80.0, PieOutline.sweepDegrees(770.0, 490.0), 1e-9)
+        // Past a full turn the sweep grows again from 0: 0 -> 450 draws a 90 deg wedge.
+        val mt = PieOutline.segments(0.0, 450.0, 100.0)
+        assertEquals(4, mt.size)
+        assertEquals(0f, mt[0].pts[0], 0.001f)
+        assertEquals(-100f, mt[0].pts[1], 0.001f)
+        assertEquals(100f, mt[1].pts[4], 0.001f)
+        assertEquals(0f, mt[1].pts[5], 0.001f)
+        // Negative angles are ordinary: -30 -> 60 sweeps 270 deg from the 60 deg point.
+        val neg = PieOutline.segments(-30.0, 60.0, 100.0)
+        assertEquals(6, neg.size)
+        assertEquals(50f, neg[0].pts[0], 0.001f)
+        assertEquals(-86.60254f, neg[0].pts[1], 0.001f)
+    }
+
+    @Test
+    fun pieOutlineCounterRotatingAtRadius50() {
+        // start 200 / end 100 (the angles run against each other): sweep = 360 - 100 = 260 deg,
+        // three cubics, starting at the 200 deg point; the first cubic's end lies ON the arc.
+        val segs = PieOutline.segments(200.0, 100.0, 50.0)
+        assertEquals(6, segs.size)
+        assertEquals(-46.984631f, segs[0].pts[0], 0.001f)
+        assertEquals(17.101007f, segs[0].pts[1], 0.001f)
+        assertEquals(17.101007f, segs[1].pts[4], 0.001f)
+        assertEquals(46.984631f, segs[1].pts[5], 0.001f)
+        assertEquals(50f, hypot(segs[1].pts[4], segs[1].pts[5]), 0.001f)
+    }
+
+    @Test
+    fun pieStaticAnglesImport() {
+        // A static wedge (no keyframes anywhere): start 30 / end 120 at radius 80 — sweep 270,
+        // outline normalised by the radius, first vertex at the 120 deg point (-0.5, -0.866).
+        val r = AlightXmlImporter.parse(scene("""<shape id="21" label="Pie S" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".pie">
+    <transform><location value="540.000000,960.000000,0.000000" /></transform>
+    <fillColor value="#ff123456" />
+    <property name="startAngle" type="float" value="30.000000" />
+    <property name="endAngle" type="float" value="120.000000" />
+    <property name="radius" type="float" value="80.000000" />
+  </shape>"""), 1080f)
+        assertTrue(r.warnings.none { it.contains(".pie") || it.contains("wedge") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertTrue(c.hasPie)
+        assertEquals(80f, c.pieRadius, 0.001f)
+        assertEquals(1, c.pieStartKeys.size)
+        assertEquals(30f, c.pieStartKeys[0].a, 0.001f)
+        assertEquals(120f, c.pieEndKeys[0].a, 0.001f)
+        assertEquals(6, c.pathSegments.size)   // MOVE + 3 CUBIC + LINE + CLOSE
+        assertEquals(-0.5f, c.pathSegments[0].pts[0], 0.0001f)
+        assertEquals(-0.866025f, c.pathSegments[0].pts[1], 0.0001f)
+        // Rendered width = 2 x radius against the 390 px shape box of a 1080-wide scene.
+        assertEquals(160f / 390f, c.shapeScaleX, 0.001f)
+        // A static pie evaluates to the same outline at every time (the stored outline is built
+        // at the real radius and divided by it, the evaluated one at radius 1 — equal to the
+        // last float digit, not bit-exact).
+        val later = c.at(c.startMs + 1500L)
+        assertEquals(c.pathSegments.size, later.pathSegments.size)
+        for (i in c.pathSegments.indices) {
+            assertEquals(c.pathSegments[i].op, later.pathSegments[i].op)
+            for (j in c.pathSegments[i].pts.indices) {
+                assertEquals(c.pathSegments[i].pts[j], later.pathSegments[i].pts[j], 0.000001f)
+            }
+        }
+    }
+
+    @Test
+    fun pieVerbatimLikenyaLoaderEvaluatesPerFrame() {
+        // Verbatim from shared-preset-likenya.xml: "Pie 1", one of the loader's 128 wedges.
+        // Both angles are keyframed (810->770->810 against 450->490->450), so the drawn sweep
+        // pulses 0 -> 80 -> 0 deg while the layer's own rotation spins it a full turn.
+        val r = AlightXmlImporter.parse(scene("""<shape id="713679" label="Pie 1" startTime="0" endTime="849" fillType="color" mediaFillMode="stretch" s=".pie">
+    <transform>
+      <location value="540.000000,960.000000,0.000000" />
+      <rotation>
+        <kf t="0.009423" v="0.000000" />
+        <kf t="0.990577" v="360.000000" e="cubicBezier 0.0 0.0 0.0 1.0" />
+        <kf t="0.539458" v="180.000000" e="cubicBezier 1.0 0.0 1.0 1.0" />
+      </rotation>
+    </transform>
+    <fillColor value="#ffa887a9" />
+    <property name="startAngle" type="float">
+      <kf t="0.009423" v="810.000000" />
+      <kf t="0.539458" v="770.000000" e="cubicBezier 1.0 0.0 1.0 1.0" />
+      <kf t="0.990577" v="810.000000" e="cubicBezier 0.0 0.0 0.0 1.0" />
+    </property>
+    <property name="endAngle" type="float">
+      <kf t="0.009423" v="450.000000" />
+      <kf t="0.539458" v="490.000000" e="cubicBezier 1.0 0.0 1.0 1.0" />
+      <kf t="0.990577" v="450.000000" e="cubicBezier 0.0 0.0 0.0 1.0" />
+    </property>
+    <property name="radius" type="float" value="100.000000" />
+  </shape>"""), 1080f)
+        assertTrue(r.warnings.none { it.contains(".pie") || it.contains("wedge") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(0xFFA887A9L, c.textColor)
+        assertTrue(c.hasPie)
+        assertEquals(100f, c.pieRadius, 0.001f)
+        // The angle tracks ride as keyframes at the Alight keys' own times (849 ms layer).
+        assertEquals(listOf(8L, 458L, 841L), c.pieStartKeys.map { it.timeMs })
+        assertEquals(listOf(810f, 770f, 810f), c.pieStartKeys.map { it.a })
+        assertEquals(listOf(450f, 490f, 450f), c.pieEndKeys.map { it.a })
+        // The stored outline is the most open instant (the middle key, sweep 80 deg).
+        assertEquals(4, c.pathSegments.size)
+        assertEquals(0.642788f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(-0.766044f, c.pathSegments[0].pts[1], 0.001f)
+        // At the first key the angles are a full turn apart: the wedge is closed, nothing drawn.
+        assertTrue(c.at(c.startMs + 8L).pathSegments.isEmpty())
+        assertTrue(c.at(c.startMs + 841L).pathSegments.isEmpty())
+        // At the middle key the outline is the 80 deg wedge across the top (one Riskus cubic,
+        // normalised by the radius), and the layer's own spin has reached 180 deg.
+        val mid = c.at(c.startMs + 458L)
+        assertEquals(180f, mid.rotationDeg, 0.01f)
+        assertEquals(4, mid.pathSegments.size)
+        assertEquals(0.642788f, mid.pathSegments[0].pts[0], 0.001f)
+        assertEquals(-0.766044f, mid.pathSegments[0].pts[1], 0.001f)
+        assertEquals(0.271031f, mid.pathSegments[1].pts[0], 0.001f)
+        assertEquals(-1.077985f, mid.pathSegments[1].pts[1], 0.001f)
+        assertEquals(-0.642788f, mid.pathSegments[1].pts[4], 0.001f)
+        assertEquals(-0.766044f, mid.pathSegments[1].pts[5], 0.001f)
+        assertEquals(com.example.model.PATH_OP_CLOSE, mid.pathSegments[3].op)
+        // Mid-segment (rel 402, eased by cubicBezier(1,0,1,1) to ~0.5011): the evaluated angles
+        // are 789.96 / 470.04, a 40 deg wedge whose first vertex sits at the 789.96 deg point.
+        val eased = c.at(c.startMs + 402L)
+        assertEquals(4, eased.pathSegments.size)
+        assertEquals(0.342750f, eased.pathSegments[0].pts[0], 0.003f)
+        assertEquals(-0.939427f, eased.pathSegments[0].pts[1], 0.003f)
+    }
+
+    @Test
+    fun pieKeyframedRadiusRidesTheScaleKeys() {
+        // The radius is keyframed 100 -> 200 while the angles stay static: the outline (which is
+        // normalised by the radius) does not change, the composed SCALE keyframes double the size.
+        val r = AlightXmlImporter.parse(scene("""<shape id="22" label="Pie R" startTime="0" endTime="2000" fillType="color" s=".pie">
+    <transform><location value="540.000000,960.000000,0.000000" /></transform>
+    <fillColor value="#ff00ff00" />
+    <property name="startAngle" type="float" value="0.000000" />
+    <property name="endAngle" type="float" value="90.000000" />
+    <property name="radius" type="float">
+      <kf t="0.000000" v="100.000000" />
+      <kf t="1.000000" v="200.000000" />
+    </property>
+  </shape>"""), 1080f)
+        assertTrue(r.warnings.none { it.contains("first value") || it.contains("wedge") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertTrue(c.hasPie)
+        assertEquals(100f, c.pieRadius, 0.001f)   // the first value is the normalisation basis
+        assertTrue(c.keyframes[AnimProp.SCALE]?.isNotEmpty() == true)
+        val t0 = c.at(c.startMs)
+        val t1 = c.at(c.startMs + c.durationMs)
+        assertEquals(200f / 390f, t0.shapeScaleX, 0.001f)
+        assertEquals(400f / 390f, t1.shapeScaleX, 0.001f)
+        assertEquals(t0.pathSegments, t1.pathSegments)   // static angles: same normalised outline
+        assertEquals(0f, t0.pathSegments[0].pts[0], 0.001f)   // the 90 deg start point: the top
+        assertEquals(-1f, t0.pathSegments[0].pts[1], 0.001f)
+    }
+
+    @Test
+    fun pieAlwaysClosedIsSkipped() {
+        // Equal angles at every instant: the wrap rule never opens the wedge (Alight draws
+        // nothing either), so the layer is skipped with that said.
+        val r = AlightXmlImporter.parse(scene("""<shape id="23" label="Pie 0" startTime="0" endTime="2000" fillType="color" s=".pie">
+    <transform><location value="540.000000,960.000000,0.000000" /></transform>
+    <fillColor value="#ff0000ff" />
+    <property name="startAngle" type="float" value="200.000000" />
+    <property name="endAngle" type="float" value="200.000000" />
+    <property name="radius" type="float" value="100.000000" />
+  </shape>"""), 1080f)
+        assertTrue(r.warnings.any { it.contains("wedge closed") && it.contains("skipped") })
         assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
     }
 

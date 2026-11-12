@@ -624,6 +624,9 @@ object AlightXmlImporter {
         // No `s` kind but a <path> child: a freehand vector layer (whole presets are built from them).
         if (kind.isEmpty() && child(el, "path") != null) return readPathShape(el, ctx)
         if (kind == ".multifoil") return readMultifoilShape(el, ctx)
+        if (kind == ".triangle" || kind == ".penta") return readPointShape(el, ctx, kind)
+        if (kind == ".poly") return readPolyShape(el, ctx)
+        if (kind == ".star") return readStarShape(el, ctx)
         val pattern = when (kind) {
             ".rect" -> "RECT"
             ".circle" -> "CIRCLE"
@@ -854,6 +857,134 @@ object AlightXmlImporter {
             // valley -> next tip (the tip's in handle lands it smoothly).
             segs += PathSeg(PATH_OP_CUBIC, listOf(tip.ox, tip.oy, v.first, v.second, v.first, v.second))
             segs += PathSeg(PATH_OP_CUBIC, listOf(v.first, v.second, next.ix, next.iy, next.x, next.y))
+        }
+        segs += PathSeg(PATH_OP_CLOSE, emptyList())
+        return finishPathShape(el, ctx, segs)
+    }
+
+    // ---- parameterised shape kinds (.triangle / .penta / .poly / .star) ----------------------------------------
+    //
+    // These kinds carry no `size` property: their outlines are built from the shape definition's
+    // own parameters, serialised as <property> elements named by the def's param ids (the corpus's
+    // .multifoil instance proves the pattern). Each reader below is a line-by-line port of the
+    // getPath script in AM's own shape definition (recovered from the public decompiled AM assets,
+    // assets/shapes/; copies in hunt-staging/shape-defs/), finished by the shared path-shape tail
+    // ([finishPathShape]) — so fills, strokes, masks, media fills and drawing.progress behave as
+    // they do for a freehand <path>. A path shape's trim starts at its first stored vertex
+    // (build 120), which here is the construction's first point: p1 for the free-point kinds, the
+    // top vertex for .poly / .star. A keyframed parameter keeps its first value with a warning,
+    // like a multifoil's (the corpus holds no instance of any of these kinds — the constructions
+    // rest entirely on AM's defs).
+
+    /** One `<property>` of a parameterised shape kind, as a track (null when the property is absent). */
+    private fun shapeParam(el: Element, name: String): Track? =
+        elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == name }
+            ?.let { readTrack(it) }
+
+    private fun keyframedParamNote(ctx: Ctx, kindName: String, name: String, t: Track) {
+        if (t.keys.size >= 2) ctx.warnings += "Keyframed \"" + name + "\" of a " + kindName +
+            " is not supported yet: the first value is used"
+    }
+
+    private fun shapeParamFloat(el: Element, ctx: Ctx, kindName: String, name: String, def: Float): Float {
+        val t = shapeParam(el, name) ?: return def
+        keyframedParamNote(ctx, kindName, name, t)
+        return t.first().firstOrNull() ?: def
+    }
+
+    private fun shapeParamPoint(
+        el: Element, ctx: Ctx, kindName: String, name: String, defX: Float, defY: Float
+    ): Pair<Float, Float> {
+        val t = shapeParam(el, name) ?: return defX to defY
+        keyframedParamNote(ctx, kindName, name, t)
+        val v = t.first()
+        return (v.getOrNull(0) ?: defX) to (v.getOrNull(1) ?: defY)
+    }
+
+    private fun shapeParamBool(el: Element, ctx: Ctx, kindName: String, name: String, def: Boolean): Boolean {
+        val t = shapeParam(el, name) ?: return def
+        keyframedParamNote(ctx, kindName, name, t)
+        return (t.first().firstOrNull() ?: if (def) 1f else 0f) > 0.5f
+    }
+
+    /**
+     * A `.triangle` / `.penta` shape: a free-point polygon — AM's def returns the points p1..pN
+     * verbatim, in order (the triangle's outline starts at p1), closed unless its `closed`
+     * switch is off. The fallback points are the defs' defaults; the penta's are NOT a regular
+     * pentagon (its p3 default is the centre point) — they are ported exactly as written.
+     */
+    private fun readPointShape(el: Element, ctx: Ctx, kind: String): TimelineClip? {
+        val kindName = kind.removePrefix(".")
+        val defaults = if (kind == ".triangle") listOf(
+            -100f to 100f, 0f to -100f, 100f to 100f
+        ) else listOf(
+            -100f to -100f, 0f to -100f, 0f to 0f, 100f to 100f, -100f to 100f
+        )
+        val pts = defaults.mapIndexed { i, d ->
+            shapeParamPoint(el, ctx, kindName, "p" + (i + 1), d.first, d.second)
+        }
+        val closed = shapeParamBool(el, ctx, kindName, "closed", true)
+        val segs = ArrayList<PathSeg>()
+        segs += PathSeg(PATH_OP_MOVE, listOf(pts[0].first, pts[0].second))
+        for (i in 1 until pts.size) segs += PathSeg(PATH_OP_LINE, listOf(pts[i].first, pts[i].second))
+        if (closed) segs += PathSeg(PATH_OP_CLOSE, emptyList())
+        return finishPathShape(el, ctx, segs)
+    }
+
+    /**
+     * A `.poly` shape: a regular polygon of `sideCount` sides on `radius`, ported from AM's
+     * def — vertex i at angle (2pi/sides * i + pi/2 + offsetAngle), drawn as
+     * (r * cos a, -r * sin a), so the first vertex is the TOP one at offset 0 and the outline
+     * runs counterclockwise in AM's own frame. Always closed.
+     */
+    private fun readPolyShape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val sides = shapeParamFloat(el, ctx, "poly", "sideCount", 6f).roundToInt().coerceIn(3, 32)
+        val radius = shapeParamFloat(el, ctx, "poly", "radius", 100f)
+        val offsetRad = Math.toRadians(shapeParamFloat(el, ctx, "poly", "offsetAngle", 0f).toDouble())
+        if (abs(radius) < 1e-6f) {
+            w += "Layer <shape>" + labelOf(el) + ": its radius is 0: skipped"
+            return null
+        }
+        val per = 2.0 * Math.PI / sides
+        val segs = ArrayList<PathSeg>()
+        for (i in 0 until sides) {
+            val a = per * i + Math.PI / 2.0 + offsetRad
+            segs += PathSeg(
+                if (i == 0) PATH_OP_MOVE else PATH_OP_LINE,
+                listOf((radius * cos(a)).toFloat(), (-radius * sin(a)).toFloat())
+            )
+        }
+        segs += PathSeg(PATH_OP_CLOSE, emptyList())
+        return finishPathShape(el, ctx, segs)
+    }
+
+    /**
+     * A `.star` shape, ported from AM's def: `pointCount` points alternating outer / inner
+     * radius — the outer vertex first, at the top at offset 0, each inner vertex half a step
+     * later — so the outline runs counterclockwise in AM's own frame. Always closed.
+     */
+    private fun readStarShape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val count = shapeParamFloat(el, ctx, "star", "pointCount", 5f).roundToInt().coerceIn(3, 32)
+        val outerR = shapeParamFloat(el, ctx, "star", "outerRadius", 100f)
+        val innerR = shapeParamFloat(el, ctx, "star", "innerRadius", 50f)
+        val offsetRad = Math.toRadians(shapeParamFloat(el, ctx, "star", "offsetAngle", 0f).toDouble())
+        if (abs(outerR) < 1e-6f && abs(innerR) < 1e-6f) {
+            w += "Layer <shape>" + labelOf(el) + ": its radii are 0: skipped"
+            return null
+        }
+        val per = 2.0 * Math.PI / count
+        val halfPer = per / 2.0
+        val segs = ArrayList<PathSeg>()
+        for (i in 0 until count) {
+            var a = per * i + Math.PI / 2.0 + offsetRad
+            segs += PathSeg(
+                if (i == 0) PATH_OP_MOVE else PATH_OP_LINE,
+                listOf((outerR * cos(a)).toFloat(), (-outerR * sin(a)).toFloat())
+            )
+            a += halfPer
+            segs += PathSeg(PATH_OP_LINE, listOf((innerR * cos(a)).toFloat(), (-innerR * sin(a)).toFloat()))
         }
         segs += PathSeg(PATH_OP_CLOSE, emptyList())
         return finishPathShape(el, ctx, segs)

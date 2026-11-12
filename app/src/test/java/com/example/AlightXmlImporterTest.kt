@@ -3373,6 +3373,191 @@ $layers
         assertEquals(12, c.pathSegments.size)   // still the 5-point outline
     }
 
+    // ---- Parameterised shape kinds (build 122): .triangle / .penta / .poly / .star ----
+    // No corpus file uses any of these kinds; every expectation below is hand-computed from
+    // AM's own shape definitions (hunt-staging/shape-defs/) — the ports they pin.
+
+    @Test
+    fun triangleImportsAsPathShape() {
+        // The def's default points, serialised as a real export writes them. The outline is the
+        // points verbatim in order (p1 first): bbox +-100 on both axes, so the stored outline is
+        // the raw points / 100 about the centre.
+        val r = AlightXmlImporter.parse(scene("""<shape id="11" label="Triangle 1" startTime="0" endTime="2000" fillType="color" mediaFillMode="stretch" s=".triangle">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ff336699" />
+    <property name="p1" type="vec2" value="-100.000000,100.000000" />
+    <property name="p2" type="vec2" value="0.000000,-100.000000" />
+    <property name="p3" type="vec2" value="100.000000,100.000000" />
+    <property name="closed" type="bool" value="true" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.none { it.contains("is not supported yet") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(0xFF336699L, c.textColor)
+        assertEquals(4, c.pathSegments.size)
+        assertEquals(com.example.model.PATH_OP_MOVE, c.pathSegments[0].op)
+        assertEquals(-1f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(1f, c.pathSegments[0].pts[1], 0.001f)      // p1 verbatim: bottom-left in AM's frame
+        assertEquals(0f, c.pathSegments[1].pts[0], 0.001f)
+        assertEquals(-1f, c.pathSegments[1].pts[1], 0.001f)     // p2: the apex
+        assertEquals(1f, c.pathSegments[2].pts[0], 0.001f)
+        assertEquals(1f, c.pathSegments[2].pts[1], 0.001f)
+        assertEquals(com.example.model.PATH_OP_CLOSE, c.pathSegments[3].op)
+        // The half-extent rule through the path tail: rendered width = 2 x half (100) x scale (1)
+        // against the 1920-wide shape box (1920 x 130 / 360 = 693.3 px).
+        assertEquals(200f / 693.333f, c.shapeScaleX, 0.001f)
+        assertEquals(200f / 693.333f, c.shapeScaleY, 0.001f)
+    }
+
+    @Test
+    fun triangleOpenAndKeyframedPointKeepsFirstValue() {
+        val r = AlightXmlImporter.parse(scene("""<shape id="12" label="Tri" startTime="0" endTime="2000" fillType="color" s=".triangle">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ffff0000" />
+    <property name="p1" type="vec2" value="-100.000000,100.000000" />
+    <property name="p2" type="vec2"><kf t="0.000000" v="0.000000,-100.000000" /><kf t="1.000000" v="50.000000,-50.000000" /></property>
+    <property name="p3" type="vec2" value="100.000000,100.000000" />
+    <property name="closed" type="bool" value="false" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.any { it.contains("\"p2\"") && it.contains("first value is used") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        // closed = false: MOVE + 2 LINE and no CLOSE; the apex is the first keyframe's point.
+        assertEquals(3, c.pathSegments.size)
+        assertEquals(com.example.model.PATH_OP_LINE, c.pathSegments[2].op)
+        assertEquals(0f, c.pathSegments[1].pts[0], 0.001f)
+        assertEquals(-1f, c.pathSegments[1].pts[1], 0.001f)
+    }
+
+    @Test
+    fun pentaDefaultsImportVerbatim() {
+        // No properties at all: the def's five defaults — NOT a regular pentagon (p3 is the
+        // centre point (0,0)); they are ported as written.
+        val r = AlightXmlImporter.parse(scene("""<shape id="13" label="Penta 1" startTime="0" endTime="2000" fillType="color" s=".penta">
+    <transform><location value="540.000000,960.000000,0.000000" /></transform>
+    <fillColor value="#ff00ff00" />
+  </shape>"""), 1080f)
+        assertTrue(r.warnings.none { it.contains("is not supported yet") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(6, c.pathSegments.size)
+        val want = listOf(-1f to -1f, 0f to -1f, 0f to 0f, 1f to 1f, -1f to 1f)
+        for (i in want.indices) {
+            assertEquals(want[i].first, c.pathSegments[i].pts[0], 0.001f)
+            assertEquals(want[i].second, c.pathSegments[i].pts[1], 0.001f)
+        }
+        assertEquals(com.example.model.PATH_OP_CLOSE, c.pathSegments[5].op)
+    }
+
+    @Test
+    fun polyHexagonStartsAtTopAndRunsCounterclockwise() {
+        // AM's def: vertex i at angle (60deg x i + 90deg), drawn (r cos a, -r sin a) — vertex 0
+        // is the TOP (0,-100) and vertex 1 steps to the upper LEFT (-86.6,-50): counterclockwise
+        // in AM's frame. Bbox half is the radius (100) on y, so stored = raw / 100.
+        val r = AlightXmlImporter.parse(scene("""<shape id="14" label="Polygon 1" startTime="0" endTime="2000" fillType="color" s=".poly">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ff0000ff" />
+    <property name="sideCount" type="float" value="6.000000" />
+    <property name="radius" type="float" value="100.000000" />
+    <property name="offsetAngle" type="float" value="0.000000" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.none { it.contains("is not supported yet") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(7, c.pathSegments.size)
+        val want = listOf(
+            0f to -1f, -0.86603f to -0.5f, -0.86603f to 0.5f,
+            0f to 1f, 0.86603f to 0.5f, 0.86603f to -0.5f
+        )
+        for (i in want.indices) {
+            assertEquals(want[i].first, c.pathSegments[i].pts[0], 0.001f)
+            assertEquals(want[i].second, c.pathSegments[i].pts[1], 0.001f)
+        }
+        assertEquals(com.example.model.PATH_OP_CLOSE, c.pathSegments[6].op)
+        assertEquals(200f / 693.333f, c.shapeScaleX, 0.001f)
+    }
+
+    @Test
+    fun polyOffsetAngleRotatesTheStartVertex() {
+        // 4 sides, offset 90deg: the first vertex moves from the top to (-100, 0) — the offset
+        // ADDS to the def's angle and the y is negated, exactly as the script computes it.
+        val r = AlightXmlImporter.parse(scene("""<shape id="15" label="Poly 4" startTime="0" endTime="2000" fillType="color" s=".poly">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ff0000ff" />
+    <property name="sideCount" type="float" value="4.000000" />
+    <property name="radius" type="float" value="100.000000" />
+    <property name="offsetAngle" type="float" value="90.000000" />
+  </shape>""", 1920, 1080), 1920f)
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals(5, c.pathSegments.size)
+        val want = listOf(-1f to 0f, 0f to 1f, 1f to 0f, 0f to -1f)
+        for (i in want.indices) {
+            assertEquals(want[i].first, c.pathSegments[i].pts[0], 0.001f)
+            assertEquals(want[i].second, c.pathSegments[i].pts[1], 0.001f)
+        }
+        assertEquals(com.example.model.PATH_OP_CLOSE, c.pathSegments[4].op)
+    }
+
+    @Test
+    fun starDefaultsMatchAmDefGeometry() {
+        // 5 points, outer 100 / inner 50, offset 0 — hand-computed from the def's script:
+        // outer vertices at 90/162/234/306/18 degrees, inners half a step later at radius 50.
+        // The bbox is x +-95.106, y -100..80.902, so the centre is (0,-9.549) and the uniform
+        // half is 95.106; the stored points below are (raw - centre) / 95.106.
+        val r = AlightXmlImporter.parse(scene("""<shape id="16" label="Star 1" startTime="0" endTime="2000" fillType="color" s=".star">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ffffcc00" />
+    <property name="pointCount" type="float" value="5.000000" />
+    <property name="outerRadius" type="float" value="100.000000" />
+    <property name="innerRadius" type="float" value="50.000000" />
+    <property name="offsetAngle" type="float" value="0.000000" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.none { it.contains("is not supported yet") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(0xFFFFCC00L, c.textColor)
+        assertEquals(11, c.pathSegments.size)   // MOVE + 9 LINE + CLOSE
+        assertEquals(com.example.model.PATH_OP_MOVE, c.pathSegments[0].op)
+        assertEquals(0f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(-0.95106f, c.pathSegments[0].pts[1], 0.001f)   // the top outer vertex
+        assertEquals(-0.30902f, c.pathSegments[1].pts[0], 0.001f)   // first inner vertex
+        assertEquals(-0.32492f, c.pathSegments[1].pts[1], 0.001f)
+        assertEquals(-1f, c.pathSegments[2].pts[0], 0.001f)         // leftmost outer vertex
+        assertEquals(-0.22451f, c.pathSegments[2].pts[1], 0.001f)
+        assertEquals(0f, c.pathSegments[5].pts[0], 0.001f)          // the bottom inner vertex
+        assertEquals(0.62610f, c.pathSegments[5].pts[1], 0.001f)
+        assertEquals(0.30902f, c.pathSegments[9].pts[0], 0.001f)    // last inner vertex
+        assertEquals(-0.32492f, c.pathSegments[9].pts[1], 0.001f)
+        assertEquals(com.example.model.PATH_OP_CLOSE, c.pathSegments[10].op)
+        // Rendered width = 2 x half (95.106) against the 693.3 px shape box.
+        assertEquals(190.211f / 693.333f, c.shapeScaleX, 0.001f)
+    }
+
+    @Test
+    fun starKeyframedInnerRadiusKeepsFirstValue() {
+        val r = AlightXmlImporter.parse(scene("""<shape id="17" label="Star K" startTime="0" endTime="2000" fillType="color" s=".star">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ffffcc00" />
+    <property name="pointCount" type="float" value="5.000000" />
+    <property name="outerRadius" type="float" value="100.000000" />
+    <property name="innerRadius" type="float"><kf t="0.000000" v="50.000000" /><kf t="1.000000" v="80.000000" /></property>
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.any { it.contains("\"innerRadius\"") && it.contains("first value is used") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals(11, c.pathSegments.size)   // still the radius-50 outline
+        assertEquals(-0.30902f, c.pathSegments[1].pts[0], 0.001f)
+    }
+
+    @Test
+    fun polyZeroRadiusIsSkipped() {
+        val r = AlightXmlImporter.parse(scene("""<shape id="18" label="Poly 0" startTime="0" endTime="2000" fillType="color" s=".poly">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ff0000ff" />
+    <property name="radius" type="float" value="0.000000" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.any { it.contains("radius is 0") && it.contains("skipped") })
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
+    }
+
     @Test
     fun drawingImportsAsGroupOfStrokePaths() {
         // Verbatim from proyek-baru-15.xml: "Gambar 2", one fill stroke of 144 points.

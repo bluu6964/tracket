@@ -9,6 +9,7 @@ import com.example.engine.TextProgressEval
 import com.example.engine.textLayoutBoxWidth
 import com.example.model.AnimProp
 import com.example.model.at
+import com.example.model.CalloutOutline
 import com.example.model.ClipFxLibrary
 import com.example.model.LayerType
 import com.example.model.effectiveScalePercent
@@ -3828,6 +3829,194 @@ $layers
     <property name="radius" type="float" value="100.000000" />
   </shape>"""), 1080f)
         assertTrue(r.warnings.any { it.contains("wedge closed") && it.contains("skipped") })
+        assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
+    }
+
+    // ---- .callout.roundrect speech-bubble shapes ----
+    // Every expectation is hand-computed from AM's own shape definition (hunt-staging/
+    // shape-defs/def_calloutrr.xml): the roundrect body (corner handles at r x 0.552228474
+    // from their anchors, so the handle coordinate is 100 - 25 x (1 - 0.552228474) = 88.80571)
+    // plus the tail's three spliced plain points.
+
+    @Test
+    fun calloutOutlineDefaultsPutTheTailOnTheBottom() {
+        // The def defaults (also the corpus instance's values): size 100x100, tail (-50,150),
+        // cornerRadius 25, tailWidth 40. |tail.y| > |tail.x| and tail.y > 0: BOTTOM side.
+        // tailPos = clamp(-50 x 3.5, -75 + 20, 75 - 20) = -55, so the base spans -75..-35 on
+        // y=100; its far point lands exactly on the bottom-left corner anchor (-75,100), which
+        // the def's list then holds twice in a row — kept verbatim.
+        val segs = CalloutOutline.segments(100.0, 100.0, -50.0, 150.0, 25.0, 40.0)
+        assertEquals(13, segs.size)   // MOVE + 10 steps + closing corner cubic + CLOSE
+        assertEquals(com.example.model.PATH_OP_MOVE, segs[0].op)
+        assertEquals(-75f, segs[0].pts[0], 0.001f)
+        assertEquals(-100f, segs[0].pts[1], 0.001f)                 // the top edge's left corner end
+        assertEquals(com.example.model.PATH_OP_CUBIC, segs[2].op)
+        assertEquals(88.80571f, segs[2].pts[0], 0.001f)             // top-right corner arc intact
+        assertEquals(100f, segs[2].pts[4], 0.001f)
+        assertEquals(-75f, segs[2].pts[5], 0.001f)
+        assertEquals(com.example.model.PATH_OP_LINE, segs[5].op)
+        assertEquals(-35f, segs[5].pts[0], 0.001f)                  // the tail's near base point
+        assertEquals(100f, segs[5].pts[1], 0.001f)
+        assertEquals(-50f, segs[6].pts[0], 0.001f)                  // the tip: the RAW tail point
+        assertEquals(150f, segs[6].pts[1], 0.001f)
+        assertEquals(-75f, segs[7].pts[0], 0.001f)                  // the far base point
+        assertEquals(100f, segs[7].pts[1], 0.001f)
+        assertEquals(-75f, segs[8].pts[0], 0.001f)                  // the duplicated anchor, verbatim
+        assertEquals(100f, segs[8].pts[1], 0.001f)
+        assertEquals(com.example.model.PATH_OP_CUBIC, segs[11].op)
+        assertEquals(-75f, segs[11].pts[4], 0.001f)                 // the closing corner lands on the start
+        assertEquals(-100f, segs[11].pts[5], 0.001f)
+        assertEquals(com.example.model.PATH_OP_CLOSE, segs[12].op)
+    }
+
+    @Test
+    fun calloutOutlineTailOnEachOtherSide() {
+        // LEFT (tail.x < 0, |tail.y| <= |tail.x|): tail.y = -20 attracts to -70 and clamps to
+        // -55 (the corner arcs bound the base), so the base spans -75..-35 on x=-100 and its
+        // far point again coincides with the following anchor.
+        val left = CalloutOutline.segments(100.0, 100.0, -150.0, -20.0, 25.0, 40.0)
+        assertEquals(13, left.size)
+        assertEquals(-100f, left[7].pts[0], 0.001f)
+        assertEquals(-35f, left[7].pts[1], 0.001f)
+        assertEquals(com.example.model.PATH_OP_LINE, left[8].op)
+        assertEquals(-150f, left[8].pts[0], 0.001f)
+        assertEquals(-20f, left[8].pts[1], 0.001f)
+        assertEquals(-100f, left[9].pts[0], 0.001f)
+        assertEquals(-75f, left[9].pts[1], 0.001f)
+        // RIGHT (tail.x > 0): tail.y = 20 attracts to 70, clamps to 55: base 35..75 on x=100,
+        // spliced BEFORE the right side's lower anchor, so the steps into it are lines.
+        val right = CalloutOutline.segments(100.0, 100.0, 150.0, 20.0, 25.0, 40.0)
+        assertEquals(13, right.size)
+        assertEquals(100f, right[3].pts[0], 0.001f)
+        assertEquals(35f, right[3].pts[1], 0.001f)
+        assertEquals(150f, right[4].pts[0], 0.001f)
+        assertEquals(20f, right[4].pts[1], 0.001f)
+        assertEquals(100f, right[5].pts[0], 0.001f)
+        assertEquals(75f, right[5].pts[1], 0.001f)
+        // TOP (tail.y < 0, |tail.y| > |tail.x|): tail.x = 20 attracts to 70, clamps to 55:
+        // base 35..75 on y=-100, spliced right after the first anchor.
+        val top = CalloutOutline.segments(100.0, 100.0, 20.0, -150.0, 25.0, 40.0)
+        assertEquals(13, top.size)
+        assertEquals(35f, top[1].pts[0], 0.001f)
+        assertEquals(-100f, top[1].pts[1], 0.001f)
+        assertEquals(20f, top[2].pts[0], 0.001f)
+        assertEquals(-150f, top[2].pts[1], 0.001f)
+        assertEquals(75f, top[3].pts[0], 0.001f)
+        assertEquals(-100f, top[3].pts[1], 0.001f)
+    }
+
+    @Test
+    fun calloutDefaultsImportAsPathShape() {
+        // The def defaults serialised as a real export writes them. The outline's box is
+        // x +-100, y -100..150 (the tip overhangs), so the normalisation centre is (0,25) and
+        // the uniform half is 125: stored = (raw - centre) / 125.
+        val r = AlightXmlImporter.parse(scene("""<shape id="31" label="Callout 1" startTime="0" endTime="2000" fillType="color" mediaFillMode="fill" s=".callout.roundrect">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ff6bd3cd" />
+    <property name="size" type="vec2" value="100.000000,100.000000" />
+    <property name="tail" type="vec2" value="-50.000000,150.000000" />
+    <property name="cornerRadius" type="float" value="25.000000" />
+    <property name="tailWidth" type="float" value="40.000000" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.none { it.contains("is not supported yet") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals("PATH", c.shapePattern)
+        assertEquals(0xFF6BD3CDL, c.textColor)
+        assertEquals(13, c.pathSegments.size)
+        assertEquals(-0.6f, c.pathSegments[0].pts[0], 0.001f)
+        assertEquals(-1f, c.pathSegments[0].pts[1], 0.001f)
+        assertEquals(-0.28f, c.pathSegments[5].pts[0], 0.001f)      // the tail's near base point
+        assertEquals(0.6f, c.pathSegments[5].pts[1], 0.001f)
+        assertEquals(-0.4f, c.pathSegments[6].pts[0], 0.001f)       // the tip
+        assertEquals(1f, c.pathSegments[6].pts[1], 0.001f)
+        assertEquals(com.example.model.PATH_OP_CLOSE, c.pathSegments[12].op)
+        // Rendered width = 2 x half (125) against the 693.3 px shape box of a 1920-wide scene.
+        assertEquals(250f / 693.333f, c.shapeScaleX, 0.001f)
+    }
+
+    @Test
+    fun calloutVerbatimProyekInstanceImportsAndLinksToItsParent() {
+        // Verbatim from proyek-baru-15.xml: the corpus's only callout — and the one parented
+        // layer build 116 could not link, because its reader skipped the layer itself. Its
+        // parent is the visible multifoil, so the link lands on the anchor that mirrors it,
+        // and the anchor inherits the multifoil's own link to the null.
+        val r = AlightXmlImporter.parse(scene("""<shape id="2999482906" label="Multifoil 1" startTime="0" endTime="2032" fillType="color" mediaFillMode="fill" parent="2999482908" s=".multifoil">
+    <transform>
+      <location>
+        <kf t="0.336122" v="5.500000,-89.000000,0.000000" />
+        <kf t="0.483760" v="-38.500000,-121.000000,0.000000" />
+      </location>
+    </transform>
+    <fillColor value="#ff9d9e60" />
+    <property name="pointCount" type="float" value="5.000000" />
+    <property name="outerRadius" type="float" value="100.000000" />
+    <property name="innerRadius" type="float" value="50.000000" />
+    <property name="offsetAngle" type="float" value="0.000000" />
+  </shape>
+  <shape id="2999482907" label="Callout 1" startTime="0" endTime="2032" fillType="color" mediaFillMode="fill" parent="2999482906" s=".callout.roundrect">
+    <transform>
+      <location>
+        <kf t="0.270669" v="-5.500000,329.000000,0.000000" />
+        <kf t="0.369094" v="26.500000,276.000000,0.000000" />
+      </location>
+    </transform>
+    <fillColor value="#ff6bd3cd" />
+    <property name="size" type="vec2" value="100.000000,100.000000" />
+    <property name="tail" type="vec2" value="-50.000000,150.000000" />
+    <property name="cornerRadius" type="float" value="25.000000" />
+    <property name="tailWidth" type="float" value="40.000000" />
+  </shape>
+  <nullobj id="2999482908" label="Nol 1" startTime="0" endTime="2032" mediaFillMode="fill" type="perspective">
+    <transform>
+      <location>
+        <kf t="0.172244" v="358.500000,450.000000,0.000000" />
+        <kf t="0.401575" v="402.000000,430.500000,0.000000" />
+        <kf t="0.188484" v="366.987152,450.000000,0.000000" />
+      </location>
+    </transform>
+  </nullobj>""", 720, 900), 720f)
+        assertTrue(r.warnings.none { it.contains("is not supported yet") })
+        assertTrue(r.warnings.any { it.contains("parents other layers") })
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        assertEquals(4, clips.size)   // the null, the multifoil, the callout, the anchor
+        val callout = clips.single { it.name == "Callout 1" }
+        assertEquals("PATH", callout.shapePattern)
+        assertEquals(0xFF6BD3CDL, callout.textColor)
+        assertEquals(13, callout.pathSegments.size)
+        val anchor = clips.single { it.name == "Multifoil 1 (parent)" }
+        val nullClip = clips.single { it.name == "Nol 1" }
+        val foil = clips.single { it.name == "Multifoil 1" }
+        assertNotNull(callout.parent)
+        assertEquals(anchor.id, callout.parent!!.id)
+        assertEquals(nullClip.id, foil.parent!!.id)
+        assertEquals(nullClip.id, anchor.parent!!.id)
+    }
+
+    @Test
+    fun calloutKeyframedTailKeepsFirstValue() {
+        val r = AlightXmlImporter.parse(scene("""<shape id="32" label="Callout K" startTime="0" endTime="2000" fillType="color" s=".callout.roundrect">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ffff0000" />
+    <property name="size" type="vec2" value="100.000000,100.000000" />
+    <property name="tail" type="vec2"><kf t="0.000000" v="-50.000000,150.000000" /><kf t="1.000000" v="150.000000,-50.000000" /></property>
+    <property name="cornerRadius" type="float" value="25.000000" />
+    <property name="tailWidth" type="float" value="40.000000" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.any { it.contains("\"tail\"") && it.contains("first value is used") })
+        val c = r.snapshot.tracks.flatMap { it.clips }.single()
+        assertEquals(13, c.pathSegments.size)   // still the first value's bottom tail
+        assertEquals(-0.4f, c.pathSegments[6].pts[0], 0.001f)
+        assertEquals(1f, c.pathSegments[6].pts[1], 0.001f)
+    }
+
+    @Test
+    fun calloutNonPositiveSizeIsSkipped() {
+        val r = AlightXmlImporter.parse(scene("""<shape id="33" label="Callout 0" startTime="0" endTime="2000" fillType="color" s=".callout.roundrect">
+    <transform><location value="960.000000,540.000000,0.000000" /></transform>
+    <fillColor value="#ffff0000" />
+    <property name="size" type="vec2" value="0.000000,100.000000" />
+  </shape>""", 1920, 1080), 1920f)
+        assertTrue(r.warnings.any { it.contains("size is not positive") && it.contains("skipped") })
         assertTrue(r.snapshot.tracks.flatMap { it.clips }.isEmpty())
     }
 

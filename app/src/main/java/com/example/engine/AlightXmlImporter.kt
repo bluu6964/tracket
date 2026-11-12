@@ -4,6 +4,7 @@ import com.example.model.AnimKey
 import com.example.model.AnimProp
 import com.example.model.AnimValue
 import com.example.model.AspectRatio
+import com.example.model.CalloutOutline
 import com.example.model.ClipFx
 import com.example.model.ClipFxLibrary
 import com.example.model.ClipMask
@@ -76,7 +77,9 @@ import kotlin.math.tan
  *    between their two points (the arrow head is not drawn). A shape with no `s` kind but a `<path>`
  *    child is a freehand vector layer: its `d` (M / L / H / V / C / S / Q / T / Z, absolute or relative)
  *    becomes the clip's stored outline ([com.example.model.TimelineClip.pathSegments]); an arc command
- *    or keyframed path data stays skipped with a warning.
+ *    or keyframed path data stays skipped with a warning. The parameterised kinds (`.multifoil`,
+ *    `.triangle`, `.penta`, `.poly`, `.star`, `.pie`, `.callout.roundrect`) are line-by-line ports of
+ *    AM's own shape definitions into the same stored outline.
  *  - `<embedScene>`: a real Group layer (see GroupOps) holding the layers of the nested `<scene>`; the group's
  *    move / scale / turn / opacity and the pivot (as the children's parent link) come from its own transform,
  *    and the nested times are remapped from the [inTime, outTime] window onto the group's length.
@@ -629,6 +632,7 @@ object AlightXmlImporter {
         if (kind == ".poly") return readPolyShape(el, ctx)
         if (kind == ".star") return readStarShape(el, ctx)
         if (kind == ".pie") return readPieShape(el, ctx)
+        if (kind == ".callout.roundrect") return readCalloutShape(el, ctx)
         val pattern = when (kind) {
             ".rect" -> "RECT"
             ".circle" -> "CIRCLE"
@@ -1090,6 +1094,37 @@ object AlightXmlImporter {
         val ks = trackKeys(t, durMs) { (it.firstOrNull() ?: def) to 0f }
         if (ks.isNotEmpty()) return ks
         return listOf(Keyframe(0L, t?.first()?.firstOrNull() ?: def))
+    }
+
+    /**
+     * A `.callout.roundrect` shape: a rounded rectangle with a speech-bubble tail on one side —
+     * [CalloutOutline] is the line-by-line port of AM's own shape definition (recovered from the
+     * public decompiled AM assets, `assets/shapes/`), finished by the shared path-shape tail
+     * ([finishPathShape]), so fills, strokes, masks, media fills and drawing.progress behave as
+     * they do for the other built-in kinds. Unlike the free-point kinds above this one DOES
+     * carry a `size` property — the half extents the def's outline is built from — but the
+     * outline encodes it (its box is the rect plus the tail's overhang), so the tail's usual
+     * box normalisation applies and no separate size handling is needed. The four parameters
+     * are plain properties read with the def's defaults; a keyframed one keeps its first value
+     * with a warning, like a multifoil's. The corpus's single instance (proyek-baru-15's
+     * "Callout 1") carries exactly the def defaults, all static.
+     */
+    private fun readCalloutShape(el: Element, ctx: Ctx): TimelineClip? {
+        val w = ctx.warnings
+        val kindName = "callout.roundrect"
+        val (sizeX, sizeY) = shapeParamPoint(el, ctx, kindName, "size", 100f, 100f)
+        val (tailX, tailY) = shapeParamPoint(el, ctx, kindName, "tail", -50f, 150f)
+        val cornerRadius = shapeParamFloat(el, ctx, kindName, "cornerRadius", 25f)
+        val tailWidth = shapeParamFloat(el, ctx, kindName, "tailWidth", 40f)
+        if (sizeX <= 0f || sizeY <= 0f) {
+            w += "Layer <shape>" + labelOf(el) + ": its size is not positive: skipped"
+            return null
+        }
+        val segs = CalloutOutline.segments(
+            sizeX.toDouble(), sizeY.toDouble(), tailX.toDouble(), tailY.toDouble(),
+            cornerRadius.toDouble(), tailWidth.toDouble()
+        )
+        return finishPathShape(el, ctx, segs)
     }
 
     /** A raw outline normalised for storage (see [normalisePathSegs]): the stored segments, the bounding box's centre and larger half extent, and the flattened outline points. */

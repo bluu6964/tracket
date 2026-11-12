@@ -4901,14 +4901,17 @@ $layers
 
     @Test
     fun extrudeStaysParked() {
-        // The one tier-3 effect left: its def needs a host-supplied 3D orientation matrix
-        // (AM's 3D layer system), a gaussian-blur buffer pass and a raymarch of up to 800
-        // steps — the design is written in the roadmap; the warning stays honest.
+        // Build 127 un-parked it: corpus round 2 found 8 real instances + the def in a
+        // second dump, and the instances themselves answer the orient question (the
+        // only serialised orient is the identity quaternion). The full pins live in
+        // ExtrudeImportTest; this keeps the old parked test's fixture honest.
         val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.extrude" locallyApplied="false"><property name="depth" type="float" value="0.100000" /></effect>"""
         ), 1080f)
-        assertTrue(r.warnings.any { it.contains("extrude is not supported yet") })
-        assertTrue(r.snapshot.tracks.flatMap { it.clips }[0].effects.isEmpty())
+        assertTrue(r.warnings.none { it.contains("extrude is not supported yet") })
+        val fx = r.snapshot.tracks.flatMap { it.clips }[0].effects
+            .single { it.type == ClipFxLibrary.EXTRUDE_AM }
+        assertEquals(0.1f, fx.values[0], 0.001f)
     }
 
 }

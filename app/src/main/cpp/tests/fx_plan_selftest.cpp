@@ -920,6 +920,120 @@ int main() {
         id.type = FX_SMOOTH_BEVEL_AM; id.p[0] = 0.f;
         CHECK(fxIsIdentity(id), "smoothbevel radius 0 is identity");
     }
+    {
+        // ---- extrude / extrude flat (v173) ----
+        // The orientation matrix must reproduce the def's vertex-shader construction
+        // literally: rotationAxisAngle's transposed fill, the product rz * rx * ry
+        // (orient = identity), applied as the def's row-vector multiply. The reference
+        // below rebuilds the mat4 exactly as the def's GLSL does.
+        auto axisAngle = [](float ax, float ay, float az, float rad, float m[16]) {
+            const float s = std::sin(rad), c = std::cos(rad), oc = 1.f - c;
+            const float cols[16] = {
+                oc * ax * ax + c, oc * ax * ay + az * s, oc * az * ax - ay * s, 0,
+                oc * ax * ay - az * s, oc * ay * ay + c, oc * ay * az + ax * s, 0,
+                oc * az * ax + ay * s, oc * ay * az - ax * s, oc * az * az + c, 0,
+                0, 0, 0, 1};
+            for (int i = 0; i < 16; ++i) m[i] = cols[i];
+        };
+        auto mul4 = [](const float A[16], const float B[16], float O[16]) {
+            for (int col = 0; col < 4; ++col)
+                for (int row = 0; row < 4; ++row) {
+                    float v = 0;
+                    for (int k = 0; k < 4; ++k) v += A[k * 4 + row] * B[col * 4 + k];
+                    O[col * 4 + row] = v;
+                }
+        };
+        const float triples[][3] = {{0, 0, 0}, {-44, -26, 0}, {0, 1000, 0}, {650, -359, 0}, {30, 45, 60}, {-120, 15, 200}};
+        for (auto& tr : triples) {
+            const float d = 0.0174533f;
+            float mx[16], my[16], mz[16], t1[16], M[16];
+            axisAngle(1, 0, 0, tr[0] * d, mx);
+            axisAngle(0, 1, 0, tr[1] * d, my);
+            axisAngle(0, 0, 1, tr[2] * d, mz);
+            mul4(mz, mx, t1);
+            mul4(t1, my, M);
+            float m[9];
+            fxExtrudeRotateMat(tr[0], tr[1], tr[2], m);
+            const float v[3] = {0.35f, -0.72f, 1.25f};
+            for (int i = 0; i < 3; ++i) {
+                float defV = 0;
+                for (int j = 0; j < 3; ++j) defV += v[j] * M[i * 4 + j];  // (v * M)_i of the def
+                const float prodV = m[i * 3 + 0] * v[0] + m[i * 3 + 1] * v[1] + m[i * 3 + 2] * v[2];
+                CHECK(std::fabs(defV - prodV) < 1e-4f, "extrude mat def-port mismatch");
+            }
+        }
+        // hand-computed matrix pins
+        float m9[9];
+        fxExtrudeRotateMat(0, 0, 0, m9);
+        CHECK(std::fabs(m9[0] - 1) < 1e-6 && std::fabs(m9[4] - 1) < 1e-6 && std::fabs(m9[8] - 1) < 1e-6,
+              "extrude mat identity (toji's serialised orient)");
+        fxExtrudeRotateMat(0, 90, 0, m9);   // = Ry(-90) in column-vector form: x axis -> (0,0,1), z axis -> (-1,0,0)
+        CHECK(std::fabs(m9[2] + 1) < 1e-5 && std::fabs(m9[6] - 1) < 1e-5, "extrude mat ry90");
+        fxExtrudeRotateMat(90, 90, 0, m9);  // order pin (the def's product, transposed): (1,0,0) -> (0,0,1)
+        CHECK(std::fabs(m9[0]) < 1e-5 && std::fabs(m9[3]) < 1e-5 && std::fabs(m9[6] - 1) < 1e-5,
+              "extrude mat order (def product rz*rx*ry, row-vector)");
+        // The raymarch on a synthetic silhouette: an opaque white layer, its blur copy
+        // identical (the sampler is in layer-norm, clamp-to-edge like the engine).
+        auto samp = [](const void* ctx, int tex, float u, float v, float out[4]) {
+            (void)ctx; (void)tex;
+            u = std::min(1.f, std::max(0.f, u));
+            v = std::min(1.f, std::max(0.f, v));
+            (void)u; (void)v;
+            out[0] = out[1] = out[2] = out[3] = 1.f;  // opaque white, premultiplied
+        };
+        FxExtrudeSampler S;
+        S.sample = samp;
+        FxOp ex;
+        ex.type = FX_EXTRUDE_AM;
+        ex.p[0] = 0.1f; ex.p[1] = 1.f; ex.p[2] = 1.f; ex.p[3] = 1.f; ex.p[6] = 0.f;  // depth, scale, ratios, flat shading
+        ex.q[4] = 100.f; ex.q[5] = 500.f;                                            // position (0, 100, 500)
+        ex.r[3] = 2660.f;                                                            // intensity 1 + strength 0.1, packed
+        ex.r[6] = 410000.f;                                                          // lightDepth 100 + MAX_ITER 200, packed
+        float out[4];
+        fxExtrudeAmPixel(ex, false, 0.5f, 0.5f, 1000, 1000, S, out);
+        CHECK(std::fabs(out[0] - 1) < 0.01f && std::fabs(out[3] - 1) < 0.01f,
+              "extrude centre is the box face, opaque white");
+        ex.q[5] = 2000.f;   // a far object: the frame corner's ray misses the box
+        fxExtrudeAmPixel(ex, false, 0.02f, 0.02f, 1000, 1000, S, out);
+        CHECK(out[3] == 0.f, "extrude missed ray is transparent");
+        ex.q[5] = 500.f;
+        // Turned 90 degrees about y, the box's side faces the camera; at the face
+        // centre dz = 0.5, so the interior colour (green, blend 1) wins.
+        ex.q[1] = 90.f;
+        ex.p[4] = 1.f;
+        ex.q[6] = 0x00FF00;
+        fxExtrudeAmPixel(ex, false, 0.5f, 0.5f, 1000, 1000, S, out);
+        CHECK(std::fabs(out[1] - 1) < 0.03f && out[0] < 0.03f && std::fabs(out[3] - 1) < 0.03f,
+              "extrude side face is interior green");
+        // Depth-map shading at identity: the march lands at d = 5.9 exactly, ds = 1.25,
+        // so dd = 1 - (5.9 - 5 + 0.625) / 1.25 = -0.22.
+        ex.q[1] = 0.f; ex.p[4] = 0.f; ex.p[6] = 3.f;
+        fxExtrudeAmPixel(ex, false, 0.5f, 0.5f, 1000, 1000, S, out);
+        CHECK(std::fabs(out[0] - (-0.22f)) < 0.02f && std::fabs(out[3] - 1) < 0.01f,
+              "extrude depth-map centre value");
+        // EXT2 folding: main + EXT + EXT2 fold into one op; a stray EXT2 is dropped.
+        float flatE[] = {123, 0.1f, 1, 1, 1, 0, 0, 1,
+                         124, -44, -26, 0, 0, 100, 500, 0x3366AA,
+                         125, 0xAA3366, 0xFFFFFF, 12345, 2660, 10250, 30, 410000,
+                         126, 0.05f, 1, 1, 1, 1, 1, 1,
+                         127, 0, 90, 0, 0, 100, 500, 0,
+                         128, 0x2C3EFF, 300, 0, 0, 0, 0, 0};
+        FxOp eops[kFxMaxOps];
+        CHECK(fxParseOps(flatE, 48, eops) == 2, "extrude parse count");
+        CHECK(eops[0].type == FX_EXTRUDE_AM && eops[0].q[0] == -44.f && eops[0].r[6] == 410000.f,
+              "extrude EXT+EXT2 fold into q/r");
+        CHECK(eops[1].type == FX_EXTRUDE_FLAT_AM && eops[1].q[1] == 90.f && eops[1].r[1] == 300.f,
+              "extrudeflat EXT+EXT2 fold into q/r");
+        float flatX[] = {125, 1, 2, 3, 4, 5, 6, 7};
+        CHECK(fxParseOps(flatX, 8, eops) == 0, "bare EXT2 is dropped");
+        float flatY[] = {123, 0.1f, 1, 1, 1, 0, 0, 1, 125, 1, 2, 3, 4, 5, 6, 7};
+        CHECK(fxParseOps(flatY, 16, eops) == 1 && eops[0].r[0] == 0.f, "EXT2 without its EXT is dropped");
+        CHECK(fxShaderOf(FX_EXTRUDE_AM).group == FXG_NONE && fxShaderOf(FX_EXTRUDE_FLAT_AM).group == FXG_NONE,
+              "extrude tier is a dedicated pass");
+        FxOp eo;
+        eo.type = FX_EXTRUDE_AM;
+        CHECK(!fxIsIdentity(eo), "extrude is never identity");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

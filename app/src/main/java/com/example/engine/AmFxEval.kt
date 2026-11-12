@@ -48,6 +48,9 @@ internal object AmFxEval {
     /** Tail start of an EXTENDED effect (its values [7..13] are the EXT group, see ClipFx). */
     const val EXT_TAIL_START = 14
 
+    /** Tail start of a twice-extended effect (values [7..13] EXT, [14..20] EXT2; the extrude tier). */
+    const val EXT2_TAIL_START = 21
+
     private const val KEY_STRIDE = 6
 
     /** One animated parameter: the fx slot(s) [resolve] rewrites, and the scale it applies. */
@@ -112,6 +115,12 @@ internal object AmFxEval {
         ClipFxLibrary.DISPLACE_MAP_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))   // offs x, offs y
         ClipFxLibrary.DISPLACE_MAP_RAD_AM -> listOf(Tracked(0, 1f))               // offs angle
         ClipFxLibrary.SMOOTH_BEVEL_AM -> listOf(Tracked(2, 1f))                   // specular angle
+        // v173: the extrude tier — rotate xyz then position xyz (absolute slots 7..12,
+        // AM units, scale 1), tails from index 21 (past the EXT2 group).
+        ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM -> listOf(
+            Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f),
+            Tracked(10, 1f), Tracked(11, 1f), Tracked(12, 1f)
+        )  // rotate x/y/z, position x/y/z
         else -> emptyList()
     }
 
@@ -124,6 +133,7 @@ internal object AmFxEval {
         ClipFxLibrary.TURBULENT_DISPLACE3_AM, ClipFxLibrary.STREAKS_AM,
         ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
         ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM -> EXT_TAIL_START
+        ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM -> EXT2_TAIL_START
         else -> TAIL_START
     }
 

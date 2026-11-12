@@ -33,7 +33,7 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_LUMA_KEY, EF_FOUR_GRADIENT, EF_TURBULENT_AM, EF_PIXELATE_AM,
              EF_CHROMA_KEY_AM, EF_SOFT_GLOW, EF_FILL_BEHIND,
              EF_DISPLACE_MAP, EF_SMOOTH_BEVEL, EF_LIGHT_GLOW, EF_INNER_GLOW,
-             EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_COUNT };  // eff_[] in renderer.h has room for 30
+             EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_EXTRUDE, EF_COUNT };  // eff_[] in renderer.h has room for 36
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -1177,11 +1177,132 @@ void main() {
 }
 )";
 
+// Extrude / Extrude Flat (Alight Motion's `s3d-extrude`, its recovered shader; fx_plan.cpp
+// fxExtrudeAmPixel is the CPU twin): the layer's silhouette becomes a 3D box — a sphere-
+// tracing march (up to MAX_ITER steps, the def's own cap of 800) over the box SDF, whose
+// step size runs off the blurred copy's alpha (uBlur = the gaussianblur buffer pass:
+// the layer blurred at the effect's `strength`, the name-matched pass wiring, read with
+// the applyGaussianBlur calibration). uMat is the orientation matrix R = Rz*Rx*Ry
+// (fxExtrudeRotateMat; the host `orient` is the identity — layers here have no 3D
+// orientation, and the only serialised orient in the corpus is the identity quaternion).
+// The maths runs in AM's layer space (layer-norm, y down); texture fetches flip y back
+// to this engine's vUv. Extrude Flat (uBlend.w = 1) is the same march with the Flat
+// shading branch and uBlur = the layer itself (no def exists for it anywhere; its
+// serialised schema — rotate / position / depth / scale / MAX_ITER — is the march's).
+const char* kExtrude = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec2 uSize;
+uniform mat3 uMat;
+uniform vec3 uCenter;
+uniform vec3 uBox;
+uniform vec3 uMisc;
+uniform vec4 uBlend;
+uniform vec4 uInterior;
+uniform vec4 uFade;
+uniform vec4 uLightA;
+uniform vec3 uLightColor;
+uniform vec3 uLightPos;
+in vec2 vUv;
+out vec4 oColor;
+vec4 texAt(vec2 tc) { return textureLod(uTex, vec2(tc.x, 1.0 - tc.y), 0.0); }
+vec4 blurAt(vec2 tc) { return textureLod(uBlur, vec2(tc.x, 1.0 - tc.y), 0.0); }
+float sdBox(vec3 p, vec3 r) {
+    vec3 q = abs(p) - r;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+vec2 sdExtrude(vec3 p) {
+    vec2 st = (p.xy / uBox.xy + 1.0) / 2.0;
+    vec4 texColor = texAt(st);
+    vec4 blurColor = blurAt(st);
+    float t = max(clamp(blurColor.a * 2.0, 0.0, 1.0), texColor.a);
+    float z = (p.z / uBox.z + 1.0) / 2.0;
+    float maxdim = length(uBox);
+    float td = (1.0 - t) * (maxdim * 2.0 * (1.0 + uMisc.y)) / uMisc.z;
+    return vec2(max(td, sdBox(p, uBox * vec3(2.0, 2.0, 1.0))), z);
+}
+vec2 distD(vec3 wp) { return sdExtrude(uMat * (wp - uCenter)); }
+float lighting(vec3 p, vec3 n) {
+    return dot(n, normalize(uLightPos - p));
+}
+float directionalLighting(vec3 p, vec3 n) {
+    return dot(n, normalize(uLightPos));
+}
+vec4 applyShading(vec4 texColor, vec3 p, vec3 n, float d) {
+    float a = smoothstep(30.0, 9.0, d) * smoothstep(0.3, 0.2, n.z);
+    int shadingType = uBlend.w > 0.5 ? 0 : int(uBlend.z + 0.5);
+    if (shadingType == 0) {
+        return texColor * a;
+    } else if (shadingType == 1 || shadingType == 2) {
+        float l = shadingType == 1 ? lighting(p, n) : directionalLighting(p, n);
+        vec3 surface = texColor.rgb * uLightA.w + texColor.rgb * uLightColor * l * (1.0 - uLightA.w);
+        surface *= uLightA.x;
+        float s = pow(max(l, 0.0), uLightA.z);
+        surface = mix(surface * (1.0 - uLightA.y * 0.1), vec3(1.0), uLightA.y * s);
+        return vec4(surface, texColor.a) * a;
+    } else if (shadingType == 3) {
+        float ds = max(max(uBox.x, uBox.y), uBox.z) * 2.5;
+        float dd = 1.0 - ((d - uCenter.z + ds / 2.0) / ds);
+        return vec4(dd, dd, dd, 1.0) * a;
+    } else if (shadingType == 4) {
+        return vec4(n / 2.0 + 0.5, 1.0) * a;
+    }
+    float ds = max(max(uBox.x, uBox.y), uBox.z) * 2.5;
+    float dd = 1.0 - ((d - uCenter.z + ds / 2.0) / ds);
+    return vec4((n / 2.0 + 0.5) * dd, 1.0) * a;
+}
+void main() {
+    vec2 layerNorm = vec2(vUv.x, 1.0 - vUv.y);
+    vec2 st = layerNorm - 0.5;
+    if (uSize.x < uSize.y) st.x *= uSize.x / uSize.y; else st.y *= uSize.y / uSize.x;
+    st /= uMisc.x;
+    st /= 5.8;
+    vec3 ro = vec3(0.0, 1.0, -1.0);
+    vec3 rd = normalize(vec3(st, 1.0));
+    float d = 0.0;
+    float dz = -1.0;
+    int iter = int(uMisc.z + 0.5);
+    for (int i = 0; i < 800; i++) {
+        if (i >= iter) break;
+        vec3 p = ro + rd * d;
+        vec2 dinf = distD(p);
+        d += dinf.x;
+        if (dinf.x < 1e-7 || d > 10000.0) { dz = dinf.y; break; }
+    }
+    vec3 p = ro + rd * d;
+    float d0 = distD(p).x;
+    vec3 nRaw = vec3(d0) - vec3(distD(p - vec3(0.01, 0.0, 0.0)).x,
+                                distD(p - vec3(0.0, 0.01, 0.0)).x,
+                                distD(p - vec3(0.0, 0.0, 0.01)).x);
+    float nl = length(nRaw);
+    vec3 n = nl > 1e-12 ? nRaw / nl : vec3(0.0);
+    vec3 localCoord = uMat * (p - uCenter);
+    vec2 texCoord = (localCoord.xy / uBox.xy + 1.0) / 2.0;
+    float aMask = (uBox.x < 0.0105 || uBox.y < 0.0105) ? 0.0 : 1.0;
+    vec4 baseColor = texAt(texCoord);
+    vec4 blurColor = blurAt(texCoord);
+    vec4 texColor;
+    if (blurColor.a > baseColor.a && blurColor.a > 0.25) {
+        texColor = blurColor / blurColor.a;
+    } else if (baseColor.a > 0.25) {
+        texColor = baseColor / baseColor.a;
+    } else {
+        texColor = baseColor;
+    }
+    if (dz > 0.001 && dz < 0.999) {
+        texColor = mix(texColor, uInterior * texColor.a, uBlend.x);
+        texColor = mix(texColor, uFade * texColor.a, uBlend.y * dz);
+    }
+    oColor = applyShading(texColor, p, n, d) * aMask;
+}
+)";
+
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
                                   kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
-                                  kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp};
-static_assert(EF_COUNT <= 30, "eff_[] in renderer.h is too small");
+                                  kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp, kExtrude};
+static_assert(EF_COUNT <= 36, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -1360,6 +1481,8 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_SMOOTH_BEVEL_AM: ok = fxSmoothBevelAm(op, W, H, cur); break;
             case FX_LIGHT_GLOW_AM: ok = fxLightGlowAm(op, W, H, cur); break;
             case FX_INNER_GLOW_AM: ok = fxInnerGlowAm(op, W, H, cur); break;
+            case FX_EXTRUDE_AM:
+            case FX_EXTRUDE_FLAT_AM: ok = fxExtrudeAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -1796,6 +1919,85 @@ bool Renderer::fxDarkGlowAm(const FxOp& op, int W, int H, int* cur) {
     glUniform1i(loc(comp, "uTex"), 0);
     glUniform1i(loc(comp, "uBlur"), 1);
     glUniform1f(loc(comp, "uAlpha"), cl(op.p[4]));
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Extrude / Extrude Flat (Alight): keep the layer, blur a copy for the march's alpha
+// buffer (Extrude only — its gaussianblur buffer pass, strength through the
+// applyGaussianBlur calibration), then the raymarch pass. The orientation matrix and
+// the packed-slot unpacking mirror the CPU twin (fxExtrudeAmPixel) exactly.
+bool Renderer::fxExtrudeAm(const FxOp& op, int W, int H, int* cur) {
+    const bool flat = op.type == FX_EXTRUDE_FLAT_AM;
+    const uint32_t prog = effProg(EF_EXTRUDE), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    auto unpack = [](float packedF, float* r, float* g, float* b) {
+        const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
+        *r = ((pk >> 16) & 0xFF) / 255.f;
+        *g = ((pk >> 8) & 0xFF) / 255.f;
+        *b = (pk & 0xFF) / 255.f;
+    };
+    float inR, inG, inB, faR, faG, faB, liR, liG, liB;
+    unpack(op.q[6], &inR, &inG, &inB);
+    unpack(op.r[0], &faR, &faG, &faB);
+    float strength = 0.1f, iter = 300.f;
+    float lightIntensity = 0.f, shine = 0.f, spec = 0.f, ambient = 0.f;
+    float lightPos[3] = {0.f, 0.f, 0.f};
+    liR = liG = liB = 0.f;
+    if (flat) {
+        iter = std::max(1.f, op.r[1]);
+    } else {
+        unpack(op.r[1], &liR, &liG, &liB);
+        const int pq = (int)std::lround(std::min(16777215.f, std::max(0.f, op.r[2])));
+        const float ldx = (float)(pq / 4096 - 2048), ldy = (float)(pq % 4096 - 2048);
+        const int li = (int)std::lround(op.r[3]);
+        lightIntensity = (li % 256) / 100.f;
+        strength = (li / 256) / 100.f;
+        const int sa = (int)std::lround(op.r[4]);
+        shine = (sa / 128) / 100.f;
+        ambient = (sa % 128) / 100.f;
+        spec = op.r[5];
+        const int dm = (int)std::lround(op.r[6]);
+        const float lightDepth = (dm % 2048) / 2.f - 100.f;
+        iter = std::max(1, dm / 2048);
+        lightPos[0] = ldx / 2.f;
+        lightPos[1] = -ldy / 2.f;
+        lightPos[2] = -lightDepth * 2.f;
+        FxOp blurOp;
+        blurOp.type = FX_BLUR;
+        blurOp.p[0] = strength * 50.f;   // AM strength -> the app blur (the applyGaussianBlur calibration)
+        if (!fxBlur(blurOp, W, H, cur)) return false;
+    }
+    float m[9];
+    fxExtrudeRotateMat(op.q[0], op.q[1], op.q[2], m);
+    float matCol[9];  // glUniformMatrix3fv takes column-major
+    for (int col = 0; col < 3; ++col)
+        for (int row = 0; row < 3; ++row) matCol[col * 3 + row] = m[row * 3 + col];
+    const float mx = std::max((float)W, (float)H);
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, flat ? keep.tex[0] : fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform2f(loc(prog, "uSize"), (float)W, (float)H);
+    glUniformMatrix3fv(loc(prog, "uMat"), 1, GL_FALSE, matCol);
+    glUniform3f(loc(prog, "uCenter"), op.q[3] / 100.f, op.q[4] / 100.f, op.q[5] / 100.f);
+    glUniform3f(loc(prog, "uBox"), op.p[2] * 0.5f * W / mx, op.p[3] * 0.5f * H / mx, op.p[0]);
+    glUniform3f(loc(prog, "uMisc"), op.p[1], strength, iter);
+    glUniform4f(loc(prog, "uBlend"), op.p[4], op.p[5], op.p[6], flat ? 1.f : 0.f);
+    glUniform4f(loc(prog, "uInterior"), inR, inG, inB, 1.f);
+    glUniform4f(loc(prog, "uFade"), faR, faG, faB, 1.f);
+    glUniform4f(loc(prog, "uLightA"), lightIntensity, shine, spec, ambient);
+    glUniform3f(loc(prog, "uLightColor"), liR, liG, liB);
+    glUniform3f(loc(prog, "uLightPos"), lightPos[0], lightPos[1], lightPos[2]);
     draw();
     *cur = dst;
     return true;

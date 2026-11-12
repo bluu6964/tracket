@@ -292,6 +292,35 @@ enum FxType : int {
                              // 0xRRGGBB, p3 blend %, p4 alpha %. Dedicated pass chain
                              // (Renderer::fxDarkGlowAm): extract the dark parts, blur them,
                              // multiply back over the layer (AM's darkglow def, build 120).
+    // v173: Alight's s3d-extrude and its def-less sibling extrudeflat — dedicated raymarch
+    // passes (Renderer::fxExtrudeAm). Extrude's def (recovered from two independent dumps,
+    // byte-identical shaders) renders the layer's silhouette as a 3D box: a gaussianblur
+    // buffer pass feeds a sphere-tracing march of up to MAX_ITER steps. Slot layout
+    // (AM units throughout):
+    //   p: [0] depth, [1] scale, [2] widthRatio, [3] heightRatio, [4] interiorBlend,
+    //      [5] fadeBlend, [6] shadingType (0 flat, 1 point light, 2 directional,
+    //      3 depth map, 4 normal map, 5 normal & depth)
+    //   q: [0..2] rotate xyz (degrees), [3..5] position xyz, [6] interiorColor packed
+    //   r: [0] fadeColor packed, [1] lightColor packed, [2] lightDir point packed
+    //      (ClipFx packPoint), [3] lightIntensity + strength packed:
+    //      round(intensity*100) + round(strength*100)*256 (both 0.01-granularity
+    //      scalars; strength also feeds the blur buffer pass and the march step size),
+    //      [4] shine + ambient packed: round(shine*100)*128 + round(ambient*100),
+    //      [5] spec, [6] lightDepth + MAX_ITER packed: round((lightDepth+100)*2) +
+    //      MAX_ITER*2048
+    FX_EXTRUDE_AM = 123,
+    FX_EXTRUDE_AM_EXT = 124,
+    FX_EXTRUDE_AM_EXT2 = 125,
+    // Extrudeflat shares the march with flat shading and no light model:
+    //   p: [0] depth, [1] scale, [2] stretch x, [3] stretch y, [4] interiorBlend,
+    //      [5] fadeBlend, [6] inton (0/1; semantics unpinned — no def exists anywhere;
+    //      all 16 corpus instances carry true with interiorBlend 1, applied as
+    //      serialized)
+    //   q: like extrude's. r: [0] fadeColor packed, [1] MAX_ITER, [2..6] unused.
+    // In both, keyframed rotate / position components ride AmFxEval tails from index 21.
+    FX_EXTRUDE_FLAT_AM = 126,
+    FX_EXTRUDE_FLAT_AM_EXT = 127,
+    FX_EXTRUDE_FLAT_AM_EXT2 = 128,
     FX_MAX = FX_COPY_BG
 };
 
@@ -302,6 +331,7 @@ struct FxOp {
     int type = FX_NONE;
     float p[7] = {0, 0, 0, 0, 0, 0, 0};
     float q[7] = {0, 0, 0, 0, 0, 0, 0};  // extended params, folded in by fxParseOps from an EXT group
+    float r[7] = {0, 0, 0, 0, 0, 0, 0};  // second extension, folded from an EXT2 group (v173: extrude tier)
 };
 
 // Reads `n` floats (groups of kFxStride) into `out` (room for kFxMaxOps). Unknown types are skipped.
@@ -724,6 +754,30 @@ float fxInnerGlowAmP(float radius2, float hardness, float nearestInside);
 void fxInnerGlowAmMap(float tr, float tg, float tb, float ta,
                       float cr, float cg, float cb, int blendMode, float alpha, float p,
                       float* outR, float* outG, float* outB, float* outA);
+
+// ---- Extrude / Extrude Flat (Alight s3d-extrude; dedicated raymarch pass) ----
+// The orientation matrix of the def's vertex shader: the def forms
+// rotateAndOrient = orient * rz * rx * ry (orient = the layer's host orientation,
+// the identity in every serialised instance) and multiplies ROW vectors by it; the
+// column-vector equivalent — what m holds, row-major — is its transpose,
+// (Rz*Rx*Ry)^T. Both of the def's uses (the march's dist() and the surface
+// texture coordinate) apply that same multiply, so local = m * (world - centre).
+void fxExtrudeRotateMat(float rxDeg, float ryDeg, float rzDeg, float m[9]);
+
+// A sampler for the CPU twin: fills out[4] (premultiplied rgba) with texture `tex`
+// (0 = the layer, 1 = its blurred copy) at layer-norm (u, v) — Alight's own space,
+// origin top-left, y down.
+struct FxExtrudeSampler {
+    void (*sample)(const void* ctx, int tex, float u, float v, float out[4]) = nullptr;
+    const void* ctx = nullptr;
+};
+
+// CPU twin of the extrude raymarch (the GLSL in renderer_effects.cpp mirrors it line by
+// line from AM's def): the premultiplied output at layer-norm (ax, ay) of a picW x picH
+// layer picture. `flat` renders Extrude Flat (same march, flat shading, no light model,
+// the blur texture read as the layer itself).
+void fxExtrudeAmPixel(const FxOp& op, bool flat, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]);
 
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);

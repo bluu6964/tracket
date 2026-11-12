@@ -9,9 +9,25 @@ namespace am {
 int fxParseOps(const float* flat, int n, FxOp* out) {
     int count = 0;
     int owner = -1;  // index of the op an EXT group may extend: only the group right before it
+    int extFoldedOp = -1;     // v173: the op whose EXT group was just folded (an EXT2 group may follow it)
+    int extFoldedType = FX_NONE;  // ... and which EXT type that was
     if (!flat || !out) return 0;
     for (int i = 0; i + kFxStride <= n; i += kFxStride) {
         const int t = (int)std::lround(flat[i]);
+        // v173: an EXT2 group carries the second extension (r) of an effect whose EXT group
+        // immediately precedes it (only the extrude tier has one); anywhere else it is dropped.
+        const int ext2Ext = t == FX_EXTRUDE_AM_EXT2 ? FX_EXTRUDE_AM_EXT
+                          : t == FX_EXTRUDE_FLAT_AM_EXT2 ? FX_EXTRUDE_FLAT_AM_EXT
+                                                         : FX_NONE;
+        if (ext2Ext != FX_NONE) {
+            if (extFoldedOp >= 0 && extFoldedType == ext2Ext) {
+                for (int k = 0; k < 7; ++k) out[extFoldedOp].r[k] = flat[i + 1 + k];
+            }
+            extFoldedOp = -1;
+            extFoldedType = FX_NONE;
+            owner = -1;
+            continue;
+        }
         // v163: an EXT group carries the extended params (q) of the effect right before it. It is
         // folded into that op and never becomes an op itself; an EXT group anywhere else (or after
         // a different owner) is dropped.
@@ -31,10 +47,17 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_RIDGES_AM_EXT ? FX_RIDGES_AM
                            : t == FX_DISPLACE_MAP_RAD_AM_EXT ? FX_DISPLACE_MAP_RAD_AM
                            : t == FX_SMOOTH_BEVEL_AM_EXT ? FX_SMOOTH_BEVEL_AM
+                           : t == FX_EXTRUDE_AM_EXT ? FX_EXTRUDE_AM
+                           : t == FX_EXTRUDE_FLAT_AM_EXT ? FX_EXTRUDE_FLAT_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
                 for (int k = 0; k < 7; ++k) out[owner].q[k] = flat[i + 1 + k];
+                extFoldedOp = owner;
+                extFoldedType = t;
+            } else {
+                extFoldedOp = -1;
+                extFoldedType = FX_NONE;
             }
             owner = -1;
             continue;
@@ -57,8 +80,11 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_SPOT_COLOR_AM && t != FX_DISSOLVE_AM && t != FX_SIMPLE_STARS_AM &&
             t != FX_DOTS_AM && t != FX_RIDGES_AM && t != FX_BEND_WARP_AM &&
             t != FX_DISPLACE_MAP_AM && t != FX_DISPLACE_MAP_RAD_AM && t != FX_SMOOTH_BEVEL_AM &&
-            t != FX_LIGHT_GLOW_AM && t != FX_INNER_GLOW_AM && t != FX_DARK_GLOW_AM) {
+            t != FX_LIGHT_GLOW_AM && t != FX_INNER_GLOW_AM && t != FX_DARK_GLOW_AM &&
+            t != FX_EXTRUDE_AM && t != FX_EXTRUDE_FLAT_AM) {
             owner = -1;
+            extFoldedOp = -1;
+            extFoldedType = FX_NONE;
             continue;
         }
         FxOp& o = out[count];
@@ -66,8 +92,11 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
         for (int k = 0; k < 7; ++k) {
             o.p[k] = flat[i + 1 + k];
             o.q[k] = 0.f;
+            o.r[k] = 0.f;
         }
         owner = count;
+        extFoldedOp = -1;
+        extFoldedType = FX_NONE;
         ++count;
     }
     return count;
@@ -418,6 +447,8 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_SMOOTH_BEVEL_AM: return p[0] < 0.0005f;   // radius 0: AM's scan degenerates (a division by radius2)
         case FX_LIGHT_GLOW_AM: return p[6] < 0.0005f;   // alpha 0: the composite keeps the base
         case FX_INNER_GLOW_AM: return p[0] < 0.5f || p[1] < 0.0005f;   // AM: radius < 0.5 is a plain copy; alpha 0 mixes nothing
+        case FX_EXTRUDE_AM: return false;   // the march replaces the picture even at rotate 0 (the box shades / reframes it)
+        case FX_EXTRUDE_FLAT_AM: return false;   // same
         default: return false;
     }
 }
@@ -2167,6 +2198,262 @@ void fxInnerGlowAmMap(float tr, float tg, float tb, float ta,
     *outG = tg + (rg * ta - tg) * m;
     *outB = tb + (rb * ta - tb) * m;
     *outA = ta;   // the result's alpha is the pixel's own (vec4(rgb, 1) * tex.a)
+}
+
+// ---- Extrude / Extrude Flat (v173) ----
+// A line-by-line port of AM's s3d-extrude fragment shader (the def staged in
+// hunt-staging/defs-batch6, byte-identical in both recovered dumps). The maths runs in
+// AM's own space: layer-norm coordinates (origin top-left, y down), the object centred
+// at position/100, the camera ray from (0, 1, -1) through the frame point. The def's
+// host inputs map as: acLayerSize = the layer picture's pixels, acLayerNorm = (ax, ay),
+// orient = identity (the only orientation ever serialised), and acLayerToScreen (l2s)
+// = the identity (the pass runs on the layer's own picture), so texture fetches are
+// direct layer-norm samples. Extrude Flat runs the same march with the Flat shading
+// branch and no light uniforms (its own differences are only the param schema).
+
+void fxExtrudeRotateMat(float rxDeg, float ryDeg, float rzDeg, float m[9]) {
+    const double d = 0.017453292519943295;  // the def's 0.0174533, at double precision
+    const double rx = rxDeg * d, ry = ryDeg * d, rz = rzDeg * d;
+    const double cx = std::cos(rx), sx = std::sin(rx);
+    const double cy = std::cos(ry), sy = std::sin(ry);
+    const double cz = std::cos(rz), sz = std::sin(rz);
+    // The def's rotateAndOrient = rz * rx * ry (standard matrices — its axis-angle
+    // fill, read as GLSL columns, IS the standard Rodrigues matrix), applied to ROW
+    // vectors: p' = p * (Rz*Rx*Ry). The column-vector equivalent is the transpose,
+    // (Rz*Rx*Ry)^T — that is what m holds (row-major), so world = m * local and the
+    // def's local = m * (world - centre) as well (both of the def's uses multiply by
+    // the same rotateAndOrient). Rx*Ry first, then Rz, then the transpose.
+    const double a[9] = {cy, 0, sy, sx * sy, cx, -sx * cy, -cx * sy, sx, cx * cy};  // Rx*Ry, row-major
+    const double b[9] = {cz, -sz, 0, sz, cz, 0, 0, 0, 1};                          // Rz
+    double p[9];
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col) {
+            double v = 0;
+            for (int k = 0; k < 3; ++k) v += b[row * 3 + k] * a[k * 3 + col];
+            p[row * 3 + col] = v;
+        }
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col) m[row * 3 + col] = (float)p[col * 3 + row];
+}
+
+namespace {
+
+struct ExtrudeCtx {
+    float mat[9];      // R (column-vector convention)
+    float center[3];   // OBJECT_CENTER = position / 100
+    float width, height, depth;
+    float strength;
+    int iter;
+    float scale;
+    // shading
+    int shadingType;
+    float interior[3], interiorBlend;
+    float fade[3], fadeBlend;
+    float lightPos[3];  // (lightDir.x/2, -lightDir.y/2, -lightDepth*2), the def's formula
+    float lightColor[3];
+    float lightIntensity, shine, spec, ambient;
+    bool flat;
+    const FxExtrudeSampler* sampler;
+};
+
+inline float clampf(float v, float lo, float hi) { return std::min(hi, std::max(lo, v)); }
+inline float saturatef(float v) { return clampf(v, 0.f, 1.f); }
+// The def's smoothstep calls include reversed edges (smoothstep(30, 9, d)); GLSL
+// evaluates the formula, so the twin does too.
+inline float sstep(float e0, float e1, float x) {
+    const float t = saturatef((x - e0) / (e1 - e0));
+    return t * t * (3.f - 2.f * t);
+}
+inline void sampleTex(const ExtrudeCtx& c, int tex, float u, float v, float out[4]) {
+    if (c.sampler && c.sampler->sample) c.sampler->sample(c.sampler->ctx, tex, u, v, out);
+    else out[0] = out[1] = out[2] = out[3] = 0.f;
+}
+
+// sdExtrude of the def: (safe step, depth fraction) at a LOCAL point (already centred
+// and rotated). r = (width, height, depth); the box half extents are r * (2, 2, 1).
+inline void extrudeSd(const ExtrudeCtx& c, const float p[3], float* outStep, float* outZ) {
+    const float st[2] = {(p[0] / c.width + 1.f) / 2.f, (p[1] / c.height + 1.f) / 2.f};
+    float texC[4], blurC[4];
+    sampleTex(c, 0, st[0], st[1], texC);
+    if (c.flat) { blurC[0] = texC[0]; blurC[1] = texC[1]; blurC[2] = texC[2]; blurC[3] = texC[3]; }
+    else sampleTex(c, 1, st[0], st[1], blurC);
+    const float t = std::max(saturatef(blurC[3] * 2.f), texC[3]);
+    const float z = (p[2] / c.depth + 1.f) / 2.f;
+    const float maxdim = std::sqrt(c.width * c.width + c.height * c.height + c.depth * c.depth);
+    const float td = (1.f - t) * (maxdim * 2.f * (1.f + c.strength)) / (float)c.iter;
+    // sdBox(p, r * vec3(2, 2, 1))
+    const float q[3] = {std::fabs(p[0]) - c.width * 2.f, std::fabs(p[1]) - c.height * 2.f,
+                        std::fabs(p[2]) - c.depth};
+    const float ax = std::max(q[0], 0.f), ay = std::max(q[1], 0.f), az = std::max(q[2], 0.f);
+    const float box = std::sqrt(ax * ax + ay * ay + az * az) +
+                      std::min(std::max(q[0], std::max(q[1], q[2])), 0.f);
+    *outStep = std::max(td, box);
+    *outZ = z;
+}
+
+inline void extrudeDist(const ExtrudeCtx& c, const float wp[3], float* outStep, float* outZ) {
+    const float d[3] = {wp[0] - c.center[0], wp[1] - c.center[1], wp[2] - c.center[2]};
+    const float lp[3] = {c.mat[0] * d[0] + c.mat[1] * d[1] + c.mat[2] * d[2],
+                         c.mat[3] * d[0] + c.mat[4] * d[1] + c.mat[5] * d[2],
+                         c.mat[6] * d[0] + c.mat[7] * d[1] + c.mat[8] * d[2]};
+    extrudeSd(c, lp, outStep, outZ);
+}
+
+}  // namespace
+
+void fxExtrudeAmPixel(const FxOp& op, bool flat, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]) {
+    ExtrudeCtx c;
+    c.flat = flat;
+    c.sampler = &s;
+    // Unpack the op (the renderer's uniform unpacking mirrors this).
+    auto unpackColor = [](float packed, float rgb[3]) {
+        const int pk = (int)std::lround(clampf(packed, 0.f, 16777215.f));
+        rgb[0] = ((pk >> 16) & 0xFF) / 255.f;
+        rgb[1] = ((pk >> 8) & 0xFF) / 255.f;
+        rgb[2] = (pk & 0xFF) / 255.f;
+    };
+    c.depth = op.p[0];
+    c.scale = op.p[1];
+    const float ratioX = op.p[2], ratioY = op.p[3];
+    c.interiorBlend = op.p[4];
+    c.fadeBlend = op.p[5];
+    c.shadingType = flat ? 0 : (int)std::lround(op.p[6]);
+    fxExtrudeRotateMat(op.q[0], op.q[1], op.q[2], c.mat);
+    c.center[0] = op.q[3] / 100.f;
+    c.center[1] = op.q[4] / 100.f;
+    c.center[2] = op.q[5] / 100.f;
+    unpackColor(op.q[6], c.interior);
+    unpackColor(op.r[0], c.fade);
+    if (flat) {
+        c.strength = 0.1f;  // unused by the flat march except the step size: the def default
+        c.iter = std::max(1, (int)std::lround(op.r[1]));
+        c.lightIntensity = c.shine = c.spec = c.ambient = 0.f;
+        c.lightPos[0] = c.lightPos[1] = c.lightPos[2] = 0.f;
+        c.lightColor[0] = c.lightColor[1] = c.lightColor[2] = 0.f;
+    } else {
+        unpackColor(op.r[1], c.lightColor);
+        const int pq = (int)std::lround(clampf(op.r[2], 0.f, 16777215.f));
+        const float ldx = (float)(pq / 4096 - 2048), ldy = (float)(pq % 4096 - 2048);
+        const int li = (int)std::lround(op.r[3]);
+        c.lightIntensity = (li % 256) / 100.f;
+        c.strength = (li / 256) / 100.f;
+        const int sa = (int)std::lround(op.r[4]);
+        c.shine = (sa / 128) / 100.f;
+        c.ambient = (sa % 128) / 100.f;
+        c.spec = op.r[5];
+        const int dm = (int)std::lround(op.r[6]);
+        const float lightDepth = (dm % 2048) / 2.f - 100.f;
+        c.iter = std::max(1, dm / 2048);
+        c.lightPos[0] = ldx / 2.f;
+        c.lightPos[1] = -ldy / 2.f;
+        c.lightPos[2] = -lightDepth * 2.f;
+    }
+    const float mx = std::max(picW, picH);
+    c.width = ratioX * 0.5f * picW / mx;
+    c.height = ratioY * 0.5f * picH / mx;
+
+    // main() of the def.
+    float stx = ax - 0.5f, sty = ay - 0.5f;
+    if (picW < picH) stx *= picW / picH; else sty *= picH / picW;
+    stx /= c.scale;
+    sty /= c.scale;
+    stx /= 5.8f;
+    sty /= 5.8f;
+    const float ro[3] = {0.f, 1.f, -1.f};
+    float rd[3] = {stx, sty, 1.f};
+    const float rl = std::sqrt(rd[0] * rd[0] + rd[1] * rd[1] + rd[2] * rd[2]);
+    rd[0] /= rl; rd[1] /= rl; rd[2] /= rl;
+    float d = 0.f, dz = -1.f;
+    for (int i = 0; i < c.iter; ++i) {
+        const float p[3] = {ro[0] + rd[0] * d, ro[1] + rd[1] * d, ro[2] + rd[2] * d};
+        float step, zz;
+        extrudeDist(c, p, &step, &zz);
+        d += step;
+        if (step < 1e-7f || d > 10000.f) { dz = zz; break; }
+    }
+    const float p[3] = {ro[0] + rd[0] * d, ro[1] + rd[1] * d, ro[2] + rd[2] * d};
+    // calcNormal: forward differences of the LOCAL distance, e = 0.01. The def reads
+    // dinf.x (the step) of three offset points and subtracts it from d0.
+    float d0s, d0z;
+    extrudeDist(c, p, &d0s, &d0z);
+    float n[3];
+    {
+        const float e = 0.01f;
+        const float off[3][3] = {{-e, 0, 0}, {0, -e, 0}, {0, 0, -e}};
+        // The def offsets in WORLD space; dist() centres + rotates internally, so the
+        // offsets ride along (the GLSL port does the same).
+        for (int k = 0; k < 3; ++k) {
+            const float pp[3] = {p[0] + off[k][0], p[1] + off[k][1], p[2] + off[k][2]};
+            float ss, szz;
+            extrudeDist(c, pp, &ss, &szz);
+            n[k] = d0s - ss;
+        }
+        const float nl = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (nl > 1e-12f) { n[0] /= nl; n[1] /= nl; n[2] /= nl; }
+    }
+    // The surface texture coordinate: the hit point in the def's local space — the
+    // same rotateAndOrient multiply dist() uses (the def applies it identically in
+    // both places; it is not an inverse transform).
+    const float lc[3] = {p[0] - c.center[0], p[1] - c.center[1], p[2] - c.center[2]};
+    const float loc[3] = {c.mat[0] * lc[0] + c.mat[1] * lc[1] + c.mat[2] * lc[2],
+                          c.mat[3] * lc[0] + c.mat[4] * lc[1] + c.mat[5] * lc[2],
+                          c.mat[6] * lc[0] + c.mat[7] * lc[1] + c.mat[8] * lc[2]};
+    const float tc[2] = {(loc[0] / c.width + 1.f) / 2.f, (loc[1] / c.height + 1.f) / 2.f};
+    const float amask = (c.width < 0.0105f || c.height < 0.0105f) ? 0.f : 1.f;
+    float baseC[4], blurC[4];
+    sampleTex(c, 0, tc[0], tc[1], baseC);
+    if (flat) { blurC[0] = baseC[0]; blurC[1] = baseC[1]; blurC[2] = baseC[2]; blurC[3] = baseC[3]; }
+    else sampleTex(c, 1, tc[0], tc[1], blurC);
+    float tex[4];
+    if (blurC[3] > baseC[3] && blurC[3] > 0.25f) {
+        for (int k = 0; k < 4; ++k) tex[k] = blurC[k] / blurC[3];
+    } else if (baseC[3] > 0.25f) {
+        for (int k = 0; k < 4; ++k) tex[k] = baseC[k] / baseC[3];
+    } else {
+        for (int k = 0; k < 4; ++k) tex[k] = baseC[k];
+    }
+    if (dz > 0.001f && dz < 0.999f) {
+        for (int k = 0; k < 3; ++k) tex[k] = tex[k] + (c.interior[k] * tex[3] - tex[k]) * c.interiorBlend;
+        for (int k = 0; k < 3; ++k) tex[k] = tex[k] + (c.fade[k] * tex[3] - tex[k]) * (c.fadeBlend * dz);
+    }
+    // applyShading(tex, p, n, d) — n is the LOCAL normal, p the world hit point.
+    const float a = sstep(30.f, 9.f, d) * sstep(0.3f, 0.2f, n[2]);
+    float res[4];
+    if (c.shadingType == 1 || c.shadingType == 2) {
+        float lv[3] = {c.lightPos[0], c.lightPos[1], c.lightPos[2]};
+        if (c.shadingType == 1) { lv[0] -= p[0]; lv[1] -= p[1]; lv[2] -= p[2]; }
+        const float ll = std::sqrt(lv[0] * lv[0] + lv[1] * lv[1] + lv[2] * lv[2]);
+        if (ll > 1e-12f) { lv[0] /= ll; lv[1] /= ll; lv[2] /= ll; }
+        const float li = n[0] * lv[0] + n[1] * lv[1] + n[2] * lv[2];
+        float surf[3];
+        for (int k = 0; k < 3; ++k)
+            surf[k] = (tex[k] * c.ambient + tex[k] * c.lightColor[k] * li * (1.f - c.ambient)) * c.lightIntensity;
+        const float sp = std::pow(std::max(li, 0.f), c.spec);  // GLSL pow(l<0) is undefined; AM's look is 0 there
+        const float t = c.shine * sp;
+        for (int k = 0; k < 3; ++k) surf[k] = surf[k] * (1.f - c.shine * 0.1f) * (1.f - t) + t;
+        for (int k = 0; k < 3; ++k) res[k] = surf[k] * a;
+        res[3] = tex[3] * a;
+    } else if (c.shadingType == 3 || c.shadingType == 5) {
+        const float ds = std::max(std::max(c.width, c.height), c.depth) * 2.5f;
+        const float dd = 1.f - ((d - c.center[2] + ds / 2.f) / ds);
+        if (c.shadingType == 3) { res[0] = res[1] = res[2] = dd * a; res[3] = a; }
+        else {
+            res[0] = (n[0] / 2.f + 0.5f) * dd * a;
+            res[1] = (n[1] / 2.f + 0.5f) * dd * a;
+            res[2] = (n[2] / 2.f + 0.5f) * dd * a;
+            res[3] = a;
+        }
+    } else if (c.shadingType == 4) {
+        res[0] = (n[0] / 2.f + 0.5f) * a;
+        res[1] = (n[1] / 2.f + 0.5f) * a;
+        res[2] = (n[2] / 2.f + 0.5f) * a;
+        res[3] = a;
+    } else {
+        for (int k = 0; k < 3; ++k) res[k] = tex[k] * a;
+        res[3] = tex[3] * a;
+    }
+    for (int k = 0; k < 4; ++k) out[k] = res[k] * amask;
 }
 
 }  // namespace am

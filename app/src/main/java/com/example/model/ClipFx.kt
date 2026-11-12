@@ -359,6 +359,29 @@ object ClipFxLibrary {
     // [0] strength % (AM raw x100), [1] threshold %, [2] the colour packed 0xRRGGBB,
     // [3] blend %, [4] alpha %. Keyframed strength / threshold ride tails from index 7.
     const val DARK_GLOW_AM = "dark_glow_am"
+    // EXTRUDE_AM (native 123 + EXT 124 + EXT2 125): dedicated raymarch pass
+    // (renderer_effects.cpp). Alight's s3d-extrude, ported from its def: the layer's
+    // silhouette extruded into a 3D box, sphere-traced against a gaussian-blurred copy
+    // of itself. Values [0] depth, [1] scale, [2] width ratio, [3] height ratio,
+    // [4] interior blend, [5] fade blend, [6] shading type (0 flat, 1 point light,
+    // 2 directional, 3 depth map, 4 normal map, 5 normal & depth) — all AM raw units.
+    // EXT [7..9] rotate xyz deg, [10..12] position xyz, [13] the interior colour packed
+    // 0xRRGGBB. EXT2 [14] the fade colour packed, [15] the light colour packed,
+    // [16] the light direction point packed, [17] light intensity + strength packed
+    // (x100 each: intensity + strength*256), [18] shine + ambient packed (x100 each:
+    // shine*128 + ambient), [19] spec, [20] light depth + MAX_ITER packed
+    // ((depth+100)*2 + iter*2048). Keyframed rotate / position components ride six
+    // AmFxEval tails from index 21.
+    const val EXTRUDE_AM = "extrude_am"
+    // EXTRUDE_FLAT_AM (native 126 + EXT 127 + EXT2 128): Alight's extrudeflat — no def
+    // exists in either recovered dump; the port shares Extrude's march with flat
+    // shading and no light model (its serialised schema carries no light params).
+    // Values [0] depth, [1] scale, [2] stretch x, [3] stretch y, [4] interior blend,
+    // [5] fade blend, [6] inton (1 in all 16 corpus instances, with interior blend 1;
+    // its exact role is unpinned — the interior colouring is applied as serialized).
+    // EXT like Extrude's; EXT2 [14] the fade colour packed, [15] MAX_ITER.
+    // Keyframed rotate / position ride tails from index 21, like Extrude's.
+    const val EXTRUDE_FLAT_AM = "extrude_flat_am"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -1036,6 +1059,34 @@ object ClipFxLibrary {
                 FxParamDef("Alpha", 0f, 100f, 75f, "%")
             )
         ),
+        // Extrude (Alight): values as on the const. The panel edits the march's own
+        // params; the EXT / EXT2 values (rotate, position, colours, light) are AM's
+        // defaults via [extraValues] and survive panel edits.
+        FxDef(
+            EXTRUDE_AM, 123, "Extrude (Alight)", "Distort", "The layer extruded into a 3D box, raymarched (Alight Motion's S3D Extrude)",
+            listOf(
+                FxParamDef("Depth", 0f, 10f, 0.1f, "", step = 0.01f),
+                FxParamDef("Scale", 0.05f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Width ratio", 0.01f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Height ratio", 0.01f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Interior blend", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Fade blend", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Shading", 0f, 5f, 1f, "", step = 1f)
+            )
+        ),
+        // Extrude Flat (Alight): values as on the const.
+        FxDef(
+            EXTRUDE_FLAT_AM, 126, "Extrude Flat (Alight)", "Distort", "The layer extruded flat, no lighting (Alight Motion's Extrude Flat)",
+            listOf(
+                FxParamDef("Depth", 0f, 10f, 0.05f, "", step = 0.005f),
+                FxParamDef("Scale", 0.05f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Stretch X", 0.01f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Stretch Y", 0.01f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Interior blend", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Fade blend", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Interior on", 0f, 1f, 1f, "", step = 1f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -1513,6 +1564,17 @@ object ClipFxLibrary {
         RIDGES_AM -> listOf(0f, 0f, 0f, 0f, 1f, 1f, 2f)
         DISPLACE_MAP_RAD_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
         SMOOTH_BEVEL_AM -> listOf(35f, 0xFFFFFF.toFloat(), 0xFFFFFF.toFloat(), 0f, 0f, 0f, 0f)
+        // The extrude tier's EXT + EXT2 defaults are Alight's own def defaults (rotate 0,
+        // position (0, 100, 500), the def's colours and light rig; the packs are decoded
+        // in fx_plan.cpp / renderer_effects.cpp).
+        EXTRUDE_AM -> listOf(
+            0f, 0f, 0f, 0f, 100f, 500f, 0x3366AA.toFloat(),
+            0xAA3366.toFloat(), 0xFFFFFF.toFloat(), packPoint(75f, -75f), 2660f, 10250f, 30f, 410000f
+        )
+        EXTRUDE_FLAT_AM -> listOf(
+            0f, 0f, 0f, 0f, 100f, 500f, 0x3366AA.toFloat(),
+            0xAA3366.toFloat(), 300f, 0f, 0f, 0f, 0f, 0f
+        )
         else -> emptyList()
     }
 
@@ -1534,6 +1596,15 @@ object ClipFxLibrary {
         RIDGES_AM -> 113
         DISPLACE_MAP_RAD_AM -> 117
         SMOOTH_BEVEL_AM -> 119
+        EXTRUDE_AM -> 124
+        EXTRUDE_FLAT_AM -> 127
+        else -> null
+    }
+
+    /** The native type of an effect's EXT2 group (its values [14..20]), or null when it has none. */
+    fun ext2NativeType(type: String): Int? = when (type) {
+        EXTRUDE_AM -> 125
+        EXTRUDE_FLAT_AM -> 128
         else -> null
     }
 
@@ -1576,6 +1647,14 @@ object ClipFxLibrary {
                 val extra = extraValues(fx.type)
                 out += ext.toFloat()
                 for (k in 0 until 7) out += fx.values.getOrNull(7 + k) ?: extra.getOrNull(k) ?: 0f
+            }
+            // A third group (EXT2, the extrude tier) rides behind the EXT group; fxParseOps
+            // folds it into the same op's r[] the same way.
+            val ext2 = ext2NativeType(fx.type)
+            if (ext2 != null) {
+                val extra = extraValues(fx.type)
+                out += ext2.toFloat()
+                for (k in 0 until 7) out += fx.values.getOrNull(14 + k) ?: extra.getOrNull(7 + k) ?: 0f
             }
         }
         return out.toFloatArray()

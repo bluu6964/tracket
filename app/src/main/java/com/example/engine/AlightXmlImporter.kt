@@ -252,6 +252,8 @@ object AlightXmlImporter {
     const val SMOOTHBEVEL = "com.alightcreative.internal.smoothbevel"
     const val LIGHTGLOW = "com.alightcreative.effects.lightglow"
     const val INNERGLOW = "com.alightcreative.inner-glow"
+    const val EXTRUDE = "com.alightcreative.effects.extrude"
+    const val EXTRUDEFLAT = "com.alightcreative.effects.extrudeflat"
 
     /** Effect ids the text reader stores as [TextAnimator] itself (the effect pass must not warn about them). */
     private val TEXT_STORED = setOf(TEXTTRANSFORM, TEXTPROGRESS, COUNTER)
@@ -2417,6 +2419,8 @@ object AlightXmlImporter {
                 SMOOTHBEVEL -> applySmoothBevelAm(fx, clip, ctx)
                 LIGHTGLOW -> applyLightGlowAm(fx, clip, ctx)
                 INNERGLOW -> applyInnerGlowAm(fx, clip, ctx)
+                EXTRUDE -> applyExtrudeAm(fx, clip, ctx)
+                EXTRUDEFLAT -> applyExtrudeFlatAm(fx, clip, ctx)
                 COUNTER -> {
                     // A text effect (its number counts the layer's characters): on any other
                     // layer Alight shows nothing either, so this is a note, not a gap.
@@ -4566,6 +4570,129 @@ object AlightXmlImporter {
             0f, 0f
         )
         return addFx(clip0, ctx, ClipFxLibrary.INNER_GLOW_AM, values, "inner-glow")
+    }
+
+    /**
+     * `extrude` -> the app's Extrude (Alight), from AM's s3d-extrude def (build 127): the
+     * layer's silhouette extruded into a 3D box and raymarched (up to MAX_ITER steps,
+     * honoured as serialized — the def's own slider caps it at 800) against a
+     * gaussian-blurred copy of itself. The def's vertex shader builds
+     * rotateAndOrient = orient * rz * rx * ry from the effect's `rotate` (degrees) and
+     * the HOST's `orient` (the layer's orientation): current exports serialise no orient
+     * at all, and the one instance that does (text-toji-pack) writes the identity
+     * quaternion — the layers here have no 3D orientation, so orient is the identity and
+     * a non-identity one is reported. `position` is the object centre (AM units / 100).
+     * Keyframed rotate / position components ride six AmFxEval tails from index 21;
+     * everything else takes its first value with the standard note. `strength` has no
+     * panel slot of its own: it is packed with lightIntensity at the def's 0.01
+     * granularity (it feeds the blur buffer pass and the march step size).
+     * Corpus: 8 instances (khanbh-cooking x4 on groups, khanbh-scene-6 x3 on shapes
+     * with keyframed rotate, text-toji-pack x1 fully keyframed + lit).
+     */
+    private fun applyExtrudeAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val short = "extrude"
+        val orientT = props["orient"]
+        if (orientT != null) {
+            val o = orientT.first()
+            val ident = (o.getOrNull(0) ?: 0f) == 0f && (o.getOrNull(1) ?: 0f) == 0f &&
+                (o.getOrNull(2) ?: 0f) == 0f && (o.getOrNull(3) ?: 1f) == 1f
+            if (!ident) {
+                w += "Effect extrude: its layer orientation (orient) is not identity and is not reproduced"
+            } else if (orientT.keys.size >= 2) {
+                w += "Effect extrude: keyframed orient is not supported yet: the first value is used"
+            }
+        }
+        val depth = (props["depth"]?.firstValue(w, short, "depth") ?: 0.1f).coerceIn(0f, 10f)
+        val scale = (props["scale"]?.firstValue(w, short, "scale") ?: 1f).coerceIn(0.05f, 10f)
+        val wr = (props["widthRatio"]?.firstValue(w, short, "widthRatio") ?: 1f).coerceIn(0.01f, 10f)
+        val hr = (props["heightRatio"]?.firstValue(w, short, "heightRatio") ?: 1f).coerceIn(0.01f, 10f)
+        val inBlend = (props["interiorBlend"]?.firstValue(w, short, "interiorBlend") ?: 0f).coerceIn(0f, 1f)
+        val faBlend = (props["fadeBlend"]?.firstValue(w, short, "fadeBlend") ?: 0f).coerceIn(0f, 1f)
+        val shading = (props["shadingType"]?.firstValue(w, short, "shadingType") ?: 1f)
+            .roundToInt().coerceIn(0, 5).toFloat()
+        val rotT = props["rotate"]
+        val rot = rotT?.first() ?: emptyList()
+        val posT = props["position"]
+        val pos = posT?.first() ?: emptyList()
+        val interior = props["interiorColor"]?.packedColor(w, short, "interiorColor") ?: 0x3366AA.toFloat()
+        val fade = props["fadeColor"]?.packedColor(w, short, "fadeColor") ?: 0xAA3366.toFloat()
+        val light = props["lightColor"]?.packedColor(w, short, "lightColor") ?: 0xFFFFFF.toFloat()
+        val (ldx, ldy) = props["lightDir"]?.firstPoint(w, short, "lightDir", 75f, -75f) ?: (75f to -75f)
+        if (abs(ldx) > 2047f || abs(ldy) > 2047f) {
+            w += "Effect extrude: its light direction is out of range and is clamped"
+        }
+        val intensity = (props["lightIntensity"]?.firstValue(w, short, "lightIntensity") ?: 1f).coerceIn(0f, 2f)
+        var strength = props["strength"]?.firstValue(w, short, "strength") ?: 0.1f
+        if (strength < 0f || strength > 25f) {
+            w += "Effect extrude: its strength is out of range and is clamped"
+            strength = strength.coerceIn(0f, 25f)
+        }
+        val shine = (props["shine"]?.firstValue(w, short, "shine") ?: 0.8f).coerceIn(0f, 5f)
+        val ambient = (props["ambient"]?.firstValue(w, short, "ambient") ?: 0.1f).coerceIn(0f, 2f)
+        val spec = (props["spec"]?.firstValue(w, short, "spec") ?: 30f).coerceIn(1f, 150f)
+        val lightDepth = (props["lightDepth"]?.firstValue(w, short, "lightDepth") ?: 100f).coerceIn(-100f, 800f)
+        val iter = (props["MAX_ITER"]?.firstValue(w, short, "MAX_ITER") ?: 200f).roundToInt().coerceIn(10, 800)
+        val values = listOf(
+            depth, scale, wr, hr, inBlend, faBlend, shading,
+            rot.getOrNull(0) ?: 0f, rot.getOrNull(1) ?: 0f, rot.getOrNull(2) ?: 0f,
+            pos.getOrNull(0) ?: 0f, pos.getOrNull(1) ?: 100f, pos.getOrNull(2) ?: 500f,
+            interior,
+            fade, light, ClipFxLibrary.packPoint(ldx, ldy),
+            (intensity * 100f).roundToInt().toFloat() + (strength * 100f).roundToInt() * 256f,
+            (shine * 100f).roundToInt() * 128f + (ambient * 100f).roundToInt().toFloat(),
+            spec,
+            ((lightDepth + 100f) * 2f).roundToInt().toFloat() + iter * 2048f
+        ) + tailsOf(
+            pointTail(rotT, 0) { it }, pointTail(rotT, 1) { it }, pointTail(rotT, 2) { it },
+            pointTail(posT, 0) { it }, pointTail(posT, 1) { it }, pointTail(posT, 2) { it }
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.EXTRUDE_AM, values, short)
+    }
+
+    /**
+     * `extrudeflat` -> the app's Extrude Flat (Alight): no def for it exists in either
+     * recovered dump, so the port is built from its serialised schema (16 instances, all
+     * in khanbh-op02): the same raymarch as `extrude` (rotate / position / depth /
+     * scale / MAX_ITER all present, position's default the same (0, 100, 500)) with
+     * flat shading — it carries NO light parameters — `stretch` in place of the
+     * width/height ratios, and interior/fade colouring at blend 1. Its `inton` bool is
+     * true in all 16 instances; what it switches is unpinned by any def, so a false
+     * value is reported rather than guessed. Keyframed rotate / position ride the same
+     * six tails as Extrude's.
+     */
+    private fun applyExtrudeFlatAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val short = "extrudeflat"
+        val depth = (props["depth"]?.firstValue(w, short, "depth") ?: 0.05f).coerceIn(0f, 10f)
+        val scale = (props["scale"]?.firstValue(w, short, "scale") ?: 1f).coerceIn(0.05f, 10f)
+        val stretch = props["stretch"]?.firstPoint(w, short, "stretch", 1f, 1f) ?: (1f to 1f)
+        val inBlend = (props["interiorBlend"]?.firstValue(w, short, "interiorBlend") ?: 1f).coerceIn(0f, 1f)
+        val faBlend = (props["fadeBlend"]?.firstValue(w, short, "fadeBlend") ?: 1f).coerceIn(0f, 1f)
+        val inton = boolOf(props["inton"], true)
+        if (inton < 0.5f) w += "Effect extrudeflat: an inton of false is not reproduced"
+        val rotT = props["rotate"]
+        val rot = rotT?.first() ?: emptyList()
+        val posT = props["position"]
+        val pos = posT?.first() ?: emptyList()
+        val interior = props["interiorColor"]?.packedColor(w, short, "interiorColor") ?: 0x3366AA.toFloat()
+        val fade = props["fadeColor"]?.packedColor(w, short, "fadeColor") ?: 0xAA3366.toFloat()
+        val iter = (props["MAX_ITER"]?.firstValue(w, short, "MAX_ITER") ?: 300f).roundToInt().coerceIn(10, 800)
+        val values = listOf(
+            depth, scale,
+            stretch.first.coerceIn(0.01f, 10f), stretch.second.coerceIn(0.01f, 10f),
+            inBlend, faBlend, inton,
+            rot.getOrNull(0) ?: 0f, rot.getOrNull(1) ?: 0f, rot.getOrNull(2) ?: 0f,
+            pos.getOrNull(0) ?: 0f, pos.getOrNull(1) ?: 100f, pos.getOrNull(2) ?: 500f,
+            interior,
+            fade, iter.toFloat(), 0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(
+            pointTail(rotT, 0) { it }, pointTail(rotT, 1) { it }, pointTail(rotT, 2) { it },
+            pointTail(posT, 0) { it }, pointTail(posT, 1) { it }, pointTail(posT, 2) { it }
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.EXTRUDE_FLAT_AM, values, short)
     }
 
     /** `exposure` -> the app's Exposure: stops as-is, offset 0..1 -> -100..100, gamma as a percent. */

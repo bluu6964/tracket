@@ -45,11 +45,13 @@ class ClipFxLibraryTest {
         // FX_DISPLACE_MAP_RAD_AM (116), FX_SMOOTH_BEVEL_AM (118),
         // FX_LIGHT_GLOW_AM (120) and FX_INNER_GLOW_AM (121); 91 / 96 / 99 / 102 / 109 /
         // 111 / 113 / 117 / 119 are their EXT groups. Build 120 adds FX_DARK_GLOW_AM (122),
-        // a dedicated pass chain with no EXT group.
+        // a dedicated pass chain with no EXT group. Build 127 adds FX_EXTRUDE_AM (123) and
+        // FX_EXTRUDE_FLAT_AM (126), dedicated raymarch passes; 124 / 127 are their EXT
+        // groups and 125 / 128 their EXT2 groups.
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
-                114 + 115 + 116 + 118 + 120 + 121 + 122).toList(),
+                114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

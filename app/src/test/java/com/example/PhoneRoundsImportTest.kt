@@ -50,12 +50,15 @@ class PhoneRoundsImportTest {
     // ---- Round 9, P1: Exclude Mask is a mask, not the Exclusion blend --------------------------
 
     @Test
-    fun excludeMaskLayerIsHiddenAndUnlinked() {
+    fun excludeMaskLayerIsHiddenAndLinked() {
         // Test-1's Shape embed holds one layer: "Rounded Rectangle 1 Copy", a green roundrect
         // with blending="exclude" — Alight's Exclude Mask. It is never drawn in Alight; until
         // build 135 the importer mapped "exclude" to the Exclusion BLEND mode and painted it as
-        // a giant solid green pill (round 9, P1). It stays unlinked: the renderers' mask links
-        // intersect, an exclude mask subtracts — linking it would cut its target TO the pill.
+        // a giant solid green pill (round 9, P1). Build 135 made it a hidden mask layer but left
+        // it unlinked (the renderers' links intersected; an exclude mask subtracts). Build 138
+        // links it like any mask, with the kind on the clip: this stack is [Plate, Cut (mask),
+        // Exclude] — both masks link to the Plate, and the pairing hands the renderers both cuts
+        // in scene order with their kinds (intersect, then subtract).
         val xml = """<?xml version='1.0' encoding='UTF-8' ?><scene title="t" width="1920" height="1080" bgcolor="#ff000000" totalTime="2000" fps="30">
 <shape id="1" label="Plate" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="960,540,0" /></transform><fillColor value="#ff333333" /><property name="size" type="vec2" value="400,200" /></shape>
 <shape id="2" label="Cut" startTime="0" endTime="2000" fillType="color" blending="mask" s=".circle"><transform><location value="960,540,0" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
@@ -69,19 +72,28 @@ class PhoneRoundsImportTest {
         // The plain mask still links and hides exactly as before.
         assertTrue(cut.isMask)
         assertFalse(cut.isVisible)
+        assertFalse(cut.isExcludeMask)
         assertEquals(plate.id, cut.maskTargetId)
-        // The exclude mask: hidden, a mask, no blend, NO target, and a precise warning.
+        // The exclude mask: hidden, a mask, no blend, LINKED to the same target as an exclusion,
+        // and no warning left behind.
         assertTrue(excl.isMask)
         assertFalse(excl.isVisible)
+        assertTrue(excl.isExcludeMask)
         assertEquals("Normal", excl.blendMode)
-        assertEquals(null, excl.maskTargetId)
-        assertTrue(r.warnings.any { it.contains("Exclude mask layer") && it.contains("Rounded Rectangle 1 Copy") })
+        assertEquals(plate.id, excl.maskTargetId)
+        assertTrue(r.warnings.none { it.contains("Exclude mask layer") })
+        // The renderer pairing: both cuts on the Plate, in scene order, kinds [intersect, subtract].
+        val byTarget = com.example.engine.LayerMaskLinks.masksByTarget(clips.asReversed())
+        assertEquals(listOf("Cut", "Rounded Rectangle 1 Copy"), byTarget[plate.id]?.map { it.name })
+        assertEquals(listOf(false, true), byTarget[plate.id]?.map { it.isExcludeMask })
     }
 
     @Test
     fun excludeMaskGroupIsHidden() {
         // A whole embedScene can be the exclude mask (6 corpus instances): the group clip itself
-        // is the mask layer and must not be drawn either.
+        // is the mask layer and must not be drawn either. It stays UNLINKED (build 138): the
+        // renderers' mask painters draw shape / text layers only, so a group cannot serve as a
+        // mask yet — the warning says exactly that instead of promising a cut that cannot happen.
         val xml = """<?xml version='1.0' encoding='UTF-8' ?><scene title="t" width="1920" height="1080" bgcolor="#ff000000" totalTime="2000" fps="30">
 <shape id="1" label="Plate" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="960,540,0" /></transform><fillColor value="#ff333333" /><property name="size" type="vec2" value="400,200" /></shape>
 <embedScene id="9" label="Group 1" startTime="0" endTime="2000" blending="exclude" fillType="intrinsic"><transform><location value="960,540,0" /></transform>
@@ -93,9 +105,10 @@ class PhoneRoundsImportTest {
         val r = AlightXmlImporter.parse(xml, 1920f)
         val group = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
         assertTrue(group.isMask)
+        assertTrue(group.isExcludeMask)
         assertFalse(group.isVisible)
         assertEquals(null, group.maskTargetId)
-        assertTrue(r.warnings.any { it.contains("Exclude mask layer") })
+        assertTrue(r.warnings.any { it.contains("Exclude mask layer") && it.contains("not a shape or text layer") && it.contains("its exclusion cut is not applied") })
     }
 
     // ---- Round 9, P2/P3: the arrow's pivot + head ----------------------------------------------

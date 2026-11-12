@@ -205,6 +205,41 @@ int main(int argc, char** argv) {
         CHECK(maskEvaluate(mo, n, (float)(bx + bw / 2), (float)(by + bh - 2)) > 0.99f, "graph bar: bottom covered");
         CHECK(maskEvaluate(mo, n, (float)(bx + bw / 2), (float)(by + 2)) < 0.01f, "graph bar: top open");
     }
+    // 11c. layer-mask cuts (build 138): an Alight Mask layer intersects (DST_IN), an Exclude Mask
+    // layer subtracts (DST_OUT); a stack applies its cuts in turn. Coverages below are the mask
+    // layers' rendered alphas at a pixel (1 inside a hard-edged shape, 0 outside).
+    {
+        // Intersect alone: the picture keeps where the mask is, scaled by its coverage.
+        CHECK(std::fabs(layerMaskCut(0.8f, 0.5f, false) - 0.4f) < 1e-6f, "intersect cut scales by coverage");
+        CHECK(layerMaskCut(1.f, 1.f, false) == 1.f && layerMaskCut(1.f, 0.f, false) == 0.f, "intersect binary");
+        // Subtract ALONE (24 of the corpus's 30 exclude layers sit in no Mask stack — e.g.
+        // proyek-baru-1's exclude in its 932..2032 ms window): the target minus the shape.
+        CHECK(layerMaskCut(1.f, 1.f, true) == 0.f, "exclude alone punches the hole");
+        CHECK(layerMaskCut(1.f, 0.f, true) == 1.f, "exclude alone leaves the outside untouched");
+        CHECK(std::fabs(layerMaskCut(0.8f, 0.5f, true) - 0.4f) < 1e-6f, "exclude cut scales by one-minus-coverage");
+        // The wym-prst-268 pattern (one Mask circle + one Exclude circle over one image, x5):
+        // kept inside the mask only, removed where the exclude overlaps, gone outside the mask.
+        const float covME[2] = {1.f, 1.f};
+        const bool excME[2] = {false, true};
+        CHECK(layerMaskCutStack(1.f, covME, excME, 2) == 0.f, "wym: inside mask AND exclude -> removed");
+        const float covM[2] = {1.f, 0.f};
+        CHECK(layerMaskCutStack(1.f, covM, excME, 2) == 1.f, "wym: inside mask only -> kept");
+        const float covE[2] = {0.f, 1.f};
+        CHECK(layerMaskCutStack(1.f, covE, excME, 2) == 0.f, "wym: outside mask -> gone");
+        // For hard-edged coverages the cut order in the stack cannot matter:
+        // (mask - exclude) == (exclude applied first, then mask).
+        const bool excEM[2] = {true, false};
+        const float covBoth[2] = {1.f, 1.f};
+        CHECK(layerMaskCutStack(1.f, covBoth, excEM, 2) == layerMaskCutStack(1.f, covBoth, excME, 2),
+              "binary cuts commute");
+        // Two excludes remove the UNION of their shapes (screen union of the removals).
+        const float covEE[2] = {0.5f, 0.5f};
+        const bool excEE[2] = {true, true};
+        CHECK(std::fabs(layerMaskCutStack(1.f, covEE, excEE, 2) - 0.25f) < 1e-6f,
+              "two excludes: kept = (1-e1)(1-e2)");
+        // An empty stack cuts nothing.
+        CHECK(layerMaskCutStack(0.7f, covEE, excEE, 0) == 0.7f, "empty stack is identity");
+    }
     // 12. optional dump for the GPU comparison (one config per line group, see tests/mask_gpu_check.js)
     if (argc >= 3 && std::strcmp(argv[1], "dump") == 0) {
         FILE* fp = std::fopen(argv[2], "w");

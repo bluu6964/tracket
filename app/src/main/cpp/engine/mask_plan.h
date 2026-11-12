@@ -73,6 +73,19 @@ float maskInitial(const MaskOp* ops, int n);
 // Final value at a point with all masks (reference for tests).
 float maskEvaluate(const MaskOp* ops, int n, float x, float y);
 
+// ---- Layer masks (Alight `blending="mask"` / `blending="exclude"` layers over a target layer) ----
+// A layer mask is not a MaskOp: the mask is a whole LAYER, drawn by the painters, and its rendered
+// ALPHA at a pixel is the coverage. One cut over the target picture's alpha (the CPU reference of
+// the renderer's tex-mask pass and of the CPU overlay path's PorterDuff paints): an intersect cut
+// (a Mask layer) keeps the picture where the mask layer is — alpha * coverage (DST_IN); an
+// exclusion cut (an Exclude Mask layer) removes the picture where the mask layer is —
+// alpha * (1 - coverage) (DST_OUT). A stack applies its cuts in turn (layerMaskCutStack), which
+// for hard-edged coverages is exactly (intersection of the Mask layers) minus (union of the
+// Exclude Mask layers); an exclude with no Mask in its stack subtracts from the uncut target.
+float layerMaskCut(float alpha, float coverage, bool exclude);
+// A whole stack's cuts in stack order over a starting alpha.
+float layerMaskCutStack(float alpha, const float* coverages, const bool* excludes, int n);
+
 // Closed curve through the control points (Catmull-Rom) or the plain polygon, flattened to at most kMaskPtsMax points.
 int maskFlattenPath(const float* ctrl, int n, bool smooth, float* out);
 

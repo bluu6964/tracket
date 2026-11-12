@@ -390,6 +390,16 @@ data class TimelineClip(
     val isMask: Boolean = false,
     /** On a mask layer ([isMask]): the id of the layer it cuts — the layer directly below it in its Alight scene (for a stack of masks, the common layer below the stack; every mask of the stack carries that same id). Null = the mask cuts nothing. */
     val maskTargetId: String? = null,
+    /**
+     * On a mask layer ([isMask]): true when the layer is an Alight **Exclude Mask** (`blending="exclude"`,
+     * Alight's Blending-menu sibling of Mask). An ordinary mask INTERSECTS: the renderers keep the target
+     * only where the mask layer is (alpha multiply, DST_IN). An exclude mask SUBTRACTS: the renderers
+     * remove the target where the exclude layer is (alpha times one-minus-coverage, DST_OUT), applied to
+     * the stack's combined result in stack order — so a stack's combined cut is (the intersection of its
+     * Mask layers) minus (the union of its Exclude Mask layers) for the hard-edged shapes masks are made
+     * of. Only the importer sets this (build 138; before it, exclude masks imported hidden and unlinked).
+     */
+    val isExcludeMask: Boolean = false,
     /** Text animators imported from an Alight Motion XML (stored; drawn by the C++ text engine in a later step), see [TextAnimator]. */
     val textAnimators: List<TextAnimator> = emptyList()
 ) {

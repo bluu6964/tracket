@@ -110,12 +110,14 @@ public:
     bool applyFx(const LayerDraw& src, const LayerFx& fx, LayerDraw* out);
     // Layer mask over a ready picture (an Alight `blending="mask"` layer cutting a GROUP layer's
     // composed picture): multiplies the picture by the mask texture's alpha (DST_IN — the picture
-    // keeps only where the mask is). `maskTex` is a plain 2D texture whose first row is the TOP of
+    // keeps only where the mask is). With `subtract` (an Alight Exclude Mask layer, build 138) it
+    // multiplies by one-minus-alpha instead (DST_OUT — the picture is removed where the mask is).
+    // `maskTex` is a plain 2D texture whose first row is the TOP of
     // the canvas (e.g. an uploaded Bitmap of the mask layer drawn by the Kotlin painters); the
     // picture itself is a renderer texture (rows bottom-to-top), the shader flips the mask's v.
     // Same ownership as applyFx: the result lives in the fx targets, valid until the next
     // applyFx / applyTexMask call. False = nothing was done (the caller draws the source itself).
-    bool applyTexMask(const LayerDraw& src, uint32_t maskTex, LayerDraw* out);
+    bool applyTexMask(const LayerDraw& src, uint32_t maskTex, bool subtract, LayerDraw* out);
     // Group pass: a Group layer is drawn as ONE picture. beginGroup() makes the frame target a transparent canvas-sized
     // picture (premultiplied RGBA); everything drawn until endGroup() lands in it, blend modes of the layers inside blend
     // with the group's own contents only. endGroup() puts the previous target back (the frame, or the group this one is

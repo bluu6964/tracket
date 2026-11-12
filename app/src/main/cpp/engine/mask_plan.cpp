@@ -192,4 +192,14 @@ float maskEvaluate(const MaskOp* ops, int n, float x, float y) {
     return acc;
 }
 
+float layerMaskCut(float alpha, float coverage, bool exclude) {
+    return exclude ? alpha * (1.f - coverage) : alpha * coverage;
+}
+
+float layerMaskCutStack(float alpha, const float* coverages, const bool* excludes, int n) {
+    float acc = alpha;
+    for (int i = 0; i < n; ++i) acc = layerMaskCut(acc, coverages[i], excludes[i]);
+    return acc;
+}
+
 }  // namespace am

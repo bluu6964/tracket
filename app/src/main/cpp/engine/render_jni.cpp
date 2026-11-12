@@ -291,7 +291,7 @@ JNIEXPORT jint JNICALL Java_com_example_engine_RendererNative_nativeApplyFx(
 // of the canvas, e.g. an uploaded Bitmap). Returns the cut picture's texture (draw it with an
 // identity texture matrix, rotation 0, same content size), or 0 when nothing could be done.
 JNIEXPORT jint JNICALL Java_com_example_engine_RendererNative_nativeApplyTexMask(
-    JNIEnv* env, jclass, jlong p, jint tex, jboolean oes, jfloatArray params, jint maskTex) {
+    JNIEnv* env, jclass, jlong p, jint tex, jboolean oes, jfloatArray params, jint maskTex, jboolean subtract) {
     jfloat v[46] = {0};
     const jsize len = env->GetArrayLength(params);
     env->GetFloatArrayRegion(params, 0, len < 46 ? len : 46, v);
@@ -309,7 +309,7 @@ JNIEXPORT jint JNICALL Java_com_example_engine_RendererNative_nativeApplyTexMask
         d.cropH = v[28];
     }
     am::LayerDraw out;
-    if (!R(p)->applyTexMask(d, (uint32_t)maskTex, &out)) return 0;
+    if (!R(p)->applyTexMask(d, (uint32_t)maskTex, subtract == JNI_TRUE, &out)) return 0;
     return (jint)out.texture;
 }
 

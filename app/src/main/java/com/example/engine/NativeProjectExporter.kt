@@ -334,6 +334,10 @@ class NativeProjectExporter(private val context: Context) {
                 val maskDstInPaint = android.graphics.Paint().apply {
                     xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
                 }
+                // Erase by an Exclude Mask layer (DST_OUT): the picture is removed where the mask is.
+                val maskDstOutPaint = android.graphics.Paint().apply {
+                    xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT)
+                }
                 var maskScratchBmp: Bitmap? = null
                 // Texture the mask layer is uploaded into before it cuts a group picture (see drawGroupLayer).
                 var groupMaskTex = 0
@@ -427,7 +431,8 @@ class NativeProjectExporter(private val context: Context) {
                     // Cuts a frame-sized renderer texture (a Group layer's composed picture, or a
                     // picture layer captured into its own picture for a mask) by one mask layer: the
                     // mask is drawn into the scratch picture, uploaded, and the renderer multiplies
-                    // the texture by its alpha (DST_IN). Returns the cut texture.
+                    // the texture by its alpha (DST_IN) — or by one-minus-alpha for an Exclude Mask
+                    // layer (DST_OUT). Returns the cut texture.
                     fun cutPictureByMask(tex: Int, maskAdj: TimelineClip, timeMs: Long, ownerName: String): Int {
                         val scratch = drawMaskIntoScratch(maskAdj, timeMs)
                         if (groupMaskTex == 0) groupMaskTex = renderer.createTexture2d()
@@ -439,7 +444,7 @@ class NativeProjectExporter(private val context: Context) {
                         } else {
                             GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
                         }
-                        val cutTex = renderer.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
+                        val cutTex = renderer.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex, maskAdj.isExcludeMask)
                         if (cutTex == 0) error("Native layer mask '${maskAdj.name}' failed on '$ownerName'.")
                         return cutTex
                     }
@@ -660,7 +665,8 @@ class NativeProjectExporter(private val context: Context) {
                         // before the group's own effects — the same order as a masked shape / text
                         // layer's picture. Each mask is drawn with the same painter as every overlay
                         // (into the shared scratch picture), uploaded, and the renderer multiplies the
-                        // group picture by its alpha (DST_IN); a stack of masks cuts in turn. Outside a
+                        // group picture by its alpha (DST_IN; an Exclude Mask layer by one-minus-alpha,
+                        // DST_OUT); a stack of masks cuts in turn. Outside a
                         // mask layer's own span there is no cut from it. (In the beginGroup fallback
                         // above there is no group picture, so a mask on such a group cannot cut.)
                         for (maskAdj in scopeMasksFor(clip, timeMs)) {
@@ -871,11 +877,12 @@ class NativeProjectExporter(private val context: Context) {
                                     }
                                     // The layer masks cut the finished picture: each mask layer is drawn
                                     // into the scratch picture and multiplied over this one (alpha only,
-                                    // DST_IN), in turn — the picture keeps only where every mask is.
+                                    // DST_IN), in turn — the picture keeps only where every mask is; an
+                                    // Exclude Mask layer erases instead (DST_OUT, see LayerMaskLinks).
                                     for (maskAdj in maskAdjs) {
                                         val scratch = drawMaskIntoScratch(maskAdj, timeMs)
                                         painter.nativeTarget = g.bmp
-                                        cv.drawBitmap(scratch, 0f, 0f, maskDstInPaint)
+                                        cv.drawBitmap(scratch, 0f, 0f, if (maskAdj.isExcludeMask) maskDstOutPaint else maskDstInPaint)
                                     }
                                     // The video fill's window (build 104): the shape's silhouette,
                                     // rasterised with the same painter (white fill, no stroke, no
@@ -893,7 +900,7 @@ class NativeProjectExporter(private val context: Context) {
                                         painter.draw(android.graphics.Canvas(sil), fillCopies!![0].silhouetteCopy(), applyOpacity = false, timeMs = timeMs)
                                         for (maskAdj in maskAdjs) {
                                             val scratch = drawMaskIntoScratch(maskAdj, timeMs)
-                                            android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, maskDstInPaint)
+                                            android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, if (maskAdj.isExcludeMask) maskDstOutPaint else maskDstInPaint)
                                         }
                                         painter.nativeTarget = g.bmp
                                         if (g.silTex != 0) {

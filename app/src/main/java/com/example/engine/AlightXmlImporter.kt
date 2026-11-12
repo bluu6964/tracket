@@ -466,11 +466,15 @@ object AlightXmlImporter {
      * with no imported layer below the stack, and a mask over a layer of any other type, stay unlinked
      * and are reported instead of being guessed at.
      *
-     * Exclude Mask layers (`blending="exclude"`, [elements] marks them) are mask layers too, so they
-     * stay hidden like any mask — but they are NOT linked: Alight SUBTRACTS an exclude mask's shape
-     * from the masking group's combined mask, while every link the renderers honour INTERSECTS.
-     * Linking one would cut its target TO the excluded shape — the exact opposite — so the layer is
-     * left unlinked with a precise warning until exclusion-aware mask combining exists (build 135).
+     * Exclude Mask layers (`blending="exclude"`) are mask layers too, and since build 138 they link
+     * exactly like Mask layers — to the same target, through the same eligibility rules — with
+     * [TimelineClip.isExcludeMask] carrying the kind: Alight SUBTRACTS an exclude mask's shape from
+     * the masking stack's combined mask (the renderers apply it as a DST_OUT cut in stack order, see
+     * [LayerMaskLinks]). The one eligibility gap that bites in practice: a group can BE an exclude
+     * mask in Alight (6 corpus instances), but the renderers' mask painters draw shape / text layers
+     * only, so a group exclude mask stays unlinked with a precise warning rather than being linked
+     * and silently not drawn. (In build 135 every exclude mask stayed unlinked this way; the
+     * exclusion-aware combining is what build 138 adds.)
      */
     private fun resolveMaskLinks(
         directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx, elements: List<Element>
@@ -479,10 +483,8 @@ object AlightXmlImporter {
         for (i in directSlots.indices) {
             val m = directSlots[i] ?: continue
             if (!m.isMask) continue
-            if (isExcludeMask(elements[i])) {
-                w += "Exclude mask layer \"" + m.name + "\" is imported hidden; its exclusion cut is not applied yet"
-                continue
-            }
+            val exclude = m.isExcludeMask
+            val kind = if (exclude) "Exclude mask layer" else "Mask layer"
             // The layer this mask cuts: the first non-mask layer below it (a stack of masks over one
             // layer all cut that same layer; a skipped element in between is a gap, not a target).
             var j = i - 1
@@ -490,17 +492,21 @@ object AlightXmlImporter {
             val below = if (j >= 0) directSlots[j] else null
             val linked = when {
                 below == null -> {
-                    w += "Mask layer \"" + m.name + "\" has no imported layer below it: imported hidden, it cuts nothing"
+                    w += kind + " \"" + m.name + "\" has no imported layer below it: imported hidden, it cuts nothing"
                     false
                 }
                 below.type != LayerType.SHAPE && below.type != LayerType.TEXT && below.type != LayerType.GROUP &&
                     below.type != LayerType.VIDEO -> {
-                    w += "Mask layer \"" + m.name + "\" masks a " + below.type.displayName.lowercase() +
+                    w += kind + " \"" + m.name + "\" masks a " + below.type.displayName.lowercase() +
                         " layer: imported hidden (a mask is applied to shape, text, group and video layers so far)"
                     false
                 }
                 m.type != LayerType.SHAPE && m.type != LayerType.TEXT -> {
-                    w += "Mask layer \"" + m.name + "\" is not a shape or text layer: imported hidden, it cuts nothing"
+                    w += if (exclude) {
+                        kind + " \"" + m.name + "\" is not a shape or text layer: imported hidden, its exclusion cut is not applied"
+                    } else {
+                        kind + " \"" + m.name + "\" is not a shape or text layer: imported hidden, it cuts nothing"
+                    }
                     false
                 }
                 else -> true
@@ -658,6 +664,7 @@ object AlightXmlImporter {
             type = LayerType.TEXT,
             isVisible = !isMaskLayer(el),
             isMask = isMaskLayer(el),
+            isExcludeMask = isExcludeMask(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = 0xFF3992CE,
@@ -849,6 +856,7 @@ object AlightXmlImporter {
             type = LayerType.SHAPE,
             isVisible = !isMaskLayer(el),
             isMask = isMaskLayer(el),
+            isExcludeMask = isExcludeMask(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = SHAPE_COLOR,
@@ -1575,6 +1583,7 @@ object AlightXmlImporter {
             type = LayerType.SHAPE,
             isVisible = !isMaskLayer(el),
             isMask = isMaskLayer(el),
+            isExcludeMask = isExcludeMask(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = SHAPE_COLOR,
@@ -1960,6 +1969,7 @@ object AlightXmlImporter {
                 type = LayerType.SHAPE,
                 isVisible = !isMaskLayer(el),
                 isMask = isMaskLayer(el),
+                isExcludeMask = isExcludeMask(el),
                 startMs = startMs.coerceAtLeast(0L),
                 durationMs = durMs,
                 color = SHAPE_COLOR,
@@ -1985,6 +1995,7 @@ object AlightXmlImporter {
             type = LayerType.SHAPE,
             isVisible = !isMaskLayer(el),
             isMask = isMaskLayer(el),
+            isExcludeMask = isExcludeMask(el),
             startMs = startMs.coerceAtLeast(0L),
             durationMs = durMs,
             color = SHAPE_COLOR,
@@ -2096,9 +2107,9 @@ object AlightXmlImporter {
      * menu holds the two mask kinds side by side — "Mask" (`blending="mask"`) and "Exclude Mask"
      * (`blending="exclude"`) — so both are mask layers, never painted shapes. Until build 135
      * "exclude" was mapped to the Exclusion BLEND mode instead and the layer was drawn: Test-1's
-     * Shape embed showed a giant solid green pill Alight never paints (round 9, P1). The exclusion
-     * COMBINE itself (the mask stack minus this layer's shape) is not applied yet — see
-     * [resolveMaskLinks], which leaves exclude masks unlinked and says so.
+     * Shape embed showed a giant solid green pill Alight never paints (round 9, P1). The kind rides
+     * on the clip ([TimelineClip.isExcludeMask]): the renderers intersect a Mask layer's cut and
+     * subtract an Exclude Mask layer's (build 138) — see [resolveMaskLinks].
      */
     private fun isMaskLayer(el: Element): Boolean =
         el.getAttribute("blending") == "mask" || el.getAttribute("blending") == "exclude"
@@ -2235,11 +2246,14 @@ object AlightXmlImporter {
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             blendMode = amBlendMode(el, w),
             // An Exclude Mask group (`blending="exclude"`) is a mask layer like any other: never
-            // drawn (build 135; resolveMaskLinks leaves it unlinked with a warning, since the
-            // exclusion combine is not applied yet). A plain Mask group keeps its pre-135
-            // behaviour — group-as-mask linking is a separate, unverified question.
+            // drawn (build 135). resolveMaskLinks treats it like any exclude mask, but a group
+            // cannot serve as a mask in the renderers (their mask painters draw shape / text
+            // layers only), so it stays unlinked with a precise warning (build 138). A plain
+            // Mask group keeps its pre-135 behaviour — group-as-mask linking is a separate,
+            // unverified question.
             isVisible = !isExcludeMask(el),
             isMask = isExcludeMask(el),
+            isExcludeMask = isExcludeMask(el),
             keyframes = keyframes
         )
         val groupFx = applyLayerEffects(el, group, ctx, durMs, FxTarget.GROUP)

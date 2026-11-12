@@ -116,20 +116,25 @@ void main() {
 )";
 
 // Layer mask over a ready picture (a group layer's composed picture, cut by the Alight mask layer
-// sitting on it): the picture keeps only where the mask layer is (DST_IN). The mask is the mask
-// layer drawn by the Kotlin painters into a Bitmap and uploaded: a bitmap texture, row 0 = top,
-// read with v flipped, and its ALPHA is the coverage (the same rule the CPU overlay path applies
-// with a PorterDuff DST_IN paint). The picture is premultiplied, so its colour scales along.
+// sitting on it): the picture keeps only where the mask layer is (DST_IN). An Exclude Mask layer
+// (uSubtract = 1, build 138) subtracts instead: the picture keeps only where the mask layer is NOT
+// (DST_OUT — the same one-minus-coverage rule am::layerMaskCut pins on the CPU side). The mask is
+// the mask layer drawn by the Kotlin painters into a Bitmap and uploaded: a bitmap texture,
+// row 0 = top, read with v flipped, and its ALPHA is the coverage (the same rule the CPU overlay
+// path applies with a PorterDuff DST_IN / DST_OUT paint). The picture is premultiplied, so its
+// colour scales along.
 const char* kFxTexMask = R"(#version 300 es
 precision highp float;
 uniform sampler2D uTex;
 uniform sampler2D uMask;
+uniform float uSubtract;
 in vec2 vUv;
 out vec4 oColor;
 void main() {
     vec4 c = texture(uTex, vUv);
     float a = texture(uMask, vec2(vUv.x, 1.0 - vUv.y)).a;
-    oColor = vec4(c.rgb * a, c.a * a);
+    float keep = uSubtract > 0.5 ? 1.0 - a : a;
+    oColor = vec4(c.rgb * keep, c.a * keep);
 }
 )";
 
@@ -457,7 +462,7 @@ bool Renderer::applyFx(const LayerDraw& d, const LayerFx& fx, LayerDraw* out) {
     return true;
 }
 
-bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, LayerDraw* out) {
+bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, bool subtract, LayerDraw* out) {
     if (!out) return false;
     *out = d;
     if (!ok_ || d.texture == 0 || maskTex == 0 || d.contentW <= 0 || d.contentH <= 0) return false;
@@ -511,7 +516,8 @@ bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, LayerDraw* out
         h_ = sh;
     }
 
-    // 1) the mask multiply into the other target: the picture keeps only where the mask layer is.
+    // 1) the mask multiply into the other target: the picture keeps only where the mask layer is
+    // (an exclusion cut keeps it where the mask layer is NOT — see kFxTexMask).
     glDisable(GL_BLEND);
     glBindVertexArray(vao_);
     glBindFramebuffer(GL_FRAMEBUFFER, fxFbo_[dst]);
@@ -523,6 +529,7 @@ bool Renderer::applyTexMask(const LayerDraw& d, uint32_t maskTex, LayerDraw* out
     glBindTexture(GL_TEXTURE_2D, maskTex);
     glUniform1i(glGetUniformLocation(fxLayerMask_, "uTex"), 0);
     glUniform1i(glGetUniformLocation(fxLayerMask_, "uMask"), 1);
+    glUniform1f(glGetUniformLocation(fxLayerMask_, "uSubtract"), subtract ? 1.f : 0.f);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     // back to what the caller had

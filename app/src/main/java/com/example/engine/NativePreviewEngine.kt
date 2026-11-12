@@ -984,7 +984,8 @@ class NativePreviewEngine(context: Context) {
                 }
                 // The layer masks cut the finished picture (before any effects, which run on the cut
                 // picture like on any other): each mask layer's own rendering, alpha only, in turn —
-                // the picture keeps only where every mask is.
+                // a Mask layer keeps the picture only where it is, an Exclude Mask layer removes it
+                // where it is (see LayerMaskLinks).
                 for (maskAdj in maskAdjs) {
                     if (!applyLayerMask(bmp, maskAdj, w, h, k, dens, t)) {
                         Log.w(TAG, "layer mask '${maskAdj.name}' was not drawn, its layer is shown uncut by it")
@@ -1009,7 +1010,7 @@ class NativePreviewEngine(context: Context) {
                     fp.draw(android.graphics.Canvas(sil), fillCopies!![0].silhouetteCopy(), applyOpacity = false, timeMs = t)
                     for (maskAdj in maskAdjs) {
                         drawMaskScratch(maskAdj, w, h, k, dens, t)?.let { scratch ->
-                            android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, MASK_DST_IN_PAINT)
+                            android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, if (maskAdj.isExcludeMask) MASK_DST_OUT_PAINT else MASK_DST_IN_PAINT)
                         }
                     }
                     if (g.silTex != 0) {
@@ -1239,14 +1240,16 @@ class NativePreviewEngine(context: Context) {
     /**
      * Cuts [bmp] (a masked layer's own picture) by the mask layer's alpha: the mask layer is drawn into a
      * scratch picture with the same painters and multiplied over the picture (DST_IN: the picture keeps
-     * only where the mask is). [mask] is the mask layer evaluated at the frame's time, so the cut follows
-     * its animation. False = the mask could not be drawn (the picture is left uncut).
+     * only where the mask is). An Exclude Mask layer ([TimelineClip.isExcludeMask]) subtracts instead
+     * (DST_OUT: the picture is removed where the mask is). [mask] is the mask layer evaluated at the
+     * frame's time, so the cut follows its animation. False = the mask could not be drawn (the picture
+     * is left uncut).
      */
     private fun applyLayerMask(
         bmp: Bitmap, mask: TimelineClip, w: Int, h: Int, k: Float, dens: Float, t: Long
     ): Boolean {
         val scratch = drawMaskScratch(mask, w, h, k, dens, t) ?: return false
-        android.graphics.Canvas(bmp).drawBitmap(scratch, 0f, 0f, MASK_DST_IN_PAINT)
+        android.graphics.Canvas(bmp).drawBitmap(scratch, 0f, 0f, if (mask.isExcludeMask) MASK_DST_OUT_PAINT else MASK_DST_IN_PAINT)
         return true
     }
 
@@ -1258,7 +1261,8 @@ class NativePreviewEngine(context: Context) {
     /**
      * Cuts [tex] (a Group layer's composed picture, a renderer texture) by the mask layer's alpha:
      * the mask is drawn exactly as in [applyLayerMask], uploaded, and the renderer multiplies the
-     * picture by it (DST_IN, see [NativeRenderer.applyTexMask]). Returns the cut picture's texture,
+     * picture by it (DST_IN, see [NativeRenderer.applyTexMask]) — or by one-minus-alpha for an
+     * Exclude Mask layer (DST_OUT). Returns the cut picture's texture,
      * or 0 when the cut could not be made (the caller draws the picture uncut).
      */
     private fun cutGroupPicture(
@@ -1277,7 +1281,7 @@ class NativePreviewEngine(context: Context) {
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
             GLUtils.texSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, scratch)
         }
-        return r.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex)
+        return r.applyTexMask(tex, false, IDENTITY_TEX_MATRIX, w, h, 0, groupMaskTex, mask.isExcludeMask)
     }
 
     private fun logPoolStats() {
@@ -1370,6 +1374,11 @@ class NativePreviewEngine(context: Context) {
         /** Alpha multiply of a layer mask (DST_IN): the picture keeps only where the mask layer is. */
         val MASK_DST_IN_PAINT = android.graphics.Paint().apply {
             xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)
+        }
+
+        /** Erase by an Exclude Mask layer (DST_OUT): the picture is removed where the mask layer is. */
+        val MASK_DST_OUT_PAINT = android.graphics.Paint().apply {
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT)
         }
     }
 }

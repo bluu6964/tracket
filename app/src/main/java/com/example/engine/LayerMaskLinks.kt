@@ -11,8 +11,18 @@ import com.example.model.TimelineClip
  * group pass), in the scope the group itself sits in; a masked VIDEO layer is cut the same way again, as
  * its placed picture (the renderer's group pass around the media draw). A stack of mask layers over one
  * layer links EVERY mask of the stack to that layer: the layer is cut by each mask in turn, so it keeps
- * only where every mask is (the intersection of their shapes). Kept free of Android types so the importer
- * tests can pin the pairing rules.
+ * only where every mask is (the intersection of their shapes).
+ *
+ * A stack can also hold **Exclude Mask** layers (`blending="exclude"`, [TimelineClip.isExcludeMask],
+ * build 138): an exclude mask's cut SUBTRACTS instead of intersecting — the renderers erase the target
+ * where the exclude layer is (alpha times one-minus-coverage, DST_OUT), in the same in-turn sequence.
+ * The combined result is the masking stack's (intersection of its Mask layers) minus (the union of its
+ * Exclude Mask layers) — exact for the hard-edged shapes mask layers are made of; where a mask layer's
+ * own alpha is fractional (a translucent fill, antialiased edges) the sequence multiplies through,
+ * which is the destination-in / destination-out composite order Alight's mask kinds map to (the
+ * openmotion renderer evidence: `mask` → destination-in, `exclude` → destination-out). An exclude mask
+ * with NO Mask layer in its stack subtracts from the uncut target: the target minus its shape.
+ * Kept free of Android types so the importer tests can pin the pairing rules.
  */
 object LayerMaskLinks {
 

@@ -447,7 +447,7 @@ object AlightXmlImporter {
                 }
             }
         }
-        resolveMaskLinks(directSlots, flat, ctx)
+        resolveMaskLinks(directSlots, flat, ctx, elements)
         resolveMoveAlongPaths(directSlots, flat, ctx)
         val anchors = resolveParentLinks(elements, directSlots, flat, ctx)
         return SceneBlock(flat, directSlots.filterNotNull() + anchors)
@@ -464,12 +464,24 @@ object AlightXmlImporter {
      * stack, and the renderers cut it by each mask in turn (the intersection of their shapes). A mask
      * with no imported layer below the stack, and a mask over a layer of any other type, stay unlinked
      * and are reported instead of being guessed at.
+     *
+     * Exclude Mask layers (`blending="exclude"`, [elements] marks them) are mask layers too, so they
+     * stay hidden like any mask — but they are NOT linked: Alight SUBTRACTS an exclude mask's shape
+     * from the masking group's combined mask, while every link the renderers honour INTERSECTS.
+     * Linking one would cut its target TO the excluded shape — the exact opposite — so the layer is
+     * left unlinked with a precise warning until exclusion-aware mask combining exists (build 135).
      */
-    private fun resolveMaskLinks(directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx) {
+    private fun resolveMaskLinks(
+        directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx, elements: List<Element>
+    ) {
         val w = ctx.warnings
         for (i in directSlots.indices) {
             val m = directSlots[i] ?: continue
             if (!m.isMask) continue
+            if (isExcludeMask(elements[i])) {
+                w += "Exclude mask layer \"" + m.name + "\" is imported hidden; its exclusion cut is not applied yet"
+                continue
+            }
             // The layer this mask cuts: the first non-mask layer below it (a stack of masks over one
             // layer all cut that same layer; a skipped element in between is a gap, not a target).
             var j = i - 1
@@ -1614,9 +1626,19 @@ object AlightXmlImporter {
     }
 
     /**
-     * A `.line` (points `p1` / `p2`, painted by its path-stroke) or an `.arrow` (points `start` / `end`, `lineWidth`
-     * thick): the app has no line shape, so the shaft becomes a thin RECT between the two rendered points.
-     * Point p is rendered at location + R(rotation) * (scale * (p - pivot)), like every Alight layer.
+     * A `.line` (points `p1` / `p2`, painted by its path-stroke) or an `.arrow` (points `start` / `end`,
+     * `lineWidth` thick, with a triangular head `headWidth` wide and `headLength` long at the end point).
+     *
+     * Point p is rendered at location + pivot + R(rotation) * (scale * (p - pivot)) — the same
+     * composition as a group pose, the transform acting about the anchor at location + pivot (see
+     * [readGroup]). Until build 135 the pivot was not added back, which threw every pivoted line by
+     * exactly the pivot: Test-1's arrow (pivot (-161.5, 221.5)) landed ~270 px from its disc, drawn
+     * as a stray dash above the pill's left end while the disc itself stayed empty (round 9, P2/P3).
+     *
+     * The shaft becomes a thin RECT between the two rendered points (the app has no line shape).
+     * An arrow with head dimensions is baked as ONE filled PATH — shaft plus head outline,
+     * transformed into scene space — since build 135; before that the head was dropped with a
+     * warning, and an arrow without head dimensions still imports as the plain shaft.
      */
     private fun readLineShape(el: Element, ctx: Ctx, kind: String): TimelineClip? {
         val w = ctx.warnings
@@ -1643,13 +1665,17 @@ object AlightXmlImporter {
         if (tr.rot != null && tr.rot.keys.size >= 2) w += "Keyframed rotation of a line is not supported yet: the first value is used"
 
         fun renderPoint(p: List<Float>, loc: List<Float>): Pair<Float, Float> {
-            val px = (p[0] - (pivV.getOrNull(0) ?: 0f)) * (sclV.getOrNull(0) ?: 1f)
-            val py = (p[1] - (pivV.getOrNull(1) ?: 0f)) * (sclV.getOrNull(1) ?: sclV.getOrNull(0) ?: 1f)
+            val pivX = pivV.getOrNull(0) ?: 0f
+            val pivY = pivV.getOrNull(1) ?: 0f
+            val px = (p[0] - pivX) * (sclV.getOrNull(0) ?: 1f)
+            val py = (p[1] - pivY) * (sclV.getOrNull(1) ?: sclV.getOrNull(0) ?: 1f)
             val rad = Math.toRadians(rotV.toDouble())
             val c = cos(rad).toFloat()
             val s = sin(rad).toFloat()
-            return ((loc.getOrNull(0) ?: ctx.sceneW / 2f) + px * c - py * s) to
-                ((loc.getOrNull(1) ?: ctx.sceneH / 2f) + px * s + py * c)
+            // The pivot is added back unscaled/unrotated: the transform acts about the anchor at
+            // location + pivot, exactly as a group's stored pose composes (build 135).
+            return ((loc.getOrNull(0) ?: ctx.sceneW / 2f) + pivX + px * c - py * s) to
+                ((loc.getOrNull(1) ?: ctx.sceneH / 2f) + pivY + px * s + py * c)
         }
         fun centre(loc: List<Float>): Pair<Float, Float> {
             val a = renderPoint(p1, loc)
@@ -1675,23 +1701,109 @@ object AlightXmlImporter {
                 ?: child(el, "fillColor")?.let { parseColor(it.getAttribute("value")) } ?: 0xFFFFFFFFL
         }
         val blendMode = amBlendMode(el, w)
-        w += if (isArrow) "Arrow" + labelOf(el) + " is imported as a plain line: its head is not drawn yet"
-        else "Line" + labelOf(el) + " is imported as a thin rectangle"
+
+        // The arrow's head (build 135): the outline of shaft + head in the layer's local frame —
+        // a rectangle of half width lineWidth/2 from the tail to the head's base, flaring to
+        // headWidth/2 at the base and closing on the tip. The head length is clamped to the
+        // shaft's own length. An arrow without usable head dimensions keeps the plain shaft.
+        fun propFloat(name: String): Float? =
+            elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == name }
+                ?.let { t -> readTrack(t).also { if (it.keys.size >= 2) w += "Keyframed \"" + name + "\" of a line is not supported yet: the first value is used" }.first().firstOrNull() }
+        val localLen = hypot(p2[0] - p1[0], p2[1] - p1[1])
+        val headW = if (isArrow) propFloat("headWidth") ?: 0f else 0f
+        val headL = if (isArrow) propFloat("headLength") ?: 0f else 0f
+        val polyLocal: List<Pair<Float, Float>>? =
+            if (isArrow && headW > 0f && headL > 0f && localLen > 0f) {
+                val ux = (p2[0] - p1[0]) / localLen
+                val uy = (p2[1] - p1[1]) / localLen
+                val nx = -uy
+                val ny = ux
+                val sh = thickLocal / 2f
+                val hh = headW / 2f
+                val hl = minOf(headL, localLen)
+                val bx = p2[0] - ux * hl
+                val by = p2[1] - uy * hl
+                listOf(
+                    (p1[0] + nx * sh) to (p1[1] + ny * sh),
+                    (bx + nx * sh) to (by + ny * sh),
+                    (bx + nx * hh) to (by + ny * hh),
+                    p2[0] to p2[1],
+                    (bx - nx * hh) to (by - ny * hh),
+                    (bx - nx * sh) to (by - ny * sh),
+                    (p1[0] - nx * sh) to (p1[1] - ny * sh)
+                )
+            } else null
+        fun polyCentre(loc: List<Float>): Pair<Float, Float> {
+            var minX = Float.POSITIVE_INFINITY
+            var minY = Float.POSITIVE_INFINITY
+            var maxX = Float.NEGATIVE_INFINITY
+            var maxY = Float.NEGATIVE_INFINITY
+            for (pt in polyLocal!!) {
+                val r = renderPoint(listOf(pt.first, pt.second), loc)
+                minX = minOf(minX, r.first); maxX = maxOf(maxX, r.first)
+                minY = minOf(minY, r.second); maxY = maxOf(maxY, r.second)
+            }
+            return (minX + maxX) / 2f to (minY + maxY) / 2f
+        }
+        // The headed arrow's outline at the first location, normalised like every PATH clip
+        // (segments centred on the outline's bounding box, divided by its larger half extent).
+        val arrowNorm: PathNorm? = if (polyLocal != null) {
+            val scenePts = polyLocal.map { renderPoint(listOf(it.first, it.second), locV) }
+            val raw = ArrayList<PathSeg>(scenePts.size + 1)
+            raw += PathSeg(PATH_OP_MOVE, listOf(scenePts.first().first, scenePts.first().second))
+            for (pt in scenePts.drop(1)) raw += PathSeg(PATH_OP_LINE, listOf(pt.first, pt.second))
+            raw += PathSeg(PATH_OP_CLOSE)
+            normalisePathSegs(raw)
+        } else null
+        if (isArrow && arrowNorm == null) {
+            w += "Arrow" + labelOf(el) + " is imported as a plain line: its head is not drawn yet"
+        } else if (!isArrow) {
+            w += "Line" + labelOf(el) + " is imported as a thin rectangle"
+        }
 
         val box = ctx.shapeBoxPx
         val keyframes = LinkedHashMap<AnimProp, List<Keyframe>>()
         val posKeys = trackKeys(tr.loc, durMs) { v ->
-            val c = centre(v)
+            val c = if (polyLocal != null) polyCentre(v) else centre(v)
             ((c.first - ctx.sceneW / 2f) * ctx.k) to ((c.second - ctx.sceneH / 2f) * ctx.k)
         }
         if (posKeys.isNotEmpty()) keyframes[AnimProp.POSITION] = posKeys
         val opaKeys = trackKeys(tr.opa, durMs) { ((it.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f) to 0f }
         if (opaKeys.isNotEmpty()) keyframes[AnimProp.OPACITY] = opaKeys
 
-        val c0 = centre(locV)
+        val c0 = if (polyLocal != null) polyCentre(locV) else centre(locV)
         val posX = (c0.first - ctx.sceneW / 2f) * ctx.k
         val posY = (c0.second - ctx.sceneH / 2f) * ctx.k
-        val built = TimelineClip(
+        val built = if (arrowNorm != null) {
+            // The headed arrow: one filled PATH (shaft + head), its outline already in scene space,
+            // so no rotation is left on the clip and both shape scales are the outline's uniform
+            // normalisation extent, exactly as a freehand PATH clip stores them.
+            TimelineClip(
+                id = UUID.randomUUID().toString(),
+                name = el.getAttribute("label").ifBlank { "Arrow" },
+                type = LayerType.SHAPE,
+                isVisible = !isMaskLayer(el),
+                isMask = isMaskLayer(el),
+                startMs = startMs.coerceAtLeast(0L),
+                durationMs = durMs,
+                color = SHAPE_COLOR,
+                textColor = lineColor,
+                fillMode = FILL_SOLID,
+                shapePattern = "PATH",
+                pathSegments = arrowNorm.segments,
+                shapeScaleX = 2f * arrowNorm.half / box,
+                shapeScaleY = 2f * arrowNorm.half / box,
+                transformX = posX,
+                transformY = posY,
+                shapeOffsetX = posX,
+                shapeOffsetY = posY,
+                scalePercent = 2f * arrowNorm.half / box * 100f,
+                rotationDeg = 0f,
+                opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
+                blendMode = blendMode,
+                keyframes = keyframes
+            )
+        } else TimelineClip(
             id = UUID.randomUUID().toString(),
             name = el.getAttribute("label").ifBlank { if (isArrow) "Arrow" else "Line" },
             type = LayerType.SHAPE,
@@ -1761,14 +1873,17 @@ object AlightXmlImporter {
      * blend shaders agree with the W3C formulas for those) plus AM's own modes, Subtract, Soft
      * Overlay, Linear Burn, Darker Color, Lighter Color and Diff, whose shaders were recovered
      * from the public decompiled AM assets (blend-defs/) and are now implemented in the native
-     * blend pass. `blending="mask"` is not a blend: whether the mask can be applied is only known
-     * once the scene's layers are read (it cuts the layer below it) — resolveMaskLinks reports the
-     * outcome, so it maps to Normal here without a warning. A value with no counterpart (divide,
-     * vivid-light, ...) keeps the old warning verbatim.
+     * blend pass. Neither of Alight's mask markers is a blend: `blending="mask"` (Mask) and
+     * `blending="exclude"` (Exclude Mask) name mask layers, which are never drawn — whether the
+     * mask can be applied is only known once the scene's layers are read (it cuts the layer below
+     * it) and resolveMaskLinks reports the outcome, so both map to Normal here without a warning.
+     * (The "exclusion" spelling is not Alight's mask marker — no corpus file uses it — and stays
+     * mapped to the Exclusion blend mode.) A value with no counterpart (divide, vivid-light, ...)
+     * keeps the old warning verbatim.
      */
     private fun amBlendMode(el: Element, w: MutableList<String>): String {
         val b = el.getAttribute("blending")
-        if (b.isEmpty() || b == "mask") return "Normal"
+        if (b.isEmpty() || b == "mask" || b == "exclude") return "Normal"
         return when (b) {
             "normal" -> "Normal"
             "darken" -> "Darken"
@@ -1787,7 +1902,7 @@ object AlightXmlImporter {
             "soft-overlay" -> "Soft Overlay"
             "difference" -> "Difference"
             "diff" -> "Diff"
-            "exclude", "exclusion" -> "Exclusion"
+            "exclusion" -> "Exclusion"
             "subtract" -> "Subtract"
             "hue" -> "Hue"
             "saturation" -> "Saturation"
@@ -1800,8 +1915,20 @@ object AlightXmlImporter {
         }
     }
 
-    /** True when the layer is an Alight mask (`blending="mask"`): it must not be drawn itself. */
-    private fun isMaskLayer(el: Element): Boolean = el.getAttribute("blending") == "mask"
+    /**
+     * True when the layer is an Alight mask layer: it must not be drawn itself. Alight's Blending
+     * menu holds the two mask kinds side by side — "Mask" (`blending="mask"`) and "Exclude Mask"
+     * (`blending="exclude"`) — so both are mask layers, never painted shapes. Until build 135
+     * "exclude" was mapped to the Exclusion BLEND mode instead and the layer was drawn: Test-1's
+     * Shape embed showed a giant solid green pill Alight never paints (round 9, P1). The exclusion
+     * COMBINE itself (the mask stack minus this layer's shape) is not applied yet — see
+     * [resolveMaskLinks], which leaves exclude masks unlinked and says so.
+     */
+    private fun isMaskLayer(el: Element): Boolean =
+        el.getAttribute("blending") == "mask" || el.getAttribute("blending") == "exclude"
+
+    /** True for an "Exclude Mask" layer (`blending="exclude"`): a mask layer whose combine is exclusion. */
+    private fun isExcludeMask(el: Element): Boolean = el.getAttribute("blending") == "exclude"
 
     // ---- groups (embedScene) ------------------------------------------------------------------------------------
 
@@ -1931,6 +2058,12 @@ object AlightXmlImporter {
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             blendMode = amBlendMode(el, w),
+            // An Exclude Mask group (`blending="exclude"`) is a mask layer like any other: never
+            // drawn (build 135; resolveMaskLinks leaves it unlinked with a warning, since the
+            // exclusion combine is not applied yet). A plain Mask group keeps its pre-135
+            // behaviour — group-as-mask linking is a separate, unverified question.
+            isVisible = !isExcludeMask(el),
+            isMask = isExcludeMask(el),
             keyframes = keyframes
         )
         val groupFx = applyLayerEffects(el, group, ctx, durMs, FxTarget.GROUP)
@@ -6938,16 +7071,20 @@ object AlightXmlImporter {
     /**
      * The outline points of a shape in its own (unrotated, centre-relative) frame, half extents
      * [a] / [b] and world corner radii [rx] / [ry]. The traversal starts and runs as the stroke
-     * trim's outline does (see the C++ shape engine): a circle at the +x axis, a rectangle at the
-     * top-left corner along the top edge, always clockwise in screen space (y down) — so a follower
-     * synced to a `drawing.progress` on the path layer (the corpus case) rides its drawing tip.
+     * trim's outline does (see the C++ shape engine): fraction 0 is the TOP of the shape and the
+     * walk runs clockwise in screen space (y down) — a circle starts at (0, -b), a rectangle at
+     * the top-left corner along the top edge, a rounded rectangle likewise — so a follower synced
+     * to a `drawing.progress` on the path layer (the corpus case) rides its drawing tip. The
+     * circle branch started at the +x axis until build 135, a quarter turn behind the trim
+     * (round 9, P4: Test-1's traveller dot sat at 12 o'clock where Alight, at the same XML
+     * progress, has it at 9 o'clock on the freshly drawn left arc).
      */
     private fun outlinePoints(kind: String, a: Float, b: Float, rx: Float, ry: Float): List<Pair<Float, Float>> {
         return when (kind) {
             "CIRCLE" -> {
                 val steps = 720
                 (0 until steps).map { i ->
-                    val th = 2.0 * Math.PI * i / steps
+                    val th = -Math.PI / 2.0 + 2.0 * Math.PI * i / steps
                     (a * cos(th).toFloat()) to (b * sin(th).toFloat())
                 }
             }
@@ -7006,13 +7143,17 @@ object AlightXmlImporter {
     private fun PathSpec.linePoint(p: List<Float>, loc: List<Float>): Pair<Float, Float> {
         val sclV = scl?.first() ?: listOf(1f, 1f)
         val rotV = rot?.first()?.firstOrNull() ?: 0f
-        val px = (p[0] - (pivot.getOrNull(0) ?: 0f)) * (sclV.getOrNull(0) ?: 1f)
-        val py = (p[1] - (pivot.getOrNull(1) ?: 0f)) * (sclV.getOrNull(1) ?: sclV.getOrNull(0) ?: 1f)
+        val pivX = pivot.getOrNull(0) ?: 0f
+        val pivY = pivot.getOrNull(1) ?: 0f
+        val px = (p[0] - pivX) * (sclV.getOrNull(0) ?: 1f)
+        val py = (p[1] - pivY) * (sclV.getOrNull(1) ?: sclV.getOrNull(0) ?: 1f)
         val rad = Math.toRadians(rotV.toDouble())
         val c = cos(rad).toFloat()
         val s = sin(rad).toFloat()
-        return ((loc.getOrNull(0) ?: 0f) + px * c - py * s) to
-            ((loc.getOrNull(1) ?: 0f) + px * s + py * c)
+        // The pivot is added back unscaled/unrotated — the same composition as a group pose
+        // (see readLineShape, build 135).
+        return ((loc.getOrNull(0) ?: 0f) + pivX + px * c - py * s) to
+            ((loc.getOrNull(1) ?: 0f) + pivY + px * s + py * c)
     }
 
     /** The outline's total length (scene pixels) at scene time [sceneMs]. */

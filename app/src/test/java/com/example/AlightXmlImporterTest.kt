@@ -544,7 +544,10 @@ $layers
         // the wrap width itself, so it does not move with the text-unit rule.)
         val box = textLayoutBoxWidth(1920f, text.textWrapFrac, text.effectiveScalePercent / 100f, 52.8f)
         assertTrue(box > 1400f)
-        assertEquals(483.6f, box * text.effectiveScalePercent / 100f, 20f)   // on screen: ~512 - padding
+        // On screen the box is the wrap width itself: the engines add the padding OUTSIDE the line
+        // width, so it is not subtracted from an authored width (build 135 — before that this read
+        // ~512 - padding = 483.6, the 0.5 em shrink that wrapped the Graph counter on device).
+        assertEquals(512f, box * text.effectiveScalePercent / 100f, 20f)
         // App-made text (no authored width) is untouched by the conversion.
         assertEquals(1920f * 0.9f - 2f * 52.8f, textLayoutBoxWidth(1920f, 0f, 0.2684f, 52.8f), 0.5f)
     }
@@ -693,19 +696,27 @@ $layers
     }
 
     @Test
-    fun arrowBecomesAThinRectangle() {
+    fun arrowBecomesAFilledPathWithItsHead() {
         val clips = threeClips()
         val group1 = clips.first { it.name == "Group 1" }
         val arrow = clips.first { it.name == "Arrow 1" }
         assertEquals(LayerType.SHAPE, arrow.type)
-        assertEquals("RECT", arrow.shapePattern)
+        // Since build 135 the arrow (shaft + head) is one filled PATH, baked in scene space: the
+        // shaft centreline runs from (529.35, 490.2) to the tip (529.35, 608.5) in the Group 1
+        // scene — location + pivot + scale * (p - pivot), the pivot (-161.5, 221.5) added back.
+        // Before build 135 the pivot was dropped, the shaft was a RECT at (690.8, 327.9) — ~270 px
+        // from its disc — and the head was not drawn at all (round 9, P2/P3).
+        assertEquals("PATH", arrow.shapePattern)
         assertEquals(group1.id, arrow.groupId)
-        // The shaft runs from (690.8, 268.7) to (690.8, 387.0) scene px: straight down, 118.28 px long, 27 x scale thick.
-        assertEquals(90f, arrow.rotationDeg, 0.01f)
-        assertEquals(-269.153f, arrow.transformX, 0.5f)
-        assertEquals(-212.142f, arrow.transformY, 0.5f)
-        assertEquals(118.283f / box3, arrow.shapeScaleX, 0.001f)
-        assertEquals(27f * 0.419444f / box3, arrow.shapeScaleY, 0.0005f)
+        assertEquals(0f, arrow.rotationDeg, 0.01f)
+        // The outline's bounding box is 44.5 x 118.3 scene px (head width 106 x scale across,
+        // shaft length 282 x scale down), centred on (529.35, 549.35) in the scene.
+        assertEquals(529.35f - 960f, arrow.transformX, 0.6f)
+        assertEquals(549.35f - 540f, arrow.transformY, 0.6f)
+        assertTrue(arrow.pathSegments.isNotEmpty())
+        // Both shape scales are the normalisation extent (the larger half, 59.15) over the box.
+        assertEquals(118.3f / box3, arrow.shapeScaleX, 0.002f)
+        assertEquals(118.3f / box3, arrow.shapeScaleY, 0.002f)
     }
 
     @Test
@@ -721,7 +732,11 @@ $layers
         // (linked to the layer below, see LayerMaskImportTest) and no mask warning is left. Before build
         // 94 they were imported hidden with an "is a mask in Alight" warning.
         assertTrue(r.warnings.none { it.contains("Mask layer") })
-        assertTrue(r.warnings.any { it.contains("plain line") })
+        // The file's arrow carries head dimensions, so since build 135 it imports whole (shaft +
+        // head as one filled path) and the old "plain line" warning is gone. (This excerpt leaves
+        // the file's Shape embed out, so its Exclude Mask layer is pinned in PhoneRoundsImportTest
+        // instead.)
+        assertTrue(r.warnings.none { it.contains("plain line") })
     }
 
     @Test
@@ -3073,16 +3088,22 @@ $layers
         assertTrue(pos.size >= 10)
         // Every key on the ring at the inset radius — the authored location (819, 564.5) is NOT added.
         assertTrue(pos.all { abs(hypot(it.a, it.b) - 129f) < 2f })
-        // Progress holds 1.0 before its first key, so the ride starts at fraction 0: the +x point.
-        assertEquals(129f, pos.first().a, 1.5f)
-        assertEquals(0f, pos.first().b, 1.5f)
-        // Mid-travel (eased progress 0.5) the dot is on the far side of the ring.
-        assertTrue(pos.any { it.a < -120f && abs(it.b) < 20f })
-        // Tangent on: rotation aligns with the path's tangent — heading +y (90 deg) at the +x point.
+        // Fraction 0 is the TOP of the ring (the trim's convention, build 135): progress holds 1.0
+        // before its first key, so the ride starts at the top point. Until build 135 the walk
+        // started at the +x point, a quarter turn ahead — round 9's P4 (ours 12 o'clock where
+        // Alight has 9 o'clock at the same XML progress).
+        assertEquals(0f, pos.first().a, 1.5f)
+        assertEquals(-129f, pos.first().b, 1.5f)
+        // Mid-travel (eased progress 0.5) the dot is at the bottom of the ring...
+        assertTrue(pos.any { abs(it.a) < 20f && it.b > 120f })
+        // ...and at progress ~0.75 it passes 9 o'clock — the position Alight shows at ~2.6 s of the
+        // file, with the ring's own drawing tip synced to the same fraction.
+        assertTrue(pos.any { it.a < -120f && abs(it.b) < 25f })
+        // Tangent on: rotation aligns with the path's tangent — heading +x (0 deg) at the top.
         // Progress runs 1 -> 0, so the alignment angle sweeps one full turn in reverse, unwrapped
         // (last - first = -360, not 0).
         val rot = dot.keyframes[AnimProp.ROTATION]!!
-        assertEquals(90f, rot.first().a, 1.5f)
+        assertEquals(0f, rot.first().a, 1.5f)
         assertEquals(-360f, rot.last().a - rot.first().a, 3f)
     }
 
@@ -3155,8 +3176,9 @@ $layers
     @Test
     fun moveAlongPathHonoursTheProgressEasing() {
         // cubicBezier(1, 0, 0.64, 1) reaches eased progress 0.5 only at segment fraction 0.74, so at
-        // 1480 ms of 2000 the dot is halfway around the ring (-100, 0); a linear reading of the same
-        // keys would put it near (0, -100) instead.
+        // 1480 ms of 2000 the dot is halfway around the ring (0, 100 — the bottom, fraction 0 being
+        // the top since build 135); a linear reading of the same keys would put it near (100, 0)
+        // instead.
         val xml = scene(
             """<shape id="1" label="Ring" startTime="0" endTime="2000" fillType="color" s=".circle">
   <transform><location value="540,960,0" /><scale value="1,1" /></transform>
@@ -3174,11 +3196,11 @@ $layers
         val pos = dot.keyframes[AnimProp.POSITION]!!
         assertTrue(pos.all { abs(hypot(it.a, it.b) - 100f) < 1.5f })
         val start = pos.valueAt(0L)
-        assertEquals(100f, start.first, 1.5f)
-        assertEquals(0f, start.second, 1.5f)
+        assertEquals(0f, start.first, 1.5f)
+        assertEquals(-100f, start.second, 1.5f)
         val mid = pos.valueAt(1480L)
-        assertEquals(-100f, mid.first, 3f)
-        assertEquals(0f, mid.second, 3f)
+        assertEquals(0f, mid.first, 3f)
+        assertEquals(100f, mid.second, 3f)
     }
 
     @Test
@@ -4173,7 +4195,7 @@ $layers
     fun layerBlendModesMapToCompositor() {
         val cases = mapOf(
             "multiply" to "Multiply", "screen" to "Screen", "linear-dodge" to "Add",
-            "exclude" to "Exclusion", "overlay" to "Overlay", "darken" to "Darken",
+            "exclusion" to "Exclusion", "overlay" to "Overlay", "darken" to "Darken",
             "subtract" to "Subtract", "soft-overlay" to "Soft Overlay",
             "color-burn" to "Color Burn", "soft-light" to "Soft Light",
             "difference" to "Difference", "luminosity" to "Luminosity", "add" to "Add"

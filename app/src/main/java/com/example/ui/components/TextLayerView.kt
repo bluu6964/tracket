@@ -131,12 +131,13 @@ fun TextLayerContent(
             // An authored wrap width (textWrapFrac, from an Alight import) is an on-screen share of
             // the frame; this box is laid out unscaled and scaled by the caller, so it is divided by
             // the layer's scale — the same conversion as the render painters (see textLayoutBoxWidth).
+            // The padding below sits INSIDE this max width in Compose, while the render engines add
+            // it outside the line width, so an authored width gets the padding added back here —
+            // without it the editor box was 0.5 em narrower than the render box (build 135).
             .widthIn(
-                max = width * (
-                    if (clip.textWrapFrac > 0f) {
-                        clip.textWrapFrac / (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f)
-                    } else 0.9f
-                    )
+                max = if (clip.textWrapFrac > 0f) {
+                    width * (clip.textWrapFrac / (clip.effectiveScalePercent / 100f).coerceAtLeast(0.01f)) + padH * 2
+                } else width * 0.9f
             )
             .then(bgModifier)
             .padding(horizontal = padH, vertical = padV)

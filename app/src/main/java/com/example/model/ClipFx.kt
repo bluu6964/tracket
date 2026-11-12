@@ -450,8 +450,15 @@ object ClipFxLibrary {
     // [0] strength 0..2, [1] mask to layer 0/1.
     const val SMOOTH_EDGES_AM = "smooth_edges_am"
 
-    /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
-    const val MAX_EFFECTS = 12
+    /**
+     * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
+     * the renderer's fixed op array, mirrored here for the importer, [toNative] and the Effects
+     * panel). 32 since build 130 (Queue 14h): the largest stack in the 93-file Alight corpus is
+     * 29 (blxze-brepizx-pack), and the old 12 silently ate real, implemented effects off such
+     * layers. The cost of the bound is the array itself (32 x 88 B per layer draw); project
+     * files store the effect list unbounded, so nothing else assumes this number.
+     */
+    const val MAX_EFFECTS = 32
 
     val categories = listOf("Blur", "Color", "Light", "Lens", "Distort", "Stylize", "Texture", "Keying", "Backdrop")
 

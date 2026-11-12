@@ -412,7 +412,11 @@ enum FxType : int {
     FX_MAX = FX_COPY_BG
 };
 
-constexpr int kFxMaxOps = 12;
+// Ops per layer (ClipFxLibrary.MAX_EFFECTS in ClipFx.kt — one bound, two languages). 32 since
+// build 130: the largest stack in the 93-file Alight corpus is 29, and the old 12 silently ate
+// real effects off such layers (Queue 14h). The cost is this array alone (32 x sizeof(FxOp)
+// per layer draw) plus the matching JNI staging buffer in render_jni.cpp.
+constexpr int kFxMaxOps = 32;
 constexpr int kFxStride = 8;  // floats per effect in the JNI array: type, p0..p6
 
 struct FxOp {

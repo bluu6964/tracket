@@ -184,6 +184,13 @@ int main() {
         for (int i = 0; i < kFxMaxOps + 2; ++i) flat[i * kFxStride] = (float)FX_GLITCH;
         FxOp ops[kFxMaxOps];
         CHECK(fxParseOps(flat, (kFxMaxOps + 2) * kFxStride, ops) == kFxMaxOps, "parse stops at kFxMaxOps");
+        // The corpus's largest authored stack is 29 ops (blxze-brepizx-pack, build 130): it must
+        // parse whole — the bound covers it with headroom (Queue 14h).
+        float big[40 * kFxStride] = {0};
+        for (int i = 0; i < 40; ++i) big[i * kFxStride] = (float)FX_GLITCH;
+        FxOp bigOps[kFxMaxOps];
+        CHECK(fxParseOps(big, 29 * kFxStride, bigOps) == 29, "29-op corpus stack parses whole");
+        CHECK(kFxMaxOps >= 29, "op bound covers the corpus max stack");
         float bad[8] = {(float)FX_MAX + 1, 1, 2, 3, 4, 5, 6, 7};
         CHECK(fxParseOps(bad, 8, ops) == 0, "unknown type skipped");
         // Motion Blur is Kotlin-resolved to a directional blur before it reaches the engine, so the
@@ -429,13 +436,16 @@ int main() {
             float wrong[16] = {(float)FX_BLUR, 20, 0, 0, 0, 0, 0, 0,
                                (float)FX_PIXELATE_AM_EXT, 1, 2, 3, 4, 5, 6, 7};
             CHECK(fxParseOps(wrong, 16, ops) == 1 && ops[0].type == FX_BLUR && ops[0].q[0] == 0.f, "ext after wrong owner dropped");
-            // EXT groups do not consume op slots: 11 plain + gradient(+ext) + 1 plain = 12 ops.
+            // EXT groups do not consume op slots: 11 plain + gradient(+ext) + 1 plain = 13 ops,
+            // all kept (the array bound is 32 since build 130; under the old 12 this same array
+            // filled the array exactly, which is how the check was written then).
             float many[14 * 8];
             for (int i = 0; i < 11; ++i) { many[i * 8] = (float)FX_BLUR; many[i * 8 + 1] = 10; for (int k = 2; k < 8; ++k) many[i * 8 + k] = 0; }
             many[11 * 8] = (float)FX_FOUR_COLOR_GRADIENT; for (int k = 1; k < 8; ++k) many[11 * 8 + k] = 0;
             many[12 * 8] = (float)FX_FOUR_COLOR_GRADIENT_EXT; for (int k = 1; k < 8; ++k) many[12 * 8 + k] = 0;
             many[13 * 8] = (float)FX_GRAIN; for (int k = 1; k < 8; ++k) many[13 * 8 + k] = 0;
-            CHECK(fxParseOps(many, 14 * 8, ops) == kFxMaxOps, "ext does not consume an op slot");
+            CHECK(fxParseOps(many, 14 * 8, ops) == 13, "ext does not consume an op slot");
+            CHECK(ops[11].type == FX_FOUR_COLOR_GRADIENT && ops[12].type == FX_GRAIN, "ops after a folded ext stay in order");
         }
         // Identity rules.
         FxOp lk{FX_LUMA_KEY, {0, 100, 5, 0, 1, 0, 0}};

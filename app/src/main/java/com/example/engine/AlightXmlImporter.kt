@@ -334,6 +334,12 @@ object AlightXmlImporter {
         val ctx = Ctx(sceneW, sceneH, pw, sceneW, totalMs, fps, warnings)
         val clips = readSceneContent(root, ctx).flat
         if (clips.isEmpty()) warnings += "No supported layer found in this file"
+        // One honest line per layer the effect cap cut (Queue 14h): how many, and which ids.
+        for (drop in ctx.capDropped.values) {
+            warnings += "Layer \"" + drop.clipName + "\": " + drop.shorts.size +
+                " effects are not added \u2014 a layer runs at most " + ClipFxLibrary.MAX_EFFECTS +
+                " effects in the app (not added: " + drop.shorts.joinToString(", ") + ")"
+        }
 
         val ratio = sceneW / sceneH
         val aspect = AspectRatio.values().firstOrNull { !it.isOriginal && abs(it.ratioFloat - ratio) < 0.01f }
@@ -355,8 +361,13 @@ object AlightXmlImporter {
      */
     private class Ctx(
         val sceneW: Float, val sceneH: Float, val previewW: Float, val rootW: Float,
-        val totalMs: Long, val fps: Float, val warnings: MutableList<String>
+        val totalMs: Long, val fps: Float, val warnings: MutableList<String>,
+        val capDropped: LinkedHashMap<String, CapDrop> = LinkedHashMap()
     ) {
+        /** Effects the per-layer cap refused on one clip, in drop order (Queue 14h). */
+        class CapDrop(val clipName: String) {
+            val shorts = ArrayList<String>()
+        }
         val k: Float get() = previewW / rootW
         /**
          * The app's shape box (130 dp) in scene pixels. Anchored to the ROOT scene, not to the
@@ -1807,7 +1818,7 @@ object AlightXmlImporter {
                 ") differs from the canvas it sits in: layers inside are clipped to it"
         }
         val content = readSceneContent(nested, Ctx(nW, nH, ctx.previewW, ctx.rootW, nTotal,
-            nested.getAttribute("fps").toFloatOrNull()?.takeIf { it > 0f } ?: ctx.fps, w))
+            nested.getAttribute("fps").toFloatOrNull()?.takeIf { it > 0f } ?: ctx.fps, w, ctx.capDropped))
 
         val startMs = el.getAttribute("startTime").toLongOrNull() ?: 0L
         val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
@@ -2979,12 +2990,15 @@ object AlightXmlImporter {
 
     // ---- effects (pass 3) ---------------------------------------------------------------------------------------
 
-    /** Adds a native [ClipFx] to a clip, honouring the app's per-layer effect cap (the rest would never run). */
+    /**
+     * Adds a native [ClipFx] to a clip, honouring the app's per-layer effect cap (the rest would
+     * never run). A refusal is recorded on [Ctx.capDropped] instead of warned here: the parse
+     * reports it once per layer at the end, naming how many effects were dropped and which.
+     */
     private fun addFx(clip0: TimelineClip, ctx: Ctx, type: String, values: List<Float>, short: String): TimelineClip {
         if (ClipFxLibrary.def(type) == null) return clip0
         if (clip0.effects.size >= ClipFxLibrary.MAX_EFFECTS) {
-            ctx.warnings += "Effect " + short + " is not added: a layer runs at most " +
-                ClipFxLibrary.MAX_EFFECTS + " effects in the app"
+            ctx.capDropped.getOrPut(clip0.id) { Ctx.CapDrop(clip0.name) }.shorts += short
             return clip0
         }
         return clip0.copy(effects = clip0.effects + ClipFx(type = type, values = values))

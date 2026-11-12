@@ -2,6 +2,8 @@ package com.example
 
 import com.example.engine.ProjectArchive
 import com.example.engine.ProjectFiles
+import com.example.model.ClipFx
+import com.example.model.ClipFxLibrary
 import com.example.model.CornerPin
 import com.example.model.LayerType
 import com.example.model.PlanarRemove
@@ -97,6 +99,31 @@ class ProjectArchiveTest {
         assertEquals("content://media/external/video/7", clips[2].uri)   // left as it was
         assertTrue(r.missing.isEmpty())
         assertTrue(ProjectFiles.missingMedia(listOf(TimelineTrack("t", "L", clips = clips.take(2))), phoneB).isEmpty())
+    }
+
+    @Test
+    fun overCapEffectStackRoundTrips() {
+        // Queue 14h (build 130): a stack past the old 12-effect cap must survive an archive
+        // round trip whole — the file format stores the effect list unbounded; only the
+        // renderer's op array is bounded (32). The type order is the corpus's largest stack
+        // (blxze-brepizx-pack, 29 effects).
+        val k = ClipFxLibrary
+        val types = listOf(
+            k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM,
+            k.SOFT_GLOW_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM, k.CHROMA_KEY_AM,
+            k.HUE_SAT, k.COLOR_HOT_AM, k.COLORIZE_AM, k.HIGHLIGHT_SHADOW_AM, k.COLOR_HOT_AM,
+            k.LIGHT_GLOW_AM, k.CHROMA_KEY_AM, k.TURBULENT_DISPLACE3_AM, k.EDGE_GLOW_AM,
+            k.HUE_SAT, k.COLOR_HOT_AM, k.EDGE_GLOW_AM, k.COLORIZE_AM, k.HIGHLIGHT_SHADOW_AM,
+            k.COLOR_TEMP_AM, k.HIGHLIGHT_SHADOW_AM, k.HUE_SAT, k.EXPOSURE, k.HUE_SAT, k.HUE_SAT
+        )
+        val fx = types.mapIndexed { i, t -> ClipFx(type = t, values = listOf(i.toFloat(), 0.5f)) }
+        val snap = ProjectSnapshot(
+            tracks = listOf(TimelineTrack("t", "L", clips = listOf(clip("fxstack", null).copy(effects = fx))))
+        )
+        val out = ByteArrayOutputStream()
+        ProjectArchive.export(snap, "Fx", "0.1.102", phoneA, out)
+        val r = ProjectArchive.import(ByteArrayInputStream(out.toByteArray()), phoneB) { "file://" + it.absolutePath }
+        assertEquals(fx, r.snapshot.tracks[0].clips.single().effects)
     }
 
     @Test

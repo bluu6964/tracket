@@ -43,11 +43,22 @@ object BlendModes {
         BlendSpec("Darken", "Darken", 10, BlendKind.COLOR),
         BlendSpec("Multiply", "Darken", 11, BlendKind.COLOR),
         BlendSpec("Color Burn", "Darken", 12, BlendKind.COLOR),
+        // Alight Motion's own modes (recovered blend defs, hunt round 3, blend-defs/):
+        // Linear Burn is backdrop + source - 1 per channel; Darker Color keeps the WHOLE
+        // colour (backdrop or source) whose luminance-weighted vector is shorter — it is
+        // not a per-channel minimum. Neither has a Compose equivalent: the editor canvas
+        // falls back to SrcOver; the native preview / export shader implements them exactly.
+        BlendSpec("Linear Burn", "Darken", 13, BlendKind.COLOR),
+        BlendSpec("Darker Color", "Darken", 14, BlendKind.COLOR),
         // Brighten
         BlendSpec("Lighten", "Brighten", 20, BlendKind.COLOR),
         BlendSpec("Screen", "Brighten", 21, BlendKind.COLOR),
         BlendSpec("Color Dodge", "Brighten", 22, BlendKind.COLOR),
         BlendSpec("Add", "Brighten", 23, BlendKind.COLOR),
+        // Alight Motion's Lighter Color: the whole colour whose luminance-weighted vector
+        // is longer (the def compares length(w * c), w = 0.2126 / 0.7152 / 0.0722), NOT a
+        // per-channel maximum. No Compose equivalent, like Darker Color above.
+        BlendSpec("Lighter Color", "Brighten", 24, BlendKind.COLOR),
         // Contrast
         BlendSpec("Overlay", "Contrast", 30, BlendKind.COLOR),
         BlendSpec("Soft Light", "Contrast", 31, BlendKind.COLOR),
@@ -61,6 +72,12 @@ object BlendModes {
         BlendSpec("Exclusion", "Difference", 41, BlendKind.COLOR),
         // Alight Motion's Subtract (recovered shader: backdrop − source, clamped at 0).
         BlendSpec("Subtract", "Difference", 42, BlendKind.COLOR),
+        // Alight Motion's Diff (recovered def): |backdrop − source| at full alpha — the
+        // def premultiplies the backdrop by the layer alpha before the abs, which under
+        // this pass's W3C alpha compositing is the same colour formula as Difference;
+        // it stays a separate mode because Alight lists it separately. No Compose
+        // equivalent under its own name: the canvas falls back to SrcOver.
+        BlendSpec("Diff", "Difference", 43, BlendKind.COLOR),
         // Color
         BlendSpec("Hue", "Color", 50, BlendKind.COLOR),
         BlendSpec("Saturation", "Color", 51, BlendKind.COLOR),

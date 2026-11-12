@@ -125,15 +125,28 @@ vec3 softV(vec3 b, vec3 s) { return vec3(softCh(b.r, s.r), softCh(b.g, s.g), sof
 vec3 burnV(vec3 b, vec3 s) { return vec3(burnCh(b.r, s.r), burnCh(b.g, s.g), burnCh(b.b, s.b)); }
 vec3 dodgeV(vec3 b, vec3 s) { return vec3(dodgeCh(b.r, s.r), dodgeCh(b.g, s.g), dodgeCh(b.b, s.b)); }
 
+// Alight Motion's own colour modes, from its recovered blend defs (hunt round 3,
+// blend-defs/): Linear Burn adds the colours and subtracts 1; Lighter / Darker Color
+// keep the WHOLE colour whose luminance-weighted vector length (w = 0.2126, 0.7152,
+// 0.0722 — a vector length, not a dot product) is longer / shorter, ties going to the
+// backdrop for Lighter and to the source for Darker, exactly as the defs' ternaries
+// read; Diff is |backdrop - source| at full alpha (the def premultiplies the backdrop
+// by the layer alpha first, which this pass's W3C alpha compositing already accounts
+// for — the same treatment build 115 gave Subtract). Hand pins: linear burn of
+// b=(.6,.4,.2), s=(.5,.5,.5) = (.1,0,0); with b=(.2,.8,.2) (weighted length .574),
+// s=(.9,.1,.1) (.204) is darker and s=(.1,.9,.1) (.644) is lighter.
 // b = backdrop colour, s = layer colour (both straight, not premultiplied).
 vec3 blendFn(int m, vec3 b, vec3 s) {
     if (m == 10) { return min(b, s); }
     if (m == 11) { return b * s; }
     if (m == 12) { return burnV(b, s); }
+    if (m == 13) { return max(b + s - vec3(1.0), vec3(0.0)); }
+    if (m == 14) { vec3 w = vec3(0.2126, 0.7152, 0.0722); return length(w * s) > length(w * b) ? b : s; }
     if (m == 20) { return max(b, s); }
     if (m == 21) { return b + s - b * s; }
     if (m == 22) { return dodgeV(b, s); }
     if (m == 23) { return min(b + s, vec3(1.0)); }
+    if (m == 24) { vec3 w = vec3(0.2126, 0.7152, 0.0722); return length(w * s) > length(w * b) ? s : b; }
     if (m == 30) { return overlayV(b, s); }
     if (m == 31) { return softV(b, s); }
     if (m == 32) { return overlayV(s, b); }
@@ -141,6 +154,7 @@ vec3 blendFn(int m, vec3 b, vec3 s) {
     if (m == 40) { return abs(b - s); }
     if (m == 41) { return b + s - 2.0 * b * s; }
     if (m == 42) { return max(b - s, vec3(0.0)); }
+    if (m == 43) { return abs(b - s); }
     if (m == 50) { return setLum(setSat(s, sat(b)), lum(b)); }
     if (m == 51) { return setLum(setSat(b, sat(s)), lum(b)); }
     if (m == 52) { return setLum(s, lum(b)); }

@@ -273,6 +273,8 @@ object AlightXmlImporter {
     const val SMOOTHEDGES = "com.alightcreative.effects.smoothedges"
     const val OSCILLATE2 = "com.alightcreative.effects.oscillate2"
     const val FLICKER2 = "com.alightcreative.effects.flicker2"
+    const val JITTER = "com.alightcreative.effects.jitter"
+    const val TRANSFORM2 = "com.alightcreative.effects.transform2"
     const val PARENTHELPER = "com.alightcreative.effects.parenthelper"
     const val REPEATPATH = "com.alightcreative.effects.repeat.path"
 
@@ -1741,12 +1743,13 @@ object AlightXmlImporter {
     /**
      * The app blend mode an Alight layer's `blending` attribute maps to (the clip's `blendMode` name).
      * Every value the renderers can honour is mapped — the standard W3C family (AM's own recovered
-     * blend shaders agree with the W3C formulas for those) plus AM's two own modes, Subtract and
-     * Soft Overlay, whose shaders were recovered from the public decompiled AM assets and are now
-     * implemented in the native blend pass. `blending="mask"` is not a blend: whether the mask can
-     * be applied is only known once the scene's layers are read (it cuts the layer below it) —
-     * resolveMaskLinks reports the outcome, so it maps to Normal here without a warning. A value
-     * with no counterpart (divide, linear-burn, vivid-light, ...) keeps the old warning verbatim.
+     * blend shaders agree with the W3C formulas for those) plus AM's own modes, Subtract, Soft
+     * Overlay, Linear Burn, Darker Color, Lighter Color and Diff, whose shaders were recovered
+     * from the public decompiled AM assets (blend-defs/) and are now implemented in the native
+     * blend pass. `blending="mask"` is not a blend: whether the mask can be applied is only known
+     * once the scene's layers are read (it cuts the layer below it) — resolveMaskLinks reports the
+     * outcome, so it maps to Normal here without a warning. A value with no counterpart (divide,
+     * vivid-light, ...) keeps the old warning verbatim.
      */
     private fun amBlendMode(el: Element, w: MutableList<String>): String {
         val b = el.getAttribute("blending")
@@ -1756,7 +1759,10 @@ object AlightXmlImporter {
             "darken" -> "Darken"
             "multiply" -> "Multiply"
             "color-burn" -> "Color Burn"
+            "linear-burn" -> "Linear Burn"
+            "darker-color" -> "Darker Color"
             "lighten" -> "Lighten"
+            "lighter-color" -> "Lighter Color"
             "screen" -> "Screen"
             "color-dodge" -> "Color Dodge"
             "linear-dodge", "add" -> "Add"
@@ -1765,6 +1771,7 @@ object AlightXmlImporter {
             "hard-light" -> "Hard Light"
             "soft-overlay" -> "Soft Overlay"
             "difference" -> "Difference"
+            "diff" -> "Diff"
             "exclude", "exclusion" -> "Exclusion"
             "subtract" -> "Subtract"
             "hue" -> "Hue"
@@ -2514,6 +2521,8 @@ object AlightXmlImporter {
                 SMOOTHEDGES -> applySmoothEdgesAm(fx, clip, ctx)
                 OSCILLATE2 -> applyOscillate2(fx, clip, ctx, durMs)
                 FLICKER2 -> applyFlicker2(fx, clip, ctx, durMs)
+                JITTER -> applyJitter(fx, clip, ctx, durMs)
+                TRANSFORM2 -> applyTransform2(fx, el, clip, ctx, durMs)
                 PARENTHELPER -> clip   // a parenting-behaviour modifier, applied by resolveParentLinks' post-pass
                 REPEATPATH -> {
                     ctx.warnings += "Effect repeat.path: copies along the layer's own path are not reproduced yet: skipped"
@@ -3488,6 +3497,78 @@ object AlightXmlImporter {
         val keys = simplifyKeys(raw, 0.05f, 0.05f)
         var clip = clip0.copy(keyframes = clip0.keyframes + (AnimProp.OPACITY to keys))
         keys.firstOrNull()?.let { clip = clip.copy(opacity = it.a) }
+        return clip
+    }
+
+    /**
+     * `jitter` -> a POSITION bake (plus a POS_Z bake when `zjitter` is set): the def is a
+     * position SCRIPT, not a shader (legacy-transform; recovered in hunt round 3,
+     * defs-batch8 — a second "jitter" def in the wild, ampro_extraanim's 3-param one,
+     * matches no corpus instance and is not this effect). The layer jumps to a fresh
+     * offset every 1 / freq seconds and holds it: the script quantises the layer-local
+     * time (t = lt - lt mod (1 / freq), JS remainder semantics) and reads AM's simplex
+     * noise ([simplexNoise3]) at the quantised time, along `angle` — x takes sin, y
+     * takes cos, the script's own axes, the oscillate2 convention — with a perpendicular
+     * `slack` component and a z component on their own noise seeds. Params are read
+     * eased: the script reads each property's current value. Seeding is the def's own
+     * constants, so the bake is deterministic. Corpus: 79 instances, all serialising
+     * exactly the def's 6-param schema; slack and zjitter are 0 in every one (both
+     * branches are ported anyway — the def is the spec).
+     */
+    private fun applyJitter(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        if (durMs <= 0L) return clip0
+        val props = fxProps(fx)
+        val magT = props["mag"] ?: return clip0
+        fun Track.maxAbs(): Float = (keys.map { abs(it.v.firstOrNull() ?: 0f) } +
+            listOf(abs(constant.firstOrNull() ?: 0f), abs(first().firstOrNull() ?: 0f))).maxOrNull() ?: 0f
+        val magMax = magT.maxAbs()
+        val zT = props["zjitter"]
+        val zMax = zT?.maxAbs() ?: 0f
+        if (magMax < 1e-4f && zMax < 1e-4f) return clip0
+        val angleT = props["angle"]
+        val freqT = props["freq"]
+        val seedT = props["seed"]
+        val slackT = props["slack"]
+        val extra = (magT.keys + (freqT?.keys ?: emptyList()) + (angleT?.keys ?: emptyList()))
+            .map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }
+        // The script's offset at normalised layer time, in Alight units: [dx, dy, dz].
+        fun offsetAt(norm: Float): DoubleArray {
+            val lt = norm.toDouble() * durMs / 1000.0
+            val fq = (freqT?.scalarAtEased(norm) ?: 30f).toDouble()
+            val tq = if (fq > 1e-6) lt - (lt % (1.0 / fq)) else 0.0
+            val seed = (seedT?.scalarAtEased(norm) ?: 0f).toDouble()
+            val mag = magT.scalarAtEased(norm).toDouble()
+            val ang = Math.toRadians((angleT?.scalarAtEased(norm) ?: 45f).toDouble())
+            val m = simplexNoise3(tq * 637.729, 0.0, seed * 394.417)
+            var dx = sin(ang) * mag * m
+            var dy = cos(ang) * mag * m
+            val slack = (slackT?.scalarAtEased(norm) ?: 0f).toDouble()
+            if (slack > 0.0) {
+                val a2 = ang + Math.PI / 2.0
+                val m2 = simplexNoise3(tq * 951.217 + 149.231, 0.0, seed * 894.417 + 2773.908)
+                dx += sin(a2) * mag * m2 * slack
+                dy += cos(a2) * mag * m2 * slack
+            }
+            val dz = if (zT != null && zMax > 1e-4f) {
+                val zj = zT.scalarAtEased(norm).toDouble()
+                if (zj > 0.0) simplexNoise3(tq * 637.729 + 241.386, 0.0, seed * 394.417 + 1729.361) * zj else 0.0
+            } else 0.0
+            return doubleArrayOf(dx, dy, dz)
+        }
+        var clip = clip0
+        if (magMax >= 1e-4f) {
+            clip = bakeDelta(clip, AnimProp.POSITION, durMs, ctx, 0.0,
+                { n -> freqT?.scalarAtEased(n) ?: 30f }, extra) { _, norm ->
+                val o = offsetAt(norm)
+                (o[0] * ctx.k).toFloat() to (o[1] * ctx.k).toFloat()
+            }
+        }
+        if (zMax >= 1e-4f) {
+            clip = bakeDelta(clip, AnimProp.POS_Z, durMs, ctx, 0.0,
+                { n -> freqT?.scalarAtEased(n) ?: 30f }, extra) { _, norm ->
+                (offsetAt(norm)[2] * ctx.k).toFloat() to 0f
+            }
+        }
         return clip
     }
 
@@ -6135,6 +6216,186 @@ object AlightXmlImporter {
             w += "Effect transform: mask-to-layer is not reproduced"
         }
         return clip
+    }
+
+    /**
+     * Adds an Alight effect's own (possibly keyframed) offset onto a clip's [prop] track,
+     * the [applyTransformFx] angle pattern generalised to a value pair: constant params
+     * shift the plain value and every key (easings preserved); keyframed params resample
+     * at the union of both tracks' key times, the values read linearly and each segment's
+     * easing taken from the param keyframe the segment ends at. [aUnit] / [bUnit] convert
+     * the params' units into the track's (signs may be folded into them).
+     */
+    private fun addParamOffset(
+        clip0: TimelineClip, prop: AnimProp, durMs: Long,
+        aT: Track?, bT: Track?, aUnit: Float, bUnit: Float
+    ): TimelineClip {
+        if (aT == null && bT == null) return clip0
+        val plain = clip0.propValues(prop)
+        val keyframed = (aT?.keys?.size ?: 0) >= 2 || (bT?.keys?.size ?: 0) >= 2
+        if (!keyframed) {
+            val da = (aT?.scalarAt(0f) ?: 0f) * aUnit
+            val db = (bT?.scalarAt(0f) ?: 0f) * bUnit
+            if (abs(da) < 1e-4f && abs(db) < 1e-4f) return clip0
+            var clip = clip0.withProp(prop, plain.first + da, plain.second + db)
+            val bk = clip0.keyframes[prop]
+            if (bk != null) {
+                clip = clip.copy(keyframes = clip.keyframes + (prop to bk.map { it.copy(a = it.a + da, b = it.b + db) }))
+            }
+            return clip
+        }
+        val baseKeys = clip0.keyframes[prop]
+        val times = (((aT?.keys ?: emptyList()) + (bT?.keys ?: emptyList()))
+            .map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } +
+            (baseKeys?.map { it.timeMs } ?: emptyList()) + listOf(0L, durMs)).distinct().sorted()
+        val keys = times.mapIndexed { i, t ->
+            val n = if (durMs > 0L) t.toFloat() / durMs else 0f
+            val base = baseKeys?.valueAt(t) ?: plain
+            val next = times.getOrNull(i + 1)
+            val e = if (next == null) Easing.LINEAR
+                else aT?.easingAtMs(next, durMs) ?: bT?.easingAtMs(next, durMs) ?: Easing.LINEAR
+            Keyframe(
+                t, base.first + (aT?.scalarAt(n) ?: 0f) * aUnit,
+                base.second + (bT?.scalarAt(n) ?: 0f) * bUnit, e
+            )
+        }.distinctBy { it.timeMs }
+        var clip = clip0.copy(keyframes = clip0.keyframes + (prop to keys))
+        keys.firstOrNull()?.let { clip = clip.withProp(prop, it.a, it.b) }
+        return clip
+    }
+
+    /**
+     * [applyTransform2]'s scale addition for a layer whose SCALE track is the raw scale
+     * percent: [offT] is the offset track in percent points. A key's `b` only moves when
+     * it already carries a separate height (b > 0) — b = 0 is the uniform convention and
+     * must stay 0, or the height would stop following the width.
+     */
+    private fun addScaleOffset(clip0: TimelineClip, durMs: Long, offT: Track): TimelineClip {
+        val plain = clip0.scalePercent
+        val baseKeys = clip0.keyframes[AnimProp.SCALE]
+        if (offT.keys.size < 2) {
+            val d = offT.scalarAt(0f)
+            if (abs(d) < 1e-4f) return clip0
+            var clip = clip0.copy(scalePercent = plain + d)
+            if (baseKeys != null) {
+                clip = clip.copy(keyframes = clip.keyframes + (AnimProp.SCALE to
+                    baseKeys.map { it.copy(a = it.a + d, b = if (it.b > 0f) it.b + d else it.b) }))
+            }
+            return clip
+        }
+        val times = ((offT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }) +
+            (baseKeys?.map { it.timeMs } ?: emptyList()) + listOf(0L, durMs)).distinct().sorted()
+        val keys = times.mapIndexed { i, t ->
+            val n = if (durMs > 0L) t.toFloat() / durMs else 0f
+            val base = baseKeys?.valueAt(t) ?: (plain to 0f)
+            val next = times.getOrNull(i + 1)
+            val e = if (next == null) Easing.LINEAR else offT.easingAtMs(next, durMs) ?: Easing.LINEAR
+            val d = offT.scalarAt(n)
+            Keyframe(t, base.first + d, if (base.second > 0f) base.second + d else base.second, e)
+        }.distinctBy { it.timeMs }
+        var clip = clip0.copy(keyframes = clip0.keyframes + (AnimProp.SCALE to keys))
+        keys.firstOrNull()?.let { clip = clip.copy(scalePercent = it.a) }
+        return clip
+    }
+
+    /**
+     * `transform2` -> baked transform offsets: the def is a position SCRIPT
+     * (legacy-transform; recovered in hunt round 3, defs-batch8) that ADDS to the layer's
+     * own transform fields — location += (posx, posy), angle += angle, scale += posz - 1
+     * per axis — each component negated by its invert switch (for z the script first maps
+     * posz to 1 + (1 - posz), so the scale addition flips sign exactly like the others).
+     * AM's composition order is the script running on the layer's evaluated transform, so
+     * the bake adds onto the evaluated tracks: position (Alight scene pixels, x [Ctx.k])
+     * and rotation go through [addParamOffset].
+     *
+     * The scale addition is on the scale FACTOR (x 100 on the app's percent track). A
+     * shape's SCALE keys are its composed size x scale (see composedSizeKeys), so on a
+     * shape the addition runs through the size, read off the layer element itself: each
+     * key gains 2 x size(t) x ds(t) / box x 100 per axis. A text layer's stored scale is
+     * font-relative, so a non-zero Z distance there cannot be expressed in the track and
+     * is reported instead (no corpus instance has one). Corpus: 38 instances, all
+     * serialising the def's 8-param schema; posy and posz keyframed in 17 each, posx in
+     * 3, angle in 1; yinv is the only switch ever on (one instance).
+     */
+    private fun applyTransform2(fx: Element, el: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        if (durMs <= 0L) return clip0
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val sx = if (boolOf(props["xinv"], false) > 0.5f) -1f else 1f
+        val sy = if (boolOf(props["yinv"], false) > 0.5f) -1f else 1f
+        val sa = if (boolOf(props["ainv"], false) > 0.5f) -1f else 1f
+        val sz = if (boolOf(props["zinv"], false) > 0.5f) -1f else 1f
+        var clip = clip0
+        clip = addParamOffset(clip, AnimProp.POSITION, durMs, props["posx"], props["posy"], sx * ctx.k, sy * ctx.k)
+        clip = addParamOffset(clip, AnimProp.ROTATION, durMs, props["angle"], null, sa, 0f)
+        val poszT = props["posz"] ?: return clip
+        val pzVals = poszT.keys.map { it.v.firstOrNull() ?: 1f } +
+            listOf(poszT.constant.firstOrNull() ?: 1f, poszT.first().firstOrNull() ?: 1f)
+        if (pzVals.all { abs(it - 1f) < 1e-4f }) return clip
+        if (clip.type == LayerType.TEXT) {
+            w += "Effect transform2: its Z distance on a text layer is not reproduced (the app's text scale is font-relative): skipped"
+            return clip
+        }
+        fun ds(n: Float): Float = (poszT.scalarAt(n) - 1f) * sz
+        val sizeEl = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "size" }
+        if (clip.type == LayerType.SHAPE && sizeEl != null) {
+            val sizeT = readTrack(sizeEl)
+            val box = ctx.shapeBoxPx
+            // The composed-key gain of the scale addition on one axis, at normalised time.
+            fun term(n: Float, axis: Int): Float {
+                val sv = sizeT.valueAtEased(n)
+                val s = (sv.getOrNull(axis) ?: sv.getOrNull(0) ?: 100f).toDouble()
+                return (2.0 * s * ds(n).toDouble() / box * 100.0).toFloat()
+            }
+            val baseKeys = clip.keyframes[AnimProp.SCALE]
+            val plainA = clip.scalePercent
+            val plainB = clip.shapeScaleY * 100f
+            val keyframed = poszT.keys.size >= 2
+            if (!keyframed && baseKeys == null) {
+                val da = term(0f, 0)
+                val db = term(0f, 1)
+                if (abs(da) < 1e-4f && abs(db) < 1e-4f) return clip
+                return clip.copy(
+                    scalePercent = plainA + da,
+                    shapeScaleX = (plainA + da) / 100f,
+                    shapeScaleY = (plainB + db) / 100f
+                )
+            }
+            if (!keyframed) {
+                // Constant ds over the shape's own animated size/scale: shift the composed
+                // keys by the term at their own times — their easings are preserved.
+                val keys = baseKeys!!.map { k ->
+                    val n = if (durMs > 0L) k.timeMs.toFloat() / durMs else 0f
+                    k.copy(a = k.a + term(n, 0), b = k.b + term(n, 1))
+                }
+                var c2 = clip.copy(keyframes = clip.keyframes + (AnimProp.SCALE to keys))
+                keys.firstOrNull()?.let {
+                    c2 = c2.copy(scalePercent = it.a, shapeScaleX = it.a / 100f, shapeScaleY = it.b / 100f)
+                }
+                return c2
+            }
+            val times = ((poszT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }) +
+                (baseKeys?.map { it.timeMs } ?: emptyList()) + listOf(0L, durMs)).distinct().sorted()
+            val keys = times.mapIndexed { i, t ->
+                val n = if (durMs > 0L) t.toFloat() / durMs else 0f
+                val base = baseKeys?.valueAt(t) ?: (plainA to plainB)
+                val next = times.getOrNull(i + 1)
+                val e = if (next == null) Easing.LINEAR else poszT.easingAtMs(next, durMs) ?: Easing.LINEAR
+                Keyframe(t, base.first + term(n, 0), base.second + term(n, 1), e)
+            }.distinctBy { it.timeMs }
+            var c2 = clip.copy(keyframes = clip.keyframes + (AnimProp.SCALE to keys))
+            keys.firstOrNull()?.let {
+                c2 = c2.copy(scalePercent = it.a, shapeScaleX = it.a / 100f, shapeScaleY = it.b / 100f)
+            }
+            return c2
+        }
+        // Every other layer kind stores the raw scale percent: the offset track is
+        // (posz - 1) x sign x 100, with the param track's easings carried over.
+        val offT = Track(
+            poszT.constant.map { (it - 1f) * sz * 100f },
+            poszT.keys.map { TKey(it.t, it.v.map { v -> (v - 1f) * sz * 100f }, it.easing) }
+        )
+        return addScaleOffset(clip, durMs, offT)
     }
 
     /**

@@ -33,7 +33,8 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_LUMA_KEY, EF_FOUR_GRADIENT, EF_TURBULENT_AM, EF_PIXELATE_AM,
              EF_CHROMA_KEY_AM, EF_SOFT_GLOW, EF_FILL_BEHIND,
              EF_DISPLACE_MAP, EF_SMOOTH_BEVEL, EF_LIGHT_GLOW, EF_INNER_GLOW,
-             EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_EXTRUDE, EF_COUNT };  // eff_[] in renderer.h has room for 36
+             EF_DARK_GLOW_EXTRACT, EF_DARK_GLOW_COMP, EF_EXTRUDE,
+             EF_EDGE_GLOW_EDGE, EF_EDGE_GLOW_COMP, EF_COUNT };  // eff_[] in renderer.h has room for 36
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -850,6 +851,72 @@ void main() {
 }
 )";
 
+// Edge Glow (Alight Motion's `edgeglow`, its recovered def — two independent dumps carry
+// it identically; fx_plan.cpp fxEdgeGlowAmEdge / fxEdgeGlowAmComposite are the CPU twins):
+// pass 1 is the def's findedges-edgeglow — a Scharr Sobel on the premultiplied luma with
+// taps at +/- smoothing texels, g = clamp(|grad| - threshold, 0, 1), out = g * texColor
+// (or (1 - g) * texColor.a when inverted). The magnitude is symmetric under the picture's
+// y orientation, so AM's screen-norm sampling and the layer-space vUv here agree. Pass 2
+// (in fxEdgeGlowAm) is the host gaussianblur of the edge buffer at the def's strength
+// (its label is "Blur"; fxEdgeGlowAmBlurOp converts it). The composite below is the def's
+// final shader line by line; its only guard is max(a, 0.0001) on the two un-premultiply
+// divisions, where AM's raw division is 0/0 on invisible pixels.
+const char* kEdgeGlowEdge = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform vec3 uP;   // smoothing, threshold, invert (0/1)
+in vec2 vUv;
+out vec4 oColor;
+float lum(vec2 o) { return dot(texture(uTex, vUv + o).rgb, vec3(0.2126, 0.7152, 0.0722)); }
+void main() {
+    vec2 f = uTexel * uP.x;
+    float w = lum(vec2(-f.x, 0.0));
+    float e = lum(vec2(f.x, 0.0));
+    float n = lum(vec2(0.0, f.y));
+    float s = lum(vec2(0.0, -f.y));
+    float nw = lum(vec2(-f.x, f.y));
+    float ne = lum(vec2(f.x, f.y));
+    float sw = lum(vec2(-f.x, -f.y));
+    float se = lum(vec2(f.x, -f.y));
+    float v = nw * 3.0 + n * 10.0 + ne * 3.0 - sw * 3.0 - s * 10.0 - se * 3.0;
+    float h = -nw * 3.0 - w * 10.0 - sw * 3.0 + ne * 3.0 + e * 10.0 + se * 3.0;
+    float g = clamp(sqrt(h * h + v * v) - uP.y, 0.0, 1.0);
+    vec4 texColor = texture(uTex, vUv);
+    oColor = uP.z > 0.5 ? vec4(vec3(1.0 - g), 1.0) * texColor.a : vec4(vec3(g), 1.0) * texColor;
+}
+)";
+
+const char* kEdgeGlowComp = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec3 uFill;
+uniform vec3 uTint;
+uniform vec4 uP;   // spread, gamma, brightness, tint
+uniform float uBlend;
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
+    mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
+    vec4 glow = texture(uBlur, vUv);
+    vec4 base = texture(uTex, vUv);
+    glow.rgb /= max(glow.a, 0.0001);
+    base.rgb /= max(base.a, 0.0001);
+    glow.rgb = pow(glow.rgb, vec3(max(0.0001, 3.0 - uP.x)));
+    base.rgb = pow(base.rgb, vec3(1.0 / max(uP.y, 0.01)));
+    base.rgb = ((base.rgb * rgb2yuv) + vec3(uP.z, 0.0, 0.0)) * yuv2rgb;
+    base.rgb = clamp(base.rgb, 0.0, 1.0);
+    float lum = dot(vec3(0.2126, 0.7152, 0.0722), glow.rgb);
+    glow.rgb *= glow.a;
+    base.rgb *= base.a;
+    float factor = max(clamp(uBlend, 0.0, 1.0) * (1.0 - lum), uBlend - 1.0);
+    oColor = mix(base, base * vec4(uTint, 1.0), uP.w) +
+             mix(glow, vec4(uFill, 1.0) * lum, factor);
+}
+)";
+
 // Displace Map (Alight Motion's displacemap3 = displacemap2, and displacemaprad; their
 // recovered shaders): the layer's own channels displace where the BACKDROP (the frame so
 // far, texBackdrop_ — the def's `comp`, srcType "comp", i.e. everything below the layer,
@@ -1301,7 +1368,8 @@ void main() {
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
                                   kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
-                                  kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp, kExtrude};
+                                  kDisplaceMap, kSmoothBevel, kLightGlow, kInnerGlow, kDarkGlowExtract, kDarkGlowComp, kExtrude,
+                                  kEdgeGlowEdge, kEdgeGlowComp};
 static_assert(EF_COUNT <= 36, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
@@ -1476,6 +1544,7 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_SOFT_GLOW_AM: ok = fxSoftGlowAm(op, W, H, cur); break;
             case FX_FILL_BEHIND_AM: ok = fxFillBehindAm(op, W, H, cur); break;
             case FX_DARK_GLOW_AM: ok = fxDarkGlowAm(op, W, H, cur); break;
+            case FX_EDGE_GLOW_AM: ok = fxEdgeGlowAm(op, W, H, cur); break;
             case FX_DISPLACE_MAP_AM:
             case FX_DISPLACE_MAP_RAD_AM: ok = fxDisplaceMapAm(op, W, H, cur); break;
             case FX_SMOOTH_BEVEL_AM: ok = fxSmoothBevelAm(op, W, H, cur); break;
@@ -1919,6 +1988,55 @@ bool Renderer::fxDarkGlowAm(const FxOp& op, int W, int H, int* cur) {
     glUniform1i(loc(comp, "uTex"), 0);
     glUniform1i(loc(comp, "uBlur"), 1);
     glUniform1f(loc(comp, "uAlpha"), cl(op.p[4]));
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Edge Glow (Alight): keep the layer, run the def's findedges-edgeglow pass into the
+// other fx target, blur that edge buffer with the host gaussianblur at the def's
+// strength (fxEdgeGlowAmBlurOp — strength 0 leaves it unblurred, exactly as AM's
+// chain composites it then), then the def's composite over the kept layer.
+bool Renderer::fxEdgeGlowAm(const FxOp& op, int W, int H, int* cur) {
+    const uint32_t edge = effProg(EF_EDGE_GLOW_EDGE), comp = effProg(EF_EDGE_GLOW_COMP), copy = effProg(EF_COPY);
+    if (!edge || !comp || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    const int dst0 = 1 - *cur;
+    begin(edge, fxFbo_[dst0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(edge, "uTex"), 0);
+    glUniform2f(loc(edge, "uTexel"), 1.f / std::max(1, W), 1.f / std::max(1, H));
+    glUniform3f(loc(edge, "uP"), op.p[0], op.p[1], op.p[2]);   // smoothing, threshold, invert
+    draw();
+    *cur = dst0;
+    FxOp blurOp;
+    blurOp.type = FX_BLUR;
+    blurOp.p[0] = fxEdgeGlowAmBlurOp(op.p[3]);   // strength, the def's "Blur"
+    if (!fxBlur(blurOp, W, H, cur)) return false;
+    auto unpack = [](float packedF, float* r, float* g, float* b) {
+        const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packedF)));
+        *r = ((pk >> 16) & 0xFF) / 255.f;
+        *g = ((pk >> 8) & 0xFF) / 255.f;
+        *b = (pk & 0xFF) / 255.f;
+    };
+    float fr, fg, fb, tr, tg, tb;
+    unpack(op.p[5], &fr, &fg, &fb);
+    unpack(op.q[2], &tr, &tg, &tb);
+    const int dst = 1 - *cur;
+    begin(comp, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(comp, "uTex"), 0);
+    glUniform1i(loc(comp, "uBlur"), 1);
+    glUniform3f(loc(comp, "uFill"), fr, fg, fb);
+    glUniform3f(loc(comp, "uTint"), tr, tg, tb);
+    glUniform4f(loc(comp, "uP"), op.p[4], op.q[0], op.q[1], op.q[3]);   // spread, gamma, brightness, tint
+    glUniform1f(loc(comp, "uBlend"), op.p[6]);
     draw();
     *cur = dst;
     return true;

@@ -321,6 +321,21 @@ enum FxType : int {
     FX_EXTRUDE_FLAT_AM = 126,
     FX_EXTRUDE_FLAT_AM_EXT = 127,
     FX_EXTRUDE_FLAT_AM_EXT2 = 128,
+    // v174: Alight's edgeglow — a dedicated three-pass chain (Renderer::fxEdgeGlowAm),
+    // ported from its def (two independent dumps carry byte-identical params, pass
+    // chain and shaders): pass 1 is the def's findedges-edgeglow (a Scharr Sobel on
+    // the premultiplied luma, taps at +/- smoothing texels, g = clamp(|grad| -
+    // threshold)) into a buffer, pass 2 is the host gaussianblur of that buffer,
+    // pass 3 the def's composite. The wiring follows AM's host convention (a pass
+    // reads the params its own def declares): smoothing / threshold / invert feed
+    // pass 1 (findedges-edgeglow declares exactly those), strength feeds the blur
+    // (its def label is literally "Blur"; the app's applyGaussianBlur calibration,
+    // x50 onto the app blur, converts it). Slot layout (AM units throughout):
+    //   p: [0] smoothing 1..10, [1] threshold 0..1, [2] invert 0/1, [3] strength
+    //      0..2, [4] spread 0..3, [5] fillColor packed 0xRRGGBB, [6] blend 0..2
+    //   q: [0] gamma, [1] brightness -1..1, [2] tintColor packed 0xRRGGBB, [3] tint 0..1
+    FX_EDGE_GLOW_AM = 129,
+    FX_EDGE_GLOW_AM_EXT = 130,
     FX_MAX = FX_COPY_BG
 };
 
@@ -565,6 +580,29 @@ void fxDarkGlowComposite(float baseR, float baseG, float baseB, float baseA,
 // numBlurPixelsPerSide = strength / 2 * 1.14 / 4 / 3 * length(preview size) and
 // sigma = numBlurPixelsPerSide / 2.14596602 in half-res px, i.e. twice that at full res.
 float fxDarkGlowSigma(float strength, float previewDiagPx);
+// CPU reference of Edge Glow (AM's edgeglow def): fxEdgeGlowAmEdge is pass 1's output
+// stage — the Scharr magnitude g of the 8 neighbours' premultiplied lumas (luma8 order:
+// nw, n, ne, w, e, sw, s, se — fxFindEdgesAmG's kernel, which findedges-edgeglow's def
+// shares verbatim) applied to the centre pixel: (g * texColor) normally, or
+// ((1 - g) * a) per channel when inverted. fxEdgeGlowAmComposite is the def's final pass
+// over the base pixel and the blurred edge pixel (both premultiplied): un-premultiply,
+// pow(spread) on the glow, pow(1 / gamma) + a YUV brightness shift on the base, then
+// base' = mix(base, base * tintColor, tint) plus mix(glow, fillColor * lum, factor) with
+// factor = max(saturate(blend) * (1 - lum), blend - 1), lum the pow'd glow's luma. All
+// params AM raw. (The blur between the passes is the shared machinery.)
+void fxEdgeGlowAmEdge(const float luma8[8], float cR, float cG, float cB, float cA,
+                      float threshold, bool invert,
+                      float* outR, float* outG, float* outB, float* outA);
+void fxEdgeGlowAmComposite(float baseR, float baseG, float baseB, float baseA,
+                           float glowR, float glowG, float glowB, float glowA,
+                           float spread, float gamma, float brightness,
+                           float fillR, float fillG, float fillB, float blend,
+                           float tintR, float tintG, float tintB, float tint,
+                           float* outR, float* outG, float* outB, float* outA);
+// AM's gaussianblur strength for the edge buffer, as the app blur's own value: the
+// applyGaussianBlur calibration (strength 0..1 -> 0..50, clamped to the app's 0..100).
+// Strength 0 is the identity blur — the def composites the unblurred edge buffer then.
+float fxEdgeGlowAmBlurOp(float strength);
 // Spin Blur (AM's spinblur2) has no scalar CPU reference: its tap count depends on the pixel's
 // radius, so the host test pins fxShaderOf / fxIsIdentity and the importer pins only.
 

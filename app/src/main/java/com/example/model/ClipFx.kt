@@ -382,6 +382,14 @@ object ClipFxLibrary {
     // EXT like Extrude's; EXT2 [14] the fade colour packed, [15] MAX_ITER.
     // Keyframed rotate / position ride tails from index 21, like Extrude's.
     const val EXTRUDE_FLAT_AM = "extrude_flat_am"
+    // EDGE_GLOW_AM (native 129 + EXT 130): Alight's edgeglow, ported from its def
+    // (recovered identically from two dumps). A dedicated three-pass chain
+    // (renderer_effects.cpp): the def's findedges-edgeglow pass, the host gaussianblur
+    // of the edge buffer, then the def's composite. Values are AM raw units:
+    // [0] smoothing 1..10, [1] threshold 0..1, [2] invert 0/1, [3] strength (the blur)
+    // 0..2, [4] spread 0..3, [5] fill color packed 0xRRGGBB, [6] blend 0..2.
+    // EXT [7] gamma, [8] brightness, [9] tint color packed 0xRRGGBB, [10] tint.
+    const val EDGE_GLOW_AM = "edge_glow_am"
 
     /** Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h). */
     const val MAX_EFFECTS = 12
@@ -1087,6 +1095,21 @@ object ClipFxLibrary {
                 FxParamDef("Interior on", 0f, 1f, 1f, "", step = 1f)
             )
         ),
+        // Edge Glow (Alight): values as on the const. The panel edits the seven primary
+        // slots; gamma / brightness / tint ride the EXT group from AM's def defaults
+        // (extraValues) at create time and are imported verbatim.
+        FxDef(
+            EDGE_GLOW_AM, 129, "Edge Glow (Alight)", "Light", "The layer's edges, blurred and composited back over it (Alight Motion's Edge Glow)",
+            listOf(
+                FxParamDef("Smoothing", 1f, 10f, 5f, "", step = 0.01f),
+                FxParamDef("Threshold", 0f, 1f, 0.7f, "", step = 0.01f),
+                FxParamDef("Invert", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Blur", 0f, 2f, 0.1f, "", step = 0.01f),
+                FxParamDef("Spread", 0f, 3f, 1.5f, "", step = 0.01f),
+                FxParamDef("Fill colour", 0f, 16777215f, 0x0088FF.toFloat(), "", step = 1f),
+                FxParamDef("Blend", 0f, 2f, 0f, "", step = 0.01f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -1575,6 +1598,9 @@ object ClipFxLibrary {
             0f, 0f, 0f, 0f, 100f, 500f, 0x3366AA.toFloat(),
             0xAA3366.toFloat(), 300f, 0f, 0f, 0f, 0f, 0f
         )
+        // Edge Glow's EXT defaults are Alight's own def defaults: gamma 1, brightness 0,
+        // tint color black, tint 0.
+        EDGE_GLOW_AM -> listOf(1f, 0f, 0f, 0f, 0f, 0f, 0f)
         else -> emptyList()
     }
 
@@ -1598,6 +1624,7 @@ object ClipFxLibrary {
         SMOOTH_BEVEL_AM -> 119
         EXTRUDE_AM -> 124
         EXTRUDE_FLAT_AM -> 127
+        EDGE_GLOW_AM -> 130
         else -> null
     }
 

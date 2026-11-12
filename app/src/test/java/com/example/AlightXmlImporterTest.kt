@@ -2202,14 +2202,29 @@ $layers
     }
 
     @Test
-    fun edgeGlowBecomesNativeGlow() {
-        val c = onlyClip(shapeWith(
+    fun edgeGlowBecomesNativeEdgeGlow() {
+        // Build 128: edgeglow is a faithful native port (its def's pass chain), not the
+        // old Glow approximation. Params the fixture omits take AM's def defaults.
+        val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.edgeglow" locallyApplied="true"><property name="threshold" type="float" value="0.23" /><property name="strength" type="float" value="0.3" /><property name="spread" type="float" value="1.5" /><property name="fillColor" type="color" value="#ffffffff" /></effect>"""
-        ))
-        val fx = c.effects.first { it.type == com.example.model.ClipFxLibrary.GLOW }
-        assertEquals(23f, fx.values[0], 0.01f)
-        assertEquals(49.5f, fx.values[1], 0.01f)
-        assertEquals(30f, fx.values[2], 0.01f)
+        ), 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.single { it.type == com.example.model.ClipFxLibrary.EDGE_GLOW_AM }
+        assertEquals(5f, fx.values[0], 0.01f)        // smoothing: the def's default
+        assertEquals(0.23f, fx.values[1], 0.01f)
+        assertEquals(0f, fx.values[2], 0.01f)        // invert
+        assertEquals(0.3f, fx.values[3], 0.01f)      // strength (the blur)
+        assertEquals(1.5f, fx.values[4], 0.01f)      // spread
+        assertEquals(0xFFFFFF.toFloat(), fx.values[5], 0.01f)
+        assertEquals(0f, fx.values[6], 0.01f)        // blend: the def's default
+        assertEquals(1f, fx.values[7], 0.01f)        // gamma
+        assertEquals(0f, fx.values[8], 0.01f)        // brightness
+        assertEquals(0f, fx.values[9], 0.01f)        // tintColor: black packed
+        assertEquals(0f, fx.values[10], 0.01f)       // tint
+        val flat = ClipFxLibrary.toNative(listOf(fx))!!
+        assertEquals(129f, flat[0], 0f)
+        assertEquals(130f, flat[8], 0f)              // the EXT group rides behind its owner
+        assertTrue(r.warnings.none { it.contains("edgeglow") })
     }
 
     @Test
@@ -4885,18 +4900,26 @@ $layers
     }
 
     @Test
-    fun edgeGlowStillApproximatesToGlow() {
-        // Verbatim from 7e363d75: edgeglow keeps the Glow approximation (its def chain's
-        // pass-parameter wiring is the host's, not the defs' — see applyGlow).
+    fun edgeGlowGraphBarVerbatim() {
+        // Verbatim from 7e363d75 (a Graph bar): build 128 maps it to the native Edge
+        // Glow with every value in AM units; strength 0 keeps the edge buffer
+        // unblurred, exactly as AM's chain composites it.
         val r = AlightXmlImporter.parse(shapeWith(
             """<effect id="com.alightcreative.effects.edgeglow" locallyApplied="true"><property name="smoothing" type="float" value="2.050000" /><property name="threshold" type="float" value="0.590000" /><property name="invert" type="bool" value="false" /><property name="strength" type="float" value="0.000000" /><property name="spread" type="float" value="1.540000" /><property name="fillColor" type="color" value="#ffffffff" /></effect>"""
         ), 1080f)
         val clip = r.snapshot.tracks.flatMap { it.clips }[0]
         assertTrue(clip.effects.none { it.type == ClipFxLibrary.DARK_GLOW_AM })
-        val fx = clip.effects.single { it.type == ClipFxLibrary.GLOW }
-        assertEquals(59f, fx.values[0], 0.001f)
-        assertEquals(50.82f, fx.values[1], 0.01f)
-        assertEquals(0f, fx.values[2], 0.001f)
+        assertTrue(clip.effects.none { it.type == ClipFxLibrary.GLOW })
+        val fx = clip.effects.single { it.type == ClipFxLibrary.EDGE_GLOW_AM }
+        assertEquals(2.05f, fx.values[0], 0.001f)
+        assertEquals(0.59f, fx.values[1], 0.001f)
+        assertEquals(0f, fx.values[2], 0.001f)       // invert false
+        assertEquals(0f, fx.values[3], 0.001f)       // strength 0
+        assertEquals(1.54f, fx.values[4], 0.001f)
+        assertEquals(0xFFFFFF.toFloat(), fx.values[5], 0.01f)
+        assertEquals(0f, fx.values[6], 0.001f)       // blend: the def's default
+        assertEquals(1f, fx.values[7], 0.001f)       // gamma: the def's default
+        assertTrue(r.warnings.none { it.contains("edgeglow") })
     }
 
     @Test

@@ -1034,6 +1034,102 @@ int main() {
         eo.type = FX_EXTRUDE_AM;
         CHECK(!fxIsIdentity(eo), "extrude is never identity");
     }
+    {   // Edge Glow (AM's edgeglow def): the findedges-edgeglow output stage, the final
+        // composite, and the blur calibration — hand-computed from the def's shader.
+        float oR, oG, oB, oA;
+        // A flat neighbourhood: g = 0 — the non-inverted stage outputs black at the
+        // pixel's own alpha (the Graph bars' interior case: no edge, no contribution),
+        // the inverted stage outputs (a, a, a, a).
+        const float flat8[8] = {0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f, 0.4f};
+        fxEdgeGlowAmEdge(flat8, 0.3f, 0.5f, 0.1f, 1.f, 0.59f, false, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f && oG == 0.f && oB == 0.f && oA == 1.f, "edge glow flat non-invert (%g %g %g %g)", oR, oG, oB, oA);
+        fxEdgeGlowAmEdge(flat8, 0.3f, 0.5f, 0.1f, 0.8f, 0.59f, true, &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.8f) < 1e-6f && std::fabs(oA - 0.8f) < 1e-6f, "edge glow flat invert (%g %g)", oR, oA);
+        // A vertical step of 0.35 (nw/ne order: nw, n, ne, w, e, sw, s, se): |h| = 16 *
+        // 0.35 = 5.6 — past the Graph bars' 0.59 threshold g clamps to 1 and the stage
+        // returns the pixel itself; at threshold 6 nothing survives.
+        const float step8[8] = {0.f, 0.35f, 0.35f, 0.f, 0.35f, 0.f, 0.35f, 0.35f};
+        fxEdgeGlowAmEdge(step8, 0.3f, 0.5f, 0.1f, 1.f, 0.59f, false, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.3f && oG == 0.5f && oB == 0.1f && oA == 1.f, "edge glow step g=1 (%g %g %g)", oR, oG, oB);
+        fxEdgeGlowAmEdge(step8, 0.3f, 0.5f, 0.1f, 1.f, 6.f, false, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f && oG == 0.f && oB == 0.f, "edge glow step threshold 6 (%g)", oR);
+        fxEdgeGlowAmEdge(step8, 0.3f, 0.5f, 0.1f, 1.f, 0.59f, true, &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f && oA == 1.f, "edge glow step invert g=1 (%g %g)", oR, oA);
+        // Composite, neutral settings: the base survives the YUV round trip (the def's
+        // truncated constants cost ~5e-6), a translucent base keeps its premultiply.
+        fxEdgeGlowAmComposite(0.2f, 0.4f, 0.6f, 1.f, 0, 0, 0, 0,
+                              1.5f, 1.f, 0.f, 0.f, 0.5333333f, 1.f, 0.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.2f) < 1e-4f && std::fabs(oG - 0.4f) < 1e-4f && std::fabs(oB - 0.6f) < 1e-4f && oA == 1.f,
+              "edge glow composite neutral (%g %g %g %g)", oR, oG, oB, oA);
+        fxEdgeGlowAmComposite(0.1f, 0.2f, 0.3f, 0.5f, 0, 0, 0, 0,
+                              1.5f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.1f) < 1e-4f && std::fabs(oG - 0.2f) < 1e-4f && std::fabs(oB - 0.3f) < 1e-4f && oA == 0.5f,
+              "edge glow composite translucent (%g %g %g %g)", oR, oG, oB, oA);
+        // The blend factor branches on a black base with a 0.5-grey glow (spread 1.5:
+        // pow = 0.353553, lum the same): blend 2 -> pure fillColor * lum; blend 0 ->
+        // the glow itself added; blend 1 -> the (1 - lum) mix of the two.
+        fxEdgeGlowAmComposite(0, 0, 0, 1.f, 0.5f, 0.5f, 0.5f, 1.f,
+                              1.5f, 1.f, 0.f, 0.f, 0.5333333f, 1.f, 2.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR) < 1e-6f && std::fabs(oG - 0.1885618f) < 1e-5f && std::fabs(oB - 0.3535534f) < 1e-5f &&
+              std::fabs(oA - 1.3535534f) < 1e-5f, "edge glow composite blend 2 (%g %g %g %g)", oR, oG, oB, oA);
+        fxEdgeGlowAmComposite(0, 0, 0, 1.f, 0.5f, 0.5f, 0.5f, 1.f,
+                              1.5f, 1.f, 0.f, 0.f, 0.5333333f, 1.f, 0.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.3535534f) < 1e-5f && std::fabs(oA - 2.f) < 1e-5f,
+              "edge glow composite blend 0 (%g %g)", oR, oA);
+        fxEdgeGlowAmComposite(0, 0, 0, 1.f, 0.5f, 0.5f, 0.5f, 1.f,
+                              1.5f, 1.f, 0.f, 0.f, 0.5333333f, 1.f, 1.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.125f) < 1e-5f && std::fabs(oG - 0.2468951f) < 1e-5f && std::fabs(oB - 0.3535534f) < 1e-5f &&
+              std::fabs(oA - 1.5821068f) < 1e-5f, "edge glow composite blend 1 (%g %g %g %g)", oR, oG, oB, oA);
+        // Tint: 1 x black erases the base colour (alpha kept); 0.5 x black halves it;
+        // spread 0 -> the glow is cubed (0.5^3 = 0.125, lum the same, blend 2 white).
+        fxEdgeGlowAmComposite(0.2f, 0.4f, 0.6f, 1.f, 0, 0, 0, 0,
+                              1.5f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0, 0, 0, 1.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(oR == 0.f && oG == 0.f && oB == 0.f && oA == 1.f, "edge glow composite tint black (%g %g %g %g)", oR, oG, oB, oA);
+        fxEdgeGlowAmComposite(0.2f, 0.4f, 0.6f, 1.f, 0, 0, 0, 0,
+                              1.5f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0, 0, 0, 0.5f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.1f) < 1e-4f && std::fabs(oG - 0.2f) < 1e-4f && std::fabs(oB - 0.3f) < 1e-4f,
+              "edge glow composite tint half (%g %g %g)", oR, oG, oB);
+        fxEdgeGlowAmComposite(0, 0, 0, 1.f, 0.5f, 0.5f, 0.5f, 1.f,
+                              0.f, 1.f, 0.f, 1.f, 1.f, 1.f, 2.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.125f) < 1e-5f && std::fabs(oA - 1.125f) < 1e-5f,
+              "edge glow composite spread 0 (%g %g)", oR, oA);
+        // Gamma 2 square-roots the base; brightness +0.25 lifts its Y by that much.
+        fxEdgeGlowAmComposite(0.25f, 0.25f, 0.25f, 1.f, 0, 0, 0, 0,
+                              1.5f, 2.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.5f) < 1e-4f && std::fabs(oG - 0.5f) < 1e-4f && std::fabs(oB - 0.5f) < 1e-4f,
+              "edge glow composite gamma (%g %g %g)", oR, oG, oB);
+        fxEdgeGlowAmComposite(0.25f, 0.25f, 0.25f, 1.f, 0, 0, 0, 0,
+                              1.5f, 1.f, 0.25f, 0.f, 0.f, 0.f, 0.f, 0, 0, 0, 0.f,
+                              &oR, &oG, &oB, &oA);
+        CHECK(std::fabs(oR - 0.5f) < 1e-4f && std::fabs(oG - 0.5f) < 1e-4f && std::fabs(oB - 0.5f) < 1e-4f,
+              "edge glow composite brightness (%g %g %g)", oR, oG, oB);
+        // The blur calibration: strength 0 is the identity (the Graph bars' case),
+        // 0.3 -> 15, 2 -> the app's 100 cap.
+        CHECK(fxEdgeGlowAmBlurOp(0.f) == 0.f && std::fabs(fxEdgeGlowAmBlurOp(0.3f) - 15.f) < 1e-4f && fxEdgeGlowAmBlurOp(2.f) == 100.f,
+              "edge glow blur calibration");
+        // Parse: main + EXT fold into one op; a bare EXT is dropped; never identity.
+        float flatG[] = {129, 2.05f, 0.59f, 0, 0, 1.54f, 16777215, 0,
+                         130, 1, 0, 0, 0, 0, 0, 0};
+        FxOp gops[kFxMaxOps];
+        CHECK(fxParseOps(flatG, 16, gops) == 1 && gops[0].type == FX_EDGE_GLOW_AM &&
+              gops[0].p[0] == 2.05f && gops[0].p[5] == 16777215.f && gops[0].q[0] == 1.f,
+              "edge glow EXT folds into q");
+        float flatH[] = {130, 1, 2, 3, 4, 5, 6, 7};
+        CHECK(fxParseOps(flatH, 8, gops) == 0, "bare edge glow EXT is dropped");
+        FxOp go;
+        go.type = FX_EDGE_GLOW_AM;
+        CHECK(!fxIsIdentity(go), "edge glow is never identity");
+        CHECK(fxShaderOf(FX_EDGE_GLOW_AM).group == FXG_NONE, "edge glow is a dedicated pass");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

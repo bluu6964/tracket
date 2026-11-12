@@ -162,6 +162,7 @@ private:
     bool fxSoftGlowAm(const FxOp& op, int W, int H, int* cur);
     bool fxFillBehindAm(const FxOp& op, int W, int H, int* cur);
     bool fxDarkGlowAm(const FxOp& op, int W, int H, int* cur);
+    bool fxEdgeGlowAm(const FxOp& op, int W, int H, int* cur);
     // Tier 3 dedicated passes: Displace Map (samples texBackdrop_ like fxCopyBg), Smooth
     // Bevel (two passes through an lv_ distance buffer), Light Glow (four passes through
     // half-size lv_ buffers).

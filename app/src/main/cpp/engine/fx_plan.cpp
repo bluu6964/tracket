@@ -49,6 +49,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_SMOOTH_BEVEL_AM_EXT ? FX_SMOOTH_BEVEL_AM
                            : t == FX_EXTRUDE_AM_EXT ? FX_EXTRUDE_AM
                            : t == FX_EXTRUDE_FLAT_AM_EXT ? FX_EXTRUDE_FLAT_AM
+                           : t == FX_EDGE_GLOW_AM_EXT ? FX_EDGE_GLOW_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -81,7 +82,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_DOTS_AM && t != FX_RIDGES_AM && t != FX_BEND_WARP_AM &&
             t != FX_DISPLACE_MAP_AM && t != FX_DISPLACE_MAP_RAD_AM && t != FX_SMOOTH_BEVEL_AM &&
             t != FX_LIGHT_GLOW_AM && t != FX_INNER_GLOW_AM && t != FX_DARK_GLOW_AM &&
-            t != FX_EXTRUDE_AM && t != FX_EXTRUDE_FLAT_AM) {
+            t != FX_EXTRUDE_AM && t != FX_EXTRUDE_FLAT_AM && t != FX_EDGE_GLOW_AM) {
             owner = -1;
             extFoldedOp = -1;
             extFoldedType = FX_NONE;
@@ -422,6 +423,7 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_HEX_SHIFT_AM: return std::fabs(p[0]) < 0.00005f;   // strength 0: the sample is the pixel
         case FX_SOFT_GLOW_AM: return p[6] < 0.5f;   // alpha 0: blendInside is 0, the screen keeps the pixel
         case FX_DARK_GLOW_AM: return p[4] < 0.5f || p[1] <= 0.f;   // alpha 0, or no pixel under the threshold: the extract is empty
+        case FX_EDGE_GLOW_AM: return false;   // the (blurred) edge buffer is added back even at blend 0, and gamma / brightness re-grade the base
         case FX_FILL_BEHIND_AM: return false;   // the edge / feather terms can bite even at strength 0
         // v165 tier:
         case FX_WAVE_WARP_AM: return std::fabs(p[3]) < 0.0005f;   // magnitude 0: the offset is 0
@@ -1230,6 +1232,78 @@ float fxDarkGlowSigma(float strength, float previewDiagPx) {
     // sigma = that / 2.14596602, at half res — twice it at full res.
     if (strength <= 0.f) return 0.f;
     return strength * 0.5f * 1.14f / 4.f / 3.f * previewDiagPx / 2.14596602f * 2.f;
+}
+
+void fxEdgeGlowAmEdge(const float luma8[8], float cR, float cG, float cB, float cA,
+                      float threshold, bool invert,
+                      float* outR, float* outG, float* outB, float* outA) {
+    // AM's findedges-edgeglow pass, line by line: g is the shared Scharr magnitude
+    // (fxFindEdgesAmG — the two defs' kernels are identical), then the def's output
+    // stage: the edge grey times the pixel itself, or (1 - g) times its alpha alone.
+    const float g = fxFindEdgesAmG(luma8, threshold);
+    if (invert) {
+        const float v = (1.f - g) * cA;
+        *outR = v;
+        *outG = v;
+        *outB = v;
+        *outA = cA;
+    } else {
+        *outR = g * cR;
+        *outG = g * cG;
+        *outB = g * cB;
+        *outA = cA;
+    }
+}
+
+void fxEdgeGlowAmComposite(float baseR, float baseG, float baseB, float baseA,
+                           float glowR, float glowG, float glowB, float glowA,
+                           float spread, float gamma, float brightness,
+                           float fillR, float fillG, float fillB, float blend,
+                           float tintR, float tintG, float tintB, float tint,
+                           float* outR, float* outG, float* outB, float* outA) {
+    // AM's edgeglow final pass, line by line (its `fill` is a constant 1 in the def, so
+    // mix(lum, 1, fill) is 1 and drops out). The alpha guards mirror the GLSL twin's
+    // max(a, 0.0001): where the alpha is 0 the colour is 0 too, so the guarded quotient
+    // is the value AM's own division produces wherever the pixel is visible at all.
+    float gr = glowR / std::max(glowA, 0.0001f);
+    float gg = glowG / std::max(glowA, 0.0001f);
+    float gb = glowB / std::max(glowA, 0.0001f);
+    float br = baseR / std::max(baseA, 0.0001f);
+    float bg = baseG / std::max(baseA, 0.0001f);
+    float bb = baseB / std::max(baseA, 0.0001f);
+    const float gp = std::max(0.0001f, 3.f - spread);
+    gr = std::pow(std::max(gr, 0.f), gp);
+    gg = std::pow(std::max(gg, 0.f), gp);
+    gb = std::pow(std::max(gb, 0.f), gp);
+    const float invGamma = 1.f / std::max(gamma, 0.01f);
+    br = std::pow(std::max(br, 0.f), invGamma);
+    bg = std::pow(std::max(bg, 0.f), invGamma);
+    bb = std::pow(std::max(bb, 0.f), invGamma);
+    float y, u, v;
+    fxAmToYuv(br, bg, bb, &y, &u, &v);
+    y += brightness;
+    fxAmToRgb(y, u, v, &br, &bg, &bb);
+    br = fxClamp(br, 0.f, 1.f);
+    bg = fxClamp(bg, 0.f, 1.f);
+    bb = fxClamp(bb, 0.f, 1.f);
+    const float lum = 0.2126f * gr + 0.7152f * gg + 0.0722f * gb;
+    gr *= glowA;
+    gg *= glowA;
+    gb *= glowA;
+    br *= baseA;
+    bg *= baseA;
+    bb *= baseA;
+    const float factor = std::max(fxClamp(blend, 0.f, 1.f) * (1.f - lum), blend - 1.f);
+    *outR = (br + (br * tintR - br) * tint) + (gr + (fillR * lum - gr) * factor);
+    *outG = (bg + (bg * tintG - bg) * tint) + (gg + (fillG * lum - gg) * factor);
+    *outB = (bb + (bb * tintB - bb) * tint) + (gb + (fillB * lum - gb) * factor);
+    *outA = baseA + (glowA + (lum - glowA) * factor);
+}
+
+float fxEdgeGlowAmBlurOp(float strength) {
+    // The applyGaussianBlur calibration: AM's gaussianblur strength 0..1 -> the app
+    // blur's 0..50 (edgeglow's strength runs to 2, onto the app's 100 cap).
+    return fxClamp(strength * 50.f, 0.f, 100.f);
 }
 
 void fxFillBehindAmBg(float br, float bg, float bb, float blurA, float saturation,

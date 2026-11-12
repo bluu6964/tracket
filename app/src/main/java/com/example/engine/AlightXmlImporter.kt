@@ -103,7 +103,7 @@ import kotlin.math.tan
  *    that copy fails the clip stays silent until the file is picked again (a warning says so). The same
  *    copy applies to the picture fills of media shapes (`fillImage`).
  *  - effects (pass 3): `wipe2` -> a keyframeable rectangular [ClipMask] (the app has no wipe effect of its
- *    own); `gaussianblur` / `edgeglow` / `darkglow` / `exposure` / `tile` / `rgbsep` / `hueshift` /
+ *    own); `gaussianblur` / `darkglow` / `exposure` / `tile` / `rgbsep` / `hueshift` /
  *    `satvib` / `brightcont2` / `invert` / `vignette` / `zoomblur2` / `zoomblur3` / `dblur` / `lensblur2` /
  *    `sharpen` / `pinchbulge` / `pinchbulge2` map onto the app's native [ClipFx] library with the closest
  *    parameters; `shake2` is baked into the POSITION keyframes as seeded value noise (the app's camera
@@ -2340,7 +2340,7 @@ object AlightXmlImporter {
                 OSCILLATE, OSCILLATE3 -> applyOscillate(fx, clip, ctx, durMs, id)
                 SWING, SWING2 -> applySwing(fx, clip, ctx, durMs, id)
                 WIPE -> applyWipe(fx, clip, ctx, durMs)
-                EDGEGLOW -> applyGlow(fx, clip, ctx)
+                EDGEGLOW -> applyEdgeGlowAm(fx, clip, ctx)
                 DARKGLOW -> applyDarkGlowAm(fx, clip, ctx)
                 GAUSSIANBLUR -> applyGaussianBlur(fx, clip, ctx)
                 SHAKE -> applyShake(fx, clip, ctx, durMs)
@@ -2976,37 +2976,37 @@ object AlightXmlImporter {
     }
 
     /**
-     * `edgeglow` -> the app's Glow. Edge glow blooms the layer's edges outwards in a colour;
-     * the app's glow blooms the bright parts of the layer itself, so the mapping is: threshold 0..1 -> %,
-     * spread -> Radius (spread ~1.5 reads as about half the app's radius range), strength 0..1 -> Intensity
-     * %. The glow colour (the app's glow has none) and an inverted edge pass are reported. (darkglow used
-     * to share this approximation; since build 120 it has its own native port, [applyDarkGlowAm]. The
-     * edge glow's own def chain — a findedges pass plus a gaussianblur pass whose parameter wiring is
-     * the host's, not the defs' — is what still keeps this one approximate.)
+     * `edgeglow` -> the app's Edge Glow (Alight), a faithful port of the effect's def
+     * (build 128; the def was recovered identically from two dumps). The chain is the
+     * def's: the findedges-edgeglow pass (Sobel on the layer — its def declares exactly
+     * `smoothing` / `threshold` / `invert`, and AM's host wiring feeds a pass the params
+     * its own def declares), the host gaussianblur of the edge buffer at `strength`
+     * (the param's def label is "Blur"; the applyGaussianBlur x50 calibration converts
+     * it), then the def's composite (spread power curve, gamma, YUV brightness, tint,
+     * the lum-keyed blend). No parameter is dropped, so there is no approximation note;
+     * AM's own def defaults fill what an instance omits, and a keyframed param (none in
+     * the corpus) takes its first value with the pass-2 note. Values stay in AM units
+     * (see [ClipFxLibrary.EDGE_GLOW_AM]).
      */
-    private fun applyGlow(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+    private fun applyEdgeGlowAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val short = "edgeglow"
         val props = fxProps(fx)
-        val threshold = props["threshold"]?.firstValue(w, short, "threshold") ?: 0f
-        val strength = props["strength"]?.firstValue(w, short, "strength") ?: 0f
-        val spread = props["spread"]?.firstValue(w, short, "spread") ?: 0f
-        val colorTrack = props["fillColor"]
-        val anyNonWhite = colorTrack != null &&
-            (listOf(colorTrack.constant) + colorTrack.keys.map { it.v }).any { unpacked(it) != 0xFFFFFFFFL }
-        val aspects = ArrayList<String>()
-        if (anyNonWhite) aspects += "its colour is not reproduced"
-        if ((props["invert"]?.scalarAt(0f) ?: 0f) > 0.5f) aspects += "its invert is not reproduced"
-        if (aspects.isNotEmpty()) {
-            w += "Effect " + short + " is approximated by the app's Glow: " + aspects.joinToString(", ")
-        }
+        val smoothing = (props["smoothing"]?.firstValue(w, short, "smoothing") ?: 5f).coerceIn(1f, 10f)
+        val threshold = (props["threshold"]?.firstValue(w, short, "threshold") ?: 0.7f).coerceIn(0f, 1f)
+        val invert = if ((props["invert"]?.firstValue(w, short, "invert") ?: 0f) > 0.5f) 1f else 0f
+        val strength = (props["strength"]?.firstValue(w, short, "strength") ?: 0.1f).coerceIn(0f, 2f)
+        val spread = (props["spread"]?.firstValue(w, short, "spread") ?: 1.5f).coerceIn(0f, 3f)
+        val fillColor = props["fillColor"]?.packedColor(w, short, "fillColor") ?: 0x0088FF.toFloat()
+        val blend = (props["blend"]?.firstValue(w, short, "blend") ?: 0f).coerceIn(0f, 2f)
+        val gamma = (props["gamma"]?.firstValue(w, short, "gamma") ?: 1f).coerceIn(0.01f, 9.99f)
+        val brightness = (props["brightness"]?.firstValue(w, short, "brightness") ?: 0f).coerceIn(-1f, 1f)
+        val tintColor = props["tintColor"]?.packedColor(w, short, "tintColor") ?: 0f
+        val tint = (props["tint"]?.firstValue(w, short, "tint") ?: 0f).coerceIn(0f, 1f)
         return addFx(
-            clip0, ctx, ClipFxLibrary.GLOW,
-            listOf(
-                (threshold * 100f).coerceIn(0f, 100f),
-                (spread * 33f).coerceIn(0f, 100f),
-                (strength * 100f).coerceIn(0f, 300f)
-            ),
+            clip0, ctx, ClipFxLibrary.EDGE_GLOW_AM,
+            listOf(smoothing, threshold, invert, strength, spread, fillColor, blend,
+                gamma, brightness, tintColor, tint, 0f, 0f, 0f),
             short
         )
     }

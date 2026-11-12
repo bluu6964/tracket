@@ -591,6 +591,66 @@ $layers
     }
 
     @Test
+    fun wrappedOutTimeDecodesToTheRealWindow() {
+        // rax-preset-249's "Edit Group" slices, verbatim pattern: the embed sits at 600..832 of the
+        // timeline, inTime == startTime, and outTime is the wrapped form of 832 for a 6932 ms scene
+        // (832 - 6932 + Int.MAX_VALUE = 2147477547). The window is [600, 832], factor 1: the
+        // full-length child is cut to the slice, the child outside the window stays out, and no
+        // "timing was stretched" note is owed. Read plainly (the pre-fix bug), the factor collapsed
+        // to ~0 and BOTH children dropped as sub-millisecond clips — the group imported empty.
+        val xml = scene(
+            """<embedScene id="s" label="Slice" startTime="600" endTime="832" fillType="intrinsic" inTime="600" outTime="2147477547" mediaFillMode="fill">
+<transform><location value="540.000000,960.000000,0.000000" /></transform>
+<scene title="" width="1080" height="1920" totalTime="6932" fps="30">
+<shape id="a" label="Full" startTime="0" endTime="6932" fillType="color" s=".rect"><transform><location value="540.000000,960.000000,0.000000" /></transform><fillColor value="#ffff0000" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+<shape id="b" label="Late" startTime="3000" endTime="4000" fillType="color" s=".rect"><transform><location value="540.000000,960.000000,0.000000" /></transform><fillColor value="#ff00ff00" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+</scene>
+</embedScene>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val g = clips.first { it.name == "Slice" }
+        assertEquals(600L, g.startMs)
+        assertEquals(232L, g.durationMs)
+        val full = clips.first { it.name == "Full" }
+        assertEquals(600L, full.startMs)
+        assertEquals(232L, full.durationMs)
+        assertTrue(clips.none { it.name == "Late" })
+        assertTrue(r.warnings.none { it.contains("Slice") && it.contains("stretched") })
+    }
+
+    @Test
+    fun wrappedOutTimeKeepsTheNestedSubtree() {
+        // likenya's "Group 2 Copy 4", verbatim pattern: outTime 2147483197 is the wrapped form of
+        // 499 for a 949 ms scene, so the outer window is [0, 499] at factor 1 and the inner group
+        // (the whole 949 ms, its own window the full 1131 ms scene) is clipped to it — not dropped.
+        // Pre-fix the outer factor was ~0 and the inner group clip itself remapped below 1 ms, so
+        // the entire subtree (12 group clips and 64 pie shapes in the real file) vanished.
+        val xml = scene(
+            """<embedScene id="o" label="Outer" startTime="0" endTime="499" fillType="intrinsic" outTime="2147483197" mediaFillMode="stretch">
+<transform><location value="540.000000,960.000000,0.000000" /></transform>
+<scene title="" width="1080" height="1920" totalTime="949" fps="30">
+<embedScene id="i" label="Inner" startTime="0" endTime="949" fillType="intrinsic" mediaFillMode="stretch">
+<transform><location value="540.000000,960.000000,0.000000" /></transform>
+<scene title="" width="1080" height="1920" totalTime="1131" fps="30">
+<shape id="d" label="Deep" startTime="0" endTime="1131" fillType="color" s=".rect"><transform><location value="540.000000,960.000000,0.000000" /></transform><fillColor value="#ffff0000" /><property name="size" type="vec2" value="100.000000,100.000000" /></shape>
+</scene>
+</embedScene>
+</scene>
+</embedScene>"""
+        )
+        val clips = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }
+        val outer = clips.first { it.name == "Outer" }
+        assertEquals(499L, outer.durationMs)
+        val inner = clips.first { it.name == "Inner" }
+        assertEquals(0L, inner.startMs)
+        assertEquals(499L, inner.durationMs)   // its 949 ms span clipped to the outer window
+        val deep = clips.first { it.name == "Deep" }
+        assertEquals(0L, deep.startMs)
+        assertEquals(499L, deep.durationMs)
+    }
+
+    @Test
     fun keyframedShapeSizeBecomesScaleKeyframesWithEasing() {
         val outline = threeClips().first { it.name == "Outline" }
         assertEquals("ROUNDED_RECT", outline.shapePattern)

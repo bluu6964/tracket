@@ -1754,14 +1754,33 @@ object AlightXmlImporter {
         val endMs = el.getAttribute("endTime").toLongOrNull() ?: ctx.totalMs
         val durMs = (endMs - startMs).coerceAtLeast(100L)
         // An unset outTime is written as a sentinel near Long.MIN_VALUE (ST Intro's "Logo Here":
-        // -2147482782, the Graph file's "Week": -2147483215 — the only two in the corpus; every
-        // other embed's window is sane). The window is then the whole nested scene, fitted to the
-        // embed's span like any other window — before this, the sentinel silently read as factor 1
-        // and the children ended early, leaving the group's tail empty (the ST Intro logo vanished
-        // at 7165 of its 8032 ms group).
+        // -2147482782, the Graph file's "Week": -2147483215). The window is then the whole nested
+        // scene, fitted to the embed's span like any other window — before this, the sentinel
+        // silently read as factor 1 and the children ended early, leaving the group's tail empty
+        // (the ST Intro logo vanished at 7165 of its 8032 ms group).
         val inT = (el.getAttribute("inTime").toLongOrNull() ?: 0L).coerceAtLeast(0L)
         val outRaw = el.getAttribute("outTime").toLongOrNull()
-        val outT = if (outRaw == null || outRaw <= inT) nTotal else outRaw
+        // AM's second outTime form is WRAPPED: the window's end measured back from the scene's end
+        // and wrapped at Int.MAX_VALUE (out = realOut - totalTime + Int.MAX_VALUE). It is written
+        // when a trimmed window ends before the scene does — all 20 corpus instances decode to
+        // exactly inTime + the embed's own length (factor 1): rax-preset-249's 19 "Edit Group"
+        // slices (inTime == startTime each) and likenya's "Group 2 Copy 4" (window [0, 499] of its
+        // 949 ms scene). Read plainly, the value is ~2.1e9 ms, the factor collapses to ~0 and
+        // remapClip drops the whole subtree as sub-millisecond clips — those 20 groups imported
+        // EMPTY (likenya also lost the 12 group clips nested inside the dropped subtree). A plain
+        // outTime can never sit in the wrapped band (it would end a window ~24 days past the
+        // scene's end; every plain corpus value is at most ~26 s), so the band is safe to decode.
+        // Plain values past the scene's end (the mild "outTime == the embed's length" writes,
+        // e.g. Test-1's "Text") stay read as written: they stretch by at most a few percent and
+        // lose nothing.
+        val outWrapped = if (outRaw != null && nTotal > 0L && outRaw > nTotal &&
+            outRaw <= Int.MAX_VALUE.toLong() && outRaw >= Int.MAX_VALUE.toLong() - nTotal
+        ) outRaw - Int.MAX_VALUE.toLong() + nTotal else null
+        val outT = when {
+            outRaw == null || outRaw <= inT -> nTotal
+            outWrapped != null && outWrapped > inT -> outWrapped
+            else -> outRaw
+        }
         val factor = if (outT > inT) (endMs - startMs).toDouble() / (outT - inT).toDouble() else 1.0
         if (abs(factor - 1.0) > 1e-4) w += "Group" + labelOf(el) + ": its timing was stretched to fit its length in the timeline"
 

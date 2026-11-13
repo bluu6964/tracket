@@ -2612,10 +2612,12 @@ fun VideoEditorScreen(
                         ) else ClipEditToolsPanel(
                             height = toolbarH,
                             // Null / 3D Camera: no picture, so no Effects / Animations / Color / Crop / Blend; only what moves them.
-                            // Controller (build 146): the SAME tools as any ordinary layer — editing it
-                            // IS editing its connected layers, so nothing is taken away (the handlers'
-                            // own type gates still apply, exactly as they do for other layer kinds).
+                            // Controller (build 155 — Sarowar's scope correction): ONLY the five tools whose
+                            // edits fan out to the connected layers (Transform, Effects, Blend, Color,
+                            // Animations — ControllerPanel.TOOLS). This supersedes build 146's full-panel parity.
                             onlyTools = when {
+                                tracks.any { t -> t.clips.any { it.id == targetClipId && it.type == LayerType.CONTROLLER } } ->
+                                    com.example.model.ControllerPanel.TOOLS
                                 tracks.any { t -> t.clips.any { it.id == targetClipId && (it.type == LayerType.NULL || it.type == LayerType.CAMERA) } } ->
                                     setOf("transform", "parent", "rename")
                                 else -> null
@@ -2670,8 +2672,10 @@ fun VideoEditorScreen(
                             },
                             onColor = {
                                 // Color = the fill of a shape or text layer (none / solid / gradient).
+                                // A Controller takes it too (build 155): the edit fans out to its
+                                // connected shape / text layers (ControllerFanOut).
                                 val target = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-                                if (target != null && (target.type == LayerType.SHAPE || target.type == LayerType.TEXT)) {
+                                if (target != null && (target.type == LayerType.SHAPE || target.type == LayerType.TEXT || target.type == LayerType.CONTROLLER)) {
                                     if (!target.isActiveAt(playheadState.value)) {
                                         viewModel.seekTo(target.startMs)
                                     }

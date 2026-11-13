@@ -1240,8 +1240,13 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     /** Edit without any keyframe handling (Color reset also drops the colour keyframes). */
-    fun updateClipNoKeyframes(clipId: String, change: (TimelineClip) -> TimelineClip) =
+    fun updateClipNoKeyframes(clipId: String, change: (TimelineClip) -> TimelineClip) {
+        val before = clipNow(clipId)
         updateClipRaw(clipId, change)
+        // The Color / Blend resets ride this path: on a Controller they fan out like any
+        // other edit of those panels (build 155).
+        if (before != null) applyControllerFanOut(before)
+    }
 
     /**
      * Diamond of a panel that edits several properties at once (gradient colours): if the playhead

@@ -532,14 +532,18 @@ class CarouselTemplateTest {
     @Test
     fun controllerEditFansOutToTheSixteenInTheirOwnPlaces() {
         // One edit of the Carousel Controller — moved by (+24, -10), turned +30 degrees,
-        // opacity 50, blend Multiply, one effect — fans out onto all 16 connected layers:
-        // each keeps its own place (shifted by the delta only), turns in place by +30,
-        // and takes the values. The null, the background and the group are untouched.
+        // opacity 50, blend Multiply, one effect, colour picked (build 155) — fans out
+        // onto all 16 connected layers: each keeps its own place (shifted by the delta
+        // only), turns in place by +30, and takes the values. The colour lands as the
+        // Controller's whole fill state: the cards' image fills give way to its solid
+        // colour, exactly as if the Color tool had been used on each card. The null,
+        // the background and the group are untouched.
         val fx = ClipFx(type = "gaussian_blur", values = listOf(12f))
         val before = ins.controller
         val after = before.copy(
             transformX = before.transformX + 24f, transformY = before.transformY - 10f,
-            rotationDeg = 30f, opacity = 50f, blendMode = "Multiply", effects = listOf(fx)
+            rotationDeg = 30f, opacity = 50f, blendMode = "Multiply", effects = listOf(fx),
+            textColor = 0xFF22AA88
         )
         val t = at0 + 1000L
         for (c in cards + shadows) {
@@ -550,6 +554,8 @@ class CarouselTemplateTest {
             assertEquals("fan-out opacity ${c.id}", 50f, f.opacity, 0.001f)
             assertEquals("fan-out blend ${c.id}", "Multiply", f.blendMode)
             assertEquals("fan-out effects ${c.id}", listOf(fx), f.effects)
+            assertEquals("fan-out colour ${c.id}", 0xFF22AA88, f.textColor)
+            assertEquals("fan-out colour mode ${c.id}", FILL_SOLID, f.fillMode)
             // The ring geometry survives: the fanned layer is still on the ring, just
             // turned in place — its centre relative to the ring centre is unchanged in
             // length (the delta is a pure translation).

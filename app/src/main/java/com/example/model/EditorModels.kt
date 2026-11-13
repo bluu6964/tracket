@@ -144,7 +144,10 @@ enum class LayerType(val displayName: String) {
      * and opacity / blend mode / effects are set to the Controller's values on each connected layer
      * individually (per-layer application — Sarowar's decision, 2026-11-13). The fan-out happens at EDIT
      * time ([ControllerFanOut], driven by the editor); ParentRig and the renderers ignore the connection
-     * completely. A Controller carries the same tools as any ordinary layer. It is never drawn / exported.
+     * completely. A Controller's panel offers ONLY the five tools whose edits fan out (Transform,
+     * Effects, Blend, Color, Animations — [ControllerPanel], Sarowar's scope correction of
+     * 2026-11-13 ~16:09), and on the canvas it draws nothing while unselected; selected, it gets
+     * the standard white bounding box ([CanvasMarkRule]). It is never drawn / exported.
      */
     CONTROLLER("Controller")
 }

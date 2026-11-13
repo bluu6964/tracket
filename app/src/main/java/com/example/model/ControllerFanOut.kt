@@ -31,15 +31,24 @@ import kotlin.math.abs
  *  - EFFECTS — VALUE fan-out: the Controller's effect stack replaces every connected layer's
  *    own stack (applied to each layer individually — per-layer application is Sarowar's
  *    settled decision, 2026-11-13; not once on the connected set as a composite).
+ *  - COLOUR — VALUE fan-out (build 155 — the Color tool joined the Controller's scope):
+ *    the Controller's FILL STATE, as it looks at the playhead, becomes every connected
+ *    SHAPE / TEXT layer's fill state — fill mode, the solid colour, the gradient stops
+ *    and geometry, the image fill. Those are the kinds the app's own colour model
+ *    colours (the Color tool's gate); layers with no colour concept (video, audio,
+ *    helpers) are simply unaffected. The colours themselves land by the editor's
+ *    keyframe rule, like opacity: a connected layer carrying FILL_COLOR / GRAD_COLOR
+ *    keyframes gets the Controller's playhead colour as a keyframe at the playhead.
  *
  * Keyframing follows the editor's own rule (the Transform rule): when the connected layer
  * carries keyframes on the fanned property, the fanned value lands as a keyframe at the
  * playhead; otherwise the layer's stored field takes it. Deltas are measured between the
  * Controller's evaluated values ([TimelineClip.at]) at the playhead before / after the edit,
  * so canvas drags, panel edits and keyframe writes at the playhead all fan out the same way.
- * Not fanned (they stay per-layer, like masks / fill / crop / volume / timing): the 3D
- * properties (POS_Z / ROT_X / ROT_Y), colours, timing, and the layer's own keyframe structure
- * away from the playhead. Keyframe toggles / easing / In-Out animations made on a Controller
+ * Not fanned (they stay per-layer, like masks / crop / volume / timing): the 3D
+ * properties (POS_Z / ROT_X / ROT_Y), the text-style colours (stroke / shadow /
+ * background box — those belong to Text edit, not to the Color tool), timing, and
+ * the layer's own keyframe structure away from the playhead. Keyframe toggles / easing / In-Out animations made on a Controller
  * are mirrored onto connected layers by the editor as the same operation (see
  * VideoEditorViewModel), not by the value diff here.
  *
@@ -103,6 +112,44 @@ object ControllerFanOut {
         // BLEND MODE / EFFECTS — values (neither is keyframed): set on the layer outright.
         if (after.blendMode != before.blendMode) out = out.copy(blendMode = after.blendMode)
         if (after.effects != before.effects) out = out.copy(effects = after.effects)
+        // COLOUR — value, per layer kind (build 155): when any part of the Controller's
+        // fill state changed, a connected SHAPE / TEXT layer takes the whole state (mode,
+        // gradient geometry, image / video fill), because the Color tool presents the fill
+        // as one state — picking a colour on the Controller must visibly recolour a card
+        // whose own fill was an image. The colours land at their playhead values by the
+        // editor's keyframe rule. Other kinds have no colour concept: unaffected.
+        if (layer.type == LayerType.SHAPE || layer.type == LayerType.TEXT) {
+            val colourChanged = after.fillMode != before.fillMode ||
+                after.gradType != before.gradType ||
+                after.gradX1 != before.gradX1 || after.gradY1 != before.gradY1 ||
+                after.gradX2 != before.gradX2 || after.gradY2 != before.gradY2 ||
+                after.fillImageUri != before.fillImageUri ||
+                after.fillImageMode != before.fillImageMode ||
+                after.fillVideoUri != before.fillVideoUri ||
+                a.textColor != b.textColor ||
+                a.gradColor1 != b.gradColor1 || a.gradColor2 != b.gradColor2
+            if (colourChanged) {
+                out = out.copy(
+                    fillMode = after.fillMode, gradType = after.gradType,
+                    gradX1 = after.gradX1, gradY1 = after.gradY1,
+                    gradX2 = after.gradX2, gradY2 = after.gradY2,
+                    fillImageUri = after.fillImageUri, fillImageMode = after.fillImageMode,
+                    fillVideoUri = after.fillVideoUri
+                )
+                if (a.textColor != b.textColor) {
+                    val (pa, pb) = packColor(a.textColor)
+                    out = out.atPlayhead(AnimProp.FILL_COLOR, rel, pa, pb)
+                }
+                if (a.gradColor1 != b.gradColor1) {
+                    val (pa, pb) = packColor(a.gradColor1)
+                    out = out.atPlayhead(AnimProp.GRAD_COLOR_1, rel, pa, pb)
+                }
+                if (a.gradColor2 != b.gradColor2) {
+                    val (pa, pb) = packColor(a.gradColor2)
+                    out = out.atPlayhead(AnimProp.GRAD_COLOR_2, rel, pa, pb)
+                }
+            }
+        }
         return out
     }
 

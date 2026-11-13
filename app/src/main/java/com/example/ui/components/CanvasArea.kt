@@ -331,10 +331,11 @@ fun CanvasArea(
                             }
                     ) {
                         // The shape picture is drawn by the C++ engine (NativePreviewEngine); this box only takes the touch.
-                        // A Null object has no picture at all: only this editing marker (dashed box + cross), never exported.
-                        // A Group is the same kind of helper (its own move / scale / turn / opacity, no picture): green marker.
-                        // A Controller is the same kind of helper again (build 145): teal marker.
-                        if (clip.type == LayerType.NULL || clip.type == LayerType.GROUP || clip.type == LayerType.CONTROLLER) {
+                        // Helper layers have no picture: a GROUP shows this editing marker (dashed box + cross),
+                        // never exported. A Null / Controller shows NOTHING while unselected (build 155 —
+                        // Sarowar's display correction, CanvasMarkRule); selected, the white bounding box
+                        // below (SelectionFrameOverlay) is all that appears, like for any other layer.
+                        if (com.example.model.CanvasMarkRule.markFor(clip.type, clip.id == selectedClipId) == com.example.model.CanvasMark.MARKER) {
                             Canvas(modifier = Modifier.matchParentSize()) {
                                 val c = when (clip.type) {
                                     LayerType.GROUP -> Color(0xFF5BB85D)

@@ -1050,8 +1050,10 @@ float sstep(float e0, float e1, float x) {
     return t * t * (3.0 - 2.0 * t);
 }
 vec3 unpackRgb(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+    // Integer arithmetic, the engine's fxUnpackRgb convention: the float
+    // mod/floor unpack wraps pure white (0xFFFFFF) to black at the 2^24 edge.
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
 }
 float band(float start, float end, float feather) {
     float rad = uP[1] * 0.0174533;
@@ -1249,12 +1251,16 @@ float sstep(float e0, float e1, float x) {
     return t * t * (3.0 - 2.0 * t);
 }
 vec3 unpackRgb(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+    // Integer arithmetic, the engine's fxUnpackRgb convention: the float
+    // mod/floor unpack wraps pure white (0xFFFFFF) to black at the 2^24 edge.
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
 }
 vec2 unpackPoint(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+    // Integer arithmetic, same 2^24 edge as the colour unpack: the float form
+    // wraps the (2047, 2047) corner to (-2048, -2048).
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec2(float(k / 4096 - 2048), float(k % 4096 - 2048));
 }
 vec3 toYuv(vec3 c) {
     mat3 m = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
@@ -1579,8 +1585,10 @@ float sstep(float e0, float e1, float x) {
     return t * t * (3.0 - 2.0 * t);
 }
 vec3 unpackRgb(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+    // Integer arithmetic, the engine's fxUnpackRgb convention: the float
+    // mod/floor unpack wraps pure white (0xFFFFFF) to black at the 2^24 edge.
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
 }
 vec3 toYuv(vec3 c) {
     mat3 m = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
@@ -1658,8 +1666,10 @@ uniform float uLayerAspect;
 in vec2 vUv;
 out vec4 oColor;
 vec2 amUnpackPoint(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+    // Integer arithmetic, same 2^24 edge as the colour unpack: the float form
+    // wraps the (2047, 2047) corner to (-2048, -2048).
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec2(float(k / 4096 - 2048), float(k % 4096 - 2048));
 }
 float pickCh(vec4 t, float lum, float type) {
     return type < 0.5 ? lum : type < 1.5 ? t.r : type < 2.5 ? t.g : t.b;
@@ -2775,7 +2785,11 @@ out vec4 oColor;
 const float PI = 3.14159265;
 const float EPS = 0.0001;
 vec3 unpackRgb(float pk) {
-    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+    // Integer arithmetic, the engine's fxUnpackRgb convention: the float
+    // mod/floor unpack wraps pure white (0xFFFFFF) to black at the 2^24 edge
+    // (and floors fractional keyframed values where the twin rounds).
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
 }
 float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec3 srgbToLinear(vec3 s) {

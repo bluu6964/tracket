@@ -65,6 +65,21 @@ vec3 hueRgb(float h) {
     vec3 p = abs(fract(vec3(h / 360.0) + k) * 6.0 - 3.0);
     return clamp(p - 1.0, 0.0, 1.0);
 }
+// A packed 0xRRGGBB colour back to straight rgb — INTEGER arithmetic, the
+// engine's fxUnpackRgb convention: the float mod/floor unpack wraps pure
+// white (0xFFFFFF) to black at the 2^24 edge (floor(16777215 + 0.5) rounds
+// to 16777216, / 65536 = 256, mod 256 = 0).
+vec3 amUnpackColor(float pk) {
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
+}
+// A packed AM point (12-bit signed fields) back to its two components —
+// INTEGER arithmetic, same 2^24 edge as the colour unpack: the float form
+// wraps the (2047, 2047) corner to (-2048, -2048).
+vec2 amUnpackPoint(float pk) {
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec2(float(k / 4096 - 2048), float(k % 4096 - 2048));
+}
 
 void main() {
     vec4 c0 = tap(vUv);
@@ -378,8 +393,7 @@ void main() {
         vec2 dir = vec2(cos(ang), -sin(ang));  // uv space: the angle runs clockwise on screen, like mode 0
         float solid = clamp(uP[3], 0.0, 100.0) / 100.0;
         float fade = clamp(uP[4], 0.0, 100.0) / 100.0;
-        float pk = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
-        vec3 scol = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        vec3 scol = amUnpackColor(uP[5]);
         const int N = 64;
         float jit = ign(gl_FragCoord.xy);
         float mx = 0.0, sum = 0.0, wsum = 0.0;
@@ -493,9 +507,9 @@ void main() {
         // fxVortexBlurAmPixel in fx_plan.cpp is the twin.
         float picW = 1.0 / uTexel.x;
         float picH = 1.0 / uTexel.y;
-        float pk = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
-        vec2 diff = vec2((picW * 0.5 + (floor(pk / 4096.0) - 2048.0)) / picW,
-                         (picH - (picH * 0.5 + (mod(pk, 4096.0) - 2048.0))) / picH);
+        vec2 pt = amUnpackPoint(uP[5]);
+        vec2 diff = vec2((picW * 0.5 + pt.x) / picW,
+                         (picH - (picH * 0.5 + pt.y)) / picH);
         vec2 convRate = vec2(1.0);
         if (picH > picW) convRate.y = picH / picW; else convRate.x = picW / picH;
         vec3 offv = uP[3] < 0.5 ? vec3(0.0, -1.0, 1.0)
@@ -636,6 +650,14 @@ float hueOf(vec3 c) {
     else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
     else h = (c.r - c.g) / d + 4.0;
     return h * 60.0;
+}
+// A packed 0xRRGGBB colour back to straight rgb — INTEGER arithmetic, the
+// engine's fxUnpackRgb convention: the float mod/floor unpack wraps pure
+// white (0xFFFFFF) to black at the 2^24 edge (floor(16777215 + 0.5) rounds
+// to 16777216, / 65536 = 256, mod 256 = 0).
+vec3 amUnpackColor(float pk) {
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
 }
 
 void main() {
@@ -814,10 +836,8 @@ void main() {
         // uP[4] the alpha %, uP[5] the luminance lock. AM's smoothstep here has REVERSED edges
         // (it ramps down with distance); ES gives the formula result on the target drivers, and
         // the same maths lives in fx_plan.cpp (fxReplaceColorMap) — keep the two in step.
-        float pk1 = floor(clamp(uP[0], 0.0, 16777215.0) + 0.5);
-        float pk2 = floor(clamp(uP[1], 0.0, 16777215.0) + 0.5);
-        vec3 oc = vec3(mod(floor(pk1 / 65536.0), 256.0), mod(floor(pk1 / 256.0), 256.0), mod(pk1, 256.0)) / 255.0;
-        vec3 nc = vec3(mod(floor(pk2 / 65536.0), 256.0), mod(floor(pk2 / 256.0), 256.0), mod(pk2, 256.0)) / 255.0;
+        vec3 oc = amUnpackColor(uP[0]);
+        vec3 nc = amUnpackColor(uP[1]);
         mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
         mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
         vec3 oldYuv = oc * rgb2yuv;
@@ -958,8 +978,7 @@ void main() {
         // fxSpotColorAmMap in fx_plan.cpp is the CPU twin.
         mat3 rgb2yuv = mat3(0.299, 0.587, 0.114, -0.14713, -0.28886, 0.436, 0.615, -0.51499, -0.10001);
         mat3 yuv2rgb = mat3(1.0, 0.0, 1.13983, 1.0, -0.39465, -0.58060, 1.0, 2.03211, 0.0);
-        float pk = floor(clamp(uP[0], 0.0, 16777215.0) + 0.5);
-        vec3 spot = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        vec3 spot = amUnpackColor(uP[0]);
         vec3 spotYuv = spot * rgb2yuv;
         vec3 texYuv = c.rgb * rgb2yuv;
         spotYuv.yz *= uP[4];
@@ -1003,12 +1022,9 @@ void main() {
         float bscale = uP[6] > 0.5 ? lum0 : 1.0;
         float lum = (uP[5] > 0.5 ? 1.0 - lum0 : lum0) * uP[1] + uP[0];
         float f = mix(0.333, 0.1, uP[3]);
-        float pkR = floor(clamp(uQ[0], 0.0, 16777215.0) + 0.5);
-        float pkG = floor(clamp(uQ[1], 0.0, 16777215.0) + 0.5);
-        float pkB = floor(clamp(uQ[2], 0.0, 16777215.0) + 0.5);
-        vec3 cR = vec3(mod(floor(pkR / 65536.0), 256.0), mod(floor(pkR / 256.0), 256.0), mod(pkR, 256.0)) / 255.0;
-        vec3 cG = vec3(mod(floor(pkG / 65536.0), 256.0), mod(floor(pkG / 256.0), 256.0), mod(pkG, 256.0)) / 255.0;
-        vec3 cB = vec3(mod(floor(pkB / 65536.0), 256.0), mod(floor(pkB / 256.0), 256.0), mod(pkB, 256.0)) / 255.0;
+        vec3 cR = amUnpackColor(uQ[0]);
+        vec3 cG = amUnpackColor(uQ[1]);
+        vec3 cB = amUnpackColor(uQ[2]);
         vec3 res = amMapChannel(lum, f) * cR + amMapChannel(lum - 1.0 / 3.0, f) * cG
                  + amMapChannel(lum - 2.0 / 3.0, f) * cB;
         res = res * rgb2yuv;
@@ -1052,12 +1068,9 @@ void main() {
         // its alpha, midtones packed, its alpha, shadows packed, its alpha,
         // blend) — the def reads the colours as rgb only (their alphas are
         // carried, unused). fxTritoneAmPixel in fx_plan.cpp is the twin.
-        float pkH = floor(clamp(uP[0], 0.0, 16777215.0) + 0.5);
-        float pkM = floor(clamp(uP[2], 0.0, 16777215.0) + 0.5);
-        float pkS = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
-        vec3 cH = vec3(mod(floor(pkH / 65536.0), 256.0), mod(floor(pkH / 256.0), 256.0), mod(pkH, 256.0)) / 255.0;
-        vec3 cM = vec3(mod(floor(pkM / 65536.0), 256.0), mod(floor(pkM / 256.0), 256.0), mod(pkM, 256.0)) / 255.0;
-        vec3 cS = vec3(mod(floor(pkS / 65536.0), 256.0), mod(floor(pkS / 256.0), 256.0), mod(pkS, 256.0)) / 255.0;
+        vec3 cH = amUnpackColor(uP[0]);
+        vec3 cM = amUnpackColor(uP[2]);
+        vec3 cS = amUnpackColor(uP[4]);
         float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
         vec3 tri = lum < 0.5 ? mix(cS, cM, lum * 2.0) : mix(cM, cH, (lum - 0.5) * 2.0);
         o = mix(tri, c.rgb, uP[6]) / c.a;
@@ -1224,10 +1237,20 @@ float amValueFbm(vec2 st, vec2 parallax, int octaves, float intens) {
     }
     return value;
 }
-// A packed AM point (12-bit signed fields) back to its two components.
+// A packed AM point (12-bit signed fields) back to its two components —
+// INTEGER arithmetic, same 2^24 edge as the colour unpack: the float form
+// wraps the (2047, 2047) corner to (-2048, -2048).
 vec2 amUnpackPoint(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec2(float(k / 4096 - 2048), float(k % 4096 - 2048));
+}
+// A packed 0xRRGGBB colour back to straight rgb — INTEGER arithmetic, the
+// engine's fxUnpackRgb convention: the float mod/floor unpack wraps pure
+// white (0xFFFFFF) to black at the 2^24 edge (floor(16777215 + 0.5) rounds
+// to 16777216, / 65536 = 256, mod 256 = 0).
+vec3 amUnpackColor(float pk) {
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
 }
 // AM's bendwarp bend(): the circular-arc remap (l = w = 1 at both call sites).
 vec2 amBendCurve(vec2 p, float a, bool vertical) {
@@ -1401,10 +1424,8 @@ void main() {
             ? textureLod(uTex, st, 0.0) : vec4(0.0);
         float lum = dot(samp.rgb, vec3(0.2126, 0.7152, 0.0722));
         float p = smoothstep(0.4, 0.6, lum + (1.0 - samp.a) + length(vec2(absDistX, absDistY)) + strength - 0.5);
-        float pk1 = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
-        float pk2 = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
-        vec3 c1 = vec3(mod(floor(pk1 / 65536.0), 256.0), mod(floor(pk1 / 256.0), 256.0), mod(pk1, 256.0)) / 255.0;
-        vec3 c2 = vec3(mod(floor(pk2 / 65536.0), 256.0), mod(floor(pk2 / 256.0), 256.0), mod(pk2, 256.0)) / 255.0;
+        vec3 c1 = amUnpackColor(uP[4]);
+        vec3 c2 = amUnpackColor(uP[5]);
         oColor = vec4(mix(c1, c2, p), 1.0) * tex.a;
         return;
     }
@@ -1438,8 +1459,7 @@ void main() {
         // 1 CCW, 2 both), uP[3] the repeat count, uP[4] the centre point packed (AM units,
         // /1200 in the shader), uP[5] the offset (degrees, the start angle). fxRadialWipeAmPp
         // in fx_plan.cpp is the CPU twin — keep the two in step.
-        float pk = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
-        vec2 cp = vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+        vec2 cp = amUnpackPoint(uP[4]);
         vec2 st = vec2(vUv.x, 1.0 - vUv.y) - 0.5;
         st.x *= uAspect;
         st -= cp / 1200.0;
@@ -1480,8 +1500,7 @@ void main() {
         vec2 st = vUv - 0.5;
         st.x *= uAspect;
         vec2 scale = (uP[1] / 100.0) * (vec2(uP[2], uP[3]) / 100.0);
-        float pk = floor(clamp(uQ[1], 0.0, 16777215.0) + 0.5);
-        vec2 pos = vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0) / 500.0 * vec2(1.0, -1.0);
+        vec2 pos = amUnpackPoint(uQ[1]) / 500.0 * vec2(1.0, -1.0);
         st /= scale;
         float rad = uP[4] * 0.0174533;
         mat2 rot = mat2(cos(rad), -sin(rad), sin(rad), cos(rad));
@@ -1618,8 +1637,7 @@ void main() {
         st *= mat2(sin(a), -cos(a), cos(a), sin(a));
         float p = mod(st.x * uP[0] + uP[3], 1.0);
         float band = amSstep(uP[1], uP[1] - uP[5], p) * amSstep(0.0, uP[5], p);
-        float pk = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
-        vec3 col = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        vec3 col = amUnpackColor(uP[4]);
         if (uP[6] > 0.5) {
             oColor = tex * (1.0 - band);
         } else {
@@ -1795,10 +1813,8 @@ void main() {
             ? textureLod(uTex, st, 0.0) : vec4(0.0);
         float lum = dot(samp.rgb, vec3(0.2126, 0.7152, 0.0722));
         float p = smoothstep(0.4, 0.6, lum + (1.0 - samp.a) + absDist + uP[1] - 0.5);
-        float pk1 = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
-        float pk2 = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
-        vec3 c1 = vec3(mod(floor(pk1 / 65536.0), 256.0), mod(floor(pk1 / 256.0), 256.0), mod(pk1, 256.0)) / 255.0;
-        vec3 c2 = vec3(mod(floor(pk2 / 65536.0), 256.0), mod(floor(pk2 / 256.0), 256.0), mod(pk2, 256.0)) / 255.0;
+        vec3 c1 = amUnpackColor(uP[4]);
+        vec3 c2 = amUnpackColor(uP[5]);
         oColor = vec4(mix(c1, c2, p), 1.0) * tex.a;
         return;
     }
@@ -1975,8 +1991,7 @@ void main() {
         vec3 halfDir = normalize(lDir + vec3(0.0, 0.0, 1.0));
         float diff = max(dot(n, lDir), 0.0);
         float spec = pow(max(dot(n, halfDir), 0.0), 1.0 / max(uR[0], 0.001));
-        float pk = floor(clamp(uP[6], 0.0, 16777215.0) + 0.5);
-        vec3 lc = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        vec3 lc = amUnpackColor(uP[6]);
         float inten = uP[5] * 0.01;
         vec3 ambCol = src.rgb * (uQ[4] * 0.01);
         vec3 diffCol = src.rgb * diff * (uQ[5] * 0.01) * lc * inten;
@@ -1999,8 +2014,7 @@ void main() {
         float p0 = amSstepRev(uP[4] - feather, uP[4], p);
         float p1 = 1.0 - amSstepRev(uP[5], uP[5] + feather, p);
         float mask = clamp(p0 * p1, 0.0, 1.0);
-        float pk = floor(clamp(uP[0], 0.0, 16777215.0) + 0.5);
-        vec3 fill = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        vec3 fill = amUnpackColor(uP[0]);
         vec3 straight = tex.a > 0.0 ? tex.rgb / tex.a : vec3(0.0);
         vec3 res = uP[3] > 1.5 ? 1.0 - (1.0 - straight) * (1.0 - fill)
                    : uP[3] > 0.5 ? straight * fill : fill;
@@ -2243,15 +2257,20 @@ float amSstep(float e0, float e1, float x) {
     float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
 }
-// A packed AM point (12-bit signed fields) back to its two components.
+// A packed AM point (12-bit signed fields) back to its two components —
+// INTEGER arithmetic, same 2^24 edge as the colour unpack: the float form
+// wraps the (2047, 2047) corner to (-2048, -2048).
 vec2 amUnpackPoint(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec2(mod(floor(pk / 4096.0), 4096.0) - 2048.0, mod(pk, 4096.0) - 2048.0);
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec2(float(k / 4096 - 2048), float(k % 4096 - 2048));
 }
-// A packed 0xRRGGBB colour back to straight rgb.
+// A packed 0xRRGGBB colour back to straight rgb — INTEGER arithmetic, the
+// engine's fxUnpackRgb convention: the float mod/floor unpack wraps pure
+// white (0xFFFFFF) to black at the 2^24 edge (floor(16777215 + 0.5) rounds
+// to 16777216, / 65536 = 256, mod 256 = 0).
 vec3 amUnpackColor(float pk) {
-    pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
-    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
 }
 // Alight shapefield's hashes and colour maths (mode 21); the CPU twins are
 // q15jRand4 / q15jRgb2Hsv / q15jShapeColor in fx_plan.cpp.

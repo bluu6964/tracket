@@ -2308,6 +2308,44 @@ int main() {
         id167 = FxOp{}; id167.type = FX_PAGECURL_AM;
         CHECK(!fxIsIdentity(id167), "pagecurl is never identity (the drop shadow)");
     }
+    // Solid-wipe mode 33 + the packed-colour unpack edge (build 169 audit):
+    // the GLSL unpacked a white fill as BLACK (the float mod/floor form wraps
+    // 0xFFFFFF to black at the 2^24 edge — floor(16777215 + 0.5) rounds to
+    // 16777216, / 65536 = 256, mod 256 = 0) while the twin was already integer.
+    // The audit fixed every GLSL unpack to the integer fxUnpackRgb formula
+    // (13 helpers + mode 33 + the bccfilmglow bare form); these pins hold the
+    // twin at the edge so the two can never diverge again. q15jUnpack itself
+    // is file-local to fx_plan.cpp, so the pins go through the public twin.
+    {
+        FxOp sw{}; sw.type = FX_SOLID_WIPE_AM;
+        sw.p[2] = 1.f;                  // amount
+        sw.p[3] = 0.f;                  // blendMode 0 = replace
+        sw.p[4] = 0.f; sw.p[5] = 1.f;  // start/end cover the whole wipe
+        sw.p[6] = 0.f;                  // angle
+        sw.q[0] = 0.f;                  // feather
+        const float tex[4] = {0.2f, 0.4f, 0.6f, 1.f};
+        float out[4];
+        sw.p[0] = 16777215.f;           // fillColor white — the edge
+        fxSolidWipeAmPixel(sw, 0.5f, 0.5f, tex, out);
+        CHECK(out[0] == 1.f && out[1] == 1.f && out[2] == 1.f && out[3] == 1.f,
+              "solid wipe white fill is white (%g %g %g %g)", out[0], out[1], out[2], out[3]);
+        sw.p[0] = 0.f;                  // fillColor black
+        fxSolidWipeAmPixel(sw, 0.5f, 0.5f, tex, out);
+        CHECK(out[0] == 0.f && out[1] == 0.f && out[2] == 0.f && out[3] == 1.f,
+              "solid wipe black fill is black (%g %g %g %g)", out[0], out[1], out[2], out[3]);
+        sw.p[0] = 0xFFE200;             // the corpus yellow (omniframe-hardtrekk-hero / loser-pf)
+        fxSolidWipeAmPixel(sw, 0.5f, 0.5f, tex, out);
+        CHECK(out[0] == 1.f && std::fabs(out[1] - 0xE2 / 255.f) < 1e-6f && out[2] == 0.f,
+              "solid wipe corpus yellow is exact (%g %g %g)", out[0], out[1], out[2]);
+        sw.p[0] = 0x123456;             // a mid colour, all three channels live
+        fxSolidWipeAmPixel(sw, 0.5f, 0.5f, tex, out);
+        CHECK(std::fabs(out[0] - 0x12 / 255.f) < 1e-6f &&
+              std::fabs(out[1] - 0x34 / 255.f) < 1e-6f &&
+              std::fabs(out[2] - 0x56 / 255.f) < 1e-6f,
+              "solid wipe mid colour is exact (%g %g %g)", out[0], out[1], out[2]);
+        CHECK(fxShaderOf(FX_SOLID_WIPE_AM).group == FXG_WARP &&
+              fxShaderOf(FX_SOLID_WIPE_AM).mode == 33, "solid wipe is warp mode 33");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

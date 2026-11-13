@@ -82,6 +82,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.PreviewResolution
+import com.example.model.TimelineTrack
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.EditorSurfaceVariant
@@ -1081,6 +1082,14 @@ fun FullscreenPlayerModal(
     currentPlayheadMs: Long,
     totalDurationMs: Long,
     isPlaying: Boolean,
+    /** The level being edited — the same tracks the inline canvas receives (its touch / overlay layer). */
+    tracks: List<TimelineTrack>,
+    /** Every layer of the project — the C++ picture and the empty-project check, as on the inline canvas. */
+    nativeTracks: List<TimelineTrack>,
+    /** The C++ preview engine, shared with the inline canvas (it draws on the newest surface, back on dismiss). */
+    nativePreview: com.example.engine.NativePreviewEngine?,
+    /** Live playhead reader (the screen's playheadProvider): the canvas follows playback, not the opening frame. */
+    playheadMs: () -> Long,
     onTogglePlay: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1095,15 +1104,19 @@ fun FullscreenPlayerModal(
                 .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            // Fullscreen Canvas Area
+            // Fullscreen Canvas Area: the SAME project state as the inline canvas (this call used to pass
+            // tracks = emptyList() and no engine, so the fullscreen preview always rendered an empty
+            // project: the "No layers yet" hint over black, in a fixed 360 dp band). No height is
+            // passed, so the canvas fills the dialog and the project frame is fitted to the full screen.
             CanvasArea(
-                height = 360.dp,
                 aspectRatio = aspectRatio,
-                playheadMs = { currentPlayheadMs },
+                playheadMs = playheadMs,
                 isPlaying = isPlaying,
-                tracks = emptyList(),
+                tracks = tracks,
+                nativeTracks = nativeTracks,
+                nativePreview = nativePreview,
                 onTogglePlayPause = onTogglePlay,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxSize()
             )
 
             // Top Bar Overlay

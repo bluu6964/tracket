@@ -100,7 +100,8 @@ import com.example.ui.theme.NeonGreen
 
 @Composable
 fun CanvasArea(
-    height: Dp,
+    /** Fixed height of the canvas strip. Null = take the full height the parent offers (the fullscreen player). */
+    height: Dp? = null,
     aspectRatio: AspectRatio,
     playheadMs: () -> Long,
     isPlaying: Boolean,
@@ -136,7 +137,7 @@ fun CanvasArea(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(height)
+            .then(if (height != null) Modifier.height(height) else Modifier.fillMaxHeight())
             .background(EditorBackground)
             .testTag("canvas_preview_area"),
         contentAlignment = Alignment.Center

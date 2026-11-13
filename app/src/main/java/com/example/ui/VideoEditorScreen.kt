@@ -4176,6 +4176,10 @@ fun VideoEditorScreen(
             currentPlayheadMs = playheadState.value,
             totalDurationMs = totalDurationMs,
             isPlaying = isPlaying,
+            tracks = shownTracks,
+            nativeTracks = tracks,
+            nativePreview = nativePreview,
+            playheadMs = playheadProvider,
             onTogglePlay = { viewModel.togglePlayPause() },
             onDismiss = { showFullscreenPlayer = false }
         )

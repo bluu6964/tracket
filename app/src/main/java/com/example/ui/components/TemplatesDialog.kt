@@ -2,11 +2,17 @@ package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -19,8 +25,11 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -37,6 +46,9 @@ import androidx.compose.ui.unit.sp
 import com.example.engine.TemplateAssets
 import com.example.model.CarouselSpec
 import com.example.model.CarouselTemplate
+import com.example.model.PopTitleSpec
+import com.example.model.PopTitleTemplate
+import com.example.model.at
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
 
@@ -47,19 +59,24 @@ private val DialogFill = Color(0xFF10161B)
  * user adds to the project that is OPEN. Templates live where layers are added — the
  * editor's + sheet — and choosing one inserts it into the current timeline as ONE Group
  * layer the user then customises in place (every picture in a template is a replaceable
- * slot). One template for now: the Carousel photo ring.
+ * slot). Two templates: the Carousel photo ring and the Pop Title text animation.
  */
 @Composable
 fun TemplatesDialog(
     onDismiss: () -> Unit,
-    onAddCarousel: () -> Unit
+    onAddCarousel: () -> Unit,
+    onAddPopTitle: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = DialogFill,
         title = { Text("Templates", color = HeaderText, fontWeight = FontWeight.Bold) },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
                 CarouselPreview(modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(10.dp))
                 Text(
@@ -79,6 +96,28 @@ fun TemplatesDialog(
                     "Lands in this project's timeline at the playhead as a single group. " +
                         "To use your own photo: open the group, tap a card, then " +
                         "Color → Fill → Image and pick it.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                PopTitlePreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Pop Title — Text Animation",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "A title that pops in, holds, and fades out · 3s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddPopTitle, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "Open the group and retype the text — the animation stays on your " +
+                        "words, Bengali included.",
                     color = TextSecondary, fontSize = 12.sp
                 )
             }
@@ -164,5 +203,58 @@ private fun CarouselPreview(modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Live preview of the Pop Title: the template built headlessly at a nominal 720x405 and
+ * EVALUATED — the very clips an insert would create, run through the model's own keyframe
+ * evaluator ([at]) on the frame clock — so what plays here is exactly what lands in the
+ * project (same rise, same Back-out pop, same fade-out, looping every 3 s).
+ */
+@Composable
+private fun PopTitlePreview(modifier: Modifier = Modifier) {
+    val ins = remember { PopTitleTemplate.buildGroup(720f, 405f, 0L, idBase = "preview") }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % PopTitleSpec.DURATION_MS) + PopTitleSpec.DURATION_MS) % PopTitleSpec.DURATION_MS
+    val text = ins.textLayer.at(t)
+    val bar = ins.bar.at(t)
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A3440), Color(0xFF12181F))))
+    ) {
+        val density = LocalDensity.current
+        // Preview px per nominal stored px; the nominal shape box is 720 x 130/360 = 260.
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = with(density) { (bar.transformY * unit).toDp() })
+                .width(with(density) { (260f * bar.shapeScaleX * unit).toDp() })
+                .height(with(density) { (260f * bar.shapeScaleY * unit).toDp() })
+                .graphicsLayer { alpha = bar.opacity / 100f }
+                .background(Color(PopTitleSpec.ACCENT.toInt()), RoundedCornerShape(50))
+        )
+        Text(
+            text = PopTitleSpec.SAMPLE_TEXT,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = with(density) { (0.11f * 720f * unit).toSp() },
+            modifier = Modifier
+                .align(Alignment.Center)
+                .graphicsLayer {
+                    alpha = text.opacity / 100f
+                    scaleX = text.scalePercent / 100f
+                    scaleY = text.scalePercent / 100f
+                    translationY = text.transformY * unit
+                }
+        )
     }
 }

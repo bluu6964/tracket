@@ -3753,6 +3753,19 @@ fun VideoEditorScreen(
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
+            },
+            onAddPopTitle = {
+                // No pictures to prepare: the title is pure layers + keyframes, authored
+                // against the same live preview frame as the Carousel insert.
+                viewModel.insertPopTitleTemplate(
+                    previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                )
+                showTemplates = false
+                android.widget.Toast.makeText(
+                    context,
+                    "Pop Title added as one group layer. Open the group and retype the text — the animation stays on your words",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
         )
     }

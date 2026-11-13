@@ -11,6 +11,7 @@ import com.example.model.MAX_CLIP_VOLUME
 import com.example.model.MAX_SPEED
 import com.example.model.AspectRatio
 import com.example.model.CarouselTemplate
+import com.example.model.PopTitleTemplate
 import com.example.model.ControllerFanOut
 import com.example.model.ExportSettings
 import com.example.model.ImportedMedia
@@ -1089,6 +1090,31 @@ class VideoEditorViewModel : ViewModel() {
         )
         pushHistory()
         _editingGroupId.value = null  // the group lands at the top level: leave any open group so it can be seen
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates (text-animation template #1): inserts the "Pop Title" template into the
+     * CURRENT project as ONE Group layer at the playhead — one ordinary TEXT layer carrying
+     * the whole title animation on its own keyframes plus its accent bar, authored against
+     * the live preview frame (see [PopTitleTemplate.buildGroup]). One undo step; the group
+     * ends up selected. No generated pictures are needed, so this runs on the caller's
+     * thread. Returns the group's id.
+     */
+    fun insertPopTitleTemplate(
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String {
+        val insert = PopTitleTemplate.buildGroup(
+            previewWidthPx, previewHeightPx,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "poptitle-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null  // the group lands at the top level, like the Carousel's
         _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
         setSelected(insert.group.id)
         recomputeTotal()

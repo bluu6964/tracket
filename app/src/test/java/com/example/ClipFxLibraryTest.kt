@@ -75,13 +75,16 @@ class ClipFxLibraryTest {
         // FX_SOLID_WIPE_AM (210), FX_SOFTBLOOM_AM (212) and FX_LENSD_AM (213);
         // 188 / 195 / 199 / 201 / 204 / 206 / 211 / 214 are their EXT groups and
         // 196 / 202 / 207 their EXT2 groups, folded the same way.
+        // Build 150 (v181) adds FX_BCC_FILM_GLOW_AM (215), a dedicated five-pass
+        // chain; 216 / 217 / 218 / 219 are its EXT / EXT2 / EXT3 / EXT4 groups,
+        // folded the same way (the EXT3 / EXT4 banks exist for this one effect).
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
                 114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126 + 129 +
                 131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149 +
                 150 + 151 + 154 + 155 + 157 + 158 + 159 + 161 + 164 + 167 + 169 + 172 + 175 + 178 + 179 + 180 + 181 + 182 + 183 +
-                185 + 186 + 187 + 189 + 190 + 191 + 192 + 193 + 194 + 197 + 198 + 200 + 203 + 205 + 208 + 209 + 210 + 212 + 213).toList(),
+                185 + 186 + 187 + 189 + 190 + 191 + 192 + 193 + 194 + 197 + 198 + 200 + 203 + 205 + 208 + 209 + 210 + 212 + 213 + 215).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

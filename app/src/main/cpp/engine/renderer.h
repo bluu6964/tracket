@@ -195,6 +195,7 @@ private:
     bool fxMinimaxAm(const FxOp& op, int W, int H, int* cur);
     bool fxSoftbloomAm(const FxOp& op, int W, int H, int* cur);
     bool fxLensdAm(const FxOp& op, int W, int H, int* cur);
+    bool fxBccFilmGlowAm(const FxOp& op, int W, int H, int* cur, int grainFrame);
     bool fxUnsharpMaskAm(const FxOp& op, int W, int H, int* cur);
     bool fxNewSharpenAm(const FxOp& op, int W, int H, int* cur);
     bool fxAmBlendGenAm(const FxOp& op, int W, int H, int* cur);

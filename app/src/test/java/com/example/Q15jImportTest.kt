@@ -406,7 +406,7 @@ $layers
     }
 
     @Test
-    fun catalogueGrewTo160() {
-        assertEquals(160, ClipFxLibrary.all.size)
+    fun catalogueGrewTo161() {
+        assertEquals(161, ClipFxLibrary.all.size)
     }
 }

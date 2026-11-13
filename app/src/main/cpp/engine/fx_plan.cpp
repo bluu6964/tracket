@@ -12,9 +12,50 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
     int owner = -1;  // index of the op an EXT group may extend: only the group right before it
     int extFoldedOp = -1;     // v173: the op whose EXT group was just folded (an EXT2 group may follow it)
     int extFoldedType = FX_NONE;  // ... and which EXT type that was
+    int ext2FoldedOp = -1;    // v181: the op whose EXT2 group was just folded (an EXT3 group may follow it)
+    int ext2FoldedType = FX_NONE;  // ... and which EXT2 type that was
+    int ext3FoldedOp = -1;    // v181: the op whose EXT3 group was just folded (an EXT4 group may follow it)
+    int ext3FoldedType = FX_NONE;  // ... and which EXT3 type that was
     if (!flat || !out) return 0;
     for (int i = 0; i + kFxStride <= n; i += kFxStride) {
         const int t = (int)std::lround(flat[i]);
+        // v181: an EXT4 group carries the fourth extension (t) of an effect whose EXT3 group
+        // immediately precedes it (only bccfilmglow has one); anywhere else it is dropped.
+        const int ext4Ext3 = t == FX_BCC_FILM_GLOW_AM_EXT4 ? FX_BCC_FILM_GLOW_AM_EXT3
+                                                           : FX_NONE;
+        if (ext4Ext3 != FX_NONE) {
+            if (ext3FoldedOp >= 0 && ext3FoldedType == ext4Ext3) {
+                for (int k = 0; k < 7; ++k) out[ext3FoldedOp].t[k] = flat[i + 1 + k];
+            }
+            extFoldedOp = -1;
+            extFoldedType = FX_NONE;
+            ext2FoldedOp = -1;
+            ext2FoldedType = FX_NONE;
+            ext3FoldedOp = -1;
+            ext3FoldedType = FX_NONE;
+            owner = -1;
+            continue;
+        }
+        // v181: an EXT3 group carries the third extension (s) of an effect whose EXT2 group
+        // immediately precedes it (only bccfilmglow has one); anywhere else it is dropped.
+        const int ext3Ext2 = t == FX_BCC_FILM_GLOW_AM_EXT3 ? FX_BCC_FILM_GLOW_AM_EXT2
+                                                           : FX_NONE;
+        if (ext3Ext2 != FX_NONE) {
+            if (ext2FoldedOp >= 0 && ext2FoldedType == ext3Ext2) {
+                for (int k = 0; k < 7; ++k) out[ext2FoldedOp].s[k] = flat[i + 1 + k];
+                ext3FoldedOp = ext2FoldedOp;
+                ext3FoldedType = t;
+            } else {
+                ext3FoldedOp = -1;
+                ext3FoldedType = FX_NONE;
+            }
+            extFoldedOp = -1;
+            extFoldedType = FX_NONE;
+            ext2FoldedOp = -1;
+            ext2FoldedType = FX_NONE;
+            owner = -1;
+            continue;
+        }
         // v173: an EXT2 group carries the second extension (r) of an effect whose EXT group
         // immediately precedes it (only the extrude tier has one); anywhere else it is dropped.
         const int ext2Ext = t == FX_EXTRUDE_AM_EXT2 ? FX_EXTRUDE_AM_EXT
@@ -30,13 +71,21 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                           : t == FX_REFRACTION_AM_EXT2 ? FX_REFRACTION_AM_EXT
                           : t == FX_SHAPEFIELD_AM_EXT2 ? FX_SHAPEFIELD_AM_EXT
                           : t == FX_CC_GLASS_AM_EXT2 ? FX_CC_GLASS_AM_EXT
+                          : t == FX_BCC_FILM_GLOW_AM_EXT2 ? FX_BCC_FILM_GLOW_AM_EXT
                                                          : FX_NONE;
         if (ext2Ext != FX_NONE) {
             if (extFoldedOp >= 0 && extFoldedType == ext2Ext) {
                 for (int k = 0; k < 7; ++k) out[extFoldedOp].r[k] = flat[i + 1 + k];
+                ext2FoldedOp = extFoldedOp;
+                ext2FoldedType = t;
+            } else {
+                ext2FoldedOp = -1;
+                ext2FoldedType = FX_NONE;
             }
             extFoldedOp = -1;
             extFoldedType = FX_NONE;
+            ext3FoldedOp = -1;
+            ext3FoldedType = FX_NONE;
             owner = -1;
             continue;
         }
@@ -84,6 +133,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_CC_GLASS_AM_EXT ? FX_CC_GLASS_AM
                            : t == FX_SOLID_WIPE_AM_EXT ? FX_SOLID_WIPE_AM
                            : t == FX_LENSD_AM_EXT ? FX_LENSD_AM
+                           : t == FX_BCC_FILM_GLOW_AM_EXT ? FX_BCC_FILM_GLOW_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -94,6 +144,10 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                 extFoldedOp = -1;
                 extFoldedType = FX_NONE;
             }
+            ext2FoldedOp = -1;
+            ext2FoldedType = FX_NONE;
+            ext3FoldedOp = -1;
+            ext3FoldedType = FX_NONE;
             owner = -1;
             continue;
         }
@@ -133,11 +187,15 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_TWITCH_AM && t != FX_TURBULENT2_AM && t != FX_SHAPEFIELD_AM &&
             t != FX_HALFTONE_DOTS_AM && t != FX_CC_GLASS_AM && t != FX_BOKEH_AM &&
             t != FX_LENSBLUR_OBS_AM && t != FX_SOLID_WIPE_AM && t != FX_SOFTBLOOM_AM &&
-            t != FX_LENSD_AM &&
+            t != FX_LENSD_AM && t != FX_BCC_FILM_GLOW_AM &&
             t != FX_MB4_POS && t != FX_MB4_SCALE && t != FX_MB4_ANGLE) {
             owner = -1;
             extFoldedOp = -1;
             extFoldedType = FX_NONE;
+            ext2FoldedOp = -1;
+            ext2FoldedType = FX_NONE;
+            ext3FoldedOp = -1;
+            ext3FoldedType = FX_NONE;
             continue;
         }
         FxOp& o = out[count];
@@ -146,10 +204,16 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             o.p[k] = flat[i + 1 + k];
             o.q[k] = 0.f;
             o.r[k] = 0.f;
+            o.s[k] = 0.f;
+            o.t[k] = 0.f;
         }
         owner = count;
         extFoldedOp = -1;
         extFoldedType = FX_NONE;
+        ext2FoldedOp = -1;
+        ext2FoldedType = FX_NONE;
+        ext3FoldedOp = -1;
+        ext3FoldedType = FX_NONE;
         ++count;
     }
     return count;
@@ -598,6 +662,7 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_SOLID_WIPE_AM: return p[2] <= 0.0001f;   // alpha 0: the mix keeps the pixel
         case FX_SOFTBLOOM_AM: return p[0] <= 0.0001f;   // the def's own gate (strength > 0.0001)
         case FX_LENSD_AM: return false;   // the chromabbr stage warps even before the spread average
+        case FX_BCC_FILM_GLOW_AM: return o.t[2] < 0.5f && o.t[4] <= 0.f;   // glowOnly off and globalMix 0: the composite's final mix returns the base pixel untouched (alpha = src.a)
         default: return false;
     }
 }
@@ -5074,6 +5139,198 @@ void fxLensdAmPixel(const FxOp& op, float ax, float ay, float picW,
     } else {
         for (int k = 0; k < 4; ++k) out[k] = (tex[k] + (factor[k] - tex[k]) * op.q[0]) * tex[3];
     }
+}
+
+namespace {
+// bccfilmglow's own helpers (the def's lum / srgb pair / noise hash, line by line).
+float bccLum(float r, float g, float b) { return r * 0.2126f + g * 0.7152f + b * 0.0722f; }
+float bccSrgbToLinear(float s) {
+    const float lo = s / 12.92f;
+    const float hi = std::pow((s + 0.055f) / 1.055f, 2.4f);
+    return s >= 0.04045f ? hi : lo;
+}
+float bccLinearToSrgb(float l) {
+    const float lo = l * 12.92f;
+    const float hi = 1.055f * std::pow(std::max(l, 0.f), 1.f / 2.4f) - 0.055f;
+    return l >= 0.0031308f ? hi : lo;
+}
+float bccFract(float x) { return x - std::floor(x); }
+float bccNoiseHash(float px, float py) {
+    float p3[3] = {bccFract(px * 0.1031f), bccFract(py * 0.1031f), bccFract(px * 0.1031f)};
+    const float d = p3[0] * (p3[1] + 33.33f) + p3[1] * (p3[2] + 33.33f) + p3[2] * (p3[0] + 33.33f);
+    p3[0] += d; p3[1] += d; p3[2] += d;
+    return bccFract((p3[0] + p3[1]) * p3[2]);
+}
+float bccMix(float a, float b, float t) { return a + (b - a) * t; }
+}  // namespace
+
+float fxBccFilmGlowAmTaps(float quality) {
+    if (quality < 1.5f) return 8.f;
+    if (quality < 2.5f) return 14.f;
+    return 20.f;
+}
+
+void fxBccFilmGlowAmExtract(const FxOp& op, const float src[4], float out[4]) {
+    // Pass 0 of the def: the soft-knee threshold mask over the linear-light
+    // brightness (gamma applied first), the sRGB pixel scaled by it.
+    const float rgb[3] = {std::max(src[0], 0.f), std::max(src[1], 0.f), std::max(src[2], 0.f)};
+    const float lin[3] = {bccSrgbToLinear(rgb[0]), bccSrgbToLinear(rgb[1]), bccSrgbToLinear(rgb[2])};
+    float brightness = bccLum(lin[0], lin[1], lin[2]);
+    brightness = std::pow(std::max(brightness, 0.f), op.p[6]);
+    const float knee = std::max(op.p[5], 0.00001f);
+    float edge = brightness - op.p[4] + knee;
+    edge = std::min(1.f, std::max(0.f, edge / (2.f * knee)));
+    edge *= edge;
+    float mask = std::max(edge, std::max(brightness - op.p[4], 0.f));
+    mask = mask / std::max(brightness, 0.00001f);
+    out[0] = rgb[0] * mask;
+    out[1] = rgb[1] * mask;
+    out[2] = rgb[2] * mask;
+    out[3] = src[3];
+}
+
+void fxBccFilmGlowAmComposite(const FxOp& op, const float base[4], const float inner[4],
+                              const float outer[4], float px, float py, float timeSec,
+                              float out[4]) {
+    // Pass 4 of the def, line by line. Slot maps on FX_BCC_FILM_GLOW_AM.
+    const float baseRGB[3] = {std::max(base[0], 0.f), std::max(base[1], 0.f), std::max(base[2], 0.f)};
+    float innerLin[3], outerLin[3], baseLin[3];
+    for (int k = 0; k < 3; ++k) {
+        innerLin[k] = bccSrgbToLinear(std::max(inner[k], 0.f));
+        outerLin[k] = bccSrgbToLinear(std::max(outer[k], 0.f));
+        baseLin[k] = bccSrgbToLinear(baseRGB[k]);
+    }
+    const float baseLum = bccLum(baseLin[0], baseLin[1], baseLin[2]);
+    // Combine + the softness blend toward the inner-only glow.
+    float totalGlow[3];
+    for (int k = 0; k < 3; ++k) {
+        const float combined = innerLin[k] * op.q[3] + outerLin[k] * op.q[4] * op.q[5];
+        totalGlow[k] = bccMix(innerLin[k] * op.q[3], combined, op.p[2]);
+    }
+    // Highlight glow off the outer blur, masked by the base's highlights.
+    if (op.q[0] > 0.00001f) {
+        const float hlMask = fxSstep(op.q[1] - 0.1f, op.q[1] + 0.1f, baseLum);
+        float hlGlow[3] = {outerLin[0] * hlMask, outerLin[1] * hlMask, outerLin[2] * hlMask};
+        if (std::fabs(op.q[2] - 1.f) > 0.00001f) {
+            const float hlL = bccLum(hlGlow[0], hlGlow[1], hlGlow[2]);
+            for (int k = 0; k < 3; ++k) hlGlow[k] = bccMix(hlL, hlGlow[k], op.q[2]);
+        }
+        for (int k = 0; k < 3; ++k) totalGlow[k] += hlGlow[k] * op.q[0] * 0.5f;
+    }
+    // Colour preservation: pull the glow's hue toward the base's.
+    if (op.r[3] > 0.00001f) {
+        const float glowLum = bccLum(totalGlow[0], totalGlow[1], totalGlow[2]);
+        if (baseLum > 0.00001f && glowLum > 0.00001f) {
+            for (int k = 0; k < 3; ++k) {
+                const float colored = baseLin[k] / std::max(baseLum, 0.00001f) * glowLum;
+                totalGlow[k] = bccMix(totalGlow[k], colored, op.r[3] * 0.5f);
+            }
+        }
+    }
+    if (std::fabs(op.r[2] - 1.f) > 0.00001f) {   // glow saturation boost
+        const float gL = bccLum(totalGlow[0], totalGlow[1], totalGlow[2]);
+        for (int k = 0; k < 3; ++k) totalGlow[k] = bccMix(gL, totalGlow[k], op.r[2]);
+    }
+    if (std::fabs(op.r[1]) > 0.00001f) {         // glow warmth
+        const float gL = bccLum(totalGlow[0], totalGlow[1], totalGlow[2]);
+        totalGlow[0] += op.r[1] * 0.04f * gL;
+        totalGlow[2] -= op.r[1] * 0.03f * gL;
+    }
+    if (op.r[0] > 0.00001f) {                    // glow tint
+        float tintR, tintG, tintB;
+        fxUnpackRgb(op.q[6], &tintR, &tintG, &tintB);
+        const float tint[3] = {bccSrgbToLinear(tintR), bccSrgbToLinear(tintG), bccSrgbToLinear(tintB)};
+        for (int k = 0; k < 3; ++k) totalGlow[k] = bccMix(totalGlow[k], totalGlow[k] * tint[k], op.r[0]);
+    }
+    if (op.r[4] > 0.00001f) {                    // halation off the outer blur
+        const float halLum = bccLum(outerLin[0], outerLin[1], outerLin[2]);
+        const float halMask = fxSstep(0.2f, 0.6f, halLum);
+        float halR, halG, halB;
+        fxUnpackRgb(op.r[5], &halR, &halG, &halB);
+        const float hal[3] = {bccSrgbToLinear(halR), bccSrgbToLinear(halG), bccSrgbToLinear(halB)};
+        for (int k = 0; k < 3; ++k) totalGlow[k] += outerLin[k] * hal[k] * halMask * op.r[4] * 0.5f;
+    }
+    if (op.r[6] > 0.00001f) {                    // film diffusion
+        const float diffHL = fxSstep(0.3f, 0.8f, baseLum);
+        const float w = bccMix(1.f, diffHL, op.s[0]);
+        for (int k = 0; k < 3; ++k)
+            totalGlow[k] += bccMix(innerLin[k], outerLin[k], 0.5f) * w * op.r[6] * 0.3f;
+    }
+    // Master amount + soft clip, back to sRGB.
+    float glowSRGB[3];
+    for (int k = 0; k < 3; ++k) {
+        const float g = 1.f - std::exp(-totalGlow[k] * op.p[0] * op.s[6]);
+        glowSRGB[k] = bccLinearToSrgb(std::max(g, 0.f));
+    }
+    if (op.t[2] > 0.5f) {                        // glow only
+        for (int k = 0; k < 3; ++k) out[k] = std::min(1.f, std::max(0.f, glowSRGB[k]));
+        out[3] = 1.f;
+        return;
+    }
+    // The blend switch (1 Add, 2 Screen, 3 Soft Light, 4 Lighten).
+    float comp[3];
+    const float bm = op.t[0];
+    if (bm < 1.5f) {
+        for (int k = 0; k < 3; ++k)
+            comp[k] = baseLin[k] + bccSrgbToLinear(std::max(glowSRGB[k], 0.f));
+    } else if (bm < 2.5f) {
+        for (int k = 0; k < 3; ++k) {
+            const float s = 1.f - (1.f - baseRGB[k]) * (1.f - std::min(1.f, std::max(0.f, glowSRGB[k])));
+            comp[k] = bccSrgbToLinear(s);
+        }
+    } else if (bm < 3.5f) {
+        for (int k = 0; k < 3; ++k) {
+            const float gC = std::min(1.f, std::max(0.f, glowSRGB[k]));
+            const float b = baseRGB[k];
+            comp[k] = bccSrgbToLinear(gC < 0.5f ? 2.f * b * gC + b * b * (1.f - 2.f * gC)
+                                                : 2.f * b * (1.f - gC) + std::sqrt(std::max(b, 0.f)) * (2.f * gC - 1.f));
+        }
+    } else {
+        for (int k = 0; k < 3; ++k)
+            comp[k] = std::max(baseLin[k], bccSrgbToLinear(std::max(glowSRGB[k], 0.f)));
+    }
+    float fin[3];
+    for (int k = 0; k < 3; ++k) fin[k] = bccLinearToSrgb(std::max(comp[k], 0.f));
+    // The film grade tail.
+    if (std::fabs(op.s[3] - 1.f) > 0.00001f) {   // film saturation
+        const float fl = bccLum(fin[0], fin[1], fin[2]);
+        for (int k = 0; k < 3; ++k) fin[k] = bccMix(fl, fin[k], op.s[3]);
+    }
+    if (std::fabs(op.s[4]) > 0.5f) {             // film contrast (the S-curve on luma)
+        const float fc = op.s[4] / 100.f;
+        const float fl = bccLum(fin[0], fin[1], fin[2]);
+        const float sCurve = fl + fc * 0.5f * (fl - 0.5f) * (1.f - std::fabs(fl - 0.5f) * 2.f);
+        const float ratio = sCurve / std::max(fl, 0.00001f);
+        for (int k = 0; k < 3; ++k) fin[k] *= ratio;
+    }
+    if (std::fabs(op.s[5]) > 0.00001f) {         // film warmth
+        fin[0] += op.s[5] * 0.06f;
+        fin[2] -= op.s[5] * 0.04f;
+    }
+    if (op.s[2] > 0.00001f) {                    // film fade
+        for (int k = 0; k < 3; ++k) fin[k] = fin[k] * (1.f - op.s[2] * 0.15f) + op.s[2] * 0.1f;
+        const float fl = bccLum(fin[0], fin[1], fin[2]);
+        for (int k = 0; k < 3; ++k) fin[k] = bccMix(fin[k], fl, op.s[2] * 0.2f);
+    }
+    if (op.s[1] > 0.00001f) {                    // film grain (time-shifted hash)
+        const float n = bccNoiseHash(px + timeSec * 100.f, py + timeSec * 100.f) * 2.f - 1.f;
+        const float fl = bccLum(fin[0], fin[1], fin[2]);
+        const float grainMask = 1.f - fl * 0.4f;
+        for (int k = 0; k < 3; ++k) fin[k] += n * op.s[1] * 0.08f * grainMask;
+    }
+    if (op.t[3] > 0.00001f) {                    // dither
+        const float n1 = bccFract(std::sin(px * 12.9898f + py * 78.233f) * 43758.5453f);
+        const float n2 = bccFract(std::sin(px * 24.123f + py * 17.321f) * 12345.6789f);
+        const float n3 = bccFract(std::sin(px * 93.989f + py * 67.345f) * 98765.4321f);
+        fin[0] += (n1 - 0.5f) * op.t[3];
+        fin[1] += (n2 - 0.5f) * op.t[3];
+        fin[2] += (n3 - 0.5f) * op.t[3];
+    }
+    for (int k = 0; k < 3; ++k) {
+        fin[k] = bccMix(baseRGB[k], fin[k], op.t[4]);
+        out[k] = std::min(1.f, std::max(0.f, fin[k]));
+    }
+    out[3] = base[3];
 }
 
 

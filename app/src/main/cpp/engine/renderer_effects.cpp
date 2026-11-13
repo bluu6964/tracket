@@ -40,6 +40,7 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_BBMAKER, EF_UNSHARP_COMP, EF_NEWSHARPEN_COMP, EF_AM_BLENDGEN,
              EF_DEEP_GLOW1_COMP, EF_SPILL_STREAK, EF_SPILL_OVER, EF_SPILL_FINAL,
              EF_OPTIC_COMP, EF_UNMULT_AM, EF_MINIMAX_AM, EF_SOFTBLOOM_AM, EF_CHROMABBR_AM, EF_LENSD_AM,
+             EF_BCC_FILM_GLOW_AM,
              EF_COUNT };  // eff_[] in renderer.h has room for 56
 
 const char* kVert = R"(#version 300 es
@@ -2741,6 +2742,225 @@ void main() {
 }
 )";
 
+// BCC Film Glow (Alight Motion's bccfilmglow, the Ultra original; v181, build
+// 150): the def's five passes in one program — pass 0 extracts the soft-knee
+// threshold into the half-res glow buffer (downsample 2, the def's own),
+// passes 1-2 blur it (the inner pair), pass 3 blurs the EXTRACT again
+// horizontally (the def has NO outer V pass — reproduced exactly), pass 4
+// composites in linear light: highlight glow, colour preservation, saturation
+// boost, warmth, tint, halation, diffusion, the soft clip, the four-way blend
+// switch, then the film grade tail (saturation, S-curve contrast, warmth,
+// fade), grain and dither. The blur is the def's own incremental-gaussian
+// blurPass (sigma = numPx / 2.14596602, paired taps, the 256 loop cap);
+// uTexel is the half-res buffer's, uTime the grain clock frame / 24 (the app's
+// grain law), uSize the clip size for the grain / dither pixel coordinates.
+// uP / uQ / uR / uS / uT are the op's five groups. fxBccFilmGlowAmExtract /
+// fxBccFilmGlowAmComposite in fx_plan.cpp are the CPU twins.
+const char* kBccFilmGlow = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uInner;
+uniform sampler2D uOuter;
+uniform float uP[7];
+uniform float uQ[7];
+uniform float uR[7];
+uniform float uS[7];
+uniform float uT[7];
+uniform int uPass;
+uniform vec2 uTexel;
+uniform vec2 uSize;
+uniform float uTime;
+in vec2 vUv;
+out vec4 oColor;
+const float PI = 3.14159265;
+const float EPS = 0.0001;
+vec3 unpackRgb(float pk) {
+    return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+}
+float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+vec3 srgbToLinear(vec3 s) {
+    return mix(s / 12.92, pow((s + 0.055) / 1.055, vec3(2.4)), step(0.04045, s));
+}
+vec3 linearToSrgb(vec3 l) {
+    return mix(l * 12.92, 1.055 * pow(max(l, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055, step(0.0031308, l));
+}
+float getTaps(float q) {
+    if (q < 1.5) return 8.0;
+    if (q < 2.5) return 14.0;
+    return 20.0;
+}
+vec4 blurPass(vec2 texOff, vec2 st, float numPx) {
+    if (numPx <= 0.0) return texture(uTex, st);
+    float sigma = numPx / 2.14596602;
+    sigma = max(sigma, EPS);
+    vec3 ig;
+    ig.x = 1.0 / (sqrt(2.0 * PI) * sigma);
+    ig.y = exp(-0.5 / (sigma * sigma));
+    ig.z = ig.y * ig.y;
+    vec4 avg = texture(uTex, st) * ig.x;
+    float cSum = ig.x;
+    for (float i = 1.0; i <= 256.0; i += 2.0) {
+        if (i > numPx) break;
+        ig.xy *= ig.yz;
+        cSum += 2.0 * ig.x;
+        float w0 = ig.x;
+        ig.xy *= ig.yz;
+        cSum += 2.0 * ig.x;
+        float w1 = ig.x;
+        float wL = w0 + w1;
+        float oL = (i * w0 + (i + 1.0) * w1) / max(wL, EPS);
+        avg += texture(uTex, clamp(st - oL * texOff, vec2(0.0), vec2(1.0))) * wL;
+        avg += texture(uTex, clamp(st + oL * texOff, vec2(0.0), vec2(1.0))) * wL;
+    }
+    return avg / max(cSum, EPS);
+}
+float noiseHash(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+float softLightCh(float b, float g) {
+    return g < 0.5 ? 2.0 * b * g + b * b * (1.0 - 2.0 * g)
+                   : 2.0 * b * (1.0 - g) + sqrt(max(b, 0.0)) * (2.0 * g - 1.0);
+}
+void main() {
+    vec2 uv = vUv;
+    float taps = getTaps(uT[1]);
+    float r1 = uP[1] * 0.5;
+    float r2 = uP[1] * uP[3] * 0.5;
+    if (uPass == 0) {
+        vec4 src = texture(uTex, uv);
+        vec3 rgb = max(src.rgb, vec3(0.0));
+        float brightness = lum(srgbToLinear(rgb));
+        brightness = pow(max(brightness, 0.0), uP[6]);
+        float knee = max(uP[5], 0.00001);
+        float edge = brightness - uP[4] + knee;
+        edge = clamp(edge / (2.0 * knee), 0.0, 1.0);
+        edge *= edge;
+        float mask = max(edge, max(brightness - uP[4], 0.0));
+        mask = mask / max(brightness, 0.00001);
+        oColor = vec4(rgb * mask, src.a);
+    } else if (uPass == 1) {
+        oColor = blurPass(vec2(uTexel.x, 0.0), uv, r1 * (taps / 10.0));
+    } else if (uPass == 2) {
+        oColor = blurPass(vec2(0.0, uTexel.y), uv, r1 * (taps / 10.0));
+    } else if (uPass == 3) {
+        oColor = blurPass(vec2(uTexel.x, 0.0), uv, r2 * (taps / 10.0));
+    } else {
+        vec4 baseTex = texture(uTex, uv);
+        vec4 innerTex = texture(uInner, uv);
+        vec4 outerTex = texture(uOuter, uv);
+        vec3 baseRGB = max(baseTex.rgb, vec3(0.0));
+        vec3 innerLin = srgbToLinear(max(innerTex.rgb, vec3(0.0)));
+        vec3 outerLin = srgbToLinear(max(outerTex.rgb, vec3(0.0)));
+        vec3 baseLin = srgbToLinear(baseRGB);
+        float baseLum = lum(baseLin);
+        vec3 totalGlow = mix(innerLin * uQ[3], innerLin * uQ[3] + outerLin * uQ[4] * uQ[5], uP[2]);
+        if (uQ[0] > 0.00001) {
+            float hlMask = smoothstep(uQ[1] - 0.1, uQ[1] + 0.1, baseLum);
+            vec3 hlGlow = outerLin * hlMask;
+            if (abs(uQ[2] - 1.0) > 0.00001) {
+                float hlL = lum(hlGlow);
+                hlGlow = mix(vec3(hlL), hlGlow, uQ[2]);
+            }
+            totalGlow += hlGlow * uQ[0] * 0.5;
+        }
+        if (uR[3] > 0.00001) {
+            float glowLum = lum(totalGlow);
+            if (baseLum > 0.00001 && glowLum > 0.00001) {
+                vec3 colored = baseLin / max(baseLum, 0.00001) * glowLum;
+                totalGlow = mix(totalGlow, colored, uR[3] * 0.5);
+            }
+        }
+        if (abs(uR[2] - 1.0) > 0.00001) {
+            float gL = lum(totalGlow);
+            totalGlow = mix(vec3(gL), totalGlow, uR[2]);
+        }
+        if (abs(uR[1]) > 0.00001) {
+            float gL = lum(totalGlow);
+            totalGlow.r += uR[1] * 0.04 * gL;
+            totalGlow.b -= uR[1] * 0.03 * gL;
+        }
+        if (uR[0] > 0.00001) {
+            vec3 tint = srgbToLinear(unpackRgb(uQ[6]));
+            totalGlow = mix(totalGlow, totalGlow * tint, uR[0]);
+        }
+        if (uR[4] > 0.00001) {
+            float halLum = lum(outerLin);
+            float halMask = smoothstep(0.2, 0.6, halLum);
+            vec3 hal = srgbToLinear(unpackRgb(uR[5]));
+            totalGlow += outerLin * hal * halMask * uR[4] * 0.5;
+        }
+        if (uR[6] > 0.00001) {
+            vec3 diffGlow = mix(innerLin, outerLin, 0.5);
+            float diffHL = smoothstep(0.3, 0.8, baseLum);
+            diffGlow *= mix(1.0, diffHL, uS[0]);
+            totalGlow += diffGlow * uR[6] * 0.3;
+        }
+        totalGlow *= uP[0];
+        totalGlow = 1.0 - exp(-totalGlow * uS[6]);
+        vec3 glowSRGB = linearToSrgb(max(totalGlow, vec3(0.0)));
+        if (uT[2] > 0.5) {
+            oColor = vec4(clamp(glowSRGB, 0.0, 1.0), 1.0);
+            return;
+        }
+        vec3 comp;
+        if (uT[0] < 1.5) {
+            comp = baseLin + srgbToLinear(max(glowSRGB, vec3(0.0)));
+        } else if (uT[0] < 2.5) {
+            vec3 s = 1.0 - (1.0 - baseRGB) * (1.0 - clamp(glowSRGB, 0.0, 1.0));
+            comp = srgbToLinear(s);
+        } else if (uT[0] < 3.5) {
+            vec3 g = clamp(glowSRGB, 0.0, 1.0);
+            vec3 sl = vec3(softLightCh(baseRGB.r, g.r), softLightCh(baseRGB.g, g.g),
+                           softLightCh(baseRGB.b, g.b));
+            comp = srgbToLinear(sl);
+        } else {
+            comp = max(baseLin, srgbToLinear(max(glowSRGB, vec3(0.0))));
+        }
+        vec3 fin = linearToSrgb(max(comp, vec3(0.0)));
+        if (abs(uS[3] - 1.0) > 0.00001) {
+            float fl = lum(fin);
+            fin = mix(vec3(fl), fin, uS[3]);
+        }
+        if (abs(uS[4]) > 0.5) {
+            float fc = uS[4] / 100.0;
+            float fl = lum(fin);
+            float sCurve = fl + fc * 0.5 * (fl - 0.5) * (1.0 - abs(fl - 0.5) * 2.0);
+            float ratio = sCurve / max(fl, 0.00001);
+            fin *= ratio;
+        }
+        if (abs(uS[5]) > 0.00001) {
+            fin.r += uS[5] * 0.06;
+            fin.b -= uS[5] * 0.04;
+        }
+        if (uS[2] > 0.00001) {
+            fin = fin * (1.0 - uS[2] * 0.15) + uS[2] * 0.1;
+            float fl = lum(fin);
+            fin = mix(fin, vec3(fl), uS[2] * 0.2);
+        }
+        if (uS[1] > 0.00001) {
+            vec2 px = floor(uSize * uv);
+            float n = noiseHash(px + uTime * 100.0) * 2.0 - 1.0;
+            float fl = lum(fin);
+            float grainMask = 1.0 - fl * 0.4;
+            fin += n * uS[1] * 0.08 * grainMask;
+        }
+        if (uT[3] > 0.00001) {
+            vec2 px = floor(uSize * uv);
+            float n1 = fract(sin(px.x * 12.9898 + px.y * 78.233) * 43758.5453);
+            float n2 = fract(sin(px.x * 24.123 + px.y * 17.321) * 12345.6789);
+            float n3 = fract(sin(px.x * 93.989 + px.y * 67.345) * 98765.4321);
+            fin.r += (n1 - 0.5) * uT[3];
+            fin.g += (n2 - 0.5) * uT[3];
+            fin.b += (n3 - 0.5) * uT[3];
+        }
+        fin = mix(baseRGB, fin, uT[4]);
+        oColor = vec4(clamp(fin, 0.0, 1.0), baseTex.a);
+    }
+}
+)";
+
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
                                   kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
@@ -2750,7 +2970,7 @@ const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSpli
                                   kSmoothEdgesAm, kDeepGlowComp, kDropShadow,
                                   kBbMaker, kUnsharpComp, kNewSharpenComp, kAmBlendGen,
                                   kDeepGlow1Comp, kSpillStreak, kSpillOver, kSpillFinal,
-                                  kOpticComp, kUnmult, kMinimax, kSoftbloom, kChromabbr, kLensd};
+                                  kOpticComp, kUnmult, kMinimax, kSoftbloom, kChromabbr, kLensd, kBccFilmGlow};
 static_assert(EF_COUNT <= 56, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
@@ -2960,6 +3180,7 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_MINIMAX_AM: ok = fxMinimaxAm(op, W, H, cur); break;
             case FX_SOFTBLOOM_AM: ok = fxSoftbloomAm(op, W, H, cur); break;
             case FX_LENSD_AM: ok = fxLensdAm(op, W, H, cur); break;
+            case FX_BCC_FILM_GLOW_AM: ok = fxBccFilmGlowAm(op, W, H, cur, fx.grainFrame); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -3679,6 +3900,73 @@ bool Renderer::fxSoftbloomAm(const FxOp& op, int W, int H, int* cur) {
     glUniform1i(loc(prog, "uTex"), 0);
     glUniform1i(loc(prog, "uBlur"), 1);
     glUniform1i(loc(prog, "uPass"), 3);
+    setCommon();
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// BCC Film Glow (Alight, v181): the def's chain over the half-res levels —
+// extract into A (half0 slot 0), the inner blur pair A -> B -> C, the outer
+// blur A -> D (one horizontal pass over the extract, the def's own shape),
+// then the composite over the kept layer reading C (inner) and D (outer).
+bool Renderer::fxBccFilmGlowAm(const FxOp& op, int W, int H, int* cur, int grainFrame) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_BCC_FILM_GLOW_AM), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    const int hw = halfSize(W, 0), hh = halfSize(H, 0);
+    if (!ensureLevel(0, hw, hh) || !ensureLevel(1, hw, hh)) return false;
+    const FxLevel& half0 = lv_[0];
+    const FxLevel& half1 = lv_[1];
+    auto setCommon = [&]() {
+        glUniform1fv(loc(prog, "uP"), 7, op.p);
+        glUniform1fv(loc(prog, "uQ"), 7, op.q);
+        glUniform1fv(loc(prog, "uR"), 7, op.r);
+        glUniform1fv(loc(prog, "uS"), 7, op.s);
+        glUniform1fv(loc(prog, "uT"), 7, op.t);
+        glUniform2f(loc(prog, "uTexel"), 1.f / (float)hw, 1.f / (float)hh);
+        glUniform2f(loc(prog, "uSize"), (float)W, (float)H);
+        glUniform1f(loc(prog, "uTime"), (float)grainFrame / 24.f);
+    };
+    begin(prog, half0.fbo[0], hw, hh);   // pass 0: threshold extract -> A
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 0);
+    setCommon();
+    draw();
+    begin(prog, half0.fbo[1], hw, hh);   // pass 1: inner H, A -> B
+    bindTex(0, half0.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 1);
+    setCommon();
+    draw();
+    begin(prog, half1.fbo[0], hw, hh);   // pass 2: inner V, B -> C
+    bindTex(0, half0.tex[1]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 2);
+    setCommon();
+    draw();
+    begin(prog, half1.fbo[1], hw, hh);   // pass 3: outer H from the extract, A -> D
+    bindTex(0, half0.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 3);
+    setCommon();
+    draw();
+    const int dst = 1 - *cur;            // pass 4: composite over the kept layer
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, half1.tex[0]);
+    bindTex(2, half1.tex[1]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uInner"), 1);
+    glUniform1i(loc(prog, "uOuter"), 2);
+    glUniform1i(loc(prog, "uPass"), 4);
     setCommon();
     draw();
     *cur = dst;

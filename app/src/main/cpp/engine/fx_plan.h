@@ -779,6 +779,42 @@ enum FxType : int {
                             // [4] aberrationMax, [5] numIters, [6] bright.
                             // q: [0] alpha, [1] new, [2] iter. Dedicated chain.
     FX_LENSD_AM_EXT = 214,
+    // v181 (build 150): Alight's bccfilmglow — the last corpus effect with a
+    // complete staged def (the round5 Ultra original "Film Glow"; the TrueMotion
+    // conversion in defs-batch8 agrees param-for-param and formula-for-formula).
+    // It stayed parked through build 147 because its shader reads 33 floats,
+    // more than the 21 slots p/q/r hold; the EXT3 / EXT4 groups below are the
+    // op model's third and fourth extension banks (s / t), folded by fxParseOps
+    // only in the full chain owner -> EXT -> EXT2 -> EXT3 -> EXT4.
+    // A five-pass chain (Renderer::fxBccFilmGlowAm): soft-knee threshold
+    // extract at half res, inner separable gaussian (H then V), outer gaussian
+    // (H only — the def has no outer V pass), then the composite: highlight
+    // glow, colour preservation, saturation / warmth / tint, halation,
+    // diffusion, soft clip, the blend switch, and the film grade tail
+    // (saturation / contrast / warmth / fade / grain / dither / global mix).
+    // All values in AM's own units:
+    //   p: [0] glowAmount, [1] glowRadius, [2] glowSoftness, [3] glowSpread,
+    //      [4] threshold, [5] softKnee, [6] threshGamma
+    //   q: [0] hlGlowStr, [1] hlThreshold, [2] hlSaturation, [3] innerWeight,
+    //      [4] outerWeight, [5] tailWeight, [6] glowTint packed 0xRRGGBB (the
+    //      def declares the colour alpha="false" and its shader reads .rgb
+    //      only, so the alpha never rides)
+    //   r: [0] glowTintStr, [1] glowWarmth, [2] glowSatBoost,
+    //      [3] colorPreserve, [4] halStr, [5] halColor packed 0xRRGGBB
+    //      (same alpha rule), [6] diffAmount
+    //   s: [0] diffHighlights, [1] filmGrain, [2] filmFade,
+    //      [3] filmSaturation, [4] filmContrast, [5] filmWarmth,
+    //      [6] softClipKnee
+    //   t: [0] blendMode (1 Add, 2 Screen, 3 Soft Light, 4 Lighten),
+    //      [1] quality (1..3), [2] glowOnly 0/1, [3] ditherAmt,
+    //      [4] globalMix, [5..6] unused
+    // The one corpus instance (omniframe-hardtrekk-hero) is fully static, so
+    // no AmFxEval tail.
+    FX_BCC_FILM_GLOW_AM = 215,
+    FX_BCC_FILM_GLOW_AM_EXT = 216,
+    FX_BCC_FILM_GLOW_AM_EXT2 = 217,
+    FX_BCC_FILM_GLOW_AM_EXT3 = 218,
+    FX_BCC_FILM_GLOW_AM_EXT4 = 219,
     FX_MAX = FX_COPY_BG
 };
 
@@ -794,6 +830,8 @@ struct FxOp {
     float p[7] = {0, 0, 0, 0, 0, 0, 0};
     float q[7] = {0, 0, 0, 0, 0, 0, 0};  // extended params, folded in by fxParseOps from an EXT group
     float r[7] = {0, 0, 0, 0, 0, 0, 0};  // second extension, folded from an EXT2 group (v173: extrude tier)
+    float s[7] = {0, 0, 0, 0, 0, 0, 0};  // third extension, folded from an EXT3 group (v181: bccfilmglow)
+    float t[7] = {0, 0, 0, 0, 0, 0, 0};  // fourth extension, folded from an EXT4 group (v181: bccfilmglow)
 };
 
 // Reads `n` floats (groups of kFxStride) into `out` (room for kFxMaxOps). Unknown types are skipped.
@@ -1547,6 +1585,18 @@ void fxLensdAmPixel(const FxOp& op, float ax, float ay, float picW,
 // softblooom: the def's blur kernel size (numBlurPixelsPerSide) for a strength on a
 // screenW x screenH canvas — the same law fxLightGlowAmKernel pins for Light Glow.
 float fxSoftbloomAmKernel(float strength, float screenW, float screenH);
+// bccfilmglow (v181): the def's blur tap count for a quality level (the getTaps
+// ladder: < 1.5 -> 8, < 2.5 -> 14, else 20).
+float fxBccFilmGlowAmTaps(float quality);
+// bccfilmglow: the extract stage (pass 0: the soft-knee threshold mask over the
+// linear-light brightness) and the composite stage (pass 4) as pure pixels.
+// inner = the inner blur result (glowC), outer = the outer blur result (glowD);
+// px / py are the floored pixel coordinates the grain / dither hashes read and
+// timeSec is AM's acTime (the GLSL derives it from the grain clock).
+void fxBccFilmGlowAmExtract(const FxOp& op, const float src[4], float out[4]);
+void fxBccFilmGlowAmComposite(const FxOp& op, const float base[4], const float inner[4],
+                              const float outer[4], float px, float py, float timeSec,
+                              float out[4]);
 
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);

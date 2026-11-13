@@ -2017,6 +2017,139 @@ int main() {
         idn = FxOp{}; idn.type = FX_FISHEYE_AM;
         CHECK(!fxIsIdentity(idn), "fisheye is never identity (the def's alpha tail)");
     }
+    // ---- v181 (build 150): bccfilmglow + the EXT3 / EXT4 op-model extension ----
+    {
+        // The full five-bank chain folds into ONE op, bank by bank.
+        FxOp tops[kFxMaxOps];
+        float flatBc[] = {215, 1.5f, 2.5f, 3.5f, 4.5f, 5.5f, 6.5f, 7.5f,
+                          216, 11, 12, 13, 14, 15, 16, 17,
+                          217, 21, 22, 23, 24, 25, 26, 27,
+                          218, 31, 32, 33, 34, 35, 36, 37,
+                          219, 41, 42, 43, 44, 45, 46, 47};
+        CHECK(fxParseOps(flatBc, 40, tops) == 1 && tops[0].type == FX_BCC_FILM_GLOW_AM,
+              "bccfilmglow chain = one op");
+        CHECK(tops[0].p[0] == 1.5f && tops[0].p[6] == 7.5f && tops[0].q[3] == 14.f &&
+              tops[0].r[5] == 26.f && tops[0].s[0] == 31.f && tops[0].s[6] == 37.f &&
+              tops[0].t[0] == 41.f && tops[0].t[4] == 45.f, "bccfilmglow five banks folded");
+        // Round trip: re-encoding the parsed op reproduces the flat array exactly.
+        { float re[40]; const int types[5] = {215, 216, 217, 218, 219};
+          const float* banks[5] = {tops[0].p, tops[0].q, tops[0].r, tops[0].s, tops[0].t};
+          for (int g = 0; g < 5; ++g) {
+              re[g * 8] = (float)types[g];
+              for (int k = 0; k < 7; ++k) re[g * 8 + 1 + k] = banks[g][k];
+          }
+          bool same = true;
+          for (int k = 0; k < 40; ++k) same = same && re[k] == flatBc[k];
+          CHECK(same, "bccfilmglow encode -> decode is the identity"); }
+        // Chain discipline: a group out of order is dropped, its bank stays zero.
+        float flatNoExt2[] = {215, 1, 1, 1, 1, 1, 1, 1, 216, 2, 2, 2, 2, 2, 2, 2,
+                              218, 3, 3, 3, 3, 3, 3, 3};
+        CHECK(fxParseOps(flatNoExt2, 24, tops) == 1 && tops[0].q[0] == 2.f &&
+              tops[0].s[0] == 0.f, "EXT3 without its EXT2 is dropped");
+        float flatNoExt3[] = {215, 1, 1, 1, 1, 1, 1, 1, 216, 2, 2, 2, 2, 2, 2, 2,
+                              217, 3, 3, 3, 3, 3, 3, 3, 219, 4, 4, 4, 4, 4, 4, 4};
+        CHECK(fxParseOps(flatNoExt3, 32, tops) == 1 && tops[0].r[0] == 3.f &&
+              tops[0].t[0] == 0.f, "EXT4 without its EXT3 is dropped");
+        float flatForeign[] = {194, 1, 1, 1, 1, 1, 1, 1, 195, 2, 2, 2, 2, 2, 2, 2,
+                               196, 3, 3, 3, 3, 3, 3, 3, 218, 4, 4, 4, 4, 4, 4, 4};
+        CHECK(fxParseOps(flatForeign, 32, tops) == 1 && tops[0].type == FX_REFRACTION_AM &&
+              tops[0].s[0] == 0.f, "EXT3 after a foreign chain is dropped");
+        float flatBare4[] = {219, 1, 1, 1, 1, 1, 1, 1};
+        CHECK(fxParseOps(flatBare4, 8, tops) == 0, "bare EXT4 is dropped");
+        // No regression under the extended model: the established chains fold
+        // exactly as before and the new banks stay zero.
+        float flatEx[] = {123, 1, 1, 1, 1, 1, 1, 1, 124, 2, 2, 2, 2, 2, 2, 2,
+                          125, 3, 3, 3, 3, 3, 3, 3};
+        CHECK(fxParseOps(flatEx, 24, tops) == 1 && tops[0].type == FX_EXTRUDE_AM &&
+              tops[0].q[0] == 2.f && tops[0].r[0] == 3.f && tops[0].s[0] == 0.f &&
+              tops[0].t[0] == 0.f, "extrude chain unchanged, s/t zero");
+        CHECK(fxShaderOf(FX_BCC_FILM_GLOW_AM).group == FXG_NONE, "bccfilmglow is a dedicated chain");
+        // Identity: glowOnly off + globalMix 0 only.
+        FxOp idb{}; idb.type = FX_BCC_FILM_GLOW_AM;
+        CHECK(fxIsIdentity(idb), "bccfilmglow globalMix 0 is identity");
+        idb.t[4] = 1.f;
+        CHECK(!fxIsIdentity(idb), "bccfilmglow globalMix 1 is not identity");
+        idb.t[4] = 0.f; idb.t[2] = 1.f;
+        CHECK(!fxIsIdentity(idb), "bccfilmglow glowOnly bypasses the mix: not identity");
+        // The taps ladder.
+        CHECK(fxBccFilmGlowAmTaps(1.f) == 8.f && fxBccFilmGlowAmTaps(2.f) == 14.f &&
+              fxBccFilmGlowAmTaps(3.f) == 20.f && fxBccFilmGlowAmTaps(2.5f) == 20.f,
+              "bccfilmglow taps ladder");
+        // The corpus op (omniframe-hardtrekk-hero, dither zeroed for the numeric
+        // pins: the fract(sin) hashes are float32 knife-edge, pinned structurally).
+        FxOp bc{}; bc.type = FX_BCC_FILM_GLOW_AM;
+        bc.p[0] = 0.01f; bc.p[1] = 80.f; bc.p[2] = 0.73f; bc.p[3] = 2.5f; bc.p[4] = 0.5f;
+        bc.p[5] = 0.3f; bc.p[6] = 1.f;
+        bc.q[0] = 0.5f; bc.q[1] = 0.7f; bc.q[2] = 0.8f; bc.q[3] = 1.f; bc.q[4] = 0.5f;
+        bc.q[5] = 1.f; bc.q[6] = 16777215.f;
+        bc.r[2] = 1.f; bc.r[3] = 0.7f; bc.r[5] = 16711680.f;
+        bc.s[0] = 0.3f; bc.s[3] = 1.f; bc.s[6] = 5.f;
+        bc.t[0] = 1.f; bc.t[1] = 2.f; bc.t[4] = 1.f;
+        float o[4];
+        { float src[4] = {0.9f, 0.6f, 0.3f, 1.f};
+          fxBccFilmGlowAmExtract(bc, src, o);
+          CHECK(std::fabs(o[0] - 0.250969f) < 5e-4f && std::fabs(o[1] - 0.167312f) < 5e-4f &&
+                std::fabs(o[2] - 0.083656f) < 5e-4f && o[3] == 1.f,
+                "bccfilmglow extract bright (%g %g %g)", o[0], o[1], o[2]);
+          float dark[4] = {0.1f, 0.1f, 0.1f, 0.7f};
+          fxBccFilmGlowAmExtract(bc, dark, o);
+          CHECK(o[0] == 0.f && o[1] == 0.f && o[2] == 0.f && o[3] == 0.7f,
+                "bccfilmglow extract dark (%g %g)", o[0], o[3]); }
+        { float base[4] = {0.5f, 0.4f, 0.3f, 0.9f}, in[4] = {0.6f, 0.5f, 0.4f, 1.f},
+                out_[4] = {0.3f, 0.2f, 0.1f, 1.f};
+          fxBccFilmGlowAmComposite(bc, base, in, out_, 3.f, 7.f, 0.f, o);
+          CHECK(std::fabs(o[0] - 0.518332f) < 5e-4f && std::fabs(o[1] - 0.415594f) < 5e-4f &&
+                std::fabs(o[2] - 0.312935f) < 5e-4f && std::fabs(o[3] - 0.9f) < 1e-5f,
+                "bccfilmglow composite corpus (%g %g %g)", o[0], o[1], o[2]); }
+        // An active op across the blend switch (hand-computed from the def).
+        FxOp ac = bc;
+        ac.p[0] = 0.8f; ac.p[1] = 20.f; ac.p[2] = 0.5f;
+        ac.r[0] = 0.4f; ac.r[1] = 0.2f; ac.r[2] = 1.5f; ac.r[4] = 0.6f; ac.r[6] = 0.5f;
+        ac.s[3] = 1.2f; ac.s[4] = 20.f; ac.s[5] = 0.1f;
+        { float base[4] = {0.35f, 0.4f, 0.3f, 0.9f}, in[4] = {0.6f, 0.5f, 0.4f, 1.f},
+                out_[4] = {0.3f, 0.2f, 0.1f, 1.f};
+          fxBccFilmGlowAmComposite(ac, base, in, out_, 3.f, 7.f, 0.f, o);
+          CHECK(std::fabs(o[0] - 0.950665f) < 5e-4f && std::fabs(o[1] - 0.897580f) < 5e-4f &&
+                std::fabs(o[2] - 0.612404f) < 5e-4f, "bccfilmglow composite add (%g %g %g)", o[0], o[1], o[2]);
+          float base2[4] = {0.5f, 0.4f, 0.3f, 0.9f};
+          ac.t[0] = 3.f;
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.f, o);
+          CHECK(std::fabs(o[0] - 0.706270f) < 5e-4f && std::fabs(o[1] - 0.538029f) < 5e-4f &&
+                std::fabs(o[2] - 0.286008f) < 5e-4f, "bccfilmglow composite soft light (%g %g %g)", o[0], o[1], o[2]);
+          ac.t[0] = 4.f;
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.f, o);
+          CHECK(std::fabs(o[0] - 0.953488f) < 5e-4f && std::fabs(o[1] - 0.803485f) < 5e-4f &&
+                std::fabs(o[2] - 0.519344f) < 5e-4f, "bccfilmglow composite lighten (%g %g %g)", o[0], o[1], o[2]);
+          ac.t[0] = 1.f; ac.t[2] = 1.f;
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.f, o);
+          CHECK(std::fabs(o[0] - 0.911621f) < 5e-4f && std::fabs(o[1] - 0.793383f) < 5e-4f &&
+                std::fabs(o[2] - 0.563363f) < 5e-4f && o[3] == 1.f,
+                "bccfilmglow glow only (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+          ac.t[2] = 0.f; ac.t[0] = 2.f; ac.t[1] = 3.f; ac.t[4] = 0.8f; ac.s[2] = 0.2f;
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.f, o);
+          CHECK(std::fabs(o[0] - 0.878953f) < 5e-4f && std::fabs(o[1] - 0.782423f) < 5e-4f &&
+                std::fabs(o[2] - 0.595349f) < 5e-4f, "bccfilmglow composite screen + fade (%g %g %g)", o[0], o[1], o[2]);
+          // globalMix 0 returns the base pixel exactly.
+          ac.t[4] = 0.f;
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.f, o);
+          CHECK(o[0] == 0.5f && o[1] == 0.4f && o[2] == 0.3f && o[3] == 0.9f,
+                "bccfilmglow globalMix 0 = base (%g %g)", o[0], o[3]);
+          // Grain / dither are bounded noise over the same composite (structural:
+          // their hash values are float32 knife-edge and are not pinned numerically).
+          ac.t[4] = 1.f; ac.s[2] = 0.f;
+          float clean[4];
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.5f, clean);
+          ac.s[1] = 0.5f;
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.5f, o);
+          CHECK(std::fabs(o[0] - clean[0]) <= 0.0401f && std::fabs(o[1] - clean[1]) <= 0.0401f &&
+                std::fabs(o[2] - clean[2]) <= 0.0401f && o[3] == clean[3],
+                "bccfilmglow grain bounded (%g vs %g)", o[0], clean[0]);
+          ac.s[1] = 0.f; ac.t[3] = 0.008f;
+          fxBccFilmGlowAmComposite(ac, base2, in, out_, 3.f, 7.f, 0.5f, o);
+          CHECK(std::fabs(o[0] - clean[0]) <= 0.0041f && std::fabs(o[1] - clean[1]) <= 0.0041f &&
+                std::fabs(o[2] - clean[2]) <= 0.0041f && o[3] == clean[3],
+                "bccfilmglow dither bounded (%g vs %g)", o[0], clean[0]); }
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

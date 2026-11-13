@@ -189,6 +189,8 @@ object AlightXmlImporter {
     const val SOLIDWIPE = "com.alightcreative.effects.solid_color_wipe"
     const val SOFTBLOOOM = "com.alightcreative.effects.softblooom"
     const val LENSDIST = "com.alightcreative.effects.lensd"
+    // v181: bccfilmglow, un-parked by the fx op model's EXT3 / EXT4 banks.
+    const val BCCFILMGLOW = "com.alightcreative.effects.bccfilmglow"
     const val UNSHARPMASK = "com.alightcreative.effects.unsharpmask"
     const val NEWSHARPEN = "com.alightcreative.effects.newsharpen"
     const val GRADSHADOW = "com.alightcreative.effects.gradshadow"
@@ -2840,6 +2842,7 @@ object AlightXmlImporter {
                 SOLIDWIPE -> applySolidWipeAm(fx, clip, ctx)
                 SOFTBLOOOM -> applySoftblooomAm(fx, clip, ctx)
                 LENSDIST -> applyLensdAm(fx, clip, ctx)
+                BCCFILMGLOW -> applyBccFilmGlowAm(fx, clip, ctx)
                 PULSEOPACITY2 -> applyPulseOpacity2(fx, clip, ctx, durMs)
                 SHAKE -> applyShake(fx, clip, ctx, durMs)
                 FLIP -> applyFlip(fx, clip, ctx, durMs)
@@ -4903,6 +4906,40 @@ object AlightXmlImporter {
             fv("alpha", 1f), boolOf(props["new"], true), fv("iter", 1f), 0f, 0f, 0f, 0f
         ) + tailsOf(trackTail(ampT))
         return addFx(clip0, ctx, ClipFxLibrary.LENSD_AM, values, short)
+    }
+
+    /**
+     * `bccfilmglow` -> the app's BCC Film Glow (v181, build 150 — the last
+     * corpus effect with a staged def, un-parked by the fx op model's EXT3 /
+     * EXT4 banks): all 33 of the def's params ride the five groups (the slot
+     * map is on [ClipFxLibrary.BCC_FILM_GLOW_AM]); the two colours pack as
+     * 0xRRGGBB (the def declares them alpha="false" and reads .rgb only; corpus
+     * instances serialise them with a 0x00 alpha byte). The one corpus instance
+     * (omniframe-hardtrekk-hero) is fully static, so nothing rides an AmFxEval
+     * tail — a keyframed instance would need one added here.
+     */
+    private fun applyBccFilmGlowAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "bccfilmglow"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val values = listOf(
+            fv("glowAmount", 0.5f), fv("glowRadius", 20f), fv("glowSoftness", 0.5f),
+            fv("glowSpread", 2.5f), fv("threshold", 0.5f), fv("softKnee", 0.3f), fv("threshGamma", 1f),
+            fv("hlGlowStr", 0.5f), fv("hlThreshold", 0.7f), fv("hlSaturation", 0.8f),
+            fv("innerWeight", 1f), fv("outerWeight", 0.5f), fv("tailWeight", 1f),
+            props["glowTint"]?.packedColor(w, short, "glowTint") ?: 0xFFFFFF.toFloat(),
+            fv("glowTintStr", 0f), fv("glowWarmth", 0f), fv("glowSatBoost", 1f),
+            fv("colorPreserve", 0.7f), fv("halStr", 0f),
+            props["halColor"]?.packedColor(w, short, "halColor") ?: 0xFF2200.toFloat(),
+            fv("diffAmount", 0f),
+            fv("diffHighlights", 0.3f), fv("filmGrain", 0f), fv("filmFade", 0f),
+            fv("filmSaturation", 1f), fv("filmContrast", 0f), fv("filmWarmth", 0f), fv("softClipKnee", 5f),
+            fv("blendMode", 1f), fv("quality", 2f), boolOf(props["glowOnly"], false),
+            fv("ditherAmt", 0.008f), fv("globalMix", 1f),
+            0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.BCC_FILM_GLOW_AM, values, short)
     }
 
     /**

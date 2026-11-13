@@ -713,13 +713,28 @@ object ClipFxLibrary {
     // [5] numIters, [6] bright. EXT [7] alpha, [8] new, [9] iter.
     // Keyframed amp rides AmFxEval tails from index 14.
     const val LENSD_AM = "lensd_am"
+    // BCC_FILM_GLOW_AM (native 215 + EXT 216 + EXT2 217 + EXT3 218 + EXT4 219):
+    // Alight's bccfilmglow (the Ultra "Film Glow" def) — a five-pass film glow
+    // over the whole 33-param set, the reason the fx op model grew EXT3 / EXT4
+    // banks (five groups of 7). [0] glowAmount, [1] glowRadius, [2] glowSoftness,
+    // [3] glowSpread, [4] threshold, [5] softKnee, [6] threshGamma. EXT [7]
+    // hlGlowStr, [8] hlThreshold, [9] hlSaturation, [10] innerWeight,
+    // [11] outerWeight, [12] tailWeight, [13] glowTint (packed 0xRRGGBB).
+    // EXT2 [14] glowTintStr, [15] glowWarmth, [16] glowSatBoost,
+    // [17] colorPreserve, [18] halStr, [19] halColor (packed), [20] diffAmount.
+    // EXT3 [21] diffHighlights, [22] filmGrain, [23] filmFade, [24] filmSaturation,
+    // [25] filmContrast, [26] filmWarmth, [27] softClipKnee. EXT4 [28] blendMode
+    // (1 Add, 2 Screen, 3 Soft Light, 4 Lighten), [29] quality (1..3),
+    // [30] glowOnly, [31] ditherAmt, [32] globalMix.
+    const val BCC_FILM_GLOW_AM = "bcc_film_glow_am"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
      * the renderer's fixed op array, mirrored here for the importer, [toNative] and the Effects
      * panel). 32 since build 130 (Queue 14h): the largest stack in the 93-file Alight corpus is
      * 29 (blxze-brepizx-pack), and the old 12 silently ate real, implemented effects off such
-     * layers. The cost of the bound is the array itself (32 x 88 B per layer draw); project
+     * layers. The cost of the bound is the array itself (32 x 144 B per layer draw since the
+     * v181 EXT3 / EXT4 banks); project
      * files store the effect list unbounded, so nothing else assumes this number.
      */
     const val MAX_EFFECTS = 32
@@ -1981,6 +1996,18 @@ object ClipFxLibrary {
             )
         ),
         FxDef(
+            BCC_FILM_GLOW_AM, 215, "BCC Film Glow (Alight)", "Light", "Five-pass film glow with halation and film grade (Alight Motion's BCC Film Glow)",
+            listOf(
+                FxParamDef("Glow amount", 0f, 3f, 0.5f, "", step = 0.01f),
+                FxParamDef("Glow radius", 1f, 80f, 20f, "", step = 0.5f),
+                FxParamDef("Glow softness", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Glow spread", 1.5f, 6f, 2.5f, "", step = 0.1f),
+                FxParamDef("Threshold", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Soft knee", 0f, 1f, 0.3f, "", step = 0.01f),
+                FxParamDef("Threshold gamma", 0.2f, 3f, 1f, "", step = 0.05f)
+            )
+        ),
+        FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
                 FxParamDef("Amount", 0f, 100f, 30f),
@@ -2534,6 +2561,18 @@ object ClipFxLibrary {
         )
         SOLID_WIPE_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
         LENSD_AM -> listOf(1f, 1f, 1f, 0f, 0f, 0f, 0f)
+        // BCC Film Glow's EXT..EXT4 defaults are Alight's own def defaults (28
+        // values: highlight glow 0.5 / 0.7 / 0.8, weights 1 / 0.5 / 1, white tint;
+        // tint strength 0, warmth 0, sat boost 1, preserve 0.7, halation 0,
+        // hal colour #FF2200, diffusion 0; diff highlights 0.3, grain / fade 0,
+        // film sat 1, contrast / warmth 0, soft clip knee 5; blend Add, quality
+        // 2, glow-only off, dither 0.008, global mix 1).
+        BCC_FILM_GLOW_AM -> listOf(
+            0.5f, 0.7f, 0.8f, 1f, 0.5f, 1f, 0xFFFFFF.toFloat(),
+            0f, 0f, 1f, 0.7f, 0f, 0xFF2200.toFloat(), 0f,
+            0.3f, 0f, 0f, 1f, 0f, 0f, 5f,
+            1f, 2f, 0f, 0.008f, 1f, 0f, 0f
+        )
         else -> emptyList()
     }
 
@@ -2580,6 +2619,7 @@ object ClipFxLibrary {
         CC_GLASS_AM -> 206
         SOLID_WIPE_AM -> 211
         LENSD_AM -> 214
+        BCC_FILM_GLOW_AM -> 216
         else -> null
     }
 
@@ -2598,6 +2638,19 @@ object ClipFxLibrary {
         REFRACTION_AM -> 196
         SHAPEFIELD_AM -> 202
         CC_GLASS_AM -> 207
+        BCC_FILM_GLOW_AM -> 217
+        else -> null
+    }
+
+    /** The native type of an effect's EXT3 group (its values [21..27]), or null when it has none. */
+    fun ext3NativeType(type: String): Int? = when (type) {
+        BCC_FILM_GLOW_AM -> 218
+        else -> null
+    }
+
+    /** The native type of an effect's EXT4 group (its values [28..34]), or null when it has none. */
+    fun ext4NativeType(type: String): Int? = when (type) {
+        BCC_FILM_GLOW_AM -> 219
         else -> null
     }
 
@@ -2648,6 +2701,22 @@ object ClipFxLibrary {
                 val extra = extraValues(fx.type)
                 out += ext2.toFloat()
                 for (k in 0 until 7) out += fx.values.getOrNull(14 + k) ?: extra.getOrNull(7 + k) ?: 0f
+            }
+            // A fourth group (EXT3, bccfilmglow) rides behind EXT2; fxParseOps folds it
+            // into the same op's s[] the same way.
+            val ext3 = ext3NativeType(fx.type)
+            if (ext3 != null) {
+                val extra = extraValues(fx.type)
+                out += ext3.toFloat()
+                for (k in 0 until 7) out += fx.values.getOrNull(21 + k) ?: extra.getOrNull(14 + k) ?: 0f
+            }
+            // A fifth group (EXT4, bccfilmglow) rides behind EXT3; fxParseOps folds it
+            // into the same op's t[] the same way.
+            val ext4 = ext4NativeType(fx.type)
+            if (ext4 != null) {
+                val extra = extraValues(fx.type)
+                out += ext4.toFloat()
+                for (k in 0 until 7) out += fx.values.getOrNull(28 + k) ?: extra.getOrNull(21 + k) ?: 0f
             }
         }
         return out.toFloatArray()

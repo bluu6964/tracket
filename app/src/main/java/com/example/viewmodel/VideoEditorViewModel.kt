@@ -12,8 +12,12 @@ import com.example.model.MAX_SPEED
 import com.example.model.AspectRatio
 import com.example.model.CarouselParams
 import com.example.model.CarouselTemplate
+import com.example.model.DonutChartTemplate
+import com.example.model.GenieTemplate
 import com.example.model.LogoRevealTemplate
+import com.example.model.PieCounterTemplate
 import com.example.model.PopTitleTemplate
+import com.example.model.SocialGrowthTemplate
 import com.example.model.WordPopTemplate
 import com.example.model.SavedTemplate
 import com.example.model.UserTemplateOps
@@ -1198,6 +1202,106 @@ class VideoEditorViewModel : ViewModel() {
         )
         pushHistory()
         _editingGroupId.value = null  // the group lands at the top level, like the Pop Title's
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates (reference commission): inserts the "Genie" template into the CURRENT
+     * project as ONE Group layer at the playhead — the pill that stretches into the
+     * tilted avatar bar, the scrolling avatar row, and the four profile cards cycling
+     * one at a time (see [GenieTemplate.buildGroup]). One undo step; the group ends up
+     * selected. Returns the group's id, or null when the generated pictures are
+     * missing ([avatarUris] must hold 6, [photoUris] 4).
+     */
+    fun insertGenieTemplate(
+        avatarUris: List<String>,
+        photoUris: List<String>,
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String? {
+        if (avatarUris.size != 6 || photoUris.size != 4) return null
+        val insert = GenieTemplate.buildGroup(
+            previewWidthPx, previewHeightPx, avatarUris, photoUris,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "genie-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null  // the group lands at the top level, like the Carousel's
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates (reference commission batch 2): inserts the "Pie Counter" template —
+     * a pie that sweeps clockwise from the top while its % counts 0 -> 100 (see
+     * [PieCounterTemplate.buildGroup]). No generated pictures are needed. One undo
+     * step; the group ends up selected. Returns the group's id.
+     */
+    fun insertPieCounterTemplate(
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String {
+        val insert = PieCounterTemplate.buildGroup(
+            previewWidthPx, previewHeightPx,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "pie-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates (reference commission batch 2): inserts the "Donut Chart" template —
+     * five segments building one by one around the ring, each with its % label and
+     * its legend line (see [DonutChartTemplate.buildGroup]). No generated pictures
+     * are needed. One undo step; the group ends up selected. Returns the group's id.
+     */
+    fun insertDonutChartTemplate(
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String {
+        val insert = DonutChartTemplate.buildGroup(
+            previewWidthPx, previewHeightPx,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "donut-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates (reference commission batch 2): inserts the "Social Growth" template —
+     * the upload pill, the progress ring, the CREATE / POST... / ELEVATE titles and the
+     * header counters above the tile grid (see [SocialGrowthTemplate.buildGroup]).
+     * One undo step; the group ends up selected. Returns the group's id, or null when
+     * [avatarUri] is blank.
+     */
+    fun insertSocialGrowthTemplate(
+        avatarUri: String,
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String? {
+        if (avatarUri.isBlank()) return null
+        val insert = SocialGrowthTemplate.buildGroup(
+            previewWidthPx, previewHeightPx, avatarUri,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "growth-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null
         _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
         setSelected(insert.group.id)
         recomputeTotal()

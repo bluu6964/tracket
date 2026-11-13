@@ -3848,6 +3848,80 @@ fun VideoEditorScreen(
                     android.widget.Toast.LENGTH_LONG
                 ).show()
             },
+            onAddGenie = {
+                scope.launch {
+                    val assets = withContext(Dispatchers.IO) {
+                        com.example.engine.TemplateAssets.genieUris(context)
+                    }
+                    if (assets == null) {
+                        android.widget.Toast.makeText(
+                            context, "Could not prepare the template pictures", android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        return@launch
+                    }
+                    val groupId = viewModel.insertGenieTemplate(
+                        assets.avatarUris, assets.photoUris,
+                        previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                    )
+                    showTemplates = false
+                    android.widget.Toast.makeText(
+                        context,
+                        if (groupId != null)
+                            "Genie added as one group layer. Open the group, tap a photo, then Color → Fill → Image to use your own — names and activities are plain text"
+                        else "Could not add the template",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            },
+            onAddPieCounter = {
+                // No pictures to prepare: two pie layers + a counter text, authored against
+                // the same live preview frame as the other inserts.
+                viewModel.insertPieCounterTemplate(
+                    previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                )
+                showTemplates = false
+                android.widget.Toast.makeText(
+                    context,
+                    "Pie Counter added as one group layer. The pie sweeps while the % counts — retime both together",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            },
+            onAddDonutChart = {
+                viewModel.insertDonutChartTemplate(
+                    previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                )
+                showTemplates = false
+                android.widget.Toast.makeText(
+                    context,
+                    "Donut Chart added as one group layer. Retype the percentages and legend lines; drag a segment's angle keys to change its share",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            },
+            onAddSocialGrowth = {
+                scope.launch {
+                    val uri = withContext(Dispatchers.IO) {
+                        com.example.engine.TemplateAssets.growthAvatarUri(context)
+                    }
+                    if (uri == null) {
+                        android.widget.Toast.makeText(
+                            context, "Could not prepare the template picture", android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        return@launch
+                    }
+                    val groupId = viewModel.insertSocialGrowthTemplate(
+                        uri,
+                        previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                    )
+                    showTemplates = false
+                    android.widget.Toast.makeText(
+                        context,
+                        if (groupId != null)
+                            "Social Growth added as one group layer. Open the group, tap the profile photo, then Color → Fill → Image to use your own"
+                        else "Could not add the template",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            },
             userTemplates = userTemplates,
             onAddUserTemplate = { tpl ->
                 // The list entry was decoded when the dialog opened; insert a FRESH load so

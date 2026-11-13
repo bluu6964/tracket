@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -46,22 +48,35 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.engine.CounterEval
 import com.example.engine.TemplateAssets
 import com.example.model.CarouselParams
 import com.example.model.CarouselSpec
 import com.example.model.CarouselTemplate
+import com.example.model.DonutChartSpec
+import com.example.model.DonutChartTemplate
+import com.example.model.GenieSpec
+import com.example.model.GenieTemplate
 import com.example.model.LogoRevealSpec
 import com.example.model.LogoRevealTemplate
+import com.example.model.PieCounterSpec
+import com.example.model.PieCounterTemplate
 import com.example.model.PopTitleSpec
 import com.example.model.PopTitleTemplate
+import com.example.model.SocialGrowthSpec
+import com.example.model.SocialGrowthTemplate
 import com.example.model.WordPopSpec
 import com.example.model.WordPopTemplate
 import com.example.model.SavedTemplate
 import com.example.model.at
+import com.example.model.flattenPathSegments
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
 
@@ -86,6 +101,10 @@ fun TemplatesDialog(
     onAddPopTitle: () -> Unit,
     onAddLogoReveal: () -> Unit,
     onAddWordPop: () -> Unit,
+    onAddGenie: () -> Unit = {},
+    onAddPieCounter: () -> Unit = {},
+    onAddDonutChart: () -> Unit = {},
+    onAddSocialGrowth: () -> Unit = {},
     /** The person's own saved templates ("Save as Template", Templates v2), newest first. */
     userTemplates: List<SavedTemplate> = emptyList(),
     onAddUserTemplate: (SavedTemplate) -> Unit = {},
@@ -255,6 +274,96 @@ fun TemplatesDialog(
                         "Every word is its own layer: open the group, tap a word and " +
                         "retype it — Bengali included — or move, retime and recolour " +
                         "each word on its own.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                GeniePreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Genie — Avatar Bar & Profile Cards",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "A pill stretches into a photo bar, then profile cards appear one by one · 16s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddGenie, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "Every photo is a slot: open the group, tap a photo, then " +
+                        "Color → Fill → Image and pick yours. Names and activities are " +
+                        "plain text — retype them, Bengali included.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                PieCounterPreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Pie Counter — Percent Pie",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "A pie fills clockwise while the number counts 0% → 100% · 4s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddPieCounter, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "The sweep and the count share one timing — retime the pie's angle " +
+                        "keys and the number's counter together. Colours live in Color → Fill.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                DonutChartPreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Donut Chart — Segment Builder",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "Five segments build one by one, each with its % label and legend line · 10s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddDonutChart, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "Retype the percentages and legend lines, recolour each segment in " +
+                        "Color → Fill, and drag a segment's angle keys to change its share.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                SocialGrowthPreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Social Growth — Follower Promo",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "Upload ring, CREATE → POST → ELEVATE titles, counters that climb over a checkmark grid · 10s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddSocialGrowth, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "The profile photo is a slot (Color → Fill → Image); the counters " +
+                        "are counter text layers — change their final numbers on the " +
+                        "counter's keyframes.",
                     color = TextSecondary, fontSize = 12.sp
                 )
                 Spacer(Modifier.height(22.dp))
@@ -552,6 +661,495 @@ private fun WordPopPreview(modifier: Modifier = Modifier) {
                         scaleX = w.scalePercent / 100f
                         scaleY = w.scalePercent / 100f
                     }
+            )
+        }
+    }
+}
+
+/** A Compose [Path] through a pie layer's evaluated outline (its normalised points scaled to [r]). */
+private fun piePreviewPath(
+    segs: List<com.example.model.PathSeg>,
+    cx: Float,
+    cy: Float,
+    r: Float
+): Path {
+    val pts = flattenPathSegments(segs)
+    val p = Path()
+    for ((i, pt) in pts.withIndex()) {
+        if (i == 0) p.moveTo(cx + pt.first * r, cy + pt.second * r)
+        else p.lineTo(cx + pt.first * r, cy + pt.second * r)
+    }
+    if (pts.size > 2) p.close()
+    return p
+}
+
+/**
+ * Live preview of the Genie template: the template built headlessly at a nominal
+ * 720x1280 and EVALUATED with the model's own evaluator ([at]) on the frame clock —
+ * the pill stretching into the tilted bar, the avatar row scrolling, the four cards
+ * cycling — looping every 16 s. Simplified like the other previews (no glow/streak
+ * effects, the flower is dots, each card is drawn as one unit).
+ */
+@Composable
+private fun GeniePreview(modifier: Modifier = Modifier) {
+    val ins = remember {
+        GenieTemplate.buildGroup(720f, 1280f, List(6) { "" }, List(4) { "" }, 0L, idBase = "preview")
+    }
+    val avatarArts = remember { (0 until 6).map { TemplateAssets.placeholderBitmap(it).asImageBitmap() } }
+    val photoArts = remember { (0 until 4).map { TemplateAssets.portraitBitmap(it).asImageBitmap() } }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % GenieSpec.DURATION_MS) + GenieSpec.DURATION_MS) % GenieSpec.DURATION_MS
+    val bg = ins.background.at(t)
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(9f / 16f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(bg.textColor.toInt()))
+    ) {
+        val density = LocalDensity.current
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        val boxPx = 260f // the nominal shape box at 720 wide (720 * 130/360)
+        // The bar (with its streak as a soft white wash under it).
+        val bar = ins.bar.at(t)
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(
+                    x = with(density) { (bar.transformX * unit).toDp() },
+                    y = with(density) { (bar.transformY * unit).toDp() }
+                )
+                .width(with(density) { (boxPx * bar.shapeScaleX * unit).toDp() })
+                .height(with(density) { (boxPx * bar.shapeScaleY * unit).toDp() })
+                .graphicsLayer {
+                    alpha = bar.opacity / 100f
+                    rotationZ = bar.rotationDeg
+                }
+                .background(Color.White, RoundedCornerShape(50))
+        )
+        // The flower: eight small dark dots riding the bar.
+        Canvas(modifier = Modifier.matchParentSize()) {
+            for (petal in ins.petals) {
+                val p = petal.at(t)
+                if (p.opacity <= 1f) continue
+                drawCircle(
+                    color = Color(0xFF202024),
+                    radius = 5f * unit,
+                    center = Offset(
+                        size.width / 2f + p.transformX * unit,
+                        size.height / 2f + p.transformY * unit
+                    ),
+                    alpha = p.opacity / 100f
+                )
+            }
+        }
+        // Selection rings, then avatars with their names.
+        for (ring in ins.rings) {
+            val r = ring.at(t)
+            if (r.opacity <= 1f) continue
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (r.transformX * unit).toDp() },
+                        y = with(density) { (r.transformY * unit).toDp() }
+                    )
+                    .size(with(density) { (boxPx * r.shapeScaleX * unit).toDp() })
+                    .graphicsLayer { alpha = r.opacity / 100f }
+                    .border(2.dp, Color(r.strokeColor.toInt()), CircleShape)
+            )
+        }
+        for ((i, avatar) in ins.avatars.withIndex()) {
+            val a = avatar.at(t)
+            if (a.opacity <= 1f) continue
+            Image(
+                bitmap = avatarArts[i],
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (a.transformX * unit).toDp() },
+                        y = with(density) { (a.transformY * unit).toDp() }
+                    )
+                    .size(with(density) { (boxPx * a.shapeScaleX * unit).toDp() })
+                    .clip(CircleShape)
+                    .graphicsLayer { alpha = a.opacity / 100f }
+            )
+            val n = ins.avatarNames[i].at(t)
+            Text(
+                text = ins.avatarNames[i].text ?: "",
+                color = Color(0xFF2B2B30),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = with(density) { (n.scalePercent / 100f * 0.11f * 720f * unit).toSp() },
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (n.transformX * unit).toDp() },
+                        y = with(density) { (n.transformY * unit).toDp() }
+                    )
+                    .graphicsLayer {
+                        alpha = n.opacity / 100f
+                        rotationZ = n.rotationDeg
+                    }
+            )
+        }
+        // The four cards, each drawn as one unit (photo + name + invite pill).
+        for ((i, card) in ins.cards.withIndex()) {
+            val p = card.photo.at(t)
+            if (p.opacity <= 1f) continue
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (p.transformX * unit).toDp() },
+                        y = with(density) { (p.transformY * unit).toDp() }
+                    )
+                    .width(with(density) { (boxPx * p.shapeScaleX * unit).toDp() })
+                    .height(with(density) { (boxPx * p.shapeScaleY * unit).toDp() })
+                    .graphicsLayer {
+                        alpha = p.opacity / 100f
+                        rotationZ = p.rotationDeg
+                        rotationX = p.rotation3dX
+                        rotationY = p.rotation3dY
+                        cameraDistance = 12f
+                    }
+                    .clip(RoundedCornerShape(12.dp))
+            ) {
+                Image(
+                    bitmap = photoArts[i],
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize()
+                )
+                Text(
+                    text = card.title.text ?: "",
+                    color = Color.White,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontStyle = FontStyle.Italic,
+                    fontSize = with(density) { (card.title.scalePercent / 100f * 0.11f * 720f * unit).toSp() },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .offset(x = 10.dp, y = (-26).dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset(x = (-10).dp, y = (-10).dp)
+                        .background(Color(0x40FFFFFF), RoundedCornerShape(50))
+                ) {
+                    Text(
+                        text = "Invite",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        modifier = Modifier.offset(x = 8.dp, y = 3.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Live preview of the Pie Counter: the template built headlessly at a nominal
+ * 720x1200 and EVALUATED on the frame clock — the wedge paths come from the clips'
+ * own evaluated outlines ([com.example.model.TimelineClip.pieSegmentsAt]) and the
+ * number from the app's own counter evaluator — looping every 4 s.
+ */
+@Composable
+private fun PieCounterPreview(modifier: Modifier = Modifier) {
+    val ins = remember { PieCounterTemplate.buildGroup(720f, 1200f, 0L, idBase = "preview") }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % PieCounterSpec.DURATION_MS) + PieCounterSpec.DURATION_MS) % PieCounterSpec.DURATION_MS
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(3f / 5f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black)
+    ) {
+        val density = LocalDensity.current
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f + PieCounterSpec.PIE_CY_FRAC * 1200f * unit
+            val r = PieCounterSpec.RADIUS_FRAC * 720f * unit
+            drawPath(
+                piePreviewPath(ins.fill.pieSegmentsAt(t), cx, cy, r),
+                Brush.linearGradient(
+                    listOf(Color(0xFF1E8CFF), Color(0xFFF4F8FF)),
+                    start = Offset(cx - r, cy - r),
+                    end = Offset(cx + r, cy + r)
+                )
+            )
+            drawPath(
+                piePreviewPath(ins.outline.pieSegmentsAt(t), cx, cy, r),
+                Color(0xFFB9C4CE),
+                style = Stroke(width = 1.5f)
+            )
+        }
+        val pct = CounterEval.displayText(ins.percentText.text ?: "0%", ins.percentText, t) ?: "0%"
+        Text(
+            text = pct,
+            color = Color.White,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = with(density) { (PieCounterSpec.TEXT_FONT_FRAC * 720f * unit).toSp() },
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = with(density) { (PieCounterSpec.TEXT_CY_FRAC * 1200f * unit).toDp() })
+        )
+    }
+}
+
+/**
+ * Live preview of the Donut Chart: the template built headlessly at a nominal
+ * 720x1280 and EVALUATED on the frame clock — each segment drawn from its clip's
+ * own evaluated outline, the hole punched over them, labels and legend lines as
+ * evaluated texts — looping every 10 s.
+ */
+@Composable
+private fun DonutChartPreview(modifier: Modifier = Modifier) {
+    val ins = remember { DonutChartTemplate.buildGroup(720f, 1280f, 0L, idBase = "preview") }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % DonutChartSpec.DURATION_MS) + DonutChartSpec.DURATION_MS) % DonutChartSpec.DURATION_MS
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(9f / 16f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black)
+    ) {
+        val density = LocalDensity.current
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f + DonutChartSpec.CY_FRAC * 1280f * unit
+            val r = DonutChartSpec.R_FRAC * 720f * unit
+            for (seg in ins.segments) {
+                val (g1, g2) = DonutChartSpec.GRADIENTS[ins.segments.indexOf(seg)]
+                drawPath(
+                    piePreviewPath(seg.wedge.pieSegmentsAt(t), cx, cy, r),
+                    Brush.linearGradient(
+                        listOf(Color(g1.toInt()), Color(g2.toInt())),
+                        start = Offset(cx - r, cy - r),
+                        end = Offset(cx + r, cy + r)
+                    )
+                )
+            }
+            drawCircle(
+                color = Color.Black,
+                radius = DonutChartSpec.HOLE_FRAC * 720f * unit / 2f,
+                center = Offset(cx, cy)
+            )
+        }
+        val title = ins.title.at(t)
+        Text(
+            text = ins.title.text ?: "",
+            color = Color(0xFF9A9A9A),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = with(density) { (DonutChartSpec.TITLE_FONT_FRAC * 720f * unit).toSp() },
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = with(density) { (title.transformY * unit).toDp() })
+                .graphicsLayer { alpha = title.opacity / 100f }
+        )
+        for (seg in ins.segments) {
+            val l = seg.label.at(t)
+            if (l.opacity > 1f) {
+                Text(
+                    text = seg.label.text ?: "",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = with(density) { (DonutChartSpec.LABEL_FONT_FRAC * 720f * unit).toSp() },
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .offset(
+                            x = with(density) { (l.transformX * unit).toDp() },
+                            y = with(density) { (l.transformY * unit).toDp() }
+                        )
+                        .graphicsLayer { alpha = l.opacity / 100f }
+                )
+            }
+            val g = seg.legendText.at(t)
+            if (g.opacity > 1f) {
+                Text(
+                    text = seg.legendText.text ?: "",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = with(density) { (DonutChartSpec.LEGEND_FONT_FRAC * 720f * unit).toSp() },
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .offset(
+                            x = with(density) { (g.transformX * unit).toDp() },
+                            y = with(density) { (g.transformY * unit).toDp() }
+                        )
+                        .graphicsLayer { alpha = g.opacity / 100f }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Live preview of the Social Growth template: the template built headlessly at a
+ * nominal 720x1280 and EVALUATED on the frame clock — titles, counters (through
+ * the app's own counter evaluator), the trim-drawn ring and the popping tiles —
+ * looping every 10 s. Simplified: the checkmarks are not drawn here.
+ */
+@Composable
+private fun SocialGrowthPreview(modifier: Modifier = Modifier) {
+    val ins = remember { SocialGrowthTemplate.buildGroup(720f, 1280f, "", 0L, idBase = "preview") }
+    val avatarArt = remember { TemplateAssets.placeholderBitmap(3).asImageBitmap() }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % SocialGrowthSpec.DURATION_MS) + SocialGrowthSpec.DURATION_MS) % SocialGrowthSpec.DURATION_MS
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(9f / 16f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black)
+    ) {
+        val density = LocalDensity.current
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        val boxPx = 260f
+        for (title in ins.titles) {
+            val c = title.at(t)
+            if (c.opacity <= 1f) continue
+            Text(
+                text = title.text ?: "",
+                color = Color(title.textColor.toInt()),
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = with(density) { (SocialGrowthSpec.TITLE_FONT_FRAC * 720f * unit).toSp() },
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(y = with(density) { (c.transformY * unit).toDp() })
+                    .graphicsLayer { alpha = c.opacity / 100f }
+            )
+        }
+        val pill = ins.uploadPill.at(t)
+        if (pill.opacity > 1f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(y = with(density) { (pill.transformY * unit).toDp() })
+                    .width(with(density) { (boxPx * pill.shapeScaleX * unit).toDp() })
+                    .height(with(density) { (boxPx * pill.shapeScaleY * unit).toDp() })
+                    .graphicsLayer { alpha = pill.opacity / 100f }
+                    .background(Color(0xFF15151A), RoundedCornerShape(50))
+            )
+            Text(
+                text = "UPLOAD",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(y = with(density) { (pill.transformY * unit).toDp() })
+                    .graphicsLayer { alpha = pill.opacity / 100f }
+            )
+        }
+        val ring = ins.ring.at(t)
+        if (ring.opacity > 1f) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val cx = size.width / 2f
+                val cy = size.height / 2f + SocialGrowthSpec.RING_Y_FRAC * 1280f * unit
+                val r = SocialGrowthSpec.RING_D_FRAC * 720f * unit / 2f
+                drawArc(
+                    color = Color(0xFF2EE66B),
+                    startAngle = -90f + ring.strokeTrimStart * 360f,
+                    sweepAngle = (ring.strokeTrimEnd - ring.strokeTrimStart) * 360f,
+                    useCenter = false,
+                    topLeft = Offset(cx - r, cy - r),
+                    size = Size(r * 2f, r * 2f),
+                    style = Stroke(width = 3f),
+                    alpha = ring.opacity / 100f
+                )
+            }
+        }
+        val av = ins.avatar.at(t)
+        if (av.opacity > 1f) {
+            Image(
+                bitmap = avatarArt,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (av.transformX * unit).toDp() },
+                        y = with(density) { (av.transformY * unit).toDp() }
+                    )
+                    .size(with(density) { (boxPx * av.shapeScaleX * unit).toDp() })
+                    .clip(CircleShape)
+                    .graphicsLayer { alpha = av.opacity / 100f }
+            )
+        }
+        for (count in listOf(ins.postsCount, ins.followersCount)) {
+            val c = count.at(t)
+            if (c.opacity <= 1f) continue
+            Text(
+                text = CounterEval.displayText(count.text ?: "0", count, t) ?: "0",
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = with(density) { (SocialGrowthSpec.COUNT_FONT_FRAC * 720f * unit).toSp() },
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (c.transformX * unit).toDp() },
+                        y = with(density) { (c.transformY * unit).toDp() }
+                    )
+                    .graphicsLayer { alpha = c.opacity / 100f }
+            )
+        }
+        for (label in listOf(ins.postsLabel, ins.followersLabel)) {
+            val c = label.at(t)
+            if (c.opacity <= 1f) continue
+            Text(
+                text = label.text ?: "",
+                color = Color(0xFFB9B9C0),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = with(density) { (SocialGrowthSpec.LABEL_FONT_FRAC * 720f * unit).toSp() },
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (c.transformX * unit).toDp() },
+                        y = with(density) { (c.transformY * unit).toDp() }
+                    )
+                    .graphicsLayer { alpha = c.opacity / 100f }
+            )
+        }
+        for (tile in ins.tiles) {
+            val c = tile.at(t)
+            if (c.opacity <= 1f) continue
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (c.transformX * unit).toDp() },
+                        y = with(density) { (c.transformY * unit).toDp() }
+                    )
+                    .size(with(density) { (boxPx * c.shapeScaleX * unit).toDp() })
+                    .graphicsLayer { alpha = c.opacity / 100f }
+                    .background(
+                        Brush.verticalGradient(listOf(Color(0xFF081C0D), Color(0xFF23C75C))),
+                        RoundedCornerShape(8.dp)
+                    )
             )
         }
     }

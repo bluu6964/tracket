@@ -970,7 +970,18 @@ class NativePreviewEngine(context: Context) {
                         fp.draw(android.graphics.Canvas(bmp), c, applyOpacity, t)
                     } else if (c.type == LayerType.SHAPE) {
                         if (!shapePainter.drawShape(bmp, c, w, h, k, dens, applyOpacity, cropFractionsOfClip(c))) {
-                            Log.w(TAG, "native shape: layer '${c.name}' was not drawn")
+                            // Path shapes (the importer's `.pie` / `.arc` / converted-path
+                            // layers) are declined by the C++ shape painter: only the
+                            // Canvas painter can replay their stored outline. Fall back
+                            // to it — the same route the live video fill takes above, and
+                            // the same picture the export draws.
+                            if (c.shapePattern == "PATH") {
+                                val fp = fillPainterFor(w, h, dens)
+                                fp.nativeTarget = bmp
+                                fp.draw(android.graphics.Canvas(bmp), c, applyOpacity, t)
+                            } else {
+                                Log.w(TAG, "native shape: layer '${c.name}' was not drawn")
+                            }
                         }
                     } else if (c.type == LayerType.STICKER) {
                         val st = StickerLibrary.frameFor(c.uri, c.sourceOffsetMs(t - c.startMs))

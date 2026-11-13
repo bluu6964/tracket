@@ -27,10 +27,15 @@ object TemplateAssets {
     /** Uris of one instantiated carousel: the background picture + the 8 card pictures. */
     data class CarouselAssets(val backgroundUri: String, val cardUris: List<String>)
 
+    /** Uris of one instantiated Genie template: the 6 bar avatar pictures + the 4 card photos. */
+    data class GenieAssets(val avatarUris: List<String>, val photoUris: List<String>)
+
     private const val BG_W = 1440
     private const val BG_H = 900
     private const val CARD_PX = 288
     private const val LOGO_PX = 512
+    private const val PORTRAIT_W = 360
+    private const val PORTRAIT_H = 504
 
     private fun lift(argb: Long, by: Int): Int {
         val r = ((argb shr 16) and 0xFF).toInt()
@@ -223,6 +228,68 @@ object TemplateAssets {
     /** Generates the Logo Reveal placeholder into import storage; its uri, or null on failure. */
     fun logoUri(context: Context): String? = runCatching {
         saveToImports(context, logoBitmap(), "logo_reveal.png")
+    }.getOrNull()
+
+    /**
+     * One portrait placeholder (the Genie cards' photo slots): a warm diagonal wash
+     * with a soft white sun-disc and horizon arcs — an abstract stand-in for a
+     * person's photo, drawn by us; the reference video's photos are NOT reused.
+     * The user replaces it via Color -> Fill -> Image.
+     */
+    fun portraitBitmap(index: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(PORTRAIT_W, PORTRAIT_H, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val pairs = listOf(
+            0xFFF6C177.toInt() to 0xFFB3541E.toInt(),
+            0xFF9CCFD8.toInt() to 0xFF286983.toInt(),
+            0xFFF2CDCD.toInt() to 0xFFA15C7B.toInt(),
+            0xFFB5E48C.toInt() to 0xFF52796F.toInt()
+        )
+        val (c1, c2) = pairs[index % pairs.size]
+        val grad = LinearGradient(
+            0f, 0f, PORTRAIT_W.toFloat(), PORTRAIT_H.toFloat(), c1, c2, Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, PORTRAIT_W.toFloat(), PORTRAIT_H.toFloat(), Paint().apply { shader = grad })
+        val w = Paint().apply {
+            color = Color.WHITE
+            alpha = 120
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        // A soft sun disc + two horizon arcs.
+        canvas.drawCircle(PORTRAIT_W * 0.68f, PORTRAIT_H * 0.30f, PORTRAIT_W * 0.17f, w)
+        val arc = Paint().apply {
+            color = Color.WHITE
+            alpha = 90
+            style = Paint.Style.STROKE
+            strokeWidth = PORTRAIT_W * 0.03f
+            isAntiAlias = true
+        }
+        canvas.drawArc(
+            RectF(-PORTRAIT_W * 0.3f, PORTRAIT_H * 0.62f, PORTRAIT_W * 0.9f, PORTRAIT_H * 1.05f),
+            200f, 140f, false, arc
+        )
+        canvas.drawArc(
+            RectF(PORTRAIT_W * 0.35f, PORTRAIT_H * 0.72f, PORTRAIT_W * 1.35f, PORTRAIT_H * 1.15f),
+            200f, 140f, false, arc
+        )
+        return bmp
+    }
+
+    /** Generates the Genie template's pictures (6 avatars + 4 card photos); null on failure. */
+    fun genieUris(context: Context): GenieAssets? = runCatching {
+        val avatars = (0 until 6).map { i ->
+            saveToImports(context, placeholderBitmap(i), "genie_avatar_${i + 1}.png") ?: return null
+        }
+        val photos = (0 until 4).map { i ->
+            saveToImports(context, portraitBitmap(i), "genie_photo_${i + 1}.png") ?: return null
+        }
+        GenieAssets(avatars, photos)
+    }.getOrNull()
+
+    /** Generates the Social Growth template's profile-picture placeholder; null on failure. */
+    fun growthAvatarUri(context: Context): String? = runCatching {
+        saveToImports(context, placeholderBitmap(3), "growth_avatar.png")
     }.getOrNull()
 
     /** Writes [bmp] as a PNG under filesDir/imports and returns its shareable uri (like

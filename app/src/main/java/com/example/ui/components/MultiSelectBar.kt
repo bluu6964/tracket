@@ -46,7 +46,6 @@ fun MultiSelectBar(
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .height(54.dp)
             .glassSurface(RoundedCornerShape(14.dp), fill = amGlassBrush())
-            .panelSheenStrip()
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -112,7 +111,7 @@ private fun AlignTile(
             .bouncyClickable { onAction(action) },
         contentAlignment = Alignment.Center
     ) {
-        KitGlassTile(Modifier.matchParentSize())
+        FlatTile(Modifier.matchParentSize())
         Canvas(modifier = Modifier.size(width = 24.dp, height = 20.dp)) { draw() }
     }
 }

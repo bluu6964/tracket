@@ -288,7 +288,6 @@ fun TransformView(
                     RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
                     fill = amGlassBrush()
                 )
-                .panelSheenStrip()
                 .padding(horizontal = 16.dp, vertical = 6.dp)
         ) {
             // Drag handle pill at top
@@ -519,7 +518,7 @@ fun TransformView(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (!isSelected) KitGlassTile(Modifier.matchParentSize())
+                        if (!isSelected) FlatTile(Modifier.matchParentSize())
                         Text(
                             text = tab.title,
                             color = if (isSelected) AmInk else TextPrimary,
@@ -690,7 +689,7 @@ private fun IconRail(
                     .bouncyClickable(onClick = { onSelect(i) }),
                 contentAlignment = Alignment.Center
             ) {
-                if (selected) KitGlassTile(Modifier.matchParentSize())
+                if (selected) FlatTile(Modifier.matchParentSize())
                 Icon(
                     imageVector = item.icon,
                     contentDescription = item.description,

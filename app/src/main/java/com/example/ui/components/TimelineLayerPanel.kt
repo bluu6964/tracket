@@ -135,10 +135,7 @@ import com.example.ui.theme.SelectedClipBorder
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.amCyanVioletBrush
 import com.example.ui.theme.amMintCyanBrush
-import com.example.ui.theme.amMintCyanVerticalBrush
 import com.example.ui.util.bouncyClickable
-import com.example.ui.util.neonGlow
-import com.example.ui.util.drawGlowLine
 import com.example.ui.theme.NeonLime
 import com.example.ui.theme.NeonLimeDeep
 import com.example.ui.theme.GoldClip
@@ -217,7 +214,7 @@ fun TimelineLayerPanel(
     onSpeed: (() -> Unit)? = null,
     /** Selected-layer bar: Reverse button (video layers). Hidden when null. */
     onReverse: (() -> Unit)? = null,
-    /** Round neon "+" button at the bottom right. Hidden when null. */
+    /** Round flat "+" button at the bottom right. Hidden when null. */
     onAddClick: (() -> Unit)? = null
 ) {
     val isMulti = multiSelectIds.isNotEmpty()
@@ -534,7 +531,7 @@ fun TimelineLayerPanel(
                 .bouncyClickable(onClick = onToggleMasterAudio),
             contentAlignment = Alignment.Center
         ) {
-            KitGlassDisc(Modifier.matchParentSize())
+            FlatDisc(Modifier.matchParentSize())
             Icon(
                 imageVector = if (isMasterMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeDown,
                 contentDescription = "Master Audio",
@@ -545,8 +542,7 @@ fun TimelineLayerPanel(
 
         // 4. VERTICAL LOCKED PLAYHEAD LINE ("খারাভাবে middle এ locked timeline")
         // Reference look: 2.3 dp white line inside a 9 dp translucent band, round ends, starting just
-        // under the ruler.
-        val thumbBmp = kitThumbBitmap()
+        // under the ruler — flat white in the B/W language, with a small flat white knob at the top.
         Canvas(
             modifier = Modifier
                 .width(12.dp)
@@ -556,21 +552,18 @@ fun TimelineLayerPanel(
             val cx = size.width / 2f
             val top = 3.dp.toPx()
             val bottom = size.height - 2.dp.toPx()
-            // Redesign Stage 2: the white line becomes the mint->cyan gradient inside a soft mint
-            // band, with a small glowing knob at the top. Widths and offsets are unchanged.
             drawLine(
-                AmMint.copy(alpha = 0.10f), Offset(cx, top + 4.5.dp.toPx()), Offset(cx, bottom - 4.5.dp.toPx()),
+                Color.White.copy(alpha = 0.10f), Offset(cx, top + 4.5.dp.toPx()), Offset(cx, bottom - 4.5.dp.toPx()),
                 strokeWidth = 9.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round
             )
             drawLine(
-                amMintCyanVerticalBrush(), Offset(cx, top), Offset(cx, bottom),
+                PlayheadColor, Offset(cx, top), Offset(cx, bottom),
                 strokeWidth = 2.3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round
             )
-            // The knob is the kit's glowing thumb asset (build 162) over the line's top.
-            drawKitThumb(thumbBmp, Offset(cx, top + 4.dp.toPx()), 11.dp.toPx())
+            drawFlatThumb(Offset(cx, top + 4.dp.toPx()), 5.5.dp.toPx())
         }
 
-        // Round neon add button (bottom right). Sits above the selected-layer bar when it is shown.
+        // Round flat add button (bottom right). Sits above the selected-layer bar when it is shown.
         if (onAddClick != null && !isMulti && showQuickActions) {
             NeonAddFab(
                 onClick = onAddClick,
@@ -658,7 +651,7 @@ private fun SelectedBarButton(
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
-        KitGlassPill(Modifier.matchParentSize())
+        FlatPill(Modifier.matchParentSize())
         Box(
             Modifier
                 .matchParentSize()
@@ -728,7 +721,6 @@ private fun LayerLaneControl(
     val latestToggle by rememberUpdatedState(onToggleMulti)
     val latestMulti by rememberUpdatedState(isMulti)
     val pillShape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp, topEnd = height / 2, bottomEnd = height / 2)
-    val pillBorderTop = if (isSelected) 0.60f else 0.42f
     Box(
         modifier = Modifier
             .padding(start = 5.dp)
@@ -748,23 +740,19 @@ private fun LayerLaneControl(
                 )
             }
     ) {
-        // Kit glass pill under the lane content (build 162); the edge is drawn OVER it —
-        // selected lane: the cyan->violet edge of the redesign language; otherwise the
-        // familiar soft white edge.
-        KitGlassPill(Modifier.matchParentSize())
+        // Flat pill under the lane content (B/W language); the edge is drawn OVER it —
+        // selected lane: a solid white edge; otherwise a soft white hairline.
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(AmPanel, pillShape)
+        ) {}
         Box(
             Modifier
                 .matchParentSize()
                 .border(
-                    0.75.dp,
-                    if (isSelected) Brush.verticalGradient(
-                        listOf(AmCyanBright.copy(alpha = 0.9f), AmViolet.copy(alpha = 0.55f))
-                    ) else Brush.verticalGradient(
-                        listOf(
-                            Color.White.copy(alpha = pillBorderTop),
-                            Color.White.copy(alpha = 0.22f)
-                        )
-                    ),
+                    if (isSelected) 1.dp else 0.75.dp,
+                    if (isSelected) Color.White else Color.White.copy(alpha = 0.22f),
                     pillShape
                 )
         ) {}
@@ -1094,7 +1082,7 @@ private fun TrimHandle(
             },
         contentAlignment = Alignment.Center
     ) {
-        KitGlassTile(Modifier.matchParentSize())
+        FlatTile(Modifier.matchParentSize())
         Icon(
             imageVector = if (isLeft) Icons.Default.ChevronLeft else Icons.Default.ChevronRight,
             contentDescription = if (isLeft) "Trim start" else "Trim end",
@@ -1249,7 +1237,7 @@ fun TimelineClipItem(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color(0xFFAEB4BC).copy(alpha = if (on) 0.24f else 0.11f))
+                        .background(Color(0xFFB4B4B4).copy(alpha = if (on) 0.24f else 0.11f))
                         .drawBehind {
                             val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(
                                 floatArrayOf(6.dp.toPx(), 4.dp.toPx()), 0f

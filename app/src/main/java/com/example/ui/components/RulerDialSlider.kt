@@ -25,7 +25,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -36,8 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.AmCyan
-import com.example.ui.theme.AmMint
 import com.example.ui.theme.AmTickMajor
 import com.example.ui.theme.AmTickMinor
 import com.example.ui.theme.TextPrimary
@@ -78,7 +76,6 @@ fun RulerDial(
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val scope = rememberCoroutineScope()
     val flingJob = remember { arrayOfNulls<Job>(1) }
-    val thumbBmp = kitThumbBitmap()
 
     Box(
         modifier = modifier
@@ -180,31 +177,25 @@ fun RulerDial(
                 )
             }
 
-            // Center indicator (needle): the slider's accent — a mint→cyan gradient
-            // line with a soft halo (redesign Stage 1; geometry and drag law unchanged).
+            // Center indicator (needle): a flat white line (B/W language; geometry
+            // and drag law unchanged), with a flat white thumb disc at its centre.
             val needleHeight = h * 0.82f
             val needleStart = (h - needleHeight) / 2f
             drawLine(
-                color = AmMint.copy(alpha = 0.20f),
+                color = Color.White.copy(alpha = 0.20f),
                 start = Offset(centerX, needleStart),
                 end = Offset(centerX, needleStart + needleHeight),
                 strokeWidth = 7.dp.toPx(),
                 cap = StrokeCap.Round
             )
             drawLine(
-                brush = Brush.verticalGradient(
-                    listOf(AmMint, AmCyan),
-                    startY = needleStart,
-                    endY = needleStart + needleHeight
-                ),
+                color = Color.White,
                 start = Offset(centerX, needleStart),
                 end = Offset(centerX, needleStart + needleHeight),
                 strokeWidth = 2.5.dp.toPx(),
                 cap = StrokeCap.Round
             )
-            // The needle's jewel: the kit's glowing thumb asset centred on the line
-            // (build 162 — a rendered core + halo instead of the flat halo line alone).
-            drawKitThumb(thumbBmp, Offset(centerX, h / 2f), 15.dp.toPx())
+            drawFlatThumb(Offset(centerX, h / 2f), 7.5.dp.toPx())
         }
     }
 }
@@ -281,15 +272,15 @@ fun RulerDialSlider(
                 .fillMaxHeight()
         )
 
-        // 3. Current value on the right (e.g., "20%", "45°", "0%") — in a small glass
-        // pill, per the redesign brief ("slider value in a small pill").
+        // 3. Current value on the right (e.g., "20%", "45°", "0%") — in a small flat
+        // grey pill (the readout format is build 160's step-exact logic, untouched).
         if (showValue) Box(
             modifier = Modifier
                 .width(68.dp)
                 .height(30.dp),
             contentAlignment = Alignment.Center
         ) {
-            KitGlassPill(Modifier.matchParentSize())
+            FlatPill(Modifier.matchParentSize())
             Text(
                 text = displayValue,
                 color = TextPrimary,

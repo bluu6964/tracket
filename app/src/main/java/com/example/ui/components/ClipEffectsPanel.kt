@@ -168,7 +168,7 @@ fun ClipEffectsPanel(
                         .testTag("fx_category_$cat"),
                     contentAlignment = Alignment.Center
                 ) {
-                    KitGlassPill(Modifier.matchParentSize())
+                    FlatPill(Modifier.matchParentSize())
                     Box(
                         Modifier
                             .matchParentSize()
@@ -233,7 +233,6 @@ fun ClipEffectsPanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .glassSurface(RoundedCornerShape(14.dp), fill = amGlassBrush())
-                    .panelSheenStrip()
                     .padding(vertical = 18.dp, horizontal = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -272,7 +271,7 @@ fun ClipEffectsPanel(
                         modifier = Modifier.size(34.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        KitGlassTile(Modifier.matchParentSize())
+                        FlatTile(Modifier.matchParentSize())
                         Icon(
                             fxIcon(def.id), contentDescription = null,
                             tint = if (!fx.enabled) TextSecondary else if (selected) AmCyan else Color.White,
@@ -395,7 +394,7 @@ fun ClipEffectsPanel(
                                 .testTag("fx_reset_${fx.type}"),
                             contentAlignment = Alignment.Center
                         ) {
-                            KitGlassPill(Modifier.matchParentSize())
+                            FlatPill(Modifier.matchParentSize())
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -519,7 +518,7 @@ private fun FxTile(def: FxDef, full: Boolean, onClick: () -> Unit) {
                 modifier = Modifier.size(64.dp),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassTile(Modifier.matchParentSize())
+                FlatTile(Modifier.matchParentSize())
                 Icon(
                     fxIcon(def.id), contentDescription = def.name,
                     tint = if (full) TextSecondary else Color.White, modifier = Modifier.size(28.dp)
@@ -532,7 +531,7 @@ private fun FxTile(def: FxDef, full: Boolean, onClick: () -> Unit) {
                     .size(20.dp)
                     .clip(CircleShape)
                     .then(
-                        if (full) Modifier.background(Color(0xFF3A4058))
+                        if (full) Modifier.background(Color(0xFF3D3D3D))
                         else Modifier.background(amMintCyanBrush())
                     ),
                 contentAlignment = Alignment.Center

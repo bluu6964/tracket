@@ -231,7 +231,7 @@ fun AspectRatioSheet(
                             .background(Color(c))
                             .border(
                                 if (selected) 3.dp else 1.dp,
-                                if (selected) Color(0xFF22E6A8) else Color.White.copy(alpha = 0.18f),
+                                if (selected) Color.White else Color.White.copy(alpha = 0.18f),
                                 RoundedCornerShape(12.dp)
                             )
                             .bouncyClickable(pressedScale = 0.88f) { onCanvasColor(c) }
@@ -400,11 +400,7 @@ fun ExportModalDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(Color(0xFF000000), Color(0xFF0F0F0F), Color(0xFF181818))
-                    )
-                )
+                .background(Color(0xFF000000))
         ) {
             Column(
                 modifier = Modifier
@@ -507,7 +503,7 @@ private fun formatRemaining(ms: Long?): String {
     return "%02d:%02d:%02d".format(total / 3600, (total % 3600) / 60, total % 60)
 }
 
-private val ExportAccent = Color(0xFF22E6A8)
+private val ExportAccent = Color(0xFFFFFFFF)
 
 /** Settings page: scrolling cards on top, "Export Now" pinned at the bottom (always visible). */
 @Composable
@@ -659,7 +655,7 @@ private fun ExportChip(text: String, selected: Boolean, onClick: () -> Unit) {
         text = text,
         fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
-        color = if (selected) Color(0xFF06231A) else Color(0xFFE5E5E7),
+        color = if (selected) Color(0xFF0A0A0A) else Color(0xFFE5E5E7),
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(if (selected) ExportAccent else Color.White.copy(alpha = 0.10f))
@@ -670,7 +666,7 @@ private fun ExportChip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 
 /**
- * Logo badge: lime wavy seal with a ring of text and "AM" in the middle, plus a big faint
+ * Logo badge: white wavy seal with a ring of text and "AM" in the middle, plus a big faint
  * ring of text around it. Both rings turn slowly (opposite directions).
  */
 @Composable

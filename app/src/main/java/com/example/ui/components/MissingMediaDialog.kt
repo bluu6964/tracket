@@ -28,7 +28,7 @@ import com.example.ui.theme.HeaderPillFill
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
 
-private val DialogFill = Color(0xFF10161B)
+private val DialogFill = Color(0xFF111111)
 
 /**
  * "Replace missing media" (build 111): the files an imported preset points at lived on the phone

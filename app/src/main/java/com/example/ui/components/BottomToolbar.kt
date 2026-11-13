@@ -71,7 +71,7 @@ fun BottomToolbar(
             .height(height)
             .background(EditorBackground)
             .drawBehind {
-                // Hairline separating the footer from the timeline (redesign glass language).
+                // Hairline separating the footer from the timeline (B/W language).
                 drawLine(AmHairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx())
             }
             .padding(horizontal = 8.dp, vertical = 5.dp),
@@ -80,8 +80,8 @@ fun BottomToolbar(
     ) {
         // The add-layer "+" lives here since build 145 (Sarowar: in the bottom toolbar with
         // the other tools, not up by the timeline): it opens the same AddLayerSheet as before.
-        // Same five items, same order — Stage 1 of the redesign only changes the look:
-        // glass pills, and Add (the bar's primary action) carries the one gradient badge.
+        // Same five items, same order — the B/W pass only changes the look:
+        // flat tiles, and Add (the bar's primary action) carries the one white badge.
         ToolbarItem("Add", Icons.Default.Add, "toolbar_add_button", onAddClick, primary = true)
         ToolbarItem("Null", Icons.Default.CenterFocusWeak, "toolbar_null_button", onNullClick)
         ToolbarItem("Controller", Icons.Default.Tune, "toolbar_controller_button", onControllerClick)
@@ -106,8 +106,8 @@ private fun RowScope.ToolbarItem(
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        // Kit glass tile under the code-drawn icon + label (build 162 asset redo).
-        KitGlassTile(Modifier.matchParentSize())
+        // Flat tile under the code-drawn icon + label (B/W language).
+        FlatTile(Modifier.matchParentSize())
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -120,7 +120,6 @@ private fun RowScope.ToolbarItem(
                 modifier = Modifier.size(38.dp),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlowRing(Modifier.size(54.dp))
                 Box(
                     modifier = Modifier
                         .size(38.dp)
@@ -189,7 +188,7 @@ fun ChainAddPanel(
         ) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Exit chain", tint = IconActive, modifier = Modifier.size(24.dp))
         }
-        Box(Modifier.width(1.dp).height(32.dp).background(Color(0xFF262C38)))
+        Box(Modifier.width(1.dp).height(32.dp).background(Color(0xFF2C2C2C)))
         val chainListState = rememberLazyListState()
         Box(
             modifier = Modifier
@@ -228,7 +227,7 @@ fun ChainAddPanel(
     }
 }
 
-/** A tool of [ChainAddPanel]: fixed width, so the row can scroll. Same glass pill as the toolbar's items. */
+/** A tool of [ChainAddPanel]: fixed width, so the row can scroll. Same flat tile as the toolbar's items. */
 @Composable
 private fun ChainToolItem(label: String, icon: ImageVector, testTag: String, onClick: () -> Unit) {
     val destructive = label == "Delete"
@@ -240,7 +239,7 @@ private fun ChainToolItem(label: String, icon: ImageVector, testTag: String, onC
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        KitGlassTile(Modifier.matchParentSize())
+        FlatTile(Modifier.matchParentSize())
         Column(
             modifier = Modifier
                 .fillMaxSize()

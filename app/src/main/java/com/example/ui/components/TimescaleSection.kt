@@ -94,12 +94,12 @@ fun TimescaleSection(
                     .testTag("panel_back_button"),
                 contentAlignment = Alignment.Center
             ) {
-                // Kit glass disc behind the chevron (build 162); the 44 dp hit area is unchanged.
+                // Flat disc behind the chevron; the 44 dp hit area is unchanged.
                 Box(
                     modifier = Modifier.size(32.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    KitGlassDisc(Modifier.matchParentSize())
+                    FlatDisc(Modifier.matchParentSize())
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = "Back",
@@ -185,7 +185,7 @@ fun TimescaleSection(
                 .testTag("playhead_time_pill"),
             contentAlignment = Alignment.Center
         ) {
-            KitGlassPill(Modifier.matchParentSize())
+            FlatPill(Modifier.matchParentSize())
             PillText { formatClock(playheadMs()) }
         }
         Box(
@@ -197,7 +197,7 @@ fun TimescaleSection(
                 .testTag("total_time_pill"),
             contentAlignment = Alignment.Center
         ) {
-            KitGlassPill(Modifier.matchParentSize())
+            FlatPill(Modifier.matchParentSize())
             PillText { formatClock(totalDurationMs) }
         }
     }

@@ -76,7 +76,7 @@ fun AudioClipToolsPanel(
             .height(height)
             .background(EditorBackground)
             .drawBehind {
-                // Hairline separating the tools row from the timeline (redesign glass language).
+                // Hairline separating the tools row from the timeline (B/W language).
                 drawLine(AmHairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx())
             }
             .padding(vertical = 4.dp)
@@ -91,7 +91,7 @@ fun AudioClipToolsPanel(
                 .testTag("audio_tools_back_button"),
             contentAlignment = Alignment.Center
         ) {
-            KitGlassTile(Modifier.matchParentSize())
+            FlatTile(Modifier.matchParentSize())
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "Exit audio edit",
@@ -136,7 +136,7 @@ fun AudioClipToolsPanel(
                         .testTag("audio_tool_${tool.id}"),
                     contentAlignment = Alignment.Center
                 ) {
-                    KitGlassTile(Modifier.matchParentSize())
+                    FlatTile(Modifier.matchParentSize())
                     Column(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,

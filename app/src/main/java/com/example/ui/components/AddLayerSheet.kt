@@ -54,7 +54,6 @@ fun AddLayerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .panelSheenStrip()
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 28.dp)
         ) {
@@ -84,8 +83,8 @@ private fun RowScope.Item(label: String, icon: ImageVector, tag: String, onClick
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
-        // Kit glass tile under the icon + label (build 162 asset redo).
-        KitGlassTile(Modifier.matchParentSize())
+        // Flat tile under the icon + label (B/W language).
+        FlatTile(Modifier.matchParentSize())
         Column(
             modifier = Modifier.padding(vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally

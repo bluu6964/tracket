@@ -164,7 +164,7 @@ fun ClipAnimationsPanel(
                         .testTag("anim_tab_${s.name.lowercase()}"),
                     contentAlignment = Alignment.Center
                 ) {
-                    KitGlassPill(Modifier.matchParentSize())
+                    FlatPill(Modifier.matchParentSize())
                     Box(
                         Modifier
                             .matchParentSize()
@@ -199,7 +199,7 @@ fun ClipAnimationsPanel(
                             .testTag("anim_section_${sec.name.lowercase()}"),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (!on) KitGlassPill(Modifier.matchParentSize())
+                        if (!on) FlatPill(Modifier.matchParentSize())
                         Text(
                             sec.label, color = if (on) AmCyan else TextPrimary, fontSize = 12.sp,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
@@ -269,7 +269,7 @@ fun ClipAnimationsPanel(
                                     .testTag("anim_dir_${d.name.lowercase()}"),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (!on) KitGlassPill(Modifier.matchParentSize())
+                                if (!on) FlatPill(Modifier.matchParentSize())
                                 Text(
                                     if (spin) (if (d == AnimDir.RIGHT) "↻ Clockwise" else "↺ Counter")
                                     else "${d.arrow} ${d.label}",
@@ -466,7 +466,7 @@ private fun AnimTile(label: String, icon: ImageVector, selected: Boolean, tag: S
                 .border(if (selected) 2.dp else 1.dp, if (selected) AmCyan else Color.Transparent, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center
         ) {
-            if (!selected) KitGlassTile(Modifier.matchParentSize())
+            if (!selected) FlatTile(Modifier.matchParentSize())
             Icon(icon, contentDescription = label, tint = if (selected) AmCyan else Color.White, modifier = Modifier.size(26.dp))
         }
         Spacer(Modifier.height(5.dp))
@@ -488,7 +488,7 @@ private fun CurveChip(label: String, easing: Easing?, selected: Boolean, onClick
             .bouncyClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        if (!selected) KitGlassTile(Modifier.matchParentSize())
+        if (!selected) FlatTile(Modifier.matchParentSize())
         Column(
             modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally

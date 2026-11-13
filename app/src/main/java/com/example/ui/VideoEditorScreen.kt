@@ -364,7 +364,7 @@ fun VideoEditorScreen(
                         fontSize = 13.sp
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text("What to blur", fontSize = 12.sp, color = Color(0xFF9AA4B5))
+                    Text("What to blur", fontSize = 12.sp, color = Color(0xFFA6A6A6))
                     com.example.engine.FaceRegion.values().forEach { r ->
                         androidx.compose.foundation.layout.Row(
                             Modifier
@@ -378,7 +378,7 @@ fun VideoEditorScreen(
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    Text("Blur strength", fontSize = 12.sp, color = Color(0xFF9AA4B5))
+                    Text("Blur strength", fontSize = 12.sp, color = Color(0xFFA6A6A6))
                     listOf("Low" to 0.15f, "Medium" to 0.5f, "High" to 0.9f).forEach { (name, v) ->
                         androidx.compose.foundation.layout.Row(
                             Modifier
@@ -526,7 +526,7 @@ fun VideoEditorScreen(
                         fontSize = 13.sp
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text("Language of the speech", fontSize = 12.sp, color = Color(0xFF9AA4B5))
+                    Text("Language of the speech", fontSize = 12.sp, color = Color(0xFFA6A6A6))
                     com.example.engine.AutoCaptions.LANGUAGES.forEach { (code, name) ->
                         androidx.compose.foundation.layout.Row(
                             Modifier
@@ -543,7 +543,7 @@ fun VideoEditorScreen(
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    Text("Length of one caption", fontSize = 12.sp, color = Color(0xFF9AA4B5))
+                    Text("Length of one caption", fontSize = 12.sp, color = Color(0xFFA6A6A6))
                     com.example.engine.AutoCaptions.LENGTHS.forEach { (name, chars) ->
                         androidx.compose.foundation.layout.Row(
                             Modifier
@@ -3973,7 +3973,7 @@ fun VideoEditorScreen(
     projectBusy?.let { msg ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = {},
-            containerColor = androidx.compose.ui.graphics.Color(0xFF10161B),
+            containerColor = androidx.compose.ui.graphics.Color(0xFF111111),
             title = { androidx.compose.material3.Text(msg, color = androidx.compose.ui.graphics.Color.White) },
             text = {
                 if (projectBusyProgress >= 0f) {

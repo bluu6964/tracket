@@ -167,7 +167,7 @@ fun ClipMasksPanel(
                     .testTag("mask_row_$idx"),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassPill(Modifier.matchParentSize())
+                FlatPill(Modifier.matchParentSize())
                 if (on) Box(
                     Modifier
                         .matchParentSize()
@@ -336,7 +336,7 @@ private fun Chip(label: String, on: Boolean, enabled: Boolean = true, tag: Strin
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
-        KitGlassPill(Modifier.matchParentSize())
+        FlatPill(Modifier.matchParentSize())
         Box(
             Modifier
                 .matchParentSize()
@@ -391,7 +391,7 @@ private fun ShapeTile(id: String, label: String, onClick: () -> Unit) {
             modifier = Modifier.size(56.dp),
             contentAlignment = Alignment.Center
         ) {
-            KitGlassTile(Modifier.matchParentSize())
+            FlatTile(Modifier.matchParentSize())
             Canvas(Modifier.size(30.dp)) { drawGlyph(id) }
         }
         Spacer(Modifier.height(4.dp))

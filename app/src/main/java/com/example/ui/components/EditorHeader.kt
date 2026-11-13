@@ -43,11 +43,11 @@ import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
 
 /**
- * Header in the redesign's glass language (Stage 1): one glass pill bar holding
+ * Header in the settled B/W language: one flat dark pill bar holding
  *   [X]   [camera icon]                 [1080P v]  [download | Export]
- * The Export pill is the bar's one glowing accent (mint→cyan gradient). [aspectRatio]
- * is kept for the callers; the ratio itself is chosen in the sheet the camera icon and
- * the resolution pill open.
+ * The Export pill is flat WHITE with black text (the CapCut-style primary emphasis).
+ * [aspectRatio] is kept for the callers; the ratio itself is chosen in the sheet the
+ * camera icon and the resolution pill open.
  */
 @Composable
 fun EditorHeader(
@@ -78,7 +78,6 @@ fun EditorHeader(
                 .fillMaxWidth()
                 .height(barH)
                 .glassSurface(CircleShape, fill = amGlassBrush())
-                .panelSheenStrip()
         ) {
             // ── Close ──────────────────────────────────────────────
             Box(
@@ -92,7 +91,7 @@ fun EditorHeader(
                     .testTag("header_back_button"),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassTile(Modifier.matchParentSize())
+                FlatTile(Modifier.matchParentSize())
                 Canvas(Modifier.size(15.dp)) {
                     val c = TextPrimary
                     val w = 2.7.dp.toPx()
@@ -113,7 +112,7 @@ fun EditorHeader(
                     .testTag("header_save_frame_button"),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassTile(Modifier.matchParentSize())
+                FlatTile(Modifier.matchParentSize())
                 SaveFrameGlyph()
             }
 
@@ -133,7 +132,7 @@ fun EditorHeader(
                         .testTag("header_resolution_pill"),
                     contentAlignment = Alignment.Center
                 ) {
-                    KitGlassPill(Modifier.matchParentSize())
+                    FlatPill(Modifier.matchParentSize())
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -167,7 +166,7 @@ fun EditorHeader(
     }
 }
 
-/** Camera (body, lens, top bump) - cyan, 28 dp: saves the current frame as a picture. */
+/** Camera (body, lens, top bump) - white, 28 dp: saves the current frame as a picture. */
 @Composable
 private fun SaveFrameGlyph() {
     Canvas(Modifier.size(28.dp)) {
@@ -192,7 +191,7 @@ private fun SaveFrameGlyph() {
     }
 }
 
-/** Arrow down into a tray (dark on the gradient button), 19 dp wide. */
+/** Arrow down into a tray (dark on the white button), 19 dp wide. */
 @Composable
 private fun DownloadGlyph() {
     Canvas(Modifier.size(20.dp)) {
@@ -247,7 +246,6 @@ fun LayerHeader(
                 .fillMaxWidth()
                 .height(barH)
                 .glassSurface(CircleShape, fill = amGlassBrush())
-                .panelSheenStrip()
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -261,7 +259,7 @@ fun LayerHeader(
                     .testTag("layer_header_back"),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassTile(Modifier.matchParentSize())
+                FlatTile(Modifier.matchParentSize())
                 Canvas(Modifier.size(15.dp)) {
                     val w = 2.7.dp.toPx()
                     val m = w / 2f
@@ -297,7 +295,7 @@ fun LayerHeader(
                         .testTag("layer_header_eye"),
                     contentAlignment = Alignment.Center
                 ) {
-                    KitGlassDisc(Modifier.matchParentSize())
+                    FlatDisc(Modifier.matchParentSize())
                     Canvas(Modifier.size(18.dp)) {
                         val u = size.width / 18f
                         val c = if (visible) AmCyan else TextPrimary.copy(alpha = 0.5f)
@@ -324,7 +322,7 @@ fun LayerHeader(
                     .testTag("layer_header_rename"),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassDisc(Modifier.matchParentSize())
+                FlatDisc(Modifier.matchParentSize())
                 Canvas(Modifier.size(16.dp)) {
                     val u = size.width / 16f
                     val st = Stroke(1.8f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)

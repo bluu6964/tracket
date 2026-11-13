@@ -85,7 +85,7 @@ import com.example.ui.theme.HeaderCyan
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
 
-private val DialogFill = Color(0xFF10161B)
+private val DialogFill = Color(0xFF111111)
 
 /**
  * The Templates picker (build 142; in-project since build 143): ready-made compositions the

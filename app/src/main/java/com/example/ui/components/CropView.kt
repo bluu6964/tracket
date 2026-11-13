@@ -492,7 +492,7 @@ fun CropView(
                     }
                 } else {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawRect(color = Color(0xFF141722))
+                        drawRect(color = Color(0xFF121212))
                         val w = size.width
                         val h = size.height
                         drawLine(color = Color.White.copy(alpha = 0.08f), start = Offset(w / 2f, 0f), end = Offset(w / 2f, h), strokeWidth = 1.dp.toPx())
@@ -907,8 +907,8 @@ fun CropView(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSelected) Color.White else Color(0xFF232834))
-                            .border(1.dp, if (isSelected) Color.White else Color(0xFF363E4E), RoundedCornerShape(8.dp))
+                            .background(if (isSelected) Color.White else Color(0xFF262626))
+                            .border(1.dp, if (isSelected) Color.White else Color(0xFF3D3D3D), RoundedCornerShape(8.dp))
                             .bouncyClickable(onClick = { applyPresetRatio(preset) })
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center

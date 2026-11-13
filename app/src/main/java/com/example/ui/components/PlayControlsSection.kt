@@ -40,15 +40,14 @@ import com.example.ui.theme.amGlassChipBrush
 import com.example.ui.util.bouncyClickable
 
 private val IconWhite = Color(0xFFF2F2F2)
-private val BadgeOrange = Color(0xFFFF8C00)
 
 /**
- * Top control bar (positions in dp from the original design reference, restyled in the
- * redesign's glass language — Stage 1):
+ * Top control bar (positions in dp from the original design reference, in the settled
+ * B/W language):
  *   [undo] [redo] [Full]            [ play ]            [frame] [grid] [beat mark +]
  * All glyphs are drawn here (no stock icons) so stroke weight and proportions match.
- * The play button is this bar's one glowing accent: a glass disc with a mint→cyan
- * gradient ring. Same controls, same order, same actions as before the restyle.
+ * The play button is a flat grey disc with a white glyph. Same controls, same order,
+ * same actions as before the restyle.
  *
  * [onPreviousClick] / [onNextClick] are kept so the callers do not change; the reference design has no
  * previous / next buttons.
@@ -120,7 +119,7 @@ fun PlayControlsSection(
             }
         }
 
-        // ── Centre: play / pause — kit glow ring + glass disc, the bar's one glow ──
+        // ── Centre: play / pause — flat grey disc, white glyph (B/W language) ──
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -130,8 +129,7 @@ fun PlayControlsSection(
                 .testTag("play_pause_button"),
             contentAlignment = Alignment.Center
         ) {
-            KitGlowRing(Modifier.size(66.dp))
-            KitGlassDisc(Modifier.fillMaxSize())
+            FlatDisc(Modifier.fillMaxSize())
             PlayGlyph(isPlaying)
         }
 
@@ -271,12 +269,12 @@ private fun GridGlyph() {
     }
 }
 
-/** Cyan diamond (the mark on the ruler) with a white plus beside it: adds a beat mark. */
+/** White diamond (the mark on the ruler) with a white plus beside it: adds a beat mark. */
 @Composable
 private fun BeatMarkGlyph() {
     Canvas(Modifier.size(24.dp)) {
         val u = size.width / 24f
-        val cyan = Color(0xFF3DDCFF)
+        val cyan = Color(0xFFFFFFFF)
         val d = Path().apply {
             moveTo(10f * u, 3.2f * u); lineTo(16.6f * u, 10f * u); lineTo(10f * u, 16.8f * u); lineTo(3.4f * u, 10f * u); close()
         }

@@ -44,7 +44,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val DialogFill = Color(0xFF10161B)
+private val DialogFill = Color(0xFF111111)
 
 /** The project list: open, new, rename, delete. The open project is marked. */
 @Composable

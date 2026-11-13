@@ -453,7 +453,7 @@ fun RotoBrushScreen(
                 )
             }
             if (status.isNotEmpty()) {
-                Text(status, color = Color(0xFFB8B8C4), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+                Text(status, color = Color(0xFFBEBEBE), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
             }
 
             Row(

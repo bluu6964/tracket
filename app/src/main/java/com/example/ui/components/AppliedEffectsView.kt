@@ -449,7 +449,7 @@ fun AppliedEffectsView(
                         modifier = Modifier
                             .size(20.dp)
                             .graphicsLayer { rotationZ = 45f }
-                            .background(Color(0xFF4B5568), RoundedCornerShape(2.dp))
+                            .background(Color(0xFF565656), RoundedCornerShape(2.dp))
                             .bouncyClickable(onClick = {}),
                         contentAlignment = Alignment.Center
                     ) {
@@ -519,7 +519,7 @@ fun AppliedEffectsView(
                                         .fillMaxWidth()
                                         .height(46.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(Color(0xFF262A35))
+                                        .background(Color(0xFF2A2A2A))
                                         .bouncyClickable(
                                             pressedScale = 0.96f,
                                             onClick = { screenMode = AppliedEffectsScreenMode.LIBRARY }
@@ -547,7 +547,7 @@ fun AppliedEffectsView(
                                     ) {
                                         Text(
                                             text = "See applied effects here, reorder them by dragging, and control their parameters",
-                                            color = Color(0xFF8B92A2),
+                                            color = Color(0xFF969696),
                                             fontSize = 13.sp,
                                             lineHeight = 19.sp,
                                             textAlign = TextAlign.Center
@@ -565,7 +565,7 @@ fun AppliedEffectsView(
                                                     .fillMaxWidth()
                                                     .height(48.dp)
                                                     .clip(RoundedCornerShape(8.dp))
-                                                    .background(Color(0xFF212530))
+                                                    .background(Color(0xFF242424))
                                                     .padding(horizontal = 10.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
@@ -616,7 +616,7 @@ fun AppliedEffectsView(
                                                     Icon(
                                                         imageVector = if (effect.isEnabled) Icons.Default.Visibility else Icons.Default.VisibilityOff,
                                                         contentDescription = "Toggle visibility",
-                                                        tint = if (effect.isEnabled) IconActive else Color(0xFF6B7280),
+                                                        tint = if (effect.isEnabled) IconActive else Color(0xFF757575),
                                                         modifier = Modifier.size(20.dp)
                                                     )
                                                 }
@@ -635,7 +635,7 @@ fun AppliedEffectsView(
                                                         for (row in 0..2) {
                                                             for (col in 0..1) {
                                                                 drawCircle(
-                                                                    color = Color(0xFF9CA3AF),
+                                                                    color = Color(0xFFA3A3A3),
                                                                     radius = dotR,
                                                                     center = Offset(col * spacingX + 2.dp.toPx(), row * spacingY + 2.dp.toPx())
                                                                 )
@@ -718,7 +718,7 @@ fun AppliedEffectsView(
                                                 modifier = Modifier
                                                     .size(62.dp)
                                                     .clip(RoundedCornerShape(10.dp))
-                                                    .background(Color(0xFF262C38))
+                                                    .background(Color(0xFF2A2A2A))
                                                     .border(1.dp, Color(0xFF3B3B3B), RoundedCornerShape(10.dp)),
                                                 contentAlignment = Alignment.Center
                                             ) {

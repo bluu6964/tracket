@@ -35,7 +35,7 @@ fun CutoutProgressBar(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF1B2230))
+            .background(Color(0xFF1C1C1C))
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -57,7 +57,7 @@ fun CutoutProgressBar(
                 .fillMaxWidth()
                 .height(5.dp)
                 .clip(RoundedCornerShape(3.dp))
-                .background(Color(0xFF2B3446))
+                .background(Color(0xFF3A3A3A))
         ) {
             Box(
                 Modifier

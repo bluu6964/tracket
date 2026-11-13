@@ -43,7 +43,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Paint
@@ -65,8 +64,7 @@ import com.example.model.Easing
 import com.example.model.TimelineClip
 import com.example.model.indexOnTime
 import com.example.model.segmentIndexAt
-import com.example.ui.theme.AmCyan
-import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmInk
 import com.example.ui.theme.AmPanel
 import com.example.ui.theme.AmPanelHigh
 import com.example.ui.theme.AmTextDim
@@ -135,7 +133,6 @@ fun BlendEditSheet(
                 RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
                 fill = amGlassBrush()
             )
-            .panelSheenStrip()
             // swallow touches so nothing underneath can be hit
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -184,7 +181,7 @@ fun BlendEditSheet(
                     .testTag("blend_reset"),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassTile(Modifier.matchParentSize())
+                FlatTile(Modifier.matchParentSize())
                 Icon(
                     Icons.Default.Refresh, "Reset",
                     tint = TextSecondary, modifier = Modifier.size(24.dp)
@@ -234,7 +231,7 @@ fun BlendEditSheet(
                     .size(width = 76.dp, height = 50.dp),
                 contentAlignment = Alignment.Center
             ) {
-                KitGlassPill(Modifier.matchParentSize())
+                FlatPill(Modifier.matchParentSize())
                 Text(
                     "${clip.opacity.roundToInt()}",
                     color = TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
@@ -301,7 +298,7 @@ fun BlendEditSheet(
                         .testTag("blend_tab_$name"),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (on) KitGlassPill(Modifier.matchParentSize())
+                    if (on) FlatPill(Modifier.matchParentSize())
                     Text(
                         name,
                         color = if (on) TextPrimary else TextSecondary,
@@ -326,7 +323,6 @@ private fun OpacitySlider(
     modifier: Modifier = Modifier
 ) {
     val latestChange by rememberUpdatedState(onValueChange)
-    val thumbBmp = kitThumbBitmap()
     Canvas(
         modifier = modifier.pointerInput(Unit) {
             awaitEachGesture {
@@ -348,18 +344,15 @@ private fun OpacitySlider(
         val thumbR = 11.dp.toPx()
         val y = size.height / 2f
         val x = thumbR + (size.width - 2f * thumbR) * (value / 100f).coerceIn(0f, 1f)
-        // Redesign Stage 2: the lime line becomes the mint->cyan gradient; the thumb gains a soft
-        // mint halo. Geometry (thumb radius, span math) is untouched.
+        // B/W language: a flat white track line and a flat white thumb disc.
+        // Geometry (thumb radius, span math) is untouched.
         drawLine(
-            brush = Brush.horizontalGradient(listOf(AmMint, AmCyan)),
+            color = Color.White,
             start = Offset(thumbR, y), end = Offset(size.width - thumbR, y),
             strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round
         )
-        // Kit thumb halo under the solid mint thumb (build 162): geometry untouched,
-        // the flat alpha halo becomes the rendered volumetric glow.
-        drawKitThumb(thumbBmp, Offset(x, y), thumbR * 2.0f)
-        drawCircle(color = AmMint, radius = thumbR, center = Offset(x, y))
-        drawCircle(color = Color.White, radius = thumbR * 0.35f, center = Offset(x, y))
+        drawCircle(color = Color.White, radius = thumbR, center = Offset(x, y))
+        drawCircle(color = AmInk, radius = thumbR * 0.35f, center = Offset(x, y))
     }
 }
 

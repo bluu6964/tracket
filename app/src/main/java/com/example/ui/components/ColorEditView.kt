@@ -100,8 +100,8 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-// Redesign Stage 2: the sheet's flat navy palette now points at the shared design tokens
-// (panel glass, raised chip tone, recessed base, mint accent). Same geometry and layout.
+// B/W language: the sheet palette points at the shared monochrome design tokens
+// (flat panel, raised chip tone, recessed base, white accent). Same geometry and layout.
 private val CePanelBg = AmPanel
 private val CeTabBg = AmPanelHigh
 private val CeInnerBg = AmBase
@@ -149,7 +149,6 @@ fun ColorEditSheet(
                 RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
                 fill = amGlassBrush()
             )
-            .panelSheenStrip()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

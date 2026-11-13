@@ -3829,6 +3829,19 @@ fun VideoEditorScreen(
                     ).show()
                 }
             },
+            onAddWordPop = {
+                // No pictures to prepare: the sentence is pure layers + keyframes, authored
+                // against the same live preview frame as the Pop Title insert.
+                viewModel.insertWordPopTemplate(
+                    previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                )
+                showTemplates = false
+                android.widget.Toast.makeText(
+                    context,
+                    "Word Pop added as one group layer. Open the group and tap a word to retype it — every word is its own layer",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            },
             userTemplates = userTemplates,
             onAddUserTemplate = { tpl ->
                 // The list entry was decoded when the dialog opened; insert a FRESH load so

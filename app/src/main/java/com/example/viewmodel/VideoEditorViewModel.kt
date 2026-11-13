@@ -13,6 +13,7 @@ import com.example.model.AspectRatio
 import com.example.model.CarouselTemplate
 import com.example.model.LogoRevealTemplate
 import com.example.model.PopTitleTemplate
+import com.example.model.WordPopTemplate
 import com.example.model.SavedTemplate
 import com.example.model.UserTemplateOps
 import com.example.model.ControllerFanOut
@@ -1167,6 +1168,31 @@ class VideoEditorViewModel : ViewModel() {
         )
         pushHistory()
         _editingGroupId.value = null  // the group lands at the top level, like the Carousel's
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates (text-animation template #2): inserts the "Word Pop" template into the
+     * CURRENT project as ONE Group layer at the playhead — one ordinary TEXT layer per
+     * word of the sample sentence, each popping in in turn on its own keyframes, authored
+     * against the live preview frame (see [WordPopTemplate.buildGroup]). One undo step;
+     * the group ends up selected. No generated pictures are needed, so this runs on the
+     * caller's thread. Returns the group's id.
+     */
+    fun insertWordPopTemplate(
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String {
+        val insert = WordPopTemplate.buildGroup(
+            previewWidthPx, previewHeightPx,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "wordpop-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null  // the group lands at the top level, like the Pop Title's
         _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
         setSelected(insert.group.id)
         recomputeTotal()

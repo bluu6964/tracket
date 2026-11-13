@@ -53,6 +53,8 @@ import com.example.model.LogoRevealSpec
 import com.example.model.LogoRevealTemplate
 import com.example.model.PopTitleSpec
 import com.example.model.PopTitleTemplate
+import com.example.model.WordPopSpec
+import com.example.model.WordPopTemplate
 import com.example.model.SavedTemplate
 import com.example.model.at
 import com.example.ui.theme.HeaderText
@@ -65,8 +67,8 @@ private val DialogFill = Color(0xFF10161B)
  * user adds to the project that is OPEN. Templates live where layers are added — the
  * editor's + sheet — and choosing one inserts it into the current timeline as ONE Group
  * layer the user then customises in place (every picture in a template is a replaceable
- * slot). Three built-in templates: the Carousel photo ring, the Pop Title text animation
- * and the Logo Reveal logo animation. Below them, "My Templates" (Templates v2) lists the
+ * slot). Four built-in templates: the Carousel photo ring, the Pop Title and Word Pop
+ * text animations and the Logo Reveal logo animation. Below them, "My Templates" (Templates v2) lists the
  * groups the person saved themselves with a group's "Save as Template" tool — each can be
  * added the same way, or deleted (with its saved media copies).
  */
@@ -76,6 +78,7 @@ fun TemplatesDialog(
     onAddCarousel: () -> Unit,
     onAddPopTitle: () -> Unit,
     onAddLogoReveal: () -> Unit,
+    onAddWordPop: () -> Unit,
     /** The person's own saved templates ("Save as Template", Templates v2), newest first. */
     userTemplates: List<SavedTemplate> = emptyList(),
     onAddUserTemplate: (SavedTemplate) -> Unit = {},
@@ -156,6 +159,29 @@ fun TemplatesDialog(
                         "To use your own logo: open the group, tap the logo, then " +
                         "Color → Fill → Image and pick it. Retype the brand name — " +
                         "Bengali included. Stretch the group longer to hold the reveal.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                WordPopPreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Word Pop — Text Animation",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "Words pop in one by one, hold, and fade out together · 3s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddWordPop, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "Every word is its own layer: open the group, tap a word and " +
+                        "retype it — Bengali included — or move, retime and recolour " +
+                        "each word on its own.",
                     color = TextSecondary, fontSize = 12.sp
                 )
                 Spacer(Modifier.height(22.dp))
@@ -403,5 +429,55 @@ private fun LogoRevealPreview(modifier: Modifier = Modifier) {
                     translationY = text.transformY * unit
                 }
         )
+    }
+}
+
+/**
+ * Live preview of the Word Pop: the template built headlessly at a nominal 720x405 and
+ * EVALUATED — the very clips an insert would create, run through the model's own keyframe
+ * evaluator ([at]) on the frame clock — so what plays here is exactly what lands in the
+ * project (each word popping in in turn on its own layer, the hold, the shared fade-out,
+ * looping every 3 s). Each word is drawn centred on its evaluated position, the way the
+ * text painters centre a layer's line on the layer's position.
+ */
+@Composable
+private fun WordPopPreview(modifier: Modifier = Modifier) {
+    val ins = remember { WordPopTemplate.buildGroup(720f, 405f, 0L, idBase = "preview") }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % WordPopSpec.DURATION_MS) + WordPopSpec.DURATION_MS) % WordPopSpec.DURATION_MS
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A3440), Color(0xFF12181F))))
+    ) {
+        val density = LocalDensity.current
+        // Preview px per nominal stored px.
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        for (word in ins.wordLayers) {
+            val w = word.at(t)
+            Text(
+                text = word.text ?: "",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = with(density) { (0.11f * 720f * unit).toSp() },
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (w.transformX * unit).toDp() },
+                        y = with(density) { (w.transformY * unit).toDp() }
+                    )
+                    .graphicsLayer {
+                        alpha = w.opacity / 100f
+                        scaleX = w.scalePercent / 100f
+                        scaleY = w.scalePercent / 100f
+                    }
+            )
+        }
     }
 }

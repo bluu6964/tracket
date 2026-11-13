@@ -138,6 +138,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_PAGECURL_AM_EXT ? FX_PAGECURL_AM
                            : t == FX_TILESHIFT2_AM_EXT ? FX_TILESHIFT2_AM
                            : t == FX_FRACTAL_WARP3_AM_EXT ? FX_FRACTAL_WARP3_AM
+                           : t == FX_RIPPLELIGHT_AM_EXT ? FX_RIPPLELIGHT_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -193,6 +194,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_LENSBLUR_OBS_AM && t != FX_SOLID_WIPE_AM && t != FX_SOFTBLOOM_AM &&
             t != FX_LENSD_AM && t != FX_BCC_FILM_GLOW_AM &&
             t != FX_PAGECURL_AM && t != FX_TILESHIFT2_AM && t != FX_FRACTAL_WARP3_AM &&
+            t != FX_RIPPLELIGHT_AM &&
             t != FX_MB4_POS && t != FX_MB4_SCALE && t != FX_MB4_ANGLE) {
             owner = -1;
             extFoldedOp = -1;
@@ -483,6 +485,7 @@ FxShaderRef fxShaderOf(int type) {
         // pagecurl is a dedicated pass (FXG_NONE, like the other multi-pass effects).
         case FX_FRACTAL_WARP3_AM: r = {FXG_WARP, 22}; break;
         case FX_TILESHIFT2_AM: r = {FXG_WARP, 34}; break;
+        case FX_RIPPLELIGHT_AM: r = {FXG_WARP, 35}; break;
         case FX_SHAPEFIELD_AM: r = {FXG_STYLE, 21}; break;
         case FX_HALFTONE_DOTS_AM: r = {FXG_STYLE, 22}; break;
         default: break;
@@ -681,6 +684,10 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_FRACTAL_WARP3_AM: return std::fabs(p[0]) < 0.0005f;   // magnitude 0: the sample is the pixel
         case FX_PAGECURL_AM: return false;
         case FX_TILESHIFT2_AM: return false;
+        // Ripple Light: strength 0 leaves the sample untouched (displaced == the
+        // pixel), so the only remaining change is the light — which reaches the
+        // output only when lightIntensity > 0 AND blend > 0.
+        case FX_RIPPLELIGHT_AM: return p[0] < 0.0005f && (o.q[0] < 0.0005f || o.q[3] < 0.0005f);
         default: return false;
     }
 }
@@ -2631,6 +2638,59 @@ void fxTileshift2AmPixel(float sampR, float sampG, float sampB, float sampA, flo
     *outG = sampG * texA;
     *outB = sampB * texA;
     *outA = sampA * texA;
+}
+
+// ---- v183 (build 171): Alight's ripplelight (the round-5 union port) ----
+void fxRipplelightAmUv(float uvX, float uvY, float aspect, float time, float strength,
+                       float frequency, float speed, float radius, float decay,
+                       float centerX, float centerY, float lightIntensity,
+                       float lightSharpness, float* outX, float* outY, float* outLight) {
+    // DEF-A, line by line, in the def's top-down space (uvA = (uvX, 1 - uvY)):
+    // the aspect-corrected radial distance from the centre, the sin ripple with
+    // distance decay, the radial displacement back into the engine's vUv (v = 1
+    // at the top). The light is DEF-A's: max(cos,0)^sharp × orient^sharp ×
+    // intensity, orient from the radial direction's dot with the def's light2D
+    // normalize(0.6, 0.8) — the (0.6, 0.8) pair is already unit length, so no
+    // division is needed. The direction divides by max(|diffA|, 1e-6) (the def's
+    // own guard), so the centre fragment's direction is the zero vector and its
+    // orient is 0.5. Float32 throughout, like the shader.
+    const float uvAx = uvX, uvAy = 1.f - uvY;
+    const float diffX = uvAx - centerX, diffY = uvAy - centerY;
+    const float diffAx = diffX * aspect, diffAy = diffY;
+    const float lenA = std::sqrt(diffAx * diffAx + diffAy * diffAy);
+    const float dist = lenA * radius;
+    const float phase = dist * frequency - time * speed;
+    const float ripple = std::sin(phase) * std::exp(-decay * dist);
+    const float inv = 1.f / std::max(lenA, 1e-6f);
+    const float dirUVx = diffAx * inv / aspect, dirUVy = diffAy * inv;
+    *outX = uvAx + dirUVx * ripple * strength;
+    *outY = 1.f - (uvAy + dirUVy * ripple * strength);
+    const float lRaw = std::cos(phase) * std::exp(-decay * dist);
+    const float light = std::max(lRaw, 0.f);
+    const float orient = std::min(1.f, std::max(0.f, 0.5f + 0.5f * (dirUVx * 0.6f + dirUVy * 0.8f)));
+    *outLight = std::pow(light, lightSharpness) * std::pow(orient, lightSharpness) * lightIntensity;
+}
+
+void fxRipplelightAmPixel(float sampR, float sampG, float sampB, float sampA,
+                          float origR, float origG, float origB, float origA,
+                          float light, float lightR, float lightG, float lightB,
+                          float blend, bool fixedUV,
+                          float* outR, float* outG, float* outB, float* outA) {
+    // DEF-A's composite: the lit sample (displaced rgb + lightColor × light)
+    // mixed back toward the original by blend; DEF-B's fixedUV gate multiplies
+    // the whole output — rgb AND alpha — by the original pixel's alpha.
+    const float finR = sampR + lightR * light;
+    const float finG = sampG + lightG * light;
+    const float finB = sampB + lightB * light;
+    float mixR = origR + (finR - origR) * blend;
+    float mixG = origG + (finG - origG) * blend;
+    float mixB = origB + (finB - origB) * blend;
+    float a = sampA;
+    if (fixedUV) {
+        mixR *= origA; mixG *= origA; mixB *= origA;
+        a = sampA * origA;
+    }
+    *outR = mixR; *outG = mixG; *outB = mixB; *outA = a;
 }
 
 namespace {

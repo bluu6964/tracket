@@ -153,6 +153,15 @@ internal object AmFxEval {
         ClipFxLibrary.PAGECURL_AM -> listOf(Tracked(0, 1f))                     // progress
         ClipFxLibrary.TILESHIFT2_AM -> listOf(Tracked(0, 1f), Tracked(5, 1f), Tracked(6, 1f))  // strength, position x, position y
         ClipFxLibrary.FRACTAL_WARP3_AM -> listOf(Tracked(0, 1f), Tracked(4, 1f), Tracked(5, 1f), Tracked(6, 1f), Tracked(7, 1f), Tracked(1, 1f))  // magnitude, offs x, offs y, parallax x, parallax y, scale
+        // Build 171 (round-5 union port): Ripple Light's eight float sliders ride
+        // tails from index 14 (EXT) — strength, frequency, speed, radius, decay,
+        // lightIntensity (EXT slot 0, absolute 7), lightSharpness (EXT slot 1,
+        // absolute 8), blend (EXT slot 3, absolute 10). lightColor is a packed
+        // colour (first value + warning, like every colour); fixedUV is a switch.
+        ClipFxLibrary.RIPPLELIGHT_AM -> listOf(
+            Tracked(0, 1f), Tracked(1, 1f), Tracked(2, 1f), Tracked(3, 1f),
+            Tracked(4, 1f), Tracked(7, 1f), Tracked(8, 1f), Tracked(10, 1f)
+        )
         // v180 (Queue 15j): the second-wave ports — AM units (scale 1). Plain tails
         // start at 7, EXT effects' at 14 (LENSD), EXT2 effects' at 21 (REFRACTION,
         // SHAPEFIELD); see tailStart.
@@ -181,7 +190,8 @@ internal object AmFxEval {
         ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM,
         ClipFxLibrary.BBMAKER_AM, ClipFxLibrary.OPTIC_COMP_AM,
         ClipFxLibrary.LENSD_AM, ClipFxLibrary.TURBULENT_DISPLACE2_AM,
-        ClipFxLibrary.TILESHIFT2_AM, ClipFxLibrary.FRACTAL_WARP3_AM -> EXT_TAIL_START
+        ClipFxLibrary.TILESHIFT2_AM, ClipFxLibrary.FRACTAL_WARP3_AM,
+        ClipFxLibrary.RIPPLELIGHT_AM -> EXT_TAIL_START
         ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
         ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM,
         ClipFxLibrary.DEEP_GLOW2_AM, ClipFxLibrary.PAGECURL_AM,

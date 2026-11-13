@@ -638,9 +638,12 @@ enum FxType : int {
     // v180 (build 143): Queue 15(j) — the second-wave community ids (hunt round 5:
     // original-format defs from AlightMotionUltra + the TrueMotion conversions in
     // defs-batch8; per-id verdicts in hunt-staging/round5/SOURCES.md). Two of the 22
-    // stay parked: ripplelight (the two staged defs are different versions — the
-    // Ultra original lacks the instances' fixedUV, the conversion lacks their
-    // lightColor) and bccfilmglow (33 shader-read floats exceed the 21-slot op).
+    // stayed parked at the time: ripplelight (the two staged defs are different
+    // versions — the Ultra original lacks the instances' fixedUV, the conversion
+    // lacks their lightColor) and bccfilmglow (33 shader-read floats exceed the
+    // 21-slot op). UPDATE build 171: ripplelight is UN-PARKED (round-5 union reading:
+    // DEF-A's shader + DEF-B's fixedUV gate, FxType 228 + EXT 229, kFxWarp mode 35);
+    // only bccfilmglow's park was closed earlier (build 150, EXT3+EXT4).
     FX_NEGATIVE_AM = 185,   // negative (double-sourced): invert -> luma -> unsharp ->
                             // brightness / contrast -> black/white point remap -> grain.
                             // p: [0] contrast, [1] brightness, [2] blackPoint,
@@ -876,6 +879,27 @@ enum FxType : int {
     // Repeat Line is Kotlin-resolved like FX_REPEAT (56): RepeatEval draws the layer once
     // per copy, so it must never reach the shaders: fxParseOps skips it.
     FX_REPEAT_LINE = 227,  // p0 count, p1/p2 offset x/y (preview px), p3 angle deg, p4 scale %, p5 alpha % — per copy
+    // v183 (build 171): Alight's ripplelight — the round-5 union port (hunt-staging/round5/
+    // ROUND5-REPORT.md §1): the 2 corpus instances serialise 12 props, covered EXACTLY by
+    // the Ultra original DEF-A ("Ripple (Radial Light).xml", full shader, carries lightColor,
+    // no fixedUV) ∪ the TrueMotion afterz-438 DEF-B (carries fixedUV "Anti Overdraw", no
+    // lightColor) — the shipped def carries both. Port = DEF-A's shader + DEF-B's fixedUV
+    // output gate. p: [0] strength, [1] frequency, [2] speed, [3] radius, [4] decay,
+    // [5] centre x, [6] centre y; q (EXT): [0] lightIntensity, [1] lightSharpness,
+    // [2] lightColor packed 0xRRGGBB, [3] blend, [4] fixedUV (0/1), [5..6] unused.
+    // kFxWarp mode 35. DIVERGENCES, recorded not guessed (phone comparison on
+    // omniframe-hardtrekk-hero is the arbiter): (a) UV space — DEF-A layer-norm,
+    // DEF-B screen-norm; the port uses layer-norm because the warp pass's picture IS
+    // the layer (fxShaded has no screen-space input), so DEF-A is the only reading
+    // the engine can run; (b) light term — DEF-A max(cos,0)^sharp × orient^sharp ×
+    // intensity × lightColor (oriented, light2D = normalize(0.6, 0.8)) vs DEF-B
+    // |cos|^sharp × intensity × 0.5, white, no orientation; the port implements
+    // DEF-A (the original AM-format def); the instances' lightColor is white, so
+    // the choice is invisible in tint and visible only in magnitude / orientation;
+    // (c) fixedUV gate — DEF-B only: when true the output (rgb AND alpha) is
+    // multiplied by the original pixel's alpha (the anti-overdraw clamp).
+    FX_RIPPLELIGHT_AM = 228,
+    FX_RIPPLELIGHT_AM_EXT = 229,
     FX_MAX = FX_COPY_BG
 };
 
@@ -1284,6 +1308,35 @@ void fxPagecurlAmUv(float uvX, float uvY, float progress, float radius, float an
 // including the soft / hard drop-shadow branches.
 void fxPagecurlAmPixel(float uvX, float uvY, const FxOp& op, const float tex[4], const float blur[4],
                        const float front[4], const float samp[4], float* out);
+// ---- v183 (build 171): Alight's ripplelight (the round-5 union port) ----
+// CPU reference of Ripple Light: the displaced sample position for a fragment at
+// (uvX, uvY) (layer norm, v = 1 at the top) + the DEF-A light value at that fragment.
+// aspect = picture width / height; time is the layer-local time in seconds (the
+// frame/24 clock, the def's acTime); strength / frequency / speed / radius / decay /
+// centre / lightIntensity / lightSharpness are AM units. The geometry is DEF-A line
+// by line, computed in the def's top-down space (uvA = (uvX, 1 - uvY)): the
+// aspect-corrected radial distance from the centre, the sin ripple with distance
+// decay, the radial displacement; the light is max(cos,0)^sharp × orient^sharp ×
+// intensity, orient from the dot of the radial direction with the def's light2D
+// normalize(0.6, 0.8). The DEF-B alternative (|cos|^sharp × intensity × 0.5, white,
+// no orientation) is NOT implemented — see FxType 228's comment; the phone
+// comparison on omniframe-hardtrekk-hero arbitrates. Guards (in the shader too):
+// the direction divides by max(|diffA|, 1e-6), so the centre fragment's direction
+// is the zero vector and its orient is 0.5.
+// Ripple Light's compose: samp is the displaced sample, orig the fragment's own
+// pixel (both premultiplied); light is the twin's light value, lightR/G/B the
+// def's lightColor (straight, alpha 1 in AM); blend mixes the lit sample back
+// toward the original; fixedUV (DEF-B's gate) multiplies the whole output — rgb
+// AND alpha — by the original pixel's alpha.
+void fxRipplelightAmUv(float uvX, float uvY, float aspect, float time, float strength,
+                       float frequency, float speed, float radius, float decay,
+                       float centerX, float centerY, float lightIntensity,
+                       float lightSharpness, float* outX, float* outY, float* outLight);
+void fxRipplelightAmPixel(float sampR, float sampG, float sampB, float sampA,
+                          float origR, float origG, float origB, float origA,
+                          float light, float lightR, float lightG, float lightB,
+                          float blend, bool fixedUV,
+                          float* outR, float* outG, float* outB, float* outA);
 // CPU reference of Stripes (AM's stripes): the band value (0..1) at a fragment; st is the
 // def's layer space, ((uv flipped to top-down) * picture px - centre px) / |picture px| —
 // computed here from (uvX, uvY) and the picture size. amount / phase / width / smoothing /

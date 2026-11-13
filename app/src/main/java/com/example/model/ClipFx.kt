@@ -769,6 +769,20 @@ object ClipFxLibrary {
     // carry them (the scatter evolution-track precedent does not apply: the
     // line's angle / scale / phase are plain scalars, not a stored track).
     const val REPEAT_LINE = "repeat_line"
+    // RIPPLELIGHT_AM (native 228 + EXT 229): Alight's ripplelight — the round-5
+    // union port (Ultra original "Ripple (Radial Light)" + TrueMotion afterz-438):
+    // concentric ripple distortion from an adjustable centre, with distance decay
+    // and a directional specular light highlight on the wave crests. Values
+    // [0] strength, [1] frequency, [2] speed, [3] radius, [4] decay,
+    // [5] centre x, [6] centre y; EXT [7] lightIntensity, [8] lightSharpness,
+    // [9] lightColor packed 0xRRGGBB, [10] blend, [11] fixedUV (0/1),
+    // [12..13] unused. Keyframed strength / frequency / speed / radius / decay /
+    // lightIntensity / lightSharpness / blend ride tails from index 14, in that
+    // order (see AmFxEval). The light term is DEF-A's oriented reading
+    // (max(cos,0)^sharp × orient^sharp × intensity × lightColor); DEF-B's
+    // unoriented |cos| alternative is recorded in fx_plan.h, and the phone
+    // comparison on omniframe-hardtrekk-hero arbitrates.
+    const val RIPPLELIGHT_AM = "ripplelight_am"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
@@ -2113,6 +2127,23 @@ object ClipFxLibrary {
                 FxParamDef("Phase", -1f, 2f, 0f, "", step = 0.001f)
             )
         ),
+        // Ripple Light: the seven panel params are the def's wave controls
+        // (strength, frequency, speed, radius, decay, centre); the light group
+        // (intensity, sharpness, colour, blend, fixedUV) rides the EXT group
+        // (extraValues: the def's own defaults, light white at 0.3 / 2.0, blend 1,
+        // fixedUV on).
+        FxDef(
+            RIPPLELIGHT_AM, 228, "Ripple Light (Alight)", "Distort", "Concentric ripples from a centre with a specular light highlight on the crests (Alight Motion's Ripple Light)",
+            listOf(
+                FxParamDef("Strength", 0f, 0.2f, 0.02f, "", step = 0.001f),
+                FxParamDef("Frequency", 1f, 100f, 20f, "", step = 0.1f),
+                FxParamDef("Speed", 0f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Radius Scale", 0.1f, 2f, 1f, "", step = 0.01f),
+                FxParamDef("Ripple Decay", 0f, 2f, 0.5f, "", step = 0.01f),
+                FxParamDef("Center X", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Center Y", 0f, 1f, 0.5f, "", step = 0.01f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -2694,6 +2725,9 @@ object ClipFxLibrary {
         // Repeat Line's values past its nine panel params: the alternating
         // copies' colour (off) and two padding zeroes.
         REPEAT_LINE -> listOf(0f, 0f, 0f, 0f, 0f)
+        // Ripple Light's EXT defaults are the def's own: light intensity 0.3,
+        // sharpness 2, white light, blend 1, fixedUV on.
+        RIPPLELIGHT_AM -> listOf(0.3f, 2f, 0xFFFFFF.toFloat(), 1f, 1f, 0f, 0f)
         else -> emptyList()
     }
 
@@ -2744,6 +2778,7 @@ object ClipFxLibrary {
         PAGECURL_AM -> 221
         TILESHIFT2_AM -> 224
         FRACTAL_WARP3_AM -> 226
+        RIPPLELIGHT_AM -> 229
         else -> null
     }
 

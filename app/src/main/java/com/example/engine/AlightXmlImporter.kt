@@ -277,6 +277,9 @@ object AlightXmlImporter {
     const val FRACTALWARP3 = "com.alightcreative.effects.fractalwarp3"
     const val PAGECURL = "com.alightcreative.effects.pagecurl"
     const val TILESHIFT2 = "com.alightcreative.effects.tileshift2"
+    // v183 (build 171): ripplelight, the round-5 union port (Ultra original +
+    // TrueMotion afterz-438 — see fx_plan.h FxType 228 for the divergence log).
+    const val RIPPLELIGHT = "com.alightcreative.effects.ripplelight"
     const val STRIPES = "com.alightcreative.effects.stripes"
     const val TURBULENTDISPLACE3 = "com.alightcreative.effects.turbulentdisplace3"
     const val ROUGHENEDGES = "com.alightcreative.effects.roughenedges"
@@ -2911,6 +2914,7 @@ object AlightXmlImporter {
                 FRACTALWARP3 -> applyFractalWarp3Am(fx, clip, ctx)
                 PAGECURL -> applyPagecurlAm(fx, clip, ctx)
                 TILESHIFT2 -> applyTileshift2Am(fx, clip, ctx)
+                RIPPLELIGHT -> applyRipplelightAm(fx, clip, ctx)
                 STRIPES -> applyStripesAm(fx, clip, ctx)
                 TURBULENTDISPLACE3 -> applyTurbulentDisplace3Am(fx, clip, ctx)
                 ROUGHENEDGES -> applyRoughenEdgesAm(fx, clip, ctx)
@@ -6212,6 +6216,55 @@ object AlightXmlImporter {
             0f, 0f, 0f, 0f, 0f
         ) + tailsOf(trackTail(strengthT), pointTail(positionT, 0) { it }, pointTail(positionT, 1) { it })
         return addFx(clip0, ctx, ClipFxLibrary.TILESHIFT2_AM, values, "tileshift2")
+    }
+
+    /**
+     * `ripplelight` -> the app's Ripple Light (Alight): the round-5 union port
+     * (hunt-staging/round5/ROUND5-REPORT.md §1) — DEF-A's shader (the Ultra
+     * original "Ripple (Radial Light)", full shader inline, carries lightColor)
+     * + DEF-B's fixedUV output gate (the TrueMotion afterz-438 conversion,
+     * carries fixedUV "Anti Overdraw"). The 2 corpus instances
+     * (omniframe-hardtrekk-hero, identical) are fully static, so their 12 props
+     * land as plain values; the eight float sliders are keyframe-capable and ride
+     * tails from index 14 in AmFxEval's order (strength, frequency, speed,
+     * radius, decay, lightIntensity, lightSharpness, blend). lightColor is a
+     * packed colour (first value + warning when keyframed, like every colour);
+     * fixedUV is a switch (first value). The three formula divergences are
+     * recorded in fx_plan.h (FxType 228) — the port implements DEF-A's
+     * layer-norm UVs and oriented light term; the phone comparison on
+     * omniframe-hardtrekk-hero arbitrates, it is not guessed here.
+     */
+    private fun applyRipplelightAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val strengthT = props["strength"]
+        val frequencyT = props["frequency"]
+        val speedT = props["speed"]
+        val radiusT = props["radius"]
+        val decayT = props["decay"]
+        val lightIntensityT = props["lightIntensity"]
+        val lightSharpnessT = props["lightSharpness"]
+        val blendT = props["blend"]
+        val values = listOf(
+            (strengthT?.scalarAtEased(0f) ?: 0.02f).coerceIn(0f, 0.2f),
+            (frequencyT?.scalarAtEased(0f) ?: 20f).coerceIn(1f, 100f),
+            (speedT?.scalarAtEased(0f) ?: 1f).coerceIn(0f, 10f),
+            (radiusT?.scalarAtEased(0f) ?: 1f).coerceIn(0.1f, 2f),
+            (decayT?.scalarAtEased(0f) ?: 0.5f).coerceIn(0f, 2f),
+            (props["centerX"]?.firstValue(w, "ripplelight", "centerX") ?: 0.5f).coerceIn(0f, 1f),
+            (props["centerY"]?.firstValue(w, "ripplelight", "centerY") ?: 0.5f).coerceIn(0f, 1f),
+            (lightIntensityT?.scalarAtEased(0f) ?: 0.3f).coerceIn(0f, 1f),
+            (lightSharpnessT?.scalarAtEased(0f) ?: 2f).coerceIn(0.1f, 10f),
+            props["lightColor"]?.packedColor(w, "ripplelight", "lightColor") ?: 0xFFFFFF.toFloat(),
+            (blendT?.scalarAtEased(0f) ?: 1f).coerceIn(0f, 1f),
+            boolOf(props["fixedUV"], true),
+            0f, 0f
+        ) + tailsOf(
+            trackTail(strengthT), trackTail(frequencyT), trackTail(speedT),
+            trackTail(radiusT), trackTail(decayT), trackTail(lightIntensityT),
+            trackTail(lightSharpnessT), trackTail(blendT)
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.RIPPLELIGHT_AM, values, "ripplelight")
     }
 
     /**

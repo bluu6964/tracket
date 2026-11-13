@@ -83,6 +83,8 @@ class ClipFxLibraryTest {
         // (227, Kotlin-resolved like 56..58, never reaching the shaders); 221 /
         // 222 are Page Curl's EXT / EXT2 groups and 224 / 226 the Tile Shift 2 /
         // Fractal Warp 3 EXT groups, folded the same way.
+        // Build 171 (round-5 union port) adds FX_RIPPLELIGHT_AM (228); 229 is
+        // its EXT group, folded the same way.
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
@@ -90,7 +92,7 @@ class ClipFxLibraryTest {
                 131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149 +
                 150 + 151 + 154 + 155 + 157 + 158 + 159 + 161 + 164 + 167 + 169 + 172 + 175 + 178 + 179 + 180 + 181 + 182 + 183 +
                 185 + 186 + 187 + 189 + 190 + 191 + 192 + 193 + 194 + 197 + 198 + 200 + 203 + 205 + 208 + 209 + 210 + 212 + 213 + 215 +
-                220 + 223 + 225 + 227).toList(),
+                220 + 223 + 225 + 227 + 228).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

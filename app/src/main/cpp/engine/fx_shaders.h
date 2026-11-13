@@ -14,7 +14,7 @@
 //               22 fractal warp (Alight), 23 stripes (Alight), 24 turbulent displace 3 (Alight), 25 roughen edges (Alight), 26 bend warp (Alight),
 //               27 halftone lines (Alight), 28 rgb glitch (Alight), 29 fisheye / anti-fisheye (Alight), 30 refraction warp (Alight),
 //               31 turbulent displace 2 (Alight), 32 cc glass (Alight), 33 solid colour wipe (Alight),
-//               34 tile shift 2 (Alight)
+//               34 tile shift 2 (Alight), 35 ripple light (Alight)
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare,
 //               14 find edges (Alight), 15 dissolve (Alight), 16 simple stars (Alight), 17 dots (Alight), 18 ridges (Alight),
 //               19 clouds / turbulence 2 (Alight), 20 checkerboard 2 (Alight), 21 shape field (Alight), 22 halftone dots (Alight)
@@ -2052,6 +2052,54 @@ void main() {
         vec4 sampColor = textureLod(uTex, sampCoord, 0.0);
         vec4 texColor = textureLod(uTex, vUv, 0.0);
         oColor = sampColor * texColor.a;
+        return;
+    }
+    if (uMode == 35) {
+        // v183: Alight's Ripple Light (the round-5 union port — Ultra original
+        // Ripple (Radial Light) + TrueMotion afterz-438): concentric ripple
+        // distortion radiating from an adjustable centre, with distance decay and
+        // a directional specular light highlight on the wave crests. uP: strength,
+        // frequency, speed, radius, decay, centre x / y (AM units); uQ: light
+        // intensity, light sharpness, light colour packed, blend, fixedUV.
+        // The shader is DEF-A line by line, computed in the def's top-down space
+        // (uvA = (vUv.x, 1 - vUv.y)); time is the frame/24 clock, the def's
+        // acTime. DIVERGENCES (recorded, phone comparison on
+        // omniframe-hardtrekk-hero arbitrates): DEF-A's layer-norm UVs (used
+        // here — the pass's picture IS the layer, so no screen-space input
+        // exists) vs DEF-B's screen-norm; DEF-A's oriented light
+        // (max(cos,0)^sharp * orient^sharp * intensity * lightColor) vs DEF-B's
+        // |cos|^sharp * intensity * 0.5, white and unoriented; DEF-B's fixedUV
+        // gate (the whole output times the original pixel's alpha). The light
+        // colour unpacks with the engine's integer amUnpackColor (the mode-33
+        // white-edge lesson). fxRipplelightAmUv / fxRipplelightAmPixel in
+        // fx_plan.cpp are the CPU twins — keep the three in step.
+        vec2 uvA = vec2(vUv.x, 1.0 - vUv.y);
+        vec2 center = vec2(uP[5], uP[6]);
+        float aspect = uAspect;
+        vec2 diff = uvA - center;
+        vec2 diffA = vec2(diff.x * aspect, diff.y);
+        float dist = length(diffA) * uP[3];
+        float time = float(uFrame) / 24.0;
+        float phase = dist * uP[1] - time * uP[2];
+        float ripple = sin(phase) * exp(-uP[4] * dist);
+        vec2 dirA = diffA / max(length(diffA), 1e-6);
+        vec2 dirUV = vec2(dirA.x / aspect, dirA.y);
+        vec2 displacedUV = uvA + dirUV * ripple * uP[0];
+        vec2 displaced = vec2(displacedUV.x, 1.0 - displacedUV.y);
+        vec4 displacedColor = (all(greaterThanEqual(displaced, vec2(0.0))) && all(lessThanEqual(displaced, vec2(1.0))))
+            ? textureLod(uTex, displaced, 0.0) : vec4(0.0);
+        vec4 originalColor = textureLod(uTex, vUv, 0.0);
+        float lRaw = cos(phase) * exp(-uP[4] * dist);
+        float light = max(lRaw, 0.0);
+        vec2 light2D = normalize(vec2(0.6, 0.8));
+        float orient = clamp(0.5 + 0.5 * dot(dirUV, light2D), 0.0, 1.0);
+        light = pow(light, uQ[1]) * pow(orient, uQ[1]) * uQ[0];
+        vec3 finalColor = displacedColor.rgb;
+        finalColor += amUnpackColor(uQ[2]) * light;
+        vec3 mixedColor = mix(originalColor.rgb, finalColor, uQ[3]);
+        vec4 outColor = vec4(mixedColor, displacedColor.a);
+        if (uQ[4] > 0.5) outColor *= originalColor.a;
+        oColor = outColor;
         return;
     }
     vec2 p = toP(vUv);

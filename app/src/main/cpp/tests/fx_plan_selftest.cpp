@@ -2346,6 +2346,95 @@ int main() {
         CHECK(fxShaderOf(FX_SOLID_WIPE_AM).group == FXG_WARP &&
               fxShaderOf(FX_SOLID_WIPE_AM).mode == 33, "solid wipe is warp mode 33");
     }
+    // Ripple Light (build 171, the round-5 union port): reference values are
+    // from a float32 mirror of DEF-A's shader (the sin/cos arguments stay
+    // small — dist * frequency <= ~280 — so float32 and double agree to ~1e-6
+    // here, unlike the tileshift2 hash). The instance values are the corpus
+    // ones (strength 0.02, frequency 7.9, speed 4, radius 1, decay 0, centre
+    // 0.5/0.5, lightIntensity 1, lightSharpness 2.3) on a 16:9 picture.
+    {
+        float rx, ry, rl;
+        // The centre fragment: no displacement, orient 0.5 (the zero direction),
+        // light = 0.5^2.3.
+        fxRipplelightAmUv(0.5f, 0.5f, 16.f / 9.f, 0.f, 0.02f, 7.9f, 4.f, 1.f, 0.f, 0.5f, 0.5f, 1.f, 2.3f, &rx, &ry, &rl);
+        CHECK(rx == 0.5f && ry == 0.5f && std::fabs(rl - 0.203063f) < 1e-3f,
+              "ripplelight centre pin (%g %g %g)", rx, ry, rl);
+        // The trough: cos(phase) is negative, so DEF-A's max(cos,0) light is 0
+        // while DEF-B's |cos| reading would give 0.425 here — this pin IS the
+        // disputed-branch record (the phone comparison arbitrates).
+        fxRipplelightAmUv(0.75f, 0.5f, 16.f / 9.f, 0.f, 0.02f, 7.9f, 4.f, 1.f, 0.f, 0.5f, 0.5f, 1.f, 2.3f, &rx, &ry, &rl);
+        CHECK(std::fabs(rx - 0.745937f) < 5e-4f && ry == 0.5f && rl == 0.f,
+              "ripplelight trough pin (%g %g %g)", rx, ry, rl);
+        // The crest at the same fragment (time = phase/speed): no displacement
+        // (sin 0), light = 0.66875^2.3 (orient 0.66875, the radial direction
+        // (0.5625, 0) dotted with light2D (0.6, 0.8)).
+        fxRipplelightAmUv(0.75f, 0.5f, 16.f / 9.f, 0.8777776f, 0.02f, 7.9f, 4.f, 1.f, 0.f, 0.5f, 0.5f, 1.f, 2.3f, &rx, &ry, &rl);
+        CHECK(rx == 0.75f && ry == 0.5f && std::fabs(rl - 0.396375f) < 1e-3f,
+              "ripplelight crest pin (%g %g %g)", rx, ry, rl);
+        // Orientation extremes, both at the crest time (phase 0): the fragment
+        // above the centre in AM space (engine uv (0.5, 0.25)) points along
+        // light2D, orient 0.9, light = 0.9^2.3; the mirrored fragment below
+        // (engine uv (0.5, 0.75)) points against it, orient 0.1, light = 0.1^2.3.
+        fxRipplelightAmUv(0.5f, 0.25f, 16.f / 9.f, 0.49375f, 0.02f, 7.9f, 4.f, 1.f, 0.f, 0.5f, 0.5f, 1.f, 2.3f, &rx, &ry, &rl);
+        CHECK(rx == 0.5f && ry == 0.25f && std::fabs(rl - 0.784798f) < 1e-3f,
+              "ripplelight max-orient pin (%g %g %g)", rx, ry, rl);
+        fxRipplelightAmUv(0.5f, 0.75f, 16.f / 9.f, 0.49375f, 0.02f, 7.9f, 4.f, 1.f, 0.f, 0.5f, 0.5f, 1.f, 2.3f, &rx, &ry, &rl);
+        CHECK(rx == 0.5f && ry == 0.75f && std::fabs(rl - 0.005012f) < 1e-3f,
+              "ripplelight min-orient pin (%g %g %g)", rx, ry, rl);
+        // Strength 0 is the identity in position (the light is still 0 here —
+        // the trough — so the whole output is the pixel).
+        fxRipplelightAmUv(0.75f, 0.5f, 16.f / 9.f, 0.f, 0.f, 7.9f, 4.f, 1.f, 0.f, 0.5f, 0.5f, 1.f, 2.3f, &rx, &ry, &rl);
+        CHECK(rx == 0.75f && ry == 0.5f && rl == 0.f, "ripplelight strength 0 is the identity");
+        // Decay 1 damps the same fragment's displacement (exp(-0.4444) on the ripple).
+        fxRipplelightAmUv(0.75f, 0.5f, 16.f / 9.f, 0.f, 0.02f, 7.9f, 4.f, 1.f, 1.f, 0.5f, 0.5f, 1.f, 2.3f, &rx, &ry, &rl);
+        CHECK(std::fabs(rx - 0.747395f) < 5e-4f && ry == 0.5f && rl == 0.f,
+              "ripplelight decay pin (%g %g %g)", rx, ry, rl);
+        // The compose: the lit sample mixed toward the original by blend, then
+        // DEF-B's fixedUV gate multiplies the whole output by the original alpha.
+        float pr, pg, pb, pa;
+        fxRipplelightAmPixel(0.4f, 0.4f, 0.4f, 0.8f, 0.2f, 0.2f, 0.2f, 0.5f, 0.3f, 1.f, 1.f, 1.f, 0.5f, true, &pr, &pg, &pb, &pa);
+        CHECK(std::fabs(pr - 0.225f) < 1e-6f && std::fabs(pg - 0.225f) < 1e-6f &&
+              std::fabs(pb - 0.225f) < 1e-6f && std::fabs(pa - 0.4f) < 1e-6f,
+              "ripplelight fixedUV compose (%g %g %g %g)", pr, pg, pb, pa);
+        fxRipplelightAmPixel(0.4f, 0.4f, 0.4f, 0.8f, 0.2f, 0.2f, 0.2f, 0.5f, 0.3f, 1.f, 1.f, 1.f, 0.5f, false, &pr, &pg, &pb, &pa);
+        CHECK(std::fabs(pr - 0.45f) < 1e-6f && std::fabs(pg - 0.45f) < 1e-6f &&
+              std::fabs(pb - 0.45f) < 1e-6f && pa == 0.8f,
+              "ripplelight gate-off compose (%g %g %g %g)", pr, pg, pb, pa);
+        fxRipplelightAmPixel(0.4f, 0.4f, 0.4f, 0.8f, 0.2f, 0.2f, 0.2f, 0.5f, 0.3f, 1.f, 1.f, 1.f, 0.f, true, &pr, &pg, &pb, &pa);
+        CHECK(std::fabs(pr - 0.1f) < 1e-6f && std::fabs(pg - 0.1f) < 1e-6f &&
+              std::fabs(pb - 0.1f) < 1e-6f && std::fabs(pa - 0.4f) < 1e-6f,
+              "ripplelight blend-0 compose (%g %g %g %g)", pr, pg, pb, pa);
+        fxRipplelightAmPixel(0.4f, 0.2f, 0.1f, 0.9f, 0.1f, 0.1f, 0.1f, 1.f, 0.3f, 1.f, 0.f, 0.f, 1.f, false, &pr, &pg, &pb, &pa);
+        CHECK(std::fabs(pr - 0.7f) < 1e-6f && std::fabs(pg - 0.2f) < 1e-6f &&
+              std::fabs(pb - 0.1f) < 1e-6f && pa == 0.9f,
+              "ripplelight red-light compose (%g %g %g %g)", pr, pg, pb, pa);
+        // Parsing: the two-bank chain folds into one op; a bare EXT is dropped;
+        // a foreign EXT after the owner is dropped.
+        FxOp ops171[kFxMaxOps];
+        float flatRl2[] = {228, 0.02f, 7.9f, 4, 1, 0, 0.5f, 0.5f,
+                           229, 1, 2.3f, 16777215, 1, 1, 0, 0};
+        CHECK(fxParseOps(flatRl2, 16, ops171) == 1 && ops171[0].type == FX_RIPPLELIGHT_AM &&
+              ops171[0].p[0] == 0.02f && ops171[0].q[0] == 1.f && ops171[0].q[2] == 16777215.f &&
+              ops171[0].q[4] == 1.f, "ripplelight two-bank chain folds");
+        float flatBareRl[] = {229, 1, 1, 1, 1, 1, 1, 1};
+        CHECK(fxParseOps(flatBareRl, 8, ops171) == 0, "bare ripplelight EXT is dropped");
+        float flatForeignRl[] = {228, 1, 1, 1, 1, 1, 1, 1, 224, 2, 2, 2, 2, 2, 2, 2};
+        CHECK(fxParseOps(flatForeignRl, 16, ops171) == 1 && ops171[0].type == FX_RIPPLELIGHT_AM &&
+              ops171[0].q[0] == 0.f, "tileshift2 EXT after a ripplelight is dropped");
+        // Routing + identity: warp mode 35; identity only when strength 0 AND
+        // (lightIntensity 0 OR blend 0) — a lit crest at blend 1 still changes
+        // the pixel, and blend 0 with strength > 0 still changes the alpha.
+        CHECK(fxShaderOf(FX_RIPPLELIGHT_AM).group == FXG_WARP &&
+              fxShaderOf(FX_RIPPLELIGHT_AM).mode == 35, "ripplelight is warp mode 35");
+        FxOp id171{}; id171.type = FX_RIPPLELIGHT_AM;
+        CHECK(fxIsIdentity(id171), "ripplelight all-zero is identity");
+        id171.q[0] = 1.f; id171.q[3] = 0.f;
+        CHECK(fxIsIdentity(id171), "ripplelight strength 0 + blend 0 is identity");
+        id171.q[3] = 1.f;
+        CHECK(!fxIsIdentity(id171), "ripplelight strength 0 + lit blend is not identity");
+        id171.p[0] = 0.02f; id171.q[0] = 0.f;
+        CHECK(!fxIsIdentity(id171), "ripplelight strength 0.02 is not identity");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.StickerLibrary
 import com.example.model.at
+import com.example.ui.theme.AmPanel
 
 /**
  * Sticker picker: category tabs on top, a grid of thumbnails below. Static stickers are PNG
@@ -58,7 +59,7 @@ fun StickerPickerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color(0xFF1A1A1A),
+        containerColor = AmPanel,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
     ) {
         Column(
@@ -86,7 +87,8 @@ fun StickerPickerSheet(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(if (on) Color(0xFFABE41D) else Color(0xFF2B2B2B))
+                            // Selected tab: flat white (B/W language) — was lime #ABE41D.
+                            .background(if (on) Color.White else Color(0xFF2B2B2B))
                             .clickable { selected = cat }
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center
@@ -179,7 +181,7 @@ fun StickerSpeedSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color(0xFF1A1A1A),
+        containerColor = AmPanel,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
     ) {
         AudioSpeedSheet(

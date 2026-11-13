@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmPanel
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
@@ -42,6 +43,7 @@ fun RenameLayerDialog(
     var text by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = AmPanel,
         title = { Text("Rename layer") },
         text = {
             OutlinedTextField(
@@ -74,6 +76,7 @@ fun SaveTemplateDialog(
     var text by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = AmPanel,
         title = { Text("Save as Template") },
         text = {
             Column {

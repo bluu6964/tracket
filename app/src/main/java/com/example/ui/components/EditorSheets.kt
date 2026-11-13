@@ -1,5 +1,6 @@
 package com.example.ui.components
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.geometry.Size
@@ -83,8 +84,10 @@ import com.example.model.AspectRatio
 import com.example.model.LayerType
 import com.example.model.PreviewResolution
 import com.example.model.TimelineTrack
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmPanelHigh
 import com.example.ui.theme.EditorBackground
-import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.NeonCyan
@@ -147,7 +150,7 @@ fun AspectRatioSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color(0xFF1C1D20)
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier
@@ -299,7 +302,7 @@ fun ResolutionSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = EditorSurface
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier
@@ -458,10 +461,39 @@ fun ExportModalDialog(
                         }
                     }
                     isExporting -> {
-                        Text(
-                            "${(progress * 100).toInt()}%", color = Color.White, fontSize = 40.sp,
-                            fontWeight = FontWeight.Black, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                        )
+                        // Flat white progress ring (Stage 3, B/W language): a plain white
+                        // arc on a faint white track, the % centred inside — no glow, no
+                        // gradient, no coloured gauge. (The glowing donut-gauge concept
+                        // from the scrapped neon redesign is dead; this is its flat
+                        // monochrome replacement.)
+                        Box(
+                            modifier = Modifier.size(168.dp).testTag("export_progress_ring"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val stroke = 10.dp.toPx()
+                                val inset = stroke / 2f
+                                val arcSize = Size(size.width - stroke, size.height - stroke)
+                                drawArc(
+                                    color = Color.White.copy(alpha = 0.15f),
+                                    startAngle = 0f, sweepAngle = 360f, useCenter = false,
+                                    topLeft = Offset(inset, inset), size = arcSize,
+                                    style = Stroke(width = stroke)
+                                )
+                                drawArc(
+                                    color = Color.White,
+                                    startAngle = -90f,
+                                    sweepAngle = progress.coerceIn(0f, 1f) * 360f,
+                                    useCenter = false,
+                                    topLeft = Offset(inset, inset), size = arcSize,
+                                    style = Stroke(width = stroke)
+                                )
+                            }
+                            Text(
+                                "${(progress * 100).toInt()}%", color = Color.White, fontSize = 40.sp,
+                                fontWeight = FontWeight.Black, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                            )
+                        }
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
                             "Remaining time approximately ${formatRemaining(remainingMs)}",
@@ -609,8 +641,8 @@ private fun ExportCard(title: String, value: String, hint: String, content: @Com
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .background(AmPanel)
+            .border(1.dp, AmHairline, RoundedCornerShape(16.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -769,7 +801,7 @@ fun AddAudioSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = EditorSurface
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier
@@ -826,7 +858,7 @@ fun AddTextSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = EditorSurface
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier
@@ -910,7 +942,7 @@ fun AddShapeSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color(0xFF1A1A1A),
+        containerColor = AmPanel,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
         dragHandle = {
             Box(
@@ -1014,7 +1046,7 @@ private fun ShapePickerCard(
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(tile)
-                .background(Color(0xFF262626))
+                .background(AmPanelHigh)
                 .border(1.dp, Color.White.copy(alpha = 0.08f), tile),
             contentAlignment = Alignment.Center
         ) {

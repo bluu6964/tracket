@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
@@ -81,11 +82,13 @@ import com.example.model.SavedTemplate
 import com.example.model.at
 import com.example.model.flattenPathSegments
 import com.example.model.pieSegmentsAt
+import com.example.ui.theme.AmDanger
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmPanelHigh
 import com.example.ui.theme.HeaderCyan
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
-
-private val DialogFill = Color(0xFF111111)
 
 /**
  * The Templates picker (build 142; in-project since build 143): ready-made compositions the
@@ -133,7 +136,7 @@ fun TemplatesDialog(
     )
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = DialogFill,
+        containerColor = AmPanel,
         title = { Text("Templates", color = HeaderText, fontWeight = FontWeight.Bold) },
         text = {
             Column(
@@ -141,283 +144,173 @@ fun TemplatesDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                Box(Modifier.fillMaxWidth()) {
-                    CarouselPreview(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { carouselSettingsOpen = !carouselSettingsOpen },
-                        params = carouselParams
-                    )
-                    // The preview itself is the settings toggle — say so on the preview, not only
-                    // in the small print under the Add button.
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xCC14181D))
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            if (carouselSettingsOpen) "Hide settings" else "Customise",
-                            color = HeaderText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
                 Text(
-                    "Carousel — Photo Ring",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                    "Built-in templates",
+                    color = HeaderText, fontWeight = FontWeight.Bold, fontSize = 17.sp
                 )
-                Text(
-                    "$carouselCards photo slots rotating in a ring · one turn in " +
+                Spacer(Modifier.height(12.dp))
+                TemplateSection(
+                    title = "Carousel — Photo Ring",
+                    description = "$carouselCards photo slots rotating in a ring · one turn in " +
                         "${carouselSeconds}s · ${if (carouselClockwise) "clockwise" else "counter-clockwise"} · " +
                         "added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                if (carouselSettingsOpen) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Cards", color = HeaderText, fontSize = 14.sp)
-                        Spacer(Modifier.weight(1f))
-                        TextButton(
-                            onClick = { carouselCards-- },
-                            enabled = carouselCards > CarouselSpec.MIN_CARDS
-                        ) { Text("−", fontSize = 18.sp) }
-                        Text("$carouselCards", color = HeaderText, fontSize = 15.sp)
-                        TextButton(
-                            onClick = { carouselCards++ },
-                            enabled = carouselCards < CarouselSpec.MAX_CARDS
-                        ) { Text("+", fontSize = 18.sp) }
-                    }
-                    Text(
-                        "One turn: ${carouselSeconds}s",
-                        color = HeaderText, fontSize = 14.sp
-                    )
-                    Slider(
-                        value = carouselSeconds.toFloat(),
-                        onValueChange = { carouselSeconds = kotlin.math.round(it).toInt() },
-                        valueRange = (CarouselSpec.MIN_DURATION_MS / 1000f)..(CarouselSpec.MAX_DURATION_MS / 1000f),
-                        steps = 7,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Direction", color = HeaderText, fontSize = 14.sp)
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { carouselClockwise = true }) {
-                            Text(
-                                "Clockwise",
-                                color = if (carouselClockwise) HeaderCyan else TextSecondary,
-                                fontWeight = if (carouselClockwise) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                        TextButton(onClick = { carouselClockwise = false }) {
-                            Text(
-                                "Counter-clockwise",
-                                color = if (!carouselClockwise) HeaderCyan else TextSecondary,
-                                fontWeight = if (!carouselClockwise) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                Button(
-                    onClick = { onAddCarousel(carouselParams) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "Tap the preview to change the card count, turn time and direction. " +
                         "To use your own photo: open the group, tap a card, then " +
                         "Color → Fill → Image and pick it.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = { onAddCarousel(carouselParams) },
+                    settings = if (carouselSettingsOpen) {
+                        {
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Cards", color = HeaderText, fontSize = 14.sp)
+                                Spacer(Modifier.weight(1f))
+                                TextButton(
+                                    onClick = { carouselCards-- },
+                                    enabled = carouselCards > CarouselSpec.MIN_CARDS
+                                ) { Text("−", fontSize = 18.sp) }
+                                Text("$carouselCards", color = HeaderText, fontSize = 15.sp)
+                                TextButton(
+                                    onClick = { carouselCards++ },
+                                    enabled = carouselCards < CarouselSpec.MAX_CARDS
+                                ) { Text("+", fontSize = 18.sp) }
+                            }
+                            Text(
+                                "One turn: ${carouselSeconds}s",
+                                color = HeaderText, fontSize = 14.sp
+                            )
+                            Slider(
+                                value = carouselSeconds.toFloat(),
+                                onValueChange = { carouselSeconds = kotlin.math.round(it).toInt() },
+                                valueRange = (CarouselSpec.MIN_DURATION_MS / 1000f)..(CarouselSpec.MAX_DURATION_MS / 1000f),
+                                steps = 7,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Direction", color = HeaderText, fontSize = 14.sp)
+                                Spacer(Modifier.weight(1f))
+                                TextButton(onClick = { carouselClockwise = true }) {
+                                    Text(
+                                        "Clockwise",
+                                        color = if (carouselClockwise) HeaderCyan else TextSecondary,
+                                        fontWeight = if (carouselClockwise) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                                TextButton(onClick = { carouselClockwise = false }) {
+                                    Text(
+                                        "Counter-clockwise",
+                                        color = if (!carouselClockwise) HeaderCyan else TextSecondary,
+                                        fontWeight = if (!carouselClockwise) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+                    } else null,
+                    preview = {
+                        Box(Modifier.fillMaxWidth()) {
+                            CarouselPreview(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { carouselSettingsOpen = !carouselSettingsOpen },
+                                params = carouselParams
+                            )
+                            // The preview itself is the settings toggle — say so on the preview, not only
+                            // in the small print under the Add button.
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(8.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xCC14181D))
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Text(
+                                    if (carouselSettingsOpen) "Hide settings" else "Customise",
+                                    color = HeaderText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                 )
-                Spacer(Modifier.height(18.dp))
-                PopTitlePreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Pop Title — Text Animation",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "A title that pops in, holds, and fades out · 3s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddPopTitle, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Pop Title — Text Animation",
+                    description = "A title that pops in, holds, and fades out · 3s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "Open the group and retype the text — the animation stays on your " +
                         "words, Bengali included.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddPopTitle,
+                    preview = { PopTitlePreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(18.dp))
-                LogoRevealPreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Logo Reveal — Logo Animation",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "Your logo pops in and your brand name rises under it, then holds · 3s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddLogoReveal, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Logo Reveal — Logo Animation",
+                    description = "Your logo pops in and your brand name rises under it, then holds · 3s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "To use your own logo: open the group, tap the logo, then " +
                         "Color → Fill → Image and pick it. Retype the brand name — " +
                         "Bengali included. Stretch the group longer to hold the reveal.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddLogoReveal,
+                    preview = { LogoRevealPreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(18.dp))
-                WordPopPreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Word Pop — Text Animation",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "Words pop in one by one, hold, and fade out together · 3s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddWordPop, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Word Pop — Text Animation",
+                    description = "Words pop in one by one, hold, and fade out together · 3s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "Every word is its own layer: open the group, tap a word and " +
                         "retype it — Bengali included — or move, retime and recolour " +
                         "each word on its own.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddWordPop,
+                    preview = { WordPopPreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(18.dp))
-                LowerThirdPreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Lower Third — Name Strap",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "A name and title slide in over an amber bar at the bottom left, hold, and slide out · 4s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddLowerThird, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Lower Third — Name Strap",
+                    description = "A name and title slide in over an amber bar at the bottom left, hold, and slide out · 4s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "Open the group and retype the name and the title line — " +
                         "Bengali included — the staging stays on your words.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddLowerThird,
+                    preview = { LowerThirdPreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(18.dp))
-                GeniePreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Genie — Avatar Bar & Profile Cards",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "A pill stretches into a photo bar, then profile cards appear one by one · 16s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddGenie, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Genie — Avatar Bar & Profile Cards",
+                    description = "A pill stretches into a photo bar, then profile cards appear one by one · 16s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "Every photo is a slot: open the group, tap a photo, then " +
                         "Color → Fill → Image and pick yours. Names and activities are " +
                         "plain text — retype them, Bengali included.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddGenie,
+                    preview = { GeniePreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(18.dp))
-                PieCounterPreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Pie Counter — Percent Pie",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "A pie fills clockwise while the number counts 0% → 100% · 4s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddPieCounter, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Pie Counter — Percent Pie",
+                    description = "A pie fills clockwise while the number counts 0% → 100% · 4s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "The sweep and the count share one timing — retime the pie's angle " +
                         "keys and the number's counter together. Colours live in Color → Fill.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddPieCounter,
+                    preview = { PieCounterPreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(18.dp))
-                DonutChartPreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Donut Chart — Segment Builder",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "Five segments build one by one, each with its % label and legend line · 10s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddDonutChart, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Donut Chart — Segment Builder",
+                    description = "Five segments build one by one, each with its % label and legend line · 10s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "Retype the percentages and legend lines, recolour each segment in " +
                         "Color → Fill, and drag a segment's angle keys to change its share.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddDonutChart,
+                    preview = { DonutChartPreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(18.dp))
-                SocialGrowthPreview(modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Social Growth — Follower Promo",
-                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                )
-                Text(
-                    "Upload ring, CREATE → POST → ELEVATE titles, counters that climb over a checkmark grid · 10s · added as one group layer",
-                    color = TextSecondary, fontSize = 13.sp
-                )
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddSocialGrowth, modifier = Modifier.fillMaxWidth()) {
-                    Text("Add to project")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Lands in this project's timeline at the playhead as a single group. " +
+                TemplateSection(
+                    title = "Social Growth — Follower Promo",
+                    description = "Upload ring, CREATE → POST → ELEVATE titles, counters that climb over a checkmark grid · 10s · added as one group layer",
+                    footnote = "Lands in this project's timeline at the playhead as a single group. " +
                         "The profile photo is a slot (Color → Fill → Image); the counters " +
                         "are counter text layers — change their final numbers on the " +
                         "counter's keyframes.",
-                    color = TextSecondary, fontSize = 12.sp
+                    onAdd = onAddSocialGrowth,
+                    preview = { SocialGrowthPreview(modifier = Modifier.fillMaxWidth()) }
                 )
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(10.dp))
                 Text(
                     "My Templates",
                     color = HeaderText, fontWeight = FontWeight.Bold, fontSize = 17.sp
@@ -433,21 +326,23 @@ fun TemplatesDialog(
                 }
                 for (tpl in userTemplates) {
                     Spacer(Modifier.height(12.dp))
-                    Text(
-                        tpl.name,
-                        color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
-                    )
-                    Text(
-                        "Your saved group · ${tpl.clips.size} layer${if (tpl.clips.size == 1) "" else "s"} · " +
-                            "added as one group layer",
-                        color = TextSecondary, fontSize = 13.sp
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = { onAddUserTemplate(tpl) }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Add to project")
-                    }
-                    TextButton(onClick = { pendingDelete = tpl }) {
-                        Text("Delete template", color = TextSecondary)
+                    TemplateCard {
+                        Text(
+                            tpl.name,
+                            color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                        )
+                        Text(
+                            "Your saved group · ${tpl.clips.size} layer${if (tpl.clips.size == 1) "" else "s"} · " +
+                                "added as one group layer",
+                            color = TextSecondary, fontSize = 13.sp
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = { onAddUserTemplate(tpl) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Add to project")
+                        }
+                        TextButton(onClick = { pendingDelete = tpl }) {
+                            Text("Delete template", color = TextSecondary)
+                        }
                     }
                 }
             }
@@ -460,7 +355,7 @@ fun TemplatesDialog(
     pendingDelete?.let { tpl ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            containerColor = DialogFill,
+            containerColor = AmPanel,
             title = { Text("Delete template?", color = HeaderText, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
@@ -471,7 +366,7 @@ fun TemplatesDialog(
             },
             confirmButton = {
                 TextButton(onClick = { pendingDelete = null; onDeleteUserTemplate(tpl) }) {
-                    Text("Delete", color = HeaderText)
+                    Text("Delete", color = AmDanger)
                 }
             },
             dismissButton = {
@@ -479,6 +374,58 @@ fun TemplatesDialog(
             }
         )
     }
+}
+
+/**
+ * One template's flat card (Stage 3, B/W language): a raised flat panel with a
+ * hairline border. The picker used to be one long loose column of nine previews;
+ * grouping each template into an identical card — same order, same texts, same
+ * buttons, same actions — is what makes the list scan. The preview inside a card
+ * is the template's OWN artwork (its colours and gradients are the template, not
+ * chrome) and is never touched by this layer.
+ */
+@Composable
+private fun TemplateCard(content: @Composable ColumnScope.() -> Unit) {
+    val card = RoundedCornerShape(16.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(card)
+            .background(AmPanelHigh)
+            .border(1.dp, AmHairline, card)
+            .padding(12.dp),
+        content = content
+    )
+}
+
+/**
+ * One built-in template's card: animated preview, name, one-line description,
+ * optional insert-time settings (the Carousel's), the white "Add to project"
+ * pill and the short how-to footnote — in that order, exactly as before.
+ */
+@Composable
+private fun ColumnScope.TemplateSection(
+    title: String,
+    description: String,
+    footnote: String,
+    onAdd: () -> Unit,
+    settings: (@Composable ColumnScope.() -> Unit)? = null,
+    preview: @Composable () -> Unit
+) {
+    TemplateCard {
+        Box(Modifier.fillMaxWidth()) { preview() }
+        Spacer(Modifier.height(10.dp))
+        Text(title, color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        Text(description, color = TextSecondary, fontSize = 13.sp)
+        settings?.invoke(this)
+        Spacer(Modifier.height(10.dp))
+        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+            Text("Add to project")
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(footnote, color = TextSecondary, fontSize = 12.sp)
+    }
+    Spacer(Modifier.height(12.dp))
 }
 
 /**

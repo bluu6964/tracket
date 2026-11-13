@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,12 +24,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.MissingMedia
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmPanelHigh
 import com.example.ui.theme.HeaderCyan
-import com.example.ui.theme.HeaderPillFill
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
 
-private val DialogFill = Color(0xFF111111)
+/** Dialog surface: the flat panel token (was a hard-coded #111111). */
+private val DialogFill = AmPanel
 
 /**
  * "Replace missing media" (build 111): the files an imported preset points at lived on the phone
@@ -61,7 +65,8 @@ fun MissingMediaDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(HeaderPillFill)
+                                .background(AmPanelHigh)
+                                .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
                                 .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {

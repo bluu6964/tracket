@@ -43,7 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
-import com.example.ui.theme.EditorSurface
+import com.example.ui.theme.AmPanel
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.TextPrimary
@@ -70,7 +70,7 @@ fun ClipEffectsSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = EditorSurface
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier
@@ -130,7 +130,7 @@ fun ClipReplaceSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = EditorSurface
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier
@@ -183,7 +183,7 @@ fun ClipBlendSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = EditorSurface
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier
@@ -229,7 +229,7 @@ fun ClipCropSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = EditorSurface
+        containerColor = AmPanel
     ) {
         Column(
             modifier = Modifier

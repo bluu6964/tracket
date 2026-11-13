@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,15 +37,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ProjectMeta
+import com.example.ui.theme.AmDanger
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmInk
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmPanelHigh
 import com.example.ui.theme.HeaderCyan
-import com.example.ui.theme.HeaderPillFill
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val DialogFill = Color(0xFF111111)
+/** Dialog surface: the flat panel token (was a hard-coded #111111). */
+private val DialogFill = AmPanel
 
 /** The project list: open, new, rename, delete. The open project is marked. */
 @Composable
@@ -94,7 +100,8 @@ fun ProjectsDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(HeaderPillFill)
+                            .background(AmPanelHigh)
+                            .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
                             .clickable { onOpen(p.id) }
                             .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -131,14 +138,17 @@ fun ProjectsDialog(
             }
         },
         confirmButton = {
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 if (missingMediaCount > 0) {
                     TextButton(onClick = onFixMissingMedia) {
                         Text("Missing media ($missingMediaCount)", color = Color(0xFFFFB74D))
                     }
                 }
                 TextButton(onClick = onImport) { Text("Import", color = HeaderCyan) }
-                TextButton(onClick = onNew) { Text("New project", color = HeaderCyan) }
+                // The primary action: a flat white pill (B/W language), not a text button.
+                GradientPillButton(onClick = onNew) {
+                    Text("New project", color = AmInk, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close", color = TextSecondary) } }
@@ -173,7 +183,7 @@ fun ProjectsDialog(
                 TextButton(onClick = {
                     onDelete(p.id)
                     deleting = null
-                }) { Text("Delete", color = Color(0xFFFF6B6B)) }
+                }) { Text("Delete", color = AmDanger) }
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel", color = TextSecondary) } }
         )

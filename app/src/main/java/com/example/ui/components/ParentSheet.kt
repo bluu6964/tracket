@@ -24,7 +24,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.EditorSurface
+import com.example.ui.theme.AmPanel
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.NeonCyan
@@ -47,7 +47,7 @@ fun ParentSheet(
     onPick: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = EditorSurface) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

@@ -234,7 +234,7 @@ fun CanvasArea(
                         tracks
                             .asReversed()
                             .flatMap { it.clips }
-                            .filter { it.isVisible && !it.isMask && (it.type == LayerType.SHAPE || it.type == LayerType.NULL || it.type == LayerType.GROUP || it.type == LayerType.STICKER || it.text != null) && it.isActiveAt(t) }
+                            .filter { it.isVisible && !it.isMask && (it.type == LayerType.SHAPE || it.type == LayerType.NULL || it.type == LayerType.GROUP || it.type == LayerType.CONTROLLER || it.type == LayerType.STICKER || it.text != null) && it.isActiveAt(t) }
                             .map { com.example.engine.NativeRenderAt.renderAt(it, t, t) }
                             .filter { !it.isBehindCamera }
                             .sortedBy { it.transformZ }
@@ -260,7 +260,7 @@ fun CanvasArea(
                         hideContent = com.example.engine.nativeShapeEligible(clip),
                         modifier = Modifier.align(Alignment.Center)
                     )
-                  } else if (clip.type != LayerType.SHAPE && clip.type != LayerType.NULL && clip.type != LayerType.GROUP) {
+                  } else if (clip.type != LayerType.SHAPE && clip.type != LayerType.NULL && clip.type != LayerType.GROUP && clip.type != LayerType.CONTROLLER) {
                     TextLayerOnCanvas(
                         clip = clip,
                         frameWidth = frameW,
@@ -333,9 +333,14 @@ fun CanvasArea(
                         // The shape picture is drawn by the C++ engine (NativePreviewEngine); this box only takes the touch.
                         // A Null object has no picture at all: only this editing marker (dashed box + cross), never exported.
                         // A Group is the same kind of helper (its own move / scale / turn / opacity, no picture): green marker.
-                        if (clip.type == LayerType.NULL || clip.type == LayerType.GROUP) {
+                        // A Controller is the same kind of helper again (build 145): teal marker.
+                        if (clip.type == LayerType.NULL || clip.type == LayerType.GROUP || clip.type == LayerType.CONTROLLER) {
                             Canvas(modifier = Modifier.matchParentSize()) {
-                                val c = if (clip.type == LayerType.GROUP) Color(0xFF5BB85D) else Color(0xFFE8A33D)
+                                val c = when (clip.type) {
+                                    LayerType.GROUP -> Color(0xFF5BB85D)
+                                    LayerType.CONTROLLER -> Color(0xFF00B8A9)
+                                    else -> Color(0xFFE8A33D)
+                                }
                                 val sw = 1.5.dp.toPx()
                                 drawRect(
                                     color = c, style = androidx.compose.ui.graphics.drawscope.Stroke(
@@ -365,7 +370,7 @@ fun CanvasArea(
                 val selOverlay = activeOverlayClips.find { it.id == selectedClipId }
                 if (selOverlay != null && selOverlay.id != gradientEditId) {
                     val dens = androidx.compose.ui.platform.LocalDensity.current.density
-                    val isShape = selOverlay.type == LayerType.SHAPE || selOverlay.type == LayerType.STICKER || selOverlay.type == LayerType.NULL || selOverlay.type == LayerType.GROUP
+                    val isShape = selOverlay.type == LayerType.SHAPE || selOverlay.type == LayerType.STICKER || selOverlay.type == LayerType.NULL || selOverlay.type == LayerType.GROUP || selOverlay.type == LayerType.CONTROLLER
                     val size = if (isShape) androidx.compose.ui.geometry.Size(130f * dens, 130f * dens)
                     else textSizes[selOverlay.id]
                     if (size != null && size.width > 0f && size.height > 0f) {

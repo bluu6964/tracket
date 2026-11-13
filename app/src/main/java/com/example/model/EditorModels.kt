@@ -133,7 +133,16 @@ enum class LayerType(val displayName: String) {
      * Group (real grouping, Alight Motion style): a layer without a picture that has its own move / scale / turn / opacity.
      * The layers inside (groupId = its id, each linked to it by [TimelineClip.parent]) follow it, see ParentRig and [GroupOps].
      */
-    GROUP("Group")
+    GROUP("Group"),
+    /**
+     * Controller (build 145, Sarowar's design): an invisible rig layer like a Null, but everything applied to it
+     * cascades to the layers CONNECTED to it (their [TimelineClip.parent] points at it): its transform drives them
+     * (the Null behaviour, ParentRig), its opacity multiplies theirs, its blend mode is inherited by connected
+     * layers that still carry the default "Normal", and its effect stack runs on EACH connected layer
+     * individually, after that layer's own stack (per-layer application — Sarowar's decision, 2026-11-13).
+     * The Controller itself is never drawn / exported.
+     */
+    CONTROLLER("Controller")
 }
 
 @Serializable
@@ -360,7 +369,8 @@ data class TimelineClip(
     val effects: List<ClipFx> = emptyList(),
     /** Masks of the Masks panel (shapes with feather / invert / combine mode, animatable), run by the C++ engine after the effects. See [ClipMaskLibrary]. */
     val masks: List<ClipMask> = emptyList(),
-    /** Parent (a Null object): this layer follows the move / turn / scale of that Null, see ParentRig. */
+    /** Parent (a Null object or a Controller): this layer follows the move / turn / scale of that layer, see ParentRig.
+     *  A Controller parent also hands down its opacity / blend mode / effects (see [LayerType.CONTROLLER]). */
     val parent: ParentLink? = null,
     /** Id of the Chain layer this layer sits in (same lane), null = a normal layer. */
     val chainId: String? = null,

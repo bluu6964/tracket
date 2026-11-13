@@ -729,7 +729,7 @@ class VideoEditorViewModel : ViewModel() {
         val all = tracks0.flatMap { it.clips }
         val b = all.firstOrNull { it.id == clipId } ?: return false
         fun visual(c: TimelineClip) = c.type != LayerType.AUDIO && c.type != LayerType.NULL && c.type != LayerType.CAMERA &&
-            c.type != LayerType.CHAIN && c.type != LayerType.GROUP
+            c.type != LayerType.CHAIN && c.type != LayerType.GROUP && c.type != LayerType.CONTROLLER
         if (!visual(b)) return false
         val prev = all.filter { it.id != b.id && visual(it) && it.groupId == b.groupId && it.startMs < b.startMs }
             .maxByOrNull { it.endMs }
@@ -864,15 +864,25 @@ class VideoEditorViewModel : ViewModel() {
         addClip(type = LayerType.NULL, name = "Null $n", durationMs = durationMs.coerceIn(250L, 60_000L))
     }
 
+    /**
+     * Adds a Controller layer (build 145) at the playhead and selects it. Like a Null it is an
+     * invisible parent other layers connect to, but everything applied to it — transform,
+     * opacity, blend mode, effects — cascades to the connected layers (see ParentRig).
+     */
+    fun addControllerLayer(durationMs: Long = 5000L) {
+        addClip(type = LayerType.CONTROLLER, name = "Controller", durationMs = durationMs.coerceIn(250L, 60_000L))
+    }
+
     /** Adds a 3D camera layer at the playhead and selects it. Layers in the lanes below it are seen through it. */
     fun addCameraLayer(durationMs: Long = 5000L) {
         addClip(type = LayerType.CAMERA, name = "Camera", durationMs = durationMs.coerceIn(250L, 60_000L))
     }
 
     /**
-     * Makes the Null [parentId] the parent of [clipId] (null = no parent). The link saves the Null's pose at the playhead,
-     * so the layer stays where it is and then follows the Null's move / turn / scale. Returns false when it cannot be
-     * done (not a Null, or a loop).
+     * Makes the parent layer [parentId] (a Null, a Group or a Controller) the parent of [clipId] (null = no parent).
+     * The link saves the parent's pose at the playhead,
+     * so the layer stays where it is and then follows the parent's move / turn / scale. Returns false when it cannot be
+     * done (not a parent kind, or a loop).
      */
     fun setClipParent(clipId: String, parentId: String?): Boolean {
         val all = _tracks.value.flatMap { it.clips }
@@ -1006,9 +1016,9 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     /**
-     * Templates (build 143; null rig build 144): inserts the Carousel template into the
+     * Templates (build 143; Controller rig build 145): inserts the Carousel template into the
      * CURRENT project as ONE Group layer at the playhead — the whole composition (the
-     * "Carousel Null" rig layer, background, 8 shadow twins, 8 photo cards) as ordinary
+     * "Carousel Controller" rig layer, background, 8 shadow twins, 8 photo cards) as ordinary
      * children inside it, fitted to the canvas by the group's own transform (see
      * [CarouselTemplate.buildGroup]). One undo step; the group ends up selected so the user
      * sees what landed. [previewWidthPx] / [previewHeightPx] are the editor preview frame's
@@ -1385,6 +1395,7 @@ class VideoEditorViewModel : ViewModel() {
             LayerType.CAMERA -> 0xFF8E6BF2
             LayerType.CHAIN -> 0xFF9AA0A8
             LayerType.GROUP -> 0xFF5BB85D
+            LayerType.CONTROLLER -> 0xFF00B8A9
         }
 
         val newClip = TimelineClip(

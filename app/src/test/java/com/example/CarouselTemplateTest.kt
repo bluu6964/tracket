@@ -4,12 +4,14 @@ import com.example.engine.ParentRig
 import com.example.model.AnimProp
 import com.example.model.CarouselSpec
 import com.example.model.CarouselTemplate
+import com.example.model.ClipFx
 import com.example.model.Easing
 import com.example.model.FILL_IMAGE
 import com.example.model.FILL_SOLID
 import com.example.model.GroupOps
 import com.example.model.IMG_FILL
 import com.example.model.LayerType
+import com.example.model.ParentLink
 import com.example.model.TimelineClip
 import com.example.model.at
 import com.example.model.renderAt
@@ -37,13 +39,16 @@ import kotlin.math.sin
  * [CarouselTemplate.carouselFit]); the composed pins below run the children through
  * ParentRig — the same composition the preview and the export use.
  *
- * Build 144 rig (Sarowar's second correction: the animation must be driven by a Null layer
+ * Build 144 rig (Sarowar's second correction: the animation must be driven by a rig layer
  * in the timeline, not by keys baked into every child): the group holds 18 ordinary
- * children — a "Carousel Null" on the ring centre carrying the ENTIRE motion as one
- * ROTATION track (the measured law as degrees), the 8 cards + 8 shadow twins parented to
- * that null at their fixed t=0 ring poses with rotation-locked links and NO keyframes of
- * their own, and the static Background linked to the group. The pins below prove the
- * composed result matches build 142/143's baked law, and that the null alone controls it.
+ * children — a rig layer on the ring centre carrying the ENTIRE motion as one ROTATION
+ * track (the measured law as degrees), the 8 cards + 8 shadow twins parented to it at
+ * their fixed t=0 ring poses with rotation-locked links and NO keyframes of their own,
+ * and the static Background linked to the group. Build 145 makes that rig layer a
+ * CONTROLLER ("Carousel Controller", Sarowar's refinement: a null only carries transform,
+ * a Controller hands down transform + opacity + blend + effects), and the last pins below
+ * prove the cascade reaches connected layers — and only connected layers. The composed
+ * result still matches build 142/143's baked law, and the controller alone controls it.
  */
 class CarouselTemplateTest {
 
@@ -90,10 +95,10 @@ class CarouselTemplateTest {
         assertEquals("Carousel", ins.group.name)
         assertEquals(at0, ins.group.startMs)
         assertEquals(5000L, ins.group.durationMs)
-        // Lane order (top lane first): the null's lane, then build 142's track order for the
+        // Lane order (top lane first): the controller's lane, then build 142's track order for the
         // picture layers — per card the photo lane above its shadow lane, Background last.
         val expected = ArrayList<String>()
-        expected += "test-null"
+        expected += "test-controller"
         for (i in 1..8) {
             expected += "test-card-$i"
             expected += "test-shadow-$i"
@@ -107,23 +112,23 @@ class CarouselTemplateTest {
             assertEquals(at0, c.startMs)
             assertEquals(5000L, c.durationMs)
         }
-        // The null: an ordinary Null layer of the group (REST link, like the background),
-        // parked on the ring centre in stored units — (364-360, 224-225) x k.
-        val n = ins.nullLayer
-        assertEquals(LayerType.NULL, n.type)
-        assertEquals("Carousel Null", n.name)
+        // The controller: an ordinary Controller layer of the group (REST link, like the
+        // background), parked on the ring centre in stored units — (364-360, 224-225) x k.
+        val n = ins.controller
+        assertEquals(LayerType.CONTROLLER, n.type)
+        assertEquals("Carousel Controller", n.name)
         assertEquals(children.first().id, n.id)
         assertEquals(4f * k, n.transformX, 0.01f)
         assertEquals(-1f * k, n.transformY, 0.01f)
-        val nLink = n.parent ?: error("the null has no parent link")
+        val nLink = n.parent ?: error("the controller has no parent link")
         assertEquals(ins.group.id, nLink.id)
         assertEquals(0f, nLink.refX, 0f)
         assertEquals(0f, nLink.refY, 0f)
         assertEquals(100f, nLink.refScale, 0f)
         assertEquals(0f, nLink.refRot, 0f)
-        // Cards + shadows: SHAPE layers parented to the NULL — ref = the null's rest pose
+        // Cards + shadows: SHAPE layers parented to the CONTROLLER — ref = its rest pose
         // (ring centre, scale 100, rotation 0), rotation LOCKED (the Parent Helper lock that
-        // keeps them upright while their positions ride the null's turn).
+        // keeps them upright while their positions ride the controller's turn).
         for (c in cards + shadows) {
             assertEquals(LayerType.SHAPE, c.type)
             val link = c.parent ?: error("child ${c.id} has no parent link")
@@ -201,10 +206,10 @@ class CarouselTemplateTest {
 
     @Test
     fun cardCentresRideTheRingPerTheLaw() {
-        // Children evaluated through the rig chain card -> null -> group (ParentRig),
+        // Children evaluated through the rig chain card -> controller -> group (ParentRig),
         // un-fitted back into template units. Rotation is rigid, so there is no chord
         // sagitta any more: the radius is exact, and the only residual is the tangential
-        // error of the null track's slice easings vs the master law (same class as the
+        // error of the controller track's slice easings vs the master law (same class as the
         // build-142/143 bake, well inside 1 px mid-segment).
         for (loopMs in listOf(0L, 137L, 1250L, 2500L, 2625L, 3750L, 4999L)) {
             for (i in 0..7) {
@@ -251,7 +256,7 @@ class CarouselTemplateTest {
     @Test
     fun cardsStayUprightAtConstantScale() {
         // Build 144: no baked keys anywhere on the picture layers — the cards and shadows
-        // hold their fixed t=0 ring poses and the null does all the travelling.
+        // hold their fixed t=0 ring poses and the controller does all the travelling.
         for ((i, c) in (cards + shadows).withIndex()) {
             assertTrue("no keyframes at all on ${c.id}", c.keyframes.isEmpty())
             assertEquals(0f, c.rotationDeg, 0f)
@@ -263,7 +268,7 @@ class CarouselTemplateTest {
             assertEquals(((224.0 + 133.2 * sin(a) + dy - 225.0) * k).toFloat(), c.transformY, 0.05f)
         }
         // Through the rig the cards still never turn and never change size: the rotation
-        // lock holds their own rotation at 0 while the null swings their positions, and
+        // lock holds their own rotation at 0 while the controller swings their positions, and
         // the composed scale is just their stored scale x the group fit.
         val (_, _, fit) = CarouselTemplate.carouselFit(pw, ph)
         for (c in cards + shadows) {
@@ -284,9 +289,9 @@ class CarouselTemplateTest {
             for (loopMs in listOf(0L, 1750L, 3200L, 4999L)) {
                 val (cx, cy) = templateSceneOf(cards[i], at0 + loopMs)
                 val (sx, sy) = templateSceneOf(s, at0 + loopMs)
-                // Build 144: the twin rides the same null as its card, so the offset is the
-                // measured 2.5 px drop ROTATED by the null's own rotation (a static local
-                // offset under a rotating parent — exactly what a real Alight null rig
+                // Build 144: the twin rides the same controller as its card, so the offset is the
+                // measured 2.5 px drop ROTATED by the controller's own rotation (a static local
+                // offset under a rotating parent — exactly what a real Alight rig
                 // produces): the distance from the card is exactly the drop, in the rig's
                 // direction, whatever the card's own ring phase.
                 val th = Math.toRadians(360.0 * CarouselTemplate.progress(loopMs / 5000.0))
@@ -301,11 +306,11 @@ class CarouselTemplateTest {
     }
 
     @Test
-    fun nullLayerCarriesTheOnlyMotionTrack() {
-        // The null's ROTATION track is the measured law in degrees: 101 keys, 0 -> 360 over
+    fun controllerLayerCarriesTheOnlyMotionTrack() {
+        // The controller's ROTATION track is the measured law in degrees: 101 keys, 0 -> 360 over
         // the 5 s, cross-checked against the app's Float Easing evaluator (independent path).
-        val keys = ins.nullLayer.keyframes.getValue(AnimProp.ROTATION)
-        assertEquals(1, ins.nullLayer.keyframes.size)
+        val keys = ins.controller.keyframes.getValue(AnimProp.ROTATION)
+        assertEquals(1, ins.controller.keyframes.size)
         assertEquals(101, keys.size)
         assertEquals(0L, keys.first().timeMs)
         assertEquals(5000L, keys.last().timeMs)
@@ -315,7 +320,7 @@ class CarouselTemplateTest {
         for (key in keys) {
             assertEquals(key.timeMs % 50L, 0L)
             val want = 360.0 * law.apply(key.timeMs / 5000f).toDouble()
-            assertEquals("null rotation at ${key.timeMs}", want, key.a.toDouble(), 1.0)
+            assertEquals("controller rotation at ${key.timeMs}", want, key.a.toDouble(), 1.0)
             assertTrue("monotonic at ${key.timeMs}", key.a > prev)
             prev = key.a
         }
@@ -323,7 +328,7 @@ class CarouselTemplateTest {
         // carry no keyframes at all — no POSITION keys anywhere, no second rotation track.
         assertTrue("group has no keys", ins.group.keyframes.isEmpty())
         for (c in children) {
-            if (c.id == ins.nullLayer.id) continue
+            if (c.id == ins.controller.id) continue
             assertTrue("no keys on ${c.id}", c.keyframes.isEmpty())
         }
         for (c in allClips) {
@@ -332,11 +337,11 @@ class CarouselTemplateTest {
     }
 
     @Test
-    fun editingTheNullRotationMovesEveryCard() {
-        // The control property (Sarowar's requirement): the null alone drives the ring.
+    fun editingTheControllerRotationMovesEveryCard() {
+        // The control property (Sarowar's requirement): the controller alone drives the ring.
         // Replace its track by one fixed rotation of 137 degrees — every card must sit on
         // the ring at its phase + 137, at any time, with the radius untouched.
-        val fixed = ins.nullLayer.copy(rotationDeg = 137f, keyframes = emptyMap())
+        val fixed = ins.controller.copy(rotationDeg = 137f, keyframes = emptyMap())
         val clips = ins.lanesTopFirst.map { if (it.id == fixed.id) fixed else it }
         val rig2 = ParentRig(clips) { c, t -> c.renderAt(t) }
         val (_, _, fit) = CarouselTemplate.carouselFit(pw, ph)
@@ -449,5 +454,84 @@ class CarouselTemplateTest {
             .adjusted(bFresh.children.last(), 7000L)
         assertEquals(bExpected.transformX, bAfter.transformX, 0.001f)
         assertEquals(bExpected.transformY, bAfter.transformY, 0.001f)
+    }
+
+    @Test
+    fun controllerCascadeReachesCarouselCardsButNotTheBackground() {
+        // Sarowar's Controller semantics on the real template: opacity / blend / effects set
+        // on the "Carousel Controller" reach every connected card + shadow through the rig;
+        // the Background (linked to the group, not to the controller) is untouched.
+        val fx = ClipFx(type = "gaussian_blur", values = listOf(12f))
+        val ctrl = ins.controller.copy(opacity = 50f, blendMode = "Multiply", effects = listOf(fx))
+        val clips = ins.lanesTopFirst.map { if (it.id == ctrl.id) ctrl else it }
+        val rig2 = ParentRig(clips) { c, t -> c.renderAt(t) }
+        for (c in cards + shadows) {
+            val a = rig2.adjusted(c, at0 + 1000L)
+            assertEquals("opacity cascades to ${c.id}", c.opacity * 0.5f, a.opacity, 0.01f)
+            assertEquals("blend cascades to ${c.id}", "Multiply", a.blendMode)
+            assertEquals("effects cascade to ${c.id}", listOf(fx), a.effects)
+        }
+        val bg = clips.single { it.id == "test-bg" }
+        val bgA = rig2.adjusted(bg, at0 + 1000L)
+        assertEquals(100f, bgA.opacity, 0f)
+        assertEquals("Normal", bgA.blendMode)
+        assertTrue(bgA.effects.isEmpty())
+    }
+
+    @Test
+    fun controllerInheritancePrecedenceAndUnconnectedLayers() {
+        // The model-level contract (ParentRig), on synthetic layers:
+        //  - opacity multiplies, blend is inherited only while the layer's own is "Normal",
+        //    effects concatenate own-first then the controller's;
+        //  - a Null parent hands down transform ONLY;
+        //  - an unconnected layer is untouched;
+        //  - the media path (withControllerInheritance + applyToFp) sees the same values.
+        val fxA = ClipFx(type = "gaussian_blur", values = listOf(3f))
+        val fxB = ClipFx(type = "glow", values = listOf(7f))
+        fun layer(
+            id: String, type: LayerType, parent: ParentLink? = null, opacity: Float = 100f,
+            blend: String = "Normal", effects: List<ClipFx> = emptyList()
+        ) = TimelineClip(
+            id = id, name = id, type = type, startMs = 0L, durationMs = 5000L, color = 0L,
+            opacity = opacity, blendMode = blend, effects = effects, parent = parent
+        )
+        val ctrl = layer("ctrl", LayerType.CONTROLLER, opacity = 40f, blend = "Overlay", effects = listOf(fxA))
+        val link = ParentLink("ctrl", 0f, 0f, 100f, 0f)
+        val connected = layer("conn", LayerType.SHAPE, parent = link, opacity = 80f, effects = listOf(fxB))
+        val ownBlend = layer("ownb", LayerType.SHAPE, parent = link, opacity = 80f, blend = "Screen")
+        val nullParent = layer("np", LayerType.NULL, opacity = 40f, blend = "Overlay", effects = listOf(fxA))
+        val nullChild = layer("nchild", LayerType.SHAPE, parent = ParentLink("np", 0f, 0f, 100f, 0f), opacity = 80f, effects = listOf(fxB))
+        val free = layer("free", LayerType.SHAPE, opacity = 80f, effects = listOf(fxB))
+        val rig3 = ParentRig(listOf(ctrl, connected, ownBlend, nullParent, nullChild, free)) { c, t -> c.renderAt(t) }
+
+        val a = rig3.adjusted(connected, 1000L)
+        assertEquals(32f, a.opacity, 0.01f)               // 80 x 40%
+        assertEquals("Overlay", a.blendMode)              // inherited (own was Normal)
+        assertEquals(listOf(fxB, fxA), a.effects)         // own stack first, controller's after
+
+        val b = rig3.adjusted(ownBlend, 1000L)
+        assertEquals("Screen", b.blendMode)               // the layer's own explicit mode wins
+        assertEquals(32f, b.opacity, 0.01f)               // opacity still multiplies
+
+        val nc = rig3.adjusted(nullChild, 1000L)
+        assertEquals(80f, nc.opacity, 0f)                 // a Null hands down transform only
+        assertEquals("Normal", nc.blendMode)
+        assertEquals(listOf(fxB), nc.effects)
+
+        val f = rig3.adjusted(free, 1000L)
+        assertEquals(80f, f.opacity, 0f)
+        assertEquals("Normal", f.blendMode)
+        assertEquals(listOf(fxB), f.effects)
+
+        // The media path reads the same cascade: values via withControllerInheritance,
+        // opacity via applyToFp's fp[5] multiplier.
+        val eff = rig3.withControllerInheritance(connected, 1000L)
+        assertEquals(32f, eff.opacity, 0.01f)
+        assertEquals("Overlay", eff.blendMode)
+        assertEquals(listOf(fxB, fxA), eff.effects)
+        val fp = FloatArray(17)
+        fp[5] = 0.8f
+        rig3.applyToFp(connected, 1000L, fp, 1f)
+        assertEquals(0.32f, fp[5], 0.001f)
     }
 }

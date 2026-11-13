@@ -2495,8 +2495,9 @@ fun VideoEditorScreen(
                     onTrimClipEdge = { id, left, d -> viewModel.trimClipEdge(id, left, d) },
                     onToggleClipVisibility = { id -> viewModel.toggleClipVisibility(id) },
                     pxPerMs = timelinePxPerMs,
-                    onPxPerMsChange = { timelinePxPerMs = it },
-                    onAddClick = { showAddLayerSheet = true }
+                    onPxPerMsChange = { timelinePxPerMs = it }
+                    // No onAddClick since build 145: the "+" moved into the bottom toolbar
+                    // (BottomToolbar's Add item opens the same AddLayerSheet).
                 )
                 val editingGroup = editingGroupId?.let { gid -> tracks.flatMap { it.clips }.firstOrNull { it.id == gid } }
                 if (editingGroup != null) {
@@ -2553,6 +2554,7 @@ fun VideoEditorScreen(
                             onAudio = { audioPicker.launch(arrayOf("audio/*")) },
                             onStickers = { showStickerSheet = true },
                             onNull = { viewModel.addNullLayer() },
+                            onController = { viewModel.addControllerLayer() },
                             onCamera = { viewModel.addCameraLayer() },
                             onDelete = { viewModel.deleteSelectedClip() }
                         ) else if (targetIsAudio) AudioClipToolsPanel(
@@ -2576,8 +2578,15 @@ fun VideoEditorScreen(
                         ) else ClipEditToolsPanel(
                             height = toolbarH,
                             // Null / 3D Camera: no picture, so no Effects / Animations / Color / Crop / Blend; only what moves them.
-                            onlyTools = if (tracks.any { t -> t.clips.any { it.id == targetClipId && (it.type == LayerType.NULL || it.type == LayerType.CAMERA) } })
-                                setOf("transform", "parent", "rename") else null,
+                            // Controller (build 145): also no picture of its own, but its Effects / Blend / Animations are
+                            // the point — they cascade to the connected layers — so it keeps exactly those plus move/parent/rename.
+                            onlyTools = when {
+                                tracks.any { t -> t.clips.any { it.id == targetClipId && it.type == LayerType.CONTROLLER } } ->
+                                    setOf("transform", "parent", "rename", "effects", "blend", "animations")
+                                tracks.any { t -> t.clips.any { it.id == targetClipId && (it.type == LayerType.NULL || it.type == LayerType.CAMERA) } } ->
+                                    setOf("transform", "parent", "rename")
+                                else -> null
+                            },
                             onDeselect = { viewModel.selectClip(null) },
                             onEffects = {
                                 // Effects are drawn by the C++ engine on every picture layer: video, photo, text, shape, sticker.
@@ -2812,7 +2821,8 @@ fun VideoEditorScreen(
                             } else null,
                             onTransition = if (tracks.flatMap { it.clips }.any {
                                     it.id == targetClipId && it.type != LayerType.GROUP && it.type != LayerType.NULL &&
-                                        it.type != LayerType.CAMERA && it.type != LayerType.CHAIN && it.type != LayerType.AUDIO
+                                        it.type != LayerType.CAMERA && it.type != LayerType.CHAIN && it.type != LayerType.AUDIO &&
+                                        it.type != LayerType.CONTROLLER
                                 }
                             ) {
                                 { transitionTargetId = targetClipId }
@@ -2821,7 +2831,9 @@ fun VideoEditorScreen(
                     } else {
                         BottomToolbar(
                             height = toolbarH,
+                            onAddClick = { showAddLayerSheet = true },
                             onNullClick = { viewModel.addNullLayer() },
+                            onControllerClick = { viewModel.addControllerLayer() },
                             onChainClick = { viewModel.addChainLayer() },
                             onCameraClick = { viewModel.addCameraLayer() }
                         )
@@ -3163,8 +3175,9 @@ fun VideoEditorScreen(
                         onRedo = { viewModel.redo(); com.example.ui.buddy.BuddyBrain.react(com.example.ui.buddy.BuddyEvent.REDO) },
                         onDismiss = { showTransformMode = false },
                         panelOnly = true,
-                        // A Null only hands its 2D move / scale / turn to its children (ParentRig): no 3D tab for it.
-                        show3d = selectedClip?.type != LayerType.NULL,
+                        // A Null / Controller only hands its move / scale / turn (and, for a Controller, its
+                        // opacity / blend / effects) to its connected layers (ParentRig): no 3D tab for them.
+                        show3d = selectedClip?.type != LayerType.NULL && selectedClip?.type != LayerType.CONTROLLER,
                         timescaleHeight = timescaleH,
                         resetTick = transformResetTick,
                         onToggleKeyframe = { prop ->
@@ -3911,11 +3924,11 @@ fun VideoEditorScreen(
             }
             com.example.ui.components.ParentSheet(
                 layerName = child.text?.takeIf { it.isNotBlank() } ?: child.name,
-                nulls = all.filter { it.type == LayerType.NULL && it.id != childId && !loops(it.id) }.map { it.id to it.name },
+                nulls = all.filter { (it.type == LayerType.NULL || it.type == LayerType.CONTROLLER) && it.id != childId && !loops(it.id) }.map { it.id to it.name },
                 currentId = child.parent?.id,
                 onPick = { pid ->
                     if (!viewModel.setClipParent(childId, pid)) {
-                        scope.launch { snackbarHostState.showSnackbar("This Null cannot be the parent") }
+                        scope.launch { snackbarHostState.showSnackbar("This layer cannot be the parent") }
                     }
                     parentSheetClipId = null
                 },

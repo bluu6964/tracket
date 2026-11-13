@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CenterFocusWeak
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Category
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.SentimentSatisfiedAlt
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.ViewStream
 import androidx.compose.material3.Icon
@@ -48,7 +50,9 @@ import com.example.ui.util.bouncyClickable
 @Composable
 fun BottomToolbar(
     height: Dp,
+    onAddClick: () -> Unit,
     onNullClick: () -> Unit,
+    onControllerClick: () -> Unit,
     onChainClick: () -> Unit,
     onCameraClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -62,7 +66,11 @@ fun BottomToolbar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // The add-layer "+" lives here since build 145 (Sarowar: in the bottom toolbar with
+        // the other tools, not up by the timeline): it opens the same AddLayerSheet as before.
+        ToolbarItem("Add", Icons.Default.Add, "toolbar_add_button", onAddClick)
         ToolbarItem("Null", Icons.Default.CenterFocusWeak, "toolbar_null_button", onNullClick)
+        ToolbarItem("Controller", Icons.Default.Tune, "toolbar_controller_button", onControllerClick)
         ToolbarItem("Chain", Icons.Default.ViewStream, "toolbar_chain_button", onChainClick)
         ToolbarItem("3D Camera", Icons.Default.Videocam, "toolbar_camera_button", onCameraClick)
     }
@@ -115,6 +123,7 @@ fun ChainAddPanel(
     onAudio: () -> Unit,
     onStickers: () -> Unit,
     onNull: () -> Unit,
+    onController: () -> Unit,
     onCamera: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -151,6 +160,7 @@ fun ChainAddPanel(
             item { ChainToolItem("Audio", Icons.Default.MusicNote, "chain_audio", onAudio) }
             item { ChainToolItem("Stickers", Icons.Default.SentimentSatisfiedAlt, "chain_stickers", onStickers) }
             item { ChainToolItem("Null", Icons.Default.CenterFocusWeak, "chain_null", onNull) }
+            item { ChainToolItem("Controller", Icons.Default.Tune, "chain_controller", onController) }
             item { ChainToolItem("Camera", Icons.Default.Videocam, "chain_camera", onCamera) }
             item { ChainToolItem("Delete", Icons.Default.Delete, "chain_delete", onDelete) }
         }

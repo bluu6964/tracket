@@ -33,8 +33,8 @@ import com.example.ui.theme.TextSecondary
 import com.example.ui.util.bouncyClickable
 
 /**
- * Parent picker: the layer follows the move / turn / scale of the chosen Null object.
- * [nulls] = (id, name) of the Null objects it may use (no loops), [currentId] = the parent now (null = none).
+ * Parent picker: the layer follows the chosen parent layer (a Null object or a Controller).
+ * [nulls] = (id, name) of the parent layers it may use (no loops), [currentId] = the parent now (null = none).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,7 +56,7 @@ fun ParentSheet(
             Text("Parent of $layerName", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(
-                "The layer follows the move, turn and size of its Null object.",
+                "The layer follows the move, turn and size of its parent. A Controller parent also hands down its opacity, blend mode and effects.",
                 color = TextSecondary, fontSize = 12.sp
             )
             Spacer(Modifier.height(14.dp))
@@ -68,7 +68,7 @@ fun ParentSheet(
             if (nulls.isEmpty()) {
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "No Null object yet. Add one using the Null button in the timeline toolbar.",
+                    "No Null or Controller layer yet. Add one using the Null / Controller buttons in the bottom toolbar.",
                     color = TextSecondary, fontSize = 13.sp
                 )
             }

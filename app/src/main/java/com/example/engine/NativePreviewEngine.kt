@@ -535,7 +535,10 @@ class NativePreviewEngine(context: Context) {
                 p.pin = CornerPinRuntime.quadOnCanvas(pinSpec, t, bp, outW, outH) ?: return
             }
             // Blend mode (same rule as the export): a matte on the lowest layer has nothing to cut, it behaves like Normal.
-            val found = BlendModes.find(c.blendMode)
+            // A Controller parent's values count as the layer's own here (build 145): [eff] carries the
+            // inherited blend mode / effect stack; the transform still comes from the C++ numbers + applyToFp.
+            val eff = if (rig.hasLinks) rig.withControllerInheritance(c, t) else c
+            val found = BlendModes.find(eff.blendMode)
             val blendId = if (c === firstMedia && found.kind == BlendKind.MATTE) 0 else found.shaderId
             // A Repeat-family effect on the picture (an imported Alight repeat, or one added in the
             // Effects panel): the same texture drawn once per copy, each copy with its own pose
@@ -563,8 +566,9 @@ class NativePreviewEngine(context: Context) {
                 val img = src.image
                 if (img != null) {
                     if (!placeByCamera(cam, c, t, anim, fp, p, img.w, img.h, previewW)) return false
-                    // Effects of the Effects panel on a photo (before crop / transform, like on a video).
-                    val imgOps = fxOpsOf(c, t)
+                    // Effects of the Effects panel on a photo (before crop / transform, like on a video) —
+                    // plus a Controller parent's stack, appended per layer (build 145, via [eff]).
+                    val imgOps = fxOpsOf(eff, t, c)
                     val imgMasks = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
                     if (imgOps != null || imgMasks != null) {
                         val fxTex = r.applyFx(
@@ -591,7 +595,7 @@ class NativePreviewEngine(context: Context) {
                 val srcMs = anim.sourceMs(t)
                 val faceMask = NativeFxMasks.face(r, c, slot, srcMs, strict = false)
                 val cutMask = NativeFxMasks.cutout(r, c, slot, srcMs, strict = false)
-                val fxOps = fxOpsOf(c, t)
+                val fxOps = fxOpsOf(eff, t, c)
                 val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
                 if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
                     val fxTex = r.applyFx(
@@ -657,8 +661,8 @@ class NativePreviewEngine(context: Context) {
             drawScopeRef(c.id, depth + 1)
             val tex = r.endGroup()
             if (tex == 0) return
-            val blendId = BlendModes.find(c.blendMode).shaderId
-            val fxOps = fxOpsOf(c, t)
+            val blendId = BlendModes.find(g.blendMode).shaderId
+            val fxOps = fxOpsOf(g, t, c)
             // The children's parent link to this group (its ref = the embed's pivot): the embed's
             // own box in the frame is read off it, for the canvas clip below and the mask remap.
             val embedLink = if (c.embedW > 0f) {
@@ -819,8 +823,12 @@ class NativePreviewEngine(context: Context) {
             return mediaLanes.any { it in (lo + 1) until hi }
         }
         for (c in overlays) {
-            val spec = BlendModes.find(c.blendMode)
-            val hasFx = ClipFxLibrary.hasEffects(c.effects)
+            // The grouping reads the EFFECTIVE blend / effects (build 145): a layer connected
+            // to a Controller blends and runs effects like the controller prescribes, so it
+            // needs its own picture exactly when its effective values say so.
+            val effC = if (rig.hasLinks) rig.withStaticControllerInheritance(c) else c
+            val spec = BlendModes.find(effC.blendMode)
+            val hasFx = ClipFxLibrary.hasEffects(effC.effects)
             val hasOwnMasks = OverlayMasks.hasOwnMasks(c)
             if (mediaFillClipOf(listOf(c)) != null && !overlayNeedsPose(c) && !cam.affects(c)) {
                 // A shape filled with a playing video (build 104): always a picture of its own (the
@@ -1264,7 +1272,8 @@ class NativePreviewEngine(context: Context) {
                 for (c in scopeClips) {
                     if (!c.isVisible || c.isMask || !c.isActiveAt(t)) continue
                     if (c.type == LayerType.AUDIO || c.type == LayerType.NULL ||
-                        c.type == LayerType.CAMERA || c.type == LayerType.CHAIN
+                        c.type == LayerType.CAMERA || c.type == LayerType.CHAIN ||
+                        c.type == LayerType.CONTROLLER
                     ) continue
                     val adj = if (rig.hasLinks) rig.adjusted(c, t) else NativeRenderAt.renderAt(c, t)
                     val tmp = groupMaskTemp(depth * 3, w, h)

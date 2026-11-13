@@ -97,6 +97,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ClipFx
@@ -157,7 +158,7 @@ fun ClipEffectsPanel(
                         .clip(RoundedCornerShape(16.dp))
                         .background(if (on) NeonCyan else EditorSurfaceVariant)
                         .bouncyClickable(onClick = { category = cat })
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                         .testTag("fx_category_$cat"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -510,6 +511,12 @@ private fun FxTile(def: FxDef, full: Boolean, onClick: () -> Unit) {
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text(def.name, color = TextPrimary, fontSize = 11.sp, maxLines = 1)
+        Text(
+            def.name,
+            color = if (full) TextSecondary else TextPrimary,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

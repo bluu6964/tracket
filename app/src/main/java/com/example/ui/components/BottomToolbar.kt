@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -33,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -148,8 +151,15 @@ fun ChainAddPanel(
             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Exit chain", tint = IconActive, modifier = Modifier.size(24.dp))
         }
         Box(Modifier.width(1.dp).height(32.dp).background(Color(0xFF262C38)))
+        val chainListState = rememberLazyListState()
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        ) {
         androidx.compose.foundation.lazy.LazyRow(
-            modifier = Modifier.weight(1f).fillMaxHeight(),
+            state = chainListState,
+            modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -163,6 +173,18 @@ fun ChainAddPanel(
             item { ChainToolItem("Controller", Icons.Default.Tune, "chain_controller", onController) }
             item { ChainToolItem("Camera", Icons.Default.Videocam, "chain_camera", onCamera) }
             item { ChainToolItem("Delete", Icons.Default.Delete, "chain_delete", onDelete) }
+        }
+        if (chainListState.canScrollForward) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(30.dp)
+                    .background(
+                        Brush.horizontalGradient(listOf(Color.Transparent, EditorBackground))
+                    )
+            )
+        }
         }
     }
 }

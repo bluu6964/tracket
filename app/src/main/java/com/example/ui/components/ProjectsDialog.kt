@@ -105,13 +105,13 @@ fun ProjectsDialog(
                                 fontSize = 11.sp
                             )
                         }
-                        IconButton(onClick = { onExport(p) }, modifier = Modifier.size(40.dp)) {
+                        IconButton(onClick = { onExport(p) }, modifier = Modifier.size(44.dp)) {
                             Icon(Icons.Filled.Share, contentDescription = "Export project file", tint = TextSecondary)
                         }
-                        IconButton(onClick = { renaming = p }, modifier = Modifier.size(40.dp)) {
+                        IconButton(onClick = { renaming = p }, modifier = Modifier.size(44.dp)) {
                             Icon(Icons.Filled.Edit, contentDescription = "Rename", tint = TextSecondary)
                         }
-                        IconButton(onClick = { deleting = p }, modifier = Modifier.size(40.dp)) {
+                        IconButton(onClick = { deleting = p }, modifier = Modifier.size(44.dp)) {
                             Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = TextSecondary)
                         }
                     }

@@ -27,7 +27,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -92,6 +94,7 @@ import com.example.ui.util.layerBlend
 import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.LocalCanvasColor
 import com.example.ui.theme.EditorBackground
+import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonGreen
 
@@ -212,16 +215,36 @@ fun CanvasArea(
                     )
                 }
                 if (activeMediaClips.isEmpty() && !anyActiveClip) {
-                    // Clean Alight Motion style canvas with subtle center indicator
+                    // Clean Alight Motion style canvas with subtle center indicator.
+                    // A truly empty project (no layers at all — a first run, or everything deleted)
+                    // also gets a one-line hint; a mere gap between layers of a real project does not.
+                    val projectEmpty = nativeTracks.all { it.clips.isEmpty() }
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Canvas(modifier = Modifier.size(24.dp)) {
-                            val dotColor = Color.White.copy(alpha = 0.25f)
-                            drawCircle(color = dotColor, radius = 2.dp.toPx())
-                            drawLine(color = dotColor, start = Offset(size.width / 2f, 0f), end = Offset(size.width / 2f, size.height), strokeWidth = 1.dp.toPx())
-                            drawLine(color = dotColor, start = Offset(0f, size.height / 2f), end = Offset(size.width, size.height / 2f), strokeWidth = 1.dp.toPx())
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Canvas(modifier = Modifier.size(24.dp)) {
+                                val dotColor = Color.White.copy(alpha = 0.25f)
+                                drawCircle(color = dotColor, radius = 2.dp.toPx())
+                                drawLine(color = dotColor, start = Offset(size.width / 2f, 0f), end = Offset(size.width / 2f, size.height), strokeWidth = 1.dp.toPx())
+                                drawLine(color = dotColor, start = Offset(0f, size.height / 2f), end = Offset(size.width, size.height / 2f), strokeWidth = 1.dp.toPx())
+                            }
+                            if (projectEmpty) {
+                                Spacer(Modifier.height(14.dp))
+                                Text(
+                                    "No layers yet",
+                                    color = TextSecondary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Tap Add below to add media, text or a shape",
+                                    color = TextSecondary.copy(alpha = 0.75f),
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
                     }
                 }

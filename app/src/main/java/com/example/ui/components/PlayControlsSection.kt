@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -80,15 +82,16 @@ fun PlayControlsSection(
                 .padding(start = 10.5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton40(enabled = canUndo, onClick = onUndoClick, tag = "undo_button", description = "Undo") {
+            IconButton44(enabled = canUndo, onClick = onUndoClick, tag = "undo_button", description = "Undo") {
                 UndoGlyph(if (canUndo) IconWhite else IconDisabled, mirrored = false)
             }
-            IconButton40(enabled = canRedo, onClick = onRedoClick, tag = "redo_button", description = "Redo") {
+            IconButton44(enabled = canRedo, onClick = onRedoClick, tag = "redo_button", description = "Redo") {
                 UndoGlyph(if (canRedo) IconWhite else IconDisabled, mirrored = true)
             }
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(44.dp)
+                    .semantics { contentDescription = "Preview resolution" }
                     .bouncyClickable(onClick = onResolutionClick)
                     .testTag("preview_resolution_button"),
                 contentAlignment = Alignment.Center
@@ -117,6 +120,7 @@ fun PlayControlsSection(
             modifier = Modifier
                 .align(Alignment.Center)
                 .size(44.dp)
+                .semantics { contentDescription = if (isPlaying) "Pause" else "Play" }
                 .bouncyClickable(pressedScale = 0.88f, onClick = onPlayPauseClick)
                 .testTag("play_pause_button"),
             contentAlignment = Alignment.Center
@@ -132,13 +136,13 @@ fun PlayControlsSection(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            IconButton40(enabled = true, onClick = onFullScreenClick, tag = "fullscreen_button", description = "Full Screen") {
+            IconButton44(enabled = true, onClick = onFullScreenClick, tag = "fullscreen_button", description = "Full Screen") {
                 FrameGlyph()
             }
-            IconButton40(enabled = true, onClick = onGridClick, tag = "grid_button", description = "Canvas") {
+            IconButton44(enabled = true, onClick = onGridClick, tag = "grid_button", description = "Canvas") {
                 GridGlyph()
             }
-            IconButton40(enabled = true, onClick = onBeatMarkClick, tag = "beat_mark_button", description = "Beat mark") {
+            IconButton44(enabled = true, onClick = onBeatMarkClick, tag = "beat_mark_button", description = "Beat mark") {
                 BeatMarkGlyph()
             }
         }
@@ -146,7 +150,7 @@ fun PlayControlsSection(
 }
 
 @Composable
-private fun IconButton40(
+private fun IconButton44(
     enabled: Boolean,
     onClick: () -> Unit,
     tag: String,
@@ -155,7 +159,8 @@ private fun IconButton40(
 ) {
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(44.dp)
+            .semantics { contentDescription = description }
             .bouncyClickable(enabled = enabled, onClick = onClick)
             .testTag(tag),
         contentAlignment = Alignment.Center

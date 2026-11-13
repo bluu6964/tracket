@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -80,6 +81,7 @@ import com.example.model.SavedTemplate
 import com.example.model.at
 import com.example.model.flattenPathSegments
 import com.example.model.pieSegmentsAt
+import com.example.ui.theme.HeaderCyan
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
 
@@ -139,12 +141,31 @@ fun TemplatesDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                CarouselPreview(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { carouselSettingsOpen = !carouselSettingsOpen },
-                    params = carouselParams
-                )
+                Box(Modifier.fillMaxWidth()) {
+                    CarouselPreview(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { carouselSettingsOpen = !carouselSettingsOpen },
+                        params = carouselParams
+                    )
+                    // The preview itself is the settings toggle — say so on the preview, not only
+                    // in the small print under the Add button.
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xCC14181D))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            if (carouselSettingsOpen) "Hide settings" else "Customise",
+                            color = HeaderText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "Carousel — Photo Ring",
@@ -162,11 +183,13 @@ fun TemplatesDialog(
                         Text("Cards", color = HeaderText, fontSize = 14.sp)
                         Spacer(Modifier.weight(1f))
                         TextButton(
-                            onClick = { if (carouselCards > CarouselSpec.MIN_CARDS) carouselCards-- }
+                            onClick = { carouselCards-- },
+                            enabled = carouselCards > CarouselSpec.MIN_CARDS
                         ) { Text("−", fontSize = 18.sp) }
                         Text("$carouselCards", color = HeaderText, fontSize = 15.sp)
                         TextButton(
-                            onClick = { if (carouselCards < CarouselSpec.MAX_CARDS) carouselCards++ }
+                            onClick = { carouselCards++ },
+                            enabled = carouselCards < CarouselSpec.MAX_CARDS
                         ) { Text("+", fontSize = 18.sp) }
                     }
                     Text(
@@ -186,12 +209,14 @@ fun TemplatesDialog(
                         TextButton(onClick = { carouselClockwise = true }) {
                             Text(
                                 "Clockwise",
+                                color = if (carouselClockwise) HeaderCyan else TextSecondary,
                                 fontWeight = if (carouselClockwise) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                         TextButton(onClick = { carouselClockwise = false }) {
                             Text(
                                 "Counter-clockwise",
+                                color = if (!carouselClockwise) HeaderCyan else TextSecondary,
                                 fontWeight = if (!carouselClockwise) FontWeight.Bold else FontWeight.Normal
                             )
                         }

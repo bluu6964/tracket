@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -91,6 +93,7 @@ fun EditorHeader(
                     .height(btnH)
                     .clip(RoundedCornerShape(btnH * 0.45f))
                     .background(HeaderButtonFill)
+                    .semantics { contentDescription = "Back to projects" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onBackClick)
                     .testTag("header_back_button"),
                 contentAlignment = Alignment.Center
@@ -110,6 +113,9 @@ fun EditorHeader(
                     .align(Alignment.CenterStart)
                     .offset(x = 104.dp - 20.dp)
                     .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(HeaderButtonFill)
+                    .semantics { contentDescription = "Save frame as picture" }
                     .bouncyClickable(onClick = onSaveFrameClick)
                     .testTag("header_save_frame_button"),
                 contentAlignment = Alignment.Center
@@ -281,6 +287,7 @@ fun LayerHeader(
                     .height(btnH)
                     .clip(RoundedCornerShape(btnH * 0.45f))
                     .background(HeaderButtonFill)
+                    .semantics { contentDescription = "Back to layers" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onBack)
                     .testTag("layer_header_back"),
                 contentAlignment = Alignment.Center
@@ -300,6 +307,7 @@ fun LayerHeader(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
+                    .semantics { contentDescription = "Rename layer" }
                     .bouncyClickable(pressedScale = 0.97f, onClick = onRename)
                     .padding(horizontal = 4.dp)
                     .testTag("layer_header_name"),
@@ -316,6 +324,7 @@ fun LayerHeader(
                         .size(btnH)
                         .clip(CircleShape)
                         .background(HeaderPillFill)
+                        .semantics { contentDescription = if (visible) "Hide layer" else "Show layer" }
                         .bouncyClickable(pressedScale = 0.92f, onClick = onToggleVisible)
                         .testTag("layer_header_eye"),
                     contentAlignment = Alignment.Center
@@ -343,6 +352,7 @@ fun LayerHeader(
                     .size(btnH)
                     .clip(CircleShape)
                     .background(HeaderPillFill)
+                    .semantics { contentDescription = "Rename layer" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onRename)
                     .testTag("layer_header_rename"),
                 contentAlignment = Alignment.Center

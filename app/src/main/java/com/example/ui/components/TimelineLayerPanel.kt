@@ -517,7 +517,7 @@ fun TimelineLayerPanel(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 10.dp, bottom = 8.dp)
-                .size(36.dp)
+                .size(44.dp)
                 .bouncyClickable(onClick = onToggleMasterAudio),
             contentAlignment = Alignment.Center
         ) {
@@ -644,7 +644,13 @@ private fun SelectedBarButton(
         verticalArrangement = Arrangement.Center
     ) {
         // Icon only (no name text); the label stays as the accessibility description.
-        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+        // A destructive action (Delete) reads red — the flag used to be accepted but never applied.
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (destructive) Color(0xFFFF6B6B) else tint,
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 
@@ -737,7 +743,7 @@ private fun LayerLaneControl(
                 .fillMaxSize()
                 .padding(start = 8.5.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (isMulti) {
                 // Multi-select: the eye turns into a check circle (empty when not checked).
@@ -764,14 +770,21 @@ private fun LayerLaneControl(
                         )
                     }
                 }
-            } else Icon(
-                imageVector = if (clip.isVisible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
-                contentDescription = if (clip.isVisible) "Hide layer" else "Show layer",
-                tint = if (clip.isVisible) LaneEyeTint else LaneEyeTint.copy(alpha = 0.35f),
+            } else Box(
+                // 30 dp hit box around the 24 dp eye glyph: hide/show is a frequent tap and the
+                // lane pill is only 34-40 dp tall, so the target grows as far as the pill allows.
                 modifier = Modifier
-                    .size(24.dp)
-                    .bouncyClickable(pressedScale = 1f, onClick = { onToggleVisibility(clip.id) })
-            )
+                    .size(30.dp)
+                    .bouncyClickable(pressedScale = 1f, onClick = { onToggleVisibility(clip.id) }),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (clip.isVisible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                    contentDescription = if (clip.isVisible) "Hide layer" else "Show layer",
+                    tint = if (clip.isVisible) LaneEyeTint else LaneEyeTint.copy(alpha = 0.35f),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
             // thin divider between eye and thumbnail
             Box(
                 Modifier

@@ -31,8 +31,12 @@ object RotoBrushVideo {
     /** Masks are made at this rate at most (a 30 fps clip uses every 3rd frame; the preview picks the nearest). */
     const val MASK_FPS = 10f
 
-    /** Longest side of the saved masks. */
-    const val MASK_SIDE = 512
+    /**
+     * Longest side of the saved masks. The decoder's own detail caps at its 256x256 logits, but the
+     * preview / export upscale the saved mask to the full frame: at 512 a 1080p frame stretched every
+     * edge over ~4 px, at 1024 over ~2 px — the saved size is the edge sharpness the user actually sees.
+     */
+    const val MASK_SIDE = 1024
 
     /** A brush point, normalised to 0..1 of the picture (so it does not depend on the size it was drawn at). */
     class NPt(val x: Float, val y: Float, val positive: Boolean)
@@ -47,7 +51,7 @@ object RotoBrushVideo {
         val startMs = clip.trimStartMs
         var spanMs = (clip.durationMs * clip.exportSpeed).toLong().coerceAtLeast(100L)
         if (clip.sourceDurationMs > 0L) spanMs = minOf(spanMs, (clip.sourceDurationMs - startMs).coerceAtLeast(100L))
-        return (spanMs / 1000f * fps).toInt() + 2
+        return RotoFrames.frameCount(spanMs, fps)
     }
 
     private class FrameReader(context: Context, clip: TimelineClip) {
@@ -61,12 +65,18 @@ object RotoBrushVideo {
         /** Frame at source time [ms], longest side at most 1024. */
         fun at(ms: Long): Bitmap {
             val raw = r.getFrameAtTime(ms.coerceAtLeast(0L) * 1_000L, MediaMetadataRetriever.OPTION_CLOSEST)
-            val b = raw ?: last ?: throw IllegalStateException("Could not read the video frame")
-            if (raw != null) last = raw
-            val longest = maxOf(b.width, b.height)
-            if (longest <= EdgeSamEngine.SIDE) return b
-            val k = EdgeSamEngine.SIDE / longest.toFloat()
-            return Bitmap.createScaledBitmap(b, (b.width * k).toInt().coerceAtLeast(1), (b.height * k).toInt().coerceAtLeast(1), true)
+            if (raw == null) return last ?: throw IllegalStateException("Could not read the video frame")
+            val longest = maxOf(raw.width, raw.height)
+            // Remember the SCALED picture, not the raw one: a raw 4K frame kept for the whole run
+            // pins ~33 MB for nothing (the raw is only ever used through its scaled form).
+            last = if (longest <= EdgeSamEngine.SIDE) raw
+            else Bitmap.createScaledBitmap(
+                raw,
+                (raw.width * EdgeSamEngine.SIDE / longest.toFloat()).toInt().coerceAtLeast(1),
+                (raw.height * EdgeSamEngine.SIDE / longest.toFloat()).toInt().coerceAtLeast(1),
+                true
+            )
+            return last!!
         }
 
         fun close() {
@@ -85,8 +95,8 @@ object RotoBrushVideo {
         val fps = maskFps(context, clip)
         val startMs = clip.trimStartMs
         val frames = frameCount(clip, fps)
-        fun frameMs(i: Int): Long = startMs + (i * 1000f / fps).toLong()
-        fun indexOf(srcMs: Long): Int = (((srcMs - startMs) * fps / 1000f) + 0.5f).toInt().coerceIn(0, frames - 1)
+        fun frameMs(i: Int): Long = RotoFrames.frameMs(startMs, i, fps)
+        fun indexOf(srcMs: Long): Int = RotoFrames.indexOf(startMs, srcMs, fps, frames)
 
         // One brush per frame index (a later one on the same frame replaces the earlier one).
         val byFrame = java.util.TreeMap<Int, Key>()
@@ -103,9 +113,12 @@ object RotoBrushVideo {
             fun report() { onProgress((done / frames.toFloat()).coerceIn(0f, 1f)) }
 
             fun saveMask(index: Int, alpha: FloatArray) {
+                // Saved masks get the small-defect cleanup (tiny enclosed holes filled, tiny specks
+                // dropped); the mask chained into the next frame's prompt stays the raw one.
+                val shown = MaskCleanup.clean(alpha, mw, mh)
                 val px = IntArray(mw * mh)
                 for (p in px.indices) {
-                    val g = (alpha[p].coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+                    val g = (shown[p].coerceIn(0f, 1f) * 255f + 0.5f).toInt()
                     px[p] = (0xFF shl 24) or (g shl 16) or (g shl 8) or g
                 }
                 val bmp = Bitmap.createBitmap(mw, mh, Bitmap.Config.ARGB_8888)

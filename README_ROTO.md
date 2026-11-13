@@ -20,9 +20,11 @@ mask_input / has_mask_input / orig_im_size). The encoder is fed a 1024x1024 imag
 
 ## Use
 1. Select a video layer -> tool "Roto".
-2. Scrub to a frame. Wait for "Analysing frame" to finish (encoder).
-3. Green "+ Object": tap or paint over the object. Red "- Not object": paint over wrongly included areas. Cyan = current mask.
-4. "Propagate & apply": follows the object forward and backward through the clip (10 mask frames per second at most).
+2. Scrub to a frame (the time snaps to the mask grid — the same frames propagation will use, so a
+   brushed frame is always findable again). Wait for "Analysing frame" to finish (encoder).
+   Brushing before that now answers with a note instead of silently doing nothing.
+3. Green "+ Object": tap or paint over the object. Red "- Not object": paint over wrongly included areas. Cyan = current mask — shown with the same cleanup the saved masks get (tiny holes filled, tiny specks dropped), and each new stroke keeps the candidate closest to the mask already on screen, so the outline no longer jumps between regions while you refine it.
+4. "Propagate & apply": follows the object forward and backward through the clip (10 mask frames per second at most, masks saved at up to 1024 px on the longest side).
 5. Check the result. To fix a bad part: open Roto again is not needed before applying - scrub to the bad frame BEFORE propagating,
    brush there too (every brushed frame is a keyframe; propagation restarts from each keyframe).
 6. Tap "Roto" (or "Cutout") again on the layer to remove the result.
@@ -30,8 +32,19 @@ mask_input / has_mask_input / orig_im_size). The encoder is fed a 1024x1024 imag
 ## Files
 - engine/EdgeSamEngine.kt - ONNX Runtime encoder + decoder, prompts from masks (box, inside points)
 - engine/RotoBrushVideo.kt - keyframes + frame-by-frame propagation, writes m_00000.jpg ... like CutoutVideo
+- engine/RotoFrames.kt - the shared mask frame grid (generator, brush screen snapping, mask lookup)
+- engine/MaskCleanup.kt - tiny-hole fill / speck removal applied to saved masks (and the brush preview)
 - ui/components/RotoBrushScreen.kt - full-screen brush editor
 - Wiring: ClipEditToolsPanel (onRoto), VideoEditorScreen (rotoClipId + dialog)
+
+## Quality note (2026-11-13)
+EdgeSAM-3x is the speed tier of the SAM family: its decoder answers at 256x256 logits (about 144
+lines of vertical detail on a 16:9 frame) and the official export has no mask_input, so propagation
+re-prompts every frame from the previous mask's box + inside points rather than tracking with a
+hint. The pipeline around it is verified exact (off-device IoU 0.992 on a synthetic mask with the
+app's own preprocessing); the remaining coarseness is the model's ceiling, not a bug. Upgrade
+candidates (EdgeTAM, SAM 2) are tracked in the dev ROADMAP (Queue item 17) behind an off-device
+quality gate — do not swap the model files on speculation.
 
 ## EdgeTAM
 EdgeTAM (video tracker with memory) can replace the frame-by-frame `follow()` in RotoBrushVideo later; EdgeSAM already gives the

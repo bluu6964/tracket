@@ -57,7 +57,9 @@ import androidx.core.net.toUri
 import com.example.engine.CutoutEngine
 import com.example.engine.CutoutVideo
 import com.example.engine.EdgeSamEngine
+import com.example.engine.MaskCleanup
 import com.example.engine.RotoBrushVideo
+import com.example.engine.RotoFrames
 import com.example.model.TimelineClip
 import com.example.model.exportSpeed
 import com.example.ui.theme.NeonCyan
@@ -91,6 +93,10 @@ fun RotoBrushScreen(
     var spanMs = (clip.durationMs * clip.exportSpeed).toLong().coerceAtLeast(100L)
     if (clip.sourceDurationMs > 0L) spanMs = minOf(spanMs, (clip.sourceDurationMs - fromMs).coerceAtLeast(100L))
     val toMs = fromMs + spanMs
+    // The mask grid the propagation will use: frames are brushed, shown and re-found on THIS grid.
+    val maskFps = remember(clip.id) { RotoBrushVideo.maskFps(context, clip) }
+    fun snap(ms: Long): Long =
+        RotoFrames.frameMs(fromMs, RotoFrames.indexOfUnclamped(fromMs, ms, maskFps), maskFps).coerceIn(fromMs, toMs)
 
     var modelsOk by remember { mutableStateOf(EdgeSamEngine.isAvailable(context)) }
     var curMs by remember { mutableStateOf(startSrcMs.coerceIn(fromMs, toMs)) }
@@ -105,11 +111,16 @@ fun RotoBrushScreen(
     var inputMode by remember { mutableStateOf(EdgeSamEngine.inputMode(context)) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
 
-    // Brush strokes per frame time (ms of the source video); one stroke = a list of normalised points.
+    // Brush strokes per frame time (ms of the source video, snapped to the mask grid by loadFrame);
+    // one stroke = a list of normalised points.
     val strokes = remember { mutableStateMapOf<Long, List<List<RotoBrushVideo.NPt>>>() }
     val live = remember { mutableStateListOf<Offset>() }
     var frameJob by remember { mutableStateOf<Job?>(null) }
     var runJob by remember { mutableStateOf<Job?>(null) }
+    // Only the newest outline request may land (a slow decoder answer must not overwrite a newer one),
+    // and the last shown mask steadies the next decode's candidate choice (see showMask).
+    var maskSeq by remember { mutableStateOf(0) }
+    var lastMaskAlpha by remember { mutableStateOf<FloatArray?>(null) }
 
     val pickEncoder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
@@ -139,45 +150,62 @@ fun RotoBrushScreen(
         val bmp = frame
         val e = emb
         val list = strokes[curMs].orEmpty().flatten()
+        val mySeq = ++maskSeq // every call invalidates the previous in-flight answer, even a clearing one
         if (bmp == null || e == null || list.isEmpty()) {
             overlay = null
+            lastMaskAlpha = null
         } else {
             scope.launch {
                 try {
                     val k = min(1f, RotoBrushVideo.MASK_SIDE / max(bmp.width, bmp.height).toFloat())
                     val ow = (bmp.width * k).toInt().coerceAtLeast(16)
                     val oh = (bmp.height * k).toInt().coerceAtLeast(16)
-                    val img = withContext(Dispatchers.Default) {
+                    val prefer = lastMaskAlpha
+                    val decoded = withContext(Dispatchers.Default) {
                         val pts = list.map { EdgeSamEngine.Pt(it.x * bmp.width, it.y * bmp.height, it.positive) }
-                        val m = EdgeSamEngine.decode(context, e, pts, null, null, null, ow, oh)
+                        // `prefer` keeps the candidate closest to the mask already on screen: without it
+                        // a refinement stroke can flip the pick to a near-duplicate (or the whole-picture)
+                        // candidate and the outline visibly jumps to a different region.
+                        val m = EdgeSamEngine.decode(context, e, pts, null, null, prefer, ow, oh)
+                        // Show exactly what propagation will save (same small-defect cleanup).
+                        val shown = MaskCleanup.clean(m.alpha, ow, oh)
                         val px = IntArray(ow * oh)
                         for (i in px.indices) {
-                            val a = (m.alpha[i] * 120f).toInt().coerceIn(0, 255)
+                            val a = (shown[i] * 120f).toInt().coerceIn(0, 255)
                             px[i] = (a shl 24) or 0x0000E5FF
                         }
                         val o = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
                         o.setPixels(px, 0, ow, 0, 0, ow, oh)
-                        o.asImageBitmap()
+                        Pair(m.alpha, o.asImageBitmap())
                     }
-                    overlay = img
+                    if (mySeq != maskSeq) return@launch // a newer brush already asked; drop this answer
+                    lastMaskAlpha = decoded.first
+                    overlay = decoded.second
                 } catch (ex: CancellationException) {
                     throw ex
                 } catch (ex: Throwable) {
-                    status = "Brush failed: " + (ex.message ?: ex.javaClass.simpleName)
+                    if (mySeq == maskSeq) status = "Brush failed: " + (ex.message ?: ex.javaClass.simpleName)
                 }
             }
         }
     }
 
     // Loads the picture at [ms], runs the (slow) encoder on it once, then shows the outline if it has a brush.
+    // The time is snapped to the mask grid first: strokes live under grid times, so any way of arriving
+    // at a frame (slider, step buttons, reopening) lands on the same key and finds its strokes again.
+    // An unsnapped slider time made brushed frames practically unfindable — the strokes were still
+    // there, but the screen only ever shows the strokes of the exact current millisecond.
     val loadFrame: (Long) -> Unit = { ms ->
         frameJob?.cancel()
-        curMs = ms
+        curMs = snap(ms)
         overlay = null
+        lastMaskAlpha = null
+        maskSeq++
+        val target = curMs
         frameJob = scope.launch {
             busy = if (modelsOk) "Analysing frame…" else null
             try {
-                val bmp = withContext(Dispatchers.IO) { CutoutEngine.loadVideoFrame(context, clip.uri!!.toUri(), ms) }
+                val bmp = withContext(Dispatchers.IO) { CutoutEngine.loadVideoFrame(context, clip.uri!!.toUri(), target) }
                 if (bmp == null) {
                     status = "Could not read this frame"
                 } else {
@@ -213,7 +241,14 @@ fun RotoBrushScreen(
     }
 
     fun addStroke(screen: List<Offset>) {
-        if (emb == null || screen.isEmpty()) return
+        if (screen.isEmpty()) return
+        if (emb == null) {
+            // Never swallow a brush silently: before this, strokes painted while the frame was still
+            // being analysed (or after the analysis had failed) simply vanished without a word.
+            status = if (modelsOk) "Still analysing this frame — wait a moment, then brush"
+            else "Download the EdgeSAM models first (below)"
+            return
+        }
         val f = fit()
         val pts = screen.map {
             RotoBrushVideo.NPt(((it.x - f[0]) / f[2]).coerceIn(0f, 1f), ((it.y - f[1]) / f[3]).coerceIn(0f, 1f), foreground)
@@ -362,7 +397,7 @@ fun RotoBrushScreen(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = { if (runJob == null) loadFrame((curMs - 100L).coerceAtLeast(fromMs)) }) { Text("◀", color = Color.White) }
+                TextButton(onClick = { if (runJob == null) loadFrame(curMs - (1000f / maskFps).toLong().coerceAtLeast(1L)) }) { Text("◀", color = Color.White) }
                 Slider(
                     value = (curMs - fromMs).toFloat(),
                     onValueChange = { curMs = fromMs + it.toLong() },
@@ -370,7 +405,7 @@ fun RotoBrushScreen(
                     valueRange = 0f..spanMs.toFloat(),
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = { if (runJob == null) loadFrame((curMs + 100L).coerceAtMost(toMs)) }) { Text("▶", color = Color.White) }
+                TextButton(onClick = { if (runJob == null) loadFrame(curMs + (1000f / maskFps).toLong().coerceAtLeast(1L)) }) { Text("▶", color = Color.White) }
                 Text(
                     String.format(java.util.Locale.US, "%.1fs", (curMs - fromMs) / 1000f),
                     color = Color.White, fontSize = 12.sp, textAlign = TextAlign.End

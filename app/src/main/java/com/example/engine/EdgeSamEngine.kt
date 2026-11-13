@@ -165,7 +165,17 @@ object EdgeSamEngine {
         try {
             o.setIntraOpNumThreads(THREADS)
             o.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-            return e.createSession(bytes, o)
+            return try {
+                e.createSession(bytes, o)
+            } catch (t: Throwable) {
+                // A hand-picked file that is not really the model (or the encoder / decoder chosen in
+                // each other's place) fails here; say so plainly instead of the runtime's own wording.
+                throw IllegalStateException(
+                    "The EdgeSAM model file could not be loaded (${t.message ?: t.javaClass.simpleName}). " +
+                        "If you chose the files by hand, check that the encoder and decoder are not swapped.",
+                    t
+                )
+            }
         } finally {
             o.close()
         }
@@ -308,6 +318,9 @@ object EdgeSamEngine {
         val opened = ArrayList<OnnxTensor>()
         try {
             val inputs = HashMap<String, OnnxTensor>()
+            var haveEmbed = false
+            var haveCoord = false
+            var haveLabel = false
             for (name in dec.inputNames) {
                 val l = name.lowercase()
                 val t: OnnxTensor? = when {
@@ -327,7 +340,19 @@ object EdgeSamEngine {
                 if (t != null) {
                     opened.add(t)
                     inputs[name] = t
+                    when {
+                        l.contains("embed") -> haveEmbed = true
+                        l.contains("coord") -> haveCoord = true
+                        l.contains("label") -> haveLabel = true
+                    }
                 }
+            }
+            if (!haveEmbed || !haveCoord || !haveLabel) {
+                // An export whose inputs are named differently would otherwise die inside the runtime
+                // with a bare "Missing Input" error; name what the tool actually needs.
+                throw IllegalStateException(
+                    "This decoder is not supported: it must take image_embeddings, point_coords and point_labels inputs"
+                )
             }
             val result: Mask = dec.run(inputs).use { res ->
                 var masksT: OnnxTensor? = null

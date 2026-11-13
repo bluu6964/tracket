@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
@@ -52,6 +53,7 @@ import com.example.model.LogoRevealSpec
 import com.example.model.LogoRevealTemplate
 import com.example.model.PopTitleSpec
 import com.example.model.PopTitleTemplate
+import com.example.model.SavedTemplate
 import com.example.model.at
 import com.example.ui.theme.HeaderText
 import com.example.ui.theme.TextSecondary
@@ -63,16 +65,23 @@ private val DialogFill = Color(0xFF10161B)
  * user adds to the project that is OPEN. Templates live where layers are added — the
  * editor's + sheet — and choosing one inserts it into the current timeline as ONE Group
  * layer the user then customises in place (every picture in a template is a replaceable
- * slot). Three templates: the Carousel photo ring, the Pop Title text animation and the
- * Logo Reveal logo animation.
+ * slot). Three built-in templates: the Carousel photo ring, the Pop Title text animation
+ * and the Logo Reveal logo animation. Below them, "My Templates" (Templates v2) lists the
+ * groups the person saved themselves with a group's "Save as Template" tool — each can be
+ * added the same way, or deleted (with its saved media copies).
  */
 @Composable
 fun TemplatesDialog(
     onDismiss: () -> Unit,
     onAddCarousel: () -> Unit,
     onAddPopTitle: () -> Unit,
-    onAddLogoReveal: () -> Unit
+    onAddLogoReveal: () -> Unit,
+    /** The person's own saved templates ("Save as Template", Templates v2), newest first. */
+    userTemplates: List<SavedTemplate> = emptyList(),
+    onAddUserTemplate: (SavedTemplate) -> Unit = {},
+    onDeleteUserTemplate: (SavedTemplate) -> Unit = {}
 ) {
+    var pendingDelete by remember { mutableStateOf<SavedTemplate?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = DialogFill,
@@ -149,6 +158,39 @@ fun TemplatesDialog(
                         "Bengali included. Stretch the group longer to hold the reveal.",
                     color = TextSecondary, fontSize = 12.sp
                 )
+                Spacer(Modifier.height(22.dp))
+                Text(
+                    "My Templates",
+                    color = HeaderText, fontWeight = FontWeight.Bold, fontSize = 17.sp
+                )
+                Spacer(Modifier.height(4.dp))
+                if (userTemplates.isEmpty()) {
+                    Text(
+                        "Nothing saved yet. Build a group, select it, and tap " +
+                            "“Save as Template” in its tools — it will appear here and can " +
+                            "be added to any project.",
+                        color = TextSecondary, fontSize = 13.sp
+                    )
+                }
+                for (tpl in userTemplates) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        tpl.name,
+                        color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                    )
+                    Text(
+                        "Your saved group · ${tpl.clips.size} layer${if (tpl.clips.size == 1) "" else "s"} · " +
+                            "added as one group layer",
+                        color = TextSecondary, fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { onAddUserTemplate(tpl) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Add to project")
+                    }
+                    TextButton(onClick = { pendingDelete = tpl }) {
+                        Text("Delete template", color = TextSecondary)
+                    }
+                }
             }
         },
         confirmButton = {},
@@ -156,6 +198,28 @@ fun TemplatesDialog(
             TextButton(onClick = onDismiss) { Text("Close", color = HeaderText) }
         }
     )
+    pendingDelete?.let { tpl ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            containerColor = DialogFill,
+            title = { Text("Delete template?", color = HeaderText, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "“${tpl.name}” will be removed from My Templates, with its saved pictures. " +
+                        "Groups you already added to projects are not changed.",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { pendingDelete = null; onDeleteUserTemplate(tpl) }) {
+                    Text("Delete", color = HeaderText)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel", color = HeaderText) }
+            }
+        )
+    }
 }
 
 /**

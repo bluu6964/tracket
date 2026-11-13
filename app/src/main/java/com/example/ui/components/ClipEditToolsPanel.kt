@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LayersClear
 import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Image
@@ -107,6 +108,8 @@ fun ClipEditToolsPanel(
     onParent: (() -> Unit)? = null,
     /** Only set for a real Group layer: takes the layers out of the group again. */
     onUngroup: (() -> Unit)? = null,
+    /** Only set for a real Group layer: saves the whole group as a reusable user template (Templates v2). */
+    onSaveTemplate: (() -> Unit)? = null,
     /** Only set for a real Group layer: goes inside it to edit its layers one by one (Edit Group). */
     onEditGroup: (() -> Unit)? = null,
     /** Rename the layer. */
@@ -142,6 +145,7 @@ fun ClipEditToolsPanel(
     else emptyList()) + (if (onFaceSwap != null) listOf(ClipToolItem("face_swap", "Face swap", Icons.Default.SwapHoriz))
     else emptyList()) + (if (onParent != null) listOf(ClipToolItem("parent", "Parent", Icons.Default.AccountTree))
     else emptyList()) + (if (onUngroup != null) listOf(ClipToolItem("ungroup", "Ungroup", Icons.Default.LayersClear))
+    else emptyList()) + (if (onSaveTemplate != null) listOf(ClipToolItem("save_template", "Save as Template", Icons.Default.Save))
     else emptyList()) + (if (onTransition != null) listOf(ClipToolItem("transition", "Transition", Icons.Default.Shuffle))
     else emptyList()) + (if (onFreeze != null) listOf(ClipToolItem("freeze", "Freeze", Icons.Default.Image))
     else emptyList()) + (if (onRename != null) listOf(ClipToolItem("rename", "Rename", Icons.Default.Edit))
@@ -224,6 +228,7 @@ fun ClipEditToolsPanel(
                                     "masks" -> onMasks?.invoke()
                                     "parent" -> onParent?.invoke()
                                     "ungroup" -> onUngroup?.invoke()
+                                    "save_template" -> onSaveTemplate?.invoke()
                                     "edit_group" -> onEditGroup?.invoke()
                                     "transition" -> onTransition?.invoke()
                                     "freeze" -> onFreeze?.invoke()

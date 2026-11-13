@@ -1378,6 +1378,10 @@ fun VideoEditorScreen(
 
     var renameTargetId by remember { mutableStateOf<String?>(null) }
     var transitionTargetId by remember { mutableStateOf<String?>(null) }
+    /** "Save as Template" (Templates v2): the Group layer waiting for its template name. */
+    var saveTemplateGroupId by remember { mutableStateOf<String?>(null) }
+    /** The person's own template library (filesDir/templates, next to the projects). */
+    val userTemplateStore = remember { com.example.engine.UserTemplateStore(context) }
 
     /** Freeze frame: the picture of the video layer at the playhead becomes a 2 s photo layer; the video goes on after it. */
     val startFreezeFrame: (String) -> Unit = startFz@{ clipId ->
@@ -1482,6 +1486,29 @@ fun VideoEditorScreen(
                     renameTargetId = null
                 },
                 onDismiss = { renameTargetId = null }
+            )
+        }
+    }
+    saveTemplateGroupId?.let { id ->
+        val group = tracks.flatMap { it.clips }.find { it.id == id && it.type == LayerType.GROUP }
+        if (group != null) {
+            com.example.ui.components.SaveTemplateDialog(
+                initial = group.name,
+                onConfirm = { tplName ->
+                    saveTemplateGroupId = null
+                    val snapshotTracks = tracks
+                    scope.launch {
+                        val saved = withContext(Dispatchers.IO) {
+                            userTemplateStore.save(tplName, snapshotTracks, id)
+                        }
+                        snackbarHostState.currentSnackbarData?.dismiss()
+                        snackbarHostState.showSnackbar(
+                            if (saved != null) "Template “${saved.name}” saved — find it in Add → Templates → My Templates"
+                            else "Could not save the template"
+                        )
+                    }
+                },
+                onDismiss = { saveTemplateGroupId = null }
             )
         }
     }
@@ -1673,6 +1700,13 @@ fun VideoEditorScreen(
     val projectId by viewModel.projectId.collectAsState()
     var showProjects by remember { mutableStateOf(false) }
     var showTemplates by remember { mutableStateOf(false) }
+    /** The person's saved templates for the Templates dialog's "My Templates" section. */
+    var userTemplates by remember { mutableStateOf(emptyList<com.example.model.SavedTemplate>()) }
+    LaunchedEffect(showTemplates) {
+        if (showTemplates) {
+            userTemplates = withContext(Dispatchers.IO) { userTemplateStore.list() }
+        }
+    }
     var projectList by remember { mutableStateOf(emptyList<com.example.model.ProjectMeta>()) }
 
     // ---- Missing media substitution (build 111): files an imported preset points at lived on the
@@ -2808,6 +2842,9 @@ fun VideoEditorScreen(
                                     scope.launch { snackbarHostState.showSnackbar("Group ungrouped") }
                                 }
                             } else null,
+                            onSaveTemplate = if (tracks.flatMap { it.clips }.any { it.id == targetClipId && it.type == LayerType.GROUP }) {
+                                { saveTemplateGroupId = targetClipId }
+                            } else null,
                             onEditGroup = if (tracks.flatMap { it.clips }.any { it.id == targetClipId && it.type == LayerType.GROUP }) {
                                 { viewModel.enterGroup(targetClipId) }
                             } else null,
@@ -3790,6 +3827,30 @@ fun VideoEditorScreen(
                         else "Could not add the template",
                         android.widget.Toast.LENGTH_LONG
                     ).show()
+                }
+            },
+            userTemplates = userTemplates,
+            onAddUserTemplate = { tpl ->
+                // The list entry was decoded when the dialog opened; insert a FRESH load so
+                // what lands is exactly what is stored (never a possibly stale object).
+                scope.launch {
+                    val fresh = withContext(Dispatchers.IO) { userTemplateStore.load(tpl.id) }
+                    val groupId = fresh?.let { viewModel.insertUserTemplate(it) }
+                    showTemplates = false
+                    android.widget.Toast.makeText(
+                        context,
+                        if (groupId != null) "Template “${tpl.name}” added as one group layer"
+                        else "Could not add the template",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            },
+            onDeleteUserTemplate = { tpl ->
+                scope.launch {
+                    userTemplates = withContext(Dispatchers.IO) {
+                        userTemplateStore.delete(tpl.id)
+                        userTemplateStore.list()
+                    }
                 }
             }
         )

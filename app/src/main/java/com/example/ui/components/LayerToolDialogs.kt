@@ -68,6 +68,47 @@ fun RenameLayerDialog(
 }
 
 /**
+ * Asks for the name of a user template ("Save as Template", Templates v2): the name the
+ * group is saved under in the Templates dialog's "My Templates" list, prefilled with the
+ * group's own name.
+ */
+@Composable
+fun SaveTemplateDialog(
+    initial: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Save as Template") },
+        text = {
+            Column {
+                Text(
+                    "The whole group — every layer, keyframe and effect inside it — is saved " +
+                        "under this name. You can add it to any project later from " +
+                        "Add → Templates → My Templates.",
+                    fontSize = 13.sp, color = TextSecondary
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it.take(60) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = text.isNotBlank(), onClick = { onConfirm(text) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+/**
  * Transition into a layer: pick the kind (the In animations of the Animations panel), the direction and the length.
  * [onApply] gets the preset id, the direction and the length in ms; [onRemove] takes the In animation away again.
  */

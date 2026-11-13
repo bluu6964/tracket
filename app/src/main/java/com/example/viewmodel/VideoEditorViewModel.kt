@@ -13,6 +13,8 @@ import com.example.model.AspectRatio
 import com.example.model.CarouselTemplate
 import com.example.model.LogoRevealTemplate
 import com.example.model.PopTitleTemplate
+import com.example.model.SavedTemplate
+import com.example.model.UserTemplateOps
 import com.example.model.ControllerFanOut
 import com.example.model.ExportSettings
 import com.example.model.ImportedMedia
@@ -1120,6 +1122,27 @@ class VideoEditorViewModel : ViewModel() {
         setSelected(insert.group.id)
         recomputeTotal()
         return insert.group.id
+    }
+
+    /**
+     * User templates ("Save as Template", Templates v2): inserts a template the person
+     * saved earlier ([com.example.engine.UserTemplateStore]) into the CURRENT project as
+     * ONE Group layer at the playhead — the same insert conventions as the built-in
+     * templates: the saved subtree is instantiated under fresh ids (internal links
+     * remapped, see [UserTemplateOps.instantiate]), one undo step, the group lands at the
+     * top level and ends up selected. The stored template is never mutated, so it can be
+     * inserted again (here or in another project) any number of times. Returns the new
+     * group's id, or null for an empty template.
+     */
+    fun insertUserTemplate(template: SavedTemplate): String? {
+        val lanes = UserTemplateOps.instantiate(template, _currentPlayheadMs.value)
+        if (lanes.isEmpty()) return null
+        pushHistory()
+        _editingGroupId.value = null  // the group lands at the top level, like the built-ins'
+        _tracks.value = LaneLayout.placeAll(_tracks.value, lanes)
+        setSelected(lanes.first().id)
+        recomputeTotal()
+        return lanes.first().id
     }
 
     /**

@@ -71,8 +71,7 @@ import com.example.ui.util.bouncyClickable
 data class ClipToolItem(
     val id: String,
     val label: String,
-    val icon: ImageVector,
-    val isDestructive: Boolean = false
+    val icon: ImageVector
 )
 
 @Composable
@@ -253,7 +252,7 @@ fun ClipEditToolsPanel(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    val tint = if (tool.isDestructive) IconActive else IconActive
+                    val tint = IconActive
                     Icon(
                         imageVector = tool.icon,
                         contentDescription = tool.label,
@@ -265,7 +264,7 @@ fun ClipEditToolsPanel(
 
                     Text(
                         text = tool.label,
-                        color = if (tool.isDestructive) TextPrimary else TextPrimary,
+                        color = TextPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Normal,
                         maxLines = 1

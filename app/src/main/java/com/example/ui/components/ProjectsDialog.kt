@@ -78,6 +78,16 @@ fun ProjectsDialog(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                if (projects.isEmpty()) {
+                    item {
+                        Text(
+                            "No projects yet. Tap New project below to create one.",
+                            color = TextSecondary,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                }
                 items(projects, key = { it.id }) { p ->
                     val isCurrent = p.id == currentId
                     Row(
@@ -102,7 +112,9 @@ fun ProjectsDialog(
                                 "${dateFmt.format(Date(p.updatedAt))}  ·  ${p.layerCount} layers  ·  ${formatDuration(p.durationMs)}" +
                                     if (isCurrent) "  ·  open" else "",
                                 color = TextSecondary,
-                                fontSize = 11.sp
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         IconButton(onClick = { onExport(p) }, modifier = Modifier.size(44.dp)) {
@@ -170,5 +182,7 @@ fun ProjectsDialog(
 
 private fun formatDuration(ms: Long): String {
     val s = (ms / 1000).toInt()
-    return "%d:%02d".format(s / 60, s % 60)
+    // Same rule as the ruler clock: from one hour on, "H:MM:SS" instead of minutes past 59.
+    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s / 60) % 60, s % 60)
+    else "%d:%02d".format(s / 60, s % 60)
 }

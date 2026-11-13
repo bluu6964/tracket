@@ -31,6 +31,7 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -203,7 +204,13 @@ fun RulerDialSlider(
     showValue: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val fmt = if (step >= 1f) "%.0f" else "%.1f"
+    // The readout must be able to show the value EXACTLY: the decimals follow the step
+    // (0.01 / 0.05 / 0.25-stepped values exist — a flat "%.1f" showed 0.25 as "0.3").
+    val fmt = when {
+        step >= 1f -> "%.0f"
+        abs(step * 10f - (step * 10f).roundToInt()) < 0.001f -> "%.1f"
+        else -> "%.2f"
+    }
     val displayValue = if (unit.isNotEmpty()) {
         String.format(Locale.US, fmt + "%s", value, unit)
     } else if (isPercentage) {
@@ -234,6 +241,8 @@ fun RulerDialSlider(
                 color = TextPrimary,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.width(labelWidth)
             )
         }
@@ -258,7 +267,7 @@ fun RulerDialSlider(
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.End,
-            modifier = Modifier.width(60.dp)
+            modifier = Modifier.width(68.dp)
         )
     }
 }

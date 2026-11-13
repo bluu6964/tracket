@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -110,7 +111,8 @@ private fun RowScope.ToolbarItem(
     }
 }
 
-private fun Modifier.clipRounded() = this.background(Color.Transparent, RoundedCornerShape(14.dp))
+/** The toolbar item's rounded frame: clips the item's content to the 14 dp rounded rect (the name used to promise a clip the code never did). */
+private fun Modifier.clipRounded() = this.clip(RoundedCornerShape(14.dp)).background(Color.Transparent, RoundedCornerShape(14.dp))
 
 /**
  * Shown while a Chain layer is selected: only ways to put layers INTO the chain (the chain has no picture of its own, so

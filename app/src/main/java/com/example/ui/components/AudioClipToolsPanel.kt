@@ -137,13 +137,13 @@ fun AudioClipToolsPanel(
                     Icon(
                         imageVector = tool.icon,
                         contentDescription = tool.label,
-                        tint = if (tool.isDestructive) IconActive else IconActive,
+                        tint = IconActive,
                         modifier = Modifier.size(23.dp)
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
                         text = tool.label,
-                        color = if (tool.isDestructive) TextPrimary else TextPrimary,
+                        color = TextPrimary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Normal,
                         maxLines = 1

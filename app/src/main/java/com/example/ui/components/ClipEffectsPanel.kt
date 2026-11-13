@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -93,6 +94,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -104,6 +106,7 @@ import com.example.model.ClipFx
 import com.example.model.ClipFxLibrary
 import com.example.model.FxDef
 import com.example.model.TimelineClip
+import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.TextPrimary
@@ -145,9 +148,12 @@ fun ClipEffectsPanel(
             .padding(horizontal = 16.dp, vertical = 4.dp)
             .testTag("clip_effects_panel")
     ) {
-        // Categories (5 chips can be wider than a small phone, so the row scrolls sideways)
+        // Categories (the chips are wider than a small phone, so the row scrolls sideways;
+        // while more categories sit off-screen the right edge fades — the tool-row cue of batch 1)
+        val categoryScroll = rememberScrollState()
+        Box {
         Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            modifier = Modifier.horizontalScroll(categoryScroll),
             verticalAlignment = Alignment.CenterVertically
         ) {
             for (cat in ClipFxLibrary.categories) {
@@ -170,6 +176,18 @@ fun ClipEffectsPanel(
                     )
                 }
             }
+        }
+        if (categoryScroll.canScrollForward) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(30.dp)
+                    .background(
+                        Brush.horizontalGradient(listOf(Color.Transparent, EditorBackground))
+                    )
+            )
+        }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -368,11 +386,11 @@ fun ClipEffectsPanel(
                                     val vals = def.params.map { it.default } + fx.values.drop(def.params.size)
                                     onChange(effects.map { if (it.id == fx.id) it.copy(values = vals) else it })
                                 })
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .padding(horizontal = 12.dp, vertical = 11.dp)
                                 .testTag("fx_reset_${fx.type}"),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(15.dp))
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Reset", color = NeonCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }

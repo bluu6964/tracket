@@ -76,7 +76,13 @@ fun TimescaleSection(
             .background(TimelineBlack)
             .testTag("timescale_section")
     ) {
-        val rightPillWidth = if (totalDurationMs >= 600_000L) 48.dp else 42.dp
+        val rightPillWidth = when {
+            totalDurationMs >= 3_600_000L -> 64.dp
+            totalDurationMs >= 600_000L -> 48.dp
+            else -> 42.dp
+        }
+        // The playhead pill widens the same way once the playhead itself passes an hour.
+        val leftPillWidth = if (playheadMs() >= 3_600_000L) 64.dp else LeftPillWidth
 
         if (onBack != null) {
             Box(
@@ -105,7 +111,7 @@ fun TimescaleSection(
             val barW = BarWidth.toPx()
             val barH = BarHeight.toPx()
             val top = (size.height - barH) / 2f
-            val areaStart = (backInset + PillMargin + LeftPillWidth + PillGap).toPx()
+            val areaStart = (backInset + PillMargin + leftPillWidth + PillGap).toPx()
             val areaEnd = w - (PillMargin + rightPillWidth + PillGap).toPx()
             val pxPerMsPx = pxPerMs.dp.toPx()
 
@@ -167,7 +173,7 @@ fun TimescaleSection(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(start = backInset + PillMargin)
-                .width(LeftPillWidth)
+                .width(leftPillWidth)
                 .height(PillHeight)
                 .background(RulerTimePill, RoundedCornerShape(6.dp))
                 .testTag("playhead_time_pill"),
@@ -203,10 +209,17 @@ private fun PillText(text: () -> String) {
     )
 }
 
-/** "MM:SS" - the clock shown in the ruler pills. */
+/** "MM:SS" - the clock shown in the ruler pills; from one hour on it becomes "H:MM:SS" (it showed "75:00" before). */
 fun formatClock(ms: Long): String {
     val totalSeconds = (ms.coerceAtLeast(0L)) / 1000
-    return String.format(Locale.US, "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
+    return if (totalSeconds >= 3600L) {
+        String.format(
+            Locale.US, "%d:%02d:%02d",
+            totalSeconds / 3600, (totalSeconds / 60) % 60, totalSeconds % 60
+        )
+    } else {
+        String.format(Locale.US, "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
 }
 
 fun formatTimeCode(ms: Long): String {

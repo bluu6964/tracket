@@ -20,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -192,32 +191,6 @@ private fun SaveFrameGlyph() {
         }
         drawPath(body, c, style = st)
         drawCircle(c, 4.6f * u, Offset(14f * u, 16.3f * u), style = st)
-    }
-}
-
-/** Open-bottom rounded frame with crossed scissors (two rings) - cyan, 26 x 25 dp. */
-@Composable
-private fun ScissorFrameGlyph() {
-    Canvas(Modifier.size(28.dp)) {
-        val u = size.width / 28f
-        val c = HeaderCyan
-        val st = Stroke(2.5f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        val l = 1.5f * u; val r = 26.5f * u; val t = 1.8f * u
-        // frame: left side down, top with rounded corners, right side down
-        val frame = Path().apply {
-            moveTo(l, 11f * u); lineTo(l, 6.5f * u)
-            quadraticBezierTo(l, t, 6f * u, t)
-            lineTo(r - 4.5f * u, t)
-            quadraticBezierTo(r, t, r, 6.5f * u)
-            lineTo(r, 11f * u)
-        }
-        drawPath(frame, c, style = st)
-        // blades crossing
-        drawLine(c, Offset(8.6f * u, 7.5f * u), Offset(19.4f * u, 18f * u), 2.5f * u, StrokeCap.Round)
-        drawLine(c, Offset(19.4f * u, 7.5f * u), Offset(8.6f * u, 18f * u), 2.5f * u, StrokeCap.Round)
-        // rings
-        drawCircle(c, 3.1f * u, Offset(6.3f * u, 22.2f * u), style = st)
-        drawCircle(c, 3.1f * u, Offset(21.7f * u, 22.2f * u), style = st)
     }
 }
 

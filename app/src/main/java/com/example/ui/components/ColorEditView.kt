@@ -296,7 +296,7 @@ fun ColorEditSheet(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(40.dp)
+                .height(44.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(CeTabBg)
         ) {

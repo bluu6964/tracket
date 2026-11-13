@@ -19,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -284,33 +283,3 @@ private fun BeatMarkGlyph() {
     }
 }
 
-/** Dark layer tile with a white plus and an orange badge at its lower-right corner. */
-@Composable
-private fun AddLayerGlyph() {
-    Canvas(Modifier.size(24.dp)) {
-        val u = size.width / 24f
-        val tileW = 16.2f * u
-        val tileH = 19.2f * u
-        val left = size.width / 2f - 1.9f * u - tileW / 2f
-        val top = (size.height - tileH) / 2f
-        val tile = CornerRadius(3.6f * u)
-        drawRoundRect(
-            Brush.verticalGradient(listOf(Color(0xFF5E5E5E), Color(0xFF3A3A3A)), top, top + tileH),
-            Offset(left, top), Size(tileW, tileH), tile
-        )
-        drawRoundRect(Color(0xFF8E8E8E), Offset(left, top), Size(tileW, tileH), tile, style = Stroke(0.9f * u))
-        // plus
-        val px = left + tileW / 2f
-        val py = top + tileH * 0.46f
-        val arm = 3.8f * u
-        drawLine(Color.White, Offset(px - arm, py), Offset(px + arm, py), 2.0f * u, StrokeCap.Round)
-        drawLine(Color.White, Offset(px, py - arm), Offset(px, py + arm), 2.0f * u, StrokeCap.Round)
-        // badge
-        val bs = 8.2f * u
-        val bx = left + tileW - bs * 0.45f
-        val by = top + tileH - bs * 0.55f
-        drawRoundRect(Color.Black, Offset(bx - 1.3f * u, by - 1.3f * u), Size(bs + 2.6f * u, bs + 2.6f * u), CornerRadius(3.2f * u))
-        drawRoundRect(BadgeOrange, Offset(bx, by), Size(bs, bs), CornerRadius(2.3f * u))
-        drawRoundRect(Color(0xFFFFB75E), Offset(bx, by), Size(bs, bs), CornerRadius(2.3f * u), style = Stroke(0.8f * u))
-    }
-}

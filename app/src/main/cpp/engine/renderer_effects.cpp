@@ -39,7 +39,8 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_SMOOTH_EDGES_AM, EF_DEEP_GLOW_COMP, EF_DROP_SHADOW,
              EF_BBMAKER, EF_UNSHARP_COMP, EF_NEWSHARPEN_COMP, EF_AM_BLENDGEN,
              EF_DEEP_GLOW1_COMP, EF_SPILL_STREAK, EF_SPILL_OVER, EF_SPILL_FINAL,
-             EF_OPTIC_COMP, EF_COUNT };  // eff_[] in renderer.h has room for 52
+             EF_OPTIC_COMP, EF_UNMULT_AM, EF_MINIMAX_AM, EF_SOFTBLOOM_AM, EF_CHROMABBR_AM, EF_LENSD_AM,
+             EF_COUNT };  // eff_[] in renderer.h has room for 56
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -2488,6 +2489,258 @@ void main() {
 }
 )";
 
+// Unmult (Alight Motion's unmult, the Ultra original): the matte alpha from
+// max(rgb) with threshold / softness / gamma shaping, a 5-tap feather of the
+// max values, a choke / spread cleanup, and the optional luma-preserving
+// unmultiply; the def writes straight rgb with the matte alpha (it rewrites
+// the alpha, so it cannot ride a shared program). uP: [blackLevel (0..255),
+// softness, featherPx, cleanupPx, edgeGamma, preserveLuma, previewMatte].
+// fxUnmultAmPixel in fx_plan.cpp is the CPU twin.
+const char* kUnmult = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec2 uTexel;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+float max3(vec3 v) { return max(v.r, max(v.g, v.b)); }
+float baseAlpha(vec3 srgb, float thr, float soft, float gamma) {
+    float a = clamp((max3(srgb) - thr) / max(soft, 1e-6), 0.0, 1.0);
+    a = a * a * (3.0 - 2.0 * a);
+    return pow(a, gamma);
+}
+void main() {
+    vec4 col = texture(uTex, vUv);
+    float thr = clamp(uP[0] / 255.0, 0.0, 1.0);
+    float soft = max(uP[1], 0.0) * 0.25;
+    float aBase = baseAlpha(col.rgb, thr, soft, uP[4]);
+    float aFeather = aBase;
+    if (uP[2] > 0.0001) {
+        float f = clamp(uP[2], 0.0, 10.0);
+        vec2 off = uTexel * f;
+        float avg = max3(col.rgb) * 0.4 +
+            (max3(texture(uTex, vUv - vec2(off.x, 0.0)).rgb) +
+             max3(texture(uTex, vUv + vec2(off.x, 0.0)).rgb) +
+             max3(texture(uTex, vUv - vec2(0.0, off.y)).rgb) +
+             max3(texture(uTex, vUv + vec2(0.0, off.y)).rgb)) * 0.15;
+        aFeather = mix(aBase, avg, 0.75);
+    }
+    float aClean;
+    float cp = abs(uP[3]);
+    if (cp < 0.001) {
+        aClean = max3(col.rgb);
+    } else {
+        vec2 off = uTexel * cp;
+        float aC = max3(col.rgb);
+        float aL = max3(texture(uTex, vUv - vec2(off.x, 0.0)).rgb);
+        float aR = max3(texture(uTex, vUv + vec2(off.x, 0.0)).rgb);
+        float aT = max3(texture(uTex, vUv - vec2(0.0, off.y)).rgb);
+        float aB = max3(texture(uTex, vUv + vec2(0.0, off.y)).rgb);
+        float spread = max(aC, max(max(aL, aR), max(aT, aB)));
+        float choke = min(aC, min(min(aL, aR), min(aT, aB)));
+        aClean = uP[3] >= 0.0 ? spread : choke;
+    }
+    float aMatte = mix(aFeather, aClean, clamp(cp / 10.0, 0.0, 1.0));
+    float aOut = aMatte * col.a;
+    if (uP[6] > 0.5) {
+        oColor = vec4(vec3(aOut), aOut);
+        return;
+    }
+    vec3 rgb = uP[5] > 0.5 ? col.rgb / max(aMatte, 1e-4) : col.rgb;
+    oColor = vec4(clamp(rgb, 0.0, 1.0), aOut);
+}
+)";
+
+// Minimax (Alight Motion's minimaxblur, the Ultra original): one separable
+// min / max pass per draw (uPass 0 horizontal, 1 vertical), per colour channel
+// or picked by one channel; direction 2 skips the horizontal pass, direction 1
+// makes the vertical pass a copy; keepEdge (pass 1) mixes the result back
+// toward the original (uOrig). uP: [operation, radius, channel, direction,
+// keepEdge]. fxMinimaxAmPixel in fx_plan.cpp is the CPU twin.
+const char* kMinimax = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uOrig;
+uniform vec2 uTexel;
+uniform int uPass;
+uniform float uP[7];
+in vec2 vUv;
+out vec4 oColor;
+float chan(vec4 c, int ch) {
+    return ch == 0 ? c.r : ch == 1 ? c.g : ch == 2 ? c.b : c.a;
+}
+void main() {
+    if (uPass == 0 && uP[3] > 1.5) { oColor = texture(uTex, vUv); return; }
+    if (uPass == 1 && uP[3] > 0.5 && uP[3] < 1.5) { oColor = texture(uTex, vUv); return; }
+    int r = int(uP[1]);
+    bool byChan = uP[2] > 3.5;
+    int ch = int(uP[2] + 0.5);
+    bool isMax = uP[0] > 0.5;
+    vec4 result = texture(uTex, vUv);
+    for (int i = -50; i <= 50; i++) {
+        if (i < -r || i > r) continue;
+        vec2 uv = uPass == 0 ? vUv + vec2(float(i) * uTexel.x, 0.0)
+                             : vUv + vec2(0.0, float(i) * uTexel.y);
+        vec4 smp = texture(uTex, uv);
+        if (byChan) {
+            result = isMax ? max(result, smp) : min(result, smp);
+        } else {
+            float rv = chan(result, ch), sv = chan(smp, ch);
+            if ((isMax && sv > rv) || (!isMax && sv < rv)) result = smp;
+        }
+    }
+    if (uPass == 1 && uP[4] > 0.5) {
+        vec4 orig = texture(uOrig, vUv);
+        float ef = clamp(uP[1] * uTexel.x * 10.0, 0.0, 1.0);
+        result = mix(orig, result, ef);
+    }
+    oColor = result;
+}
+)";
+
+// Softbloom (Alight Motion's softblooom, the TrueMotion legacy amz_417 def):
+// pass 0 threshold extract at half res, passes 1 / 2 the def's own
+// incremental-gaussian blur (the GPU Gems paired-tap scheme, stretch and
+// aspect terms included; the kernel size comes from fxSoftbloomAmKernel on
+// the canvas diagonal), pass 3 the composite base * alpha + bloom * intensity
+// * galpha. uP: [strength, intensity, threshold, glowStretch x, glowStretch y,
+// galpha, alpha]; uKernel rides separately. fxSoftbloomAmExtract /
+// fxSoftbloomAmComposite / fxSoftbloomAmKernel in fx_plan.cpp are the twins.
+const char* kSoftbloom = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform vec2 uTexel;
+uniform vec2 uAspectV;
+uniform int uPass;
+uniform float uP[7];
+uniform float uKernel;
+in vec2 vUv;
+out vec4 oColor;
+vec4 blurInternal(vec2 texOffset) {
+    if (uP[0] <= 0.0) return vec4(0.0);
+    texOffset *= vec2(uP[3], uP[4] + 0.5);
+    texOffset *= uAspectV;
+    float adjSigma = uKernel / 2.14596602;
+    vec3 inc;
+    inc.x = 1.0 / (sqrt(2.0 * 3.14159265) * adjSigma);
+    inc.y = exp(-0.5 / (adjSigma * adjSigma));
+    inc.z = inc.y * inc.y;
+    vec4 avg = texture(uBlur, vUv) * inc.x;
+    float coefSum = inc.x;
+    for (float i = 1.0; i <= 4096.0; i += 2.0) {
+        if (i > uKernel) break;
+        float offset0 = i;
+        float offset1 = i + 1.0;
+        inc.xy *= inc.yz;
+        float weight0 = inc.x;
+        inc.xy *= inc.yz;
+        float weight1 = inc.x;
+        float weightL = weight0 + weight1;
+        float offsetL = (offset0 * weight0 + offset1 * weight1) / weightL;
+        vec2 stL = clamp(vUv - offsetL * texOffset, vec2(0.0), vec2(1.0));
+        vec2 stR = clamp(vUv + offsetL * texOffset, vec2(0.0), vec2(1.0));
+        avg += texture(uBlur, stL) * weightL;
+        avg += texture(uBlur, stR) * weightL;
+        coefSum += 2.0 * weightL;
+    }
+    return avg / coefSum;
+}
+void main() {
+    if (uPass == 0) {
+        vec4 c = texture(uTex, vUv);
+        float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        float mask = smoothstep(uP[2], uP[2] + 0.05, lum);
+        oColor = vec4(c.rgb * mask, 1.0);
+    } else if (uPass == 1) {
+        oColor = blurInternal(vec2(uTexel.x, 0.0));
+    } else if (uPass == 2) {
+        oColor = blurInternal(vec2(0.0, uTexel.y));
+    } else {
+        vec4 base = texture(uTex, vUv);
+        vec4 bloom = texture(uBlur, vUv);
+        oColor = vec4(base.rgb * uP[6] + bloom.rgb * uP[1] * uP[5], base.a);
+    }
+}
+)";
+
+// Chromatic Aberration as lensd's first pass (Alight Motion's chromabbr, the
+// Ultra original): amp / new forwarded from the lensd op, rgbsplit 0 and
+// alphaa 1 at their def defaults, so all three channels sample the same
+// warped coordinate and the pass is a pure fisheye warp. uP / uQ are the
+// lensd op's groups. fxChromabbrAmPixel in fx_plan.cpp is the CPU twin.
+const char* kChromabbr = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uAspect;
+uniform float uP[7];
+uniform float uQ[7];
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 tex = texture(uTex, vUv);
+    float kcube = uP[1];
+    if (kcube < -1.0) kcube = -kcube * kcube;
+    vec2 wuv;
+    if (uQ[1] > 0.5) {
+        vec2 os = uAspect < 1.0 ? vec2(uAspect, 1.0) : vec2(1.0, 1.0 / uAspect);
+        vec2 t = vUv * os - os * 0.5;
+        float r2 = dot(t, t);
+        float f = 1.0 + r2 * kcube * sqrt(r2);
+        wuv = (f * t + os * 0.5) / os;
+    } else {
+        vec2 t = vUv - 0.5;
+        float r2 = dot(t, t);
+        float f = 1.0 + r2 * kcube * sqrt(r2);
+        wuv = f * t + 0.5;
+    }
+    vec4 smp = texture(uTex, wuv);
+    oColor = vec4(smp.rgb * tex.a, tex.a);
+}
+)";
+
+// Lens Distortion+ main pass (Alight Motion's lensd, the Ultra original): the
+// channel-spread average over scaled samples of the chromabbr buffer (uBuf),
+// mixed over the layer (uTex) by alpha, or the raw factor when offs is on.
+// uP: [offs, amp, strength, blurMax, aberrationMax, numIters, bright];
+// uQ: [alpha, new, iter]; uPicW is the screen width of the def's strength /
+// screen-width term (the picture width in this pipeline). fxLensdAmPixel in
+// fx_plan.cpp is the CPU twin.
+const char* kLensd = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBuf;
+uniform float uPicW;
+uniform float uP[7];
+uniform float uQ[7];
+in vec2 vUv;
+out vec4 oColor;
+void main() {
+    vec4 tex = texture(uTex, vUv);
+    float blur = -uP[3] * (uP[2] / uPicW);
+    float aberration = 1.0 + uP[4];
+    int ni = int(uP[5]);
+    int cs = int(uP[5] / aberration);
+    float mid = float(cs + 1) / 2.0;
+    vec3 lo = vec3(float(ni - cs), float((ni - cs) / 2), 0.0);
+    vec3 hi = vec3(float(ni), float((ni + cs) / 2), float(cs));
+    float bpi = blur / float(ni - 1);
+    vec3 colour = vec3(0.0);
+    for (float i = 0.0; i < uP[5]; i += 1.0) {
+        float scale = 1.0 + bpi * i;
+        vec4 tx = texture(uBuf, 0.5 + (vUv - 0.5) * scale);
+        vec3 kk = vec3(i + 1.0) - lo;
+        if (i >= lo.x && i < hi.x) colour.x += tx.x * (mid - abs(mid - kk.x)) / mid;
+        if (i >= lo.y && i < hi.y) colour.y += tx.y * (mid - abs(mid - kk.y)) / mid;
+        if (i >= lo.z && i < hi.z) colour.z += tx.z * (mid - abs(mid - kk.z)) / mid;
+    }
+    vec3 frag = colour / (0.5 * float(cs + 1));
+    vec4 factor = vec4(frag * uP[6], tex.a * uP[6]);
+    if (uP[0] > 0.5) oColor = factor;
+    else oColor = mix(tex, factor, uQ[0]) * tex.a;
+}
+)";
+
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
                                   kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
@@ -2497,8 +2750,8 @@ const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSpli
                                   kSmoothEdgesAm, kDeepGlowComp, kDropShadow,
                                   kBbMaker, kUnsharpComp, kNewSharpenComp, kAmBlendGen,
                                   kDeepGlow1Comp, kSpillStreak, kSpillOver, kSpillFinal,
-                                  kOpticComp};
-static_assert(EF_COUNT <= 52, "eff_[] in renderer.h is too small");
+                                  kOpticComp, kUnmult, kMinimax, kSoftbloom, kChromabbr, kLensd};
+static_assert(EF_COUNT <= 56, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -2703,6 +2956,10 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_DEEP_GLOW_AM: ok = fxDeepGlow1Am(op, W, H, cur); break;
             case FX_SPILL_CLEANUP_AM: ok = fxSpillCleanupAm(op, W, H, cur); break;
             case FX_OPTIC_COMP_AM: ok = fxOpticCompAm(op, W, H, cur); break;
+            case FX_UNMULT_AM: ok = fxUnmultAm(op, W, H, cur); break;
+            case FX_MINIMAX_AM: ok = fxMinimaxAm(op, W, H, cur); break;
+            case FX_SOFTBLOOM_AM: ok = fxSoftbloomAm(op, W, H, cur); break;
+            case FX_LENSD_AM: ok = fxLensdAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -3327,6 +3584,137 @@ bool Renderer::fxOpticCompAm(const FxOp& op, int W, int H, int* cur) {
     glUniform1fv(loc(prog, "uQ"), 7, op.q);
     draw();
     *cur = dst;
+    return true;
+}
+
+// Unmult (Alight, v180): one pass; the def rewrites the pixel's alpha.
+bool Renderer::fxUnmultAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_UNMULT_AM);
+    if (!prog) return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Minimax (Alight, v180): the two separable passes; the second reads the
+// original picture on uOrig for keepEdge.
+bool Renderer::fxMinimaxAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_MINIMAX_AM);
+    if (!prog) return false;
+    const int orig = *cur;
+    const int dst0 = 1 - *cur;
+    begin(prog, fxFbo_[dst0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1i(loc(prog, "uPass"), 0);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    draw();
+    const int dst = 1 - dst0;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[dst0]);
+    bindTex(1, fxTex_[orig]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uOrig"), 1);
+    glUniform2f(loc(prog, "uTexel"), 1.f / (float)W, 1.f / (float)H);
+    glUniform1i(loc(prog, "uPass"), 1);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Softbloom (Alight, v180): Light Glow's buffer shape — keep the layer at full
+// res, extract / blur at half res with the def's own kernel, composite.
+bool Renderer::fxSoftbloomAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_SOFTBLOOM_AM), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    const int hw = halfSize(W, 0), hh = halfSize(H, 0);
+    if (!ensureLevel(0, hw, hh) || !ensureLevel(1, hw, hh)) return false;
+    const FxLevel& half0 = lv_[0];
+    const FxLevel& half1 = lv_[1];
+    auto setCommon = [&]() {
+        glUniform1fv(loc(prog, "uP"), 7, op.p);
+        glUniform1f(loc(prog, "uKernel"), fxSoftbloomAmKernel(op.p[0], (float)w_, (float)h_));
+        glUniform2f(loc(prog, "uTexel"), 1.f / (float)hw, 1.f / (float)hh);
+        glUniform2f(loc(prog, "uAspectV"), (float)w_ / (float)std::max(1, h_), 1.f);
+    };
+    begin(prog, half0.fbo[0], hw, hh);   // pass 0: threshold extract
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uPass"), 0);
+    setCommon();
+    draw();
+    begin(prog, half0.fbo[1], hw, hh);   // pass 1: horizontal blur
+    bindTex(1, half0.tex[0]);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1i(loc(prog, "uPass"), 1);
+    setCommon();
+    draw();
+    begin(prog, half1.fbo[0], hw, hh);   // pass 2: vertical blur
+    bindTex(1, half0.tex[1]);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1i(loc(prog, "uPass"), 2);
+    setCommon();
+    draw();
+    const int dst = 1 - *cur;            // pass 3: composite over the kept layer
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, half1.tex[0]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1i(loc(prog, "uPass"), 3);
+    setCommon();
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Lens Distortion+ (Alight, v180): per iteration, the chromabbr pass fills the
+// xdist buffer (the top glow level's slot), then the main pass mixes over the
+// iteration's input; the whole chain repeats `iter` times, output feeding back.
+bool Renderer::fxLensdAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t abbr = effProg(EF_CHROMABBR_AM), prog = effProg(EF_LENSD_AM);
+    if (!abbr || !prog) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& xdist = lv_[kFxGlowLevels - 1];
+    const int iters = std::min(3, std::max(1, (int)std::lround(op.q[2])));
+    for (int it = 0; it < iters; ++it) {
+        begin(abbr, xdist.fbo[0], W, H);
+        bindTex(0, fxTex_[*cur]);
+        glUniform1i(loc(abbr, "uTex"), 0);
+        glUniform1f(loc(abbr, "uAspect"), (float)W / (float)std::max(1, H));
+        glUniform1fv(loc(abbr, "uP"), 7, op.p);
+        glUniform1fv(loc(abbr, "uQ"), 7, op.q);
+        draw();
+        const int dst = 1 - *cur;
+        begin(prog, fxFbo_[dst], W, H);
+        bindTex(0, fxTex_[*cur]);
+        bindTex(1, xdist.tex[0]);
+        glUniform1i(loc(prog, "uTex"), 0);
+        glUniform1i(loc(prog, "uBuf"), 1);
+        glUniform1f(loc(prog, "uPicW"), (float)W);
+        glUniform1fv(loc(prog, "uP"), 7, op.p);
+        glUniform1fv(loc(prog, "uQ"), 7, op.q);
+        draw();
+        *cur = dst;
+    }
     return true;
 }
 

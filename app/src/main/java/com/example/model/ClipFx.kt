@@ -580,6 +580,139 @@ object ClipFxLibrary {
     // [11] hardness. Keyframed distortion / strength ride AmFxEval tails
     // from index 14.
     const val OPTIC_COMP_AM = "optic_comp_am"
+    // NEGATIVE_AM (native 185): Alight's negative (the Ultra original) —
+    // invert, luma, fixed-offset unsharp, brightness / contrast, black / white
+    // point remap, hash grain. [0] contrast, [1] brightness, [2] blackPoint,
+    // [3] whitePoint, [4] sharpness, [5] grainAmount, [6] frameBlend (the
+    // def's, never read by its shader — stored, inert).
+    const val NEGATIVE_AM = "negative_am"
+    // TRITONE_AM (native 186): Alight's tritone (the Ultra original — the
+    // TrueMotion vs.tritone is a DIFFERENT effect and is not this port) — a
+    // shadow / midtone / highlight colour ramp over luma, mixed back by
+    // blend. [0] highlights packed, [1] its alpha, [2] midtones packed,
+    // [3] its alpha, [4] shadows packed, [5] its alpha, [6] blend (the
+    // colour alphas are carried, never read by the def).
+    const val TRITONE_AM = "tritone_am"
+    // UNMULT_AM (native 187 + EXT 188): Alight's unmult (the Ultra original) —
+    // a matte from max(rgb) with threshold / softness / gamma shaping, a
+    // max-value feather, a choke / spread cleanup, and an optional
+    // luma-preserving unmultiply; the def writes straight rgb with the matte
+    // alpha. [0] blackLevel (0..255), [1] softness, [2] featherPx,
+    // [3] cleanupPx, [4] edgeGamma, [5] preserveLuma, [6] previewMatte.
+    // EXT [7] quality (pass count; inert in this port).
+    const val UNMULT_AM = "unmult_am"
+    // DENOISE_AM (native 189): Alight's denoise (the Ultra original) — the
+    // Sir Bird spiral sampler at a hard-coded 512 x 512 virtual canvas,
+    // centre-direction / saturation weighted. [0] SAMPLES, [1]
+    // PIXEL_MULTIPLIER, [2] alpha, [3] strength (declared by the def, never
+    // read by its shader — stored, inert).
+    const val DENOISE_AM = "denoise_am"
+    // MINIMAX_AM (native 190): Alight's minimaxblur (the Ultra original) —
+    // one separable min / max pass per axis, per channel or picked by one
+    // channel. [0] operation (0 min / 1 max), [1] radius, [2] channel
+    // (4 = per-channel), [3] direction (0 both / 1 vertical / 2 horizontal),
+    // [4] keepEdge.
+    const val MINIMAX_AM = "minimax_am"
+    // RGBGLITCH_AM (native 191): Alight's rgbglitch (the Ultra original) —
+    // horizontal slice displacement driven by a floor(progressa * 36) clock
+    // and a hash; every slice may replace one channel from an offset sample.
+    // [0] progressa, [1] progressb, [2] progressc, [3] progressd.
+    const val RGBGLITCH_AM = "rgbglitch_am"
+    // FISHEYE_AM (native 192): Alight's fisheye_antifisheye (the Ultra
+    // original) — the tan / atan radial remap with its aspect modes.
+    // [0] power, [1] centerX, [2] centerY, [3] aspectMode, [4] alpha.
+    // Keyframed power / centerX ride AmFxEval tails from index 7.
+    const val FISHEYE_AM = "fisheye_am"
+    // VORTEX_BLUR_AM (native 193): Alight's chromaticvortexblur (the AM stock
+    // def) — per channel, a swirl blur whose angle grows toward the centre,
+    // sampled along the radius; centre-point components are the def defaults
+    // (0, 0) = neutral. [0] strength, [1] radius, [2] colorAberration,
+    // [3] centerChannel, [4] mode, [5] centerPoint packed. Keyframed strength
+    // rides AmFxEval tails from index 7.
+    const val VORTEX_BLUR_AM = "vortex_blur_am"
+    // REFRACTION_AM (native 194 + EXT 195 + EXT2 196): Alight's
+    // refractionwarp (the Ultra original, pass 1 only — pass 0 is a dead
+    // copy) — a recursive cosine heightfield whose gradient refracts the
+    // layer, with the reflection highlight. [0] autop, [1] PROGRESS,
+    // [2] SPEEED, [3] scale, [4] position packed, [5] intensity, [6]
+    // frequency. EXT [7] emboss, [8] steps, [9] angle, [10] delta, [11] gain,
+    // [12] reflectionCutOff, [13] reflectionIntensity. EXT2 [14] speed,
+    // [15] speed x, [16] speed y, [17] alpha. Keyframed intensity rides
+    // AmFxEval tails from index 21.
+    const val REFRACTION_AM = "refraction_am"
+    // TWITCH_AM (native 197): Alight's smartMotionBlurShake (the Ultra
+    // "Twitch") — a motion-blur average along a per-interval hash jitter
+    // vector. [0] amplitude, [1] shakeInterval, [2] samples, [3] angle.
+    // Keyframed amplitude rides AmFxEval tails from index 7.
+    const val TWITCH_AM = "twitch_am"
+    // TURBULENT2_AM (native 198 + EXT 199): Alight's turbulentdisplace2 (the
+    // TrueMotion afterz-112 SkSL def) — the octave turbulence pair displaced
+    // by direction mode (X / Y / XY / radial / rotate / spiral).
+    // [0] intensity, [1] evolution, [2] direction, [3] scale, [4] stretch,
+    // [5] seed, [6] singleAxis. EXT [7] screenSpace, [8] octaves, [9] offs,
+    // [10] position packed, [11] parallax packed. Keyframed intensity rides
+    // AmFxEval tails from index 14.
+    const val TURBULENT_DISPLACE2_AM = "turbulent_displace2_am"
+    // SHAPEFIELD_AM (native 200 + EXT 201 + EXT2 202): Alight's shapefield
+    // (the TrueMotion afterz-147 SkSL def) — parallax layers of the layer's
+    // own content tiled on a hashed grid with per-cell size / angle / colour
+    // rules. [0] position x, [1] position y, [2] position z, [3] density,
+    // [4] evolution, [5] seed, [6] scale. EXT [7] shapeSize, [8] shapeAngle,
+    // [9] sizeVariance, [10] angleVariance, [11] layerCount, [12] fade,
+    // [13] alpha. EXT2 [14] slack, [15] blendMode, [16] coloring, [17]
+    // color1 packed, [18] color2 packed, [19] color3 packed, [20] flags
+    // (lockLuminance 1 + lockSaturation 2 + interpHue 4). Keyframed evolution
+    // / shapeSize ride AmFxEval tails from index 21.
+    const val SHAPEFIELD_AM = "shapefield_am"
+    // HALFTONE_DOTS_AM (native 203 + EXT 204): Alight's halftone_dots (the
+    // Ultra original; DISTINCT from the native halftonedots 71) — a sine
+    // product dot screen over centre luma (or its 3x3 smoothed variant).
+    // [0] dotsMode, [1] dotsFrequency, [2] dotsAngle, [3] dotsRelWidth,
+    // [4] dotsSharpness, [5] dotsLighten, [6] smoothSource. EXT [7] color1
+    // packed, [8] color0 packed, [9] shiftX, [10] shiftY, [11] alpha.
+    const val HALFTONE_DOTS_AM = "halftone_dots_am"
+    // CC_GLASS_AM (native 205 + EXT 206 + EXT2 207): Alight's cc_glass (the
+    // Ultra "Glass Surface") — a bump normal from the layer's own content
+    // lighting a displaced sample, distant or point light, Blinn specular.
+    // [0] property, [1] softness, [2] height, [3] displacement, [4]
+    // lightType, [5] lightIntensity, [6] lightColor packed. EXT [7]
+    // lightHeight, [8] lightPosition x, [9] lightPosition y, [10]
+    // lightDirection, [11] ambient, [12] diffuse, [13] specular. EXT2 [14]
+    // roughness, [15] metal.
+    const val CC_GLASS_AM = "cc_glass_am"
+    // BOKEH_AM (native 208): Alight's cinematic_bokeh (the Ultra "Bokeh
+    // Blur", id com.creative.cinematic_bokeh) — a golden-angle disc average
+    // weighted by highlight energy, with the polygonal shape term.
+    // [0] blurShape, [1] blurWidth, [2] blurHeight, [3] blurRadius,
+    // [4] highlightThreshold, [5] highlightGain, [6] quality. Keyframed
+    // blurRadius / blurWidth / blurHeight ride AmFxEval tails from index 7.
+    const val BOKEH_AM = "bokeh_am"
+    // LENSBLUR_OBS_AM (native 209): Alight's lensblurobs (the Ultra "Bokeh
+    // Lens Blur") — a golden-angle bokeh with a ^4 energy weight and the
+    // three blend modes. [0] ITERATIONS, [1] progressa, [2] RADIUS,
+    // [3] bright, [4] alpha, [5] blendMode. Keyframed progressa rides
+    // AmFxEval tails from index 7.
+    const val LENSBLUR_OBS_AM = "lensblur_obs_am"
+    // SOLID_WIPE_AM (native 210 + EXT 211): Alight's solid_color_wipe (the
+    // Ultra original) — a rotated band between start and end fills the layer
+    // with a solid colour (normal / multiply / screen). [0] fillColor
+    // packed, [1] fillColor alpha (carried, never read), [2] alpha,
+    // [3] blendMode, [4] start, [5] end, [6] angle. EXT [7] feather.
+    const val SOLID_WIPE_AM = "solid_wipe_am"
+    // SOFTBLOOM_AM (native 212): Alight's softblooom (the TrueMotion legacy
+    // amz_417 def) — a threshold extract at half res blurred with the def's
+    // own incremental-gaussian kernel, composited base * alpha + bloom *
+    // intensity * galpha. [0] strength, [1] intensity, [2] threshold,
+    // [3] glowStretch x, [4] glowStretch y, [5] galpha, [6] alpha.
+    const val SOFTBLOOM_AM = "softbloom_am"
+    // LENSD_AM (native 213 + EXT 214): Alight's lensd (the Ultra "Lens
+    // Distortion+") — pass 0 delegates to chromabbr (amp / new forwarded,
+    // rgbsplit / alphaa at defaults), the main pass averages channel-spread
+    // scaled samples of it; the whole chain repeats `iter` times.
+    // [0] offs, [1] amp, [2] strength, [3] blurMax, [4] aberrationMax,
+    // [5] numIters, [6] bright. EXT [7] alpha, [8] new, [9] iter.
+    // Keyframed amp rides AmFxEval tails from index 14.
+    const val LENSD_AM = "lensd_am"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
@@ -1634,6 +1767,219 @@ object ClipFxLibrary {
                 FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f)
             )
         ),
+        // ---- v180: the second-wave Alight ports (Queue 15j) ----
+        FxDef(
+            NEGATIVE_AM, 185, "Negative (Alight)", "Color", "Inverted luma negative with grain (Alight Motion's Negative)",
+            listOf(
+                FxParamDef("Contrast", 0.5f, 4f, 1.4f, "", step = 0.1f),
+                FxParamDef("Brightness", -1f, 1f, 0f, "", step = 0.05f),
+                FxParamDef("Black point", 0f, 0.5f, 0.08f, "", step = 0.01f),
+                FxParamDef("White point", 0.5f, 1f, 0.92f, "", step = 0.01f),
+                FxParamDef("Sharpness", 0f, 2f, 0.6f, "", step = 0.1f),
+                FxParamDef("Grain", 0f, 0.2f, 0.03f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            TRITONE_AM, 186, "Tritone (Alight)", "Color", "Shadow / midtone / highlight colour ramp over luma (Alight Motion's Tritone)",
+            listOf(
+                FxParamDef("Highlights", 0f, 16777215f, 16777215f, "", step = 1f),
+                FxParamDef("Highlights alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Midtones", 0f, 16777215f, 0x71533B.toFloat(), "", step = 1f),
+                FxParamDef("Midtones alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Shadows", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Shadows alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Blend", 0f, 1f, 0f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            UNMULT_AM, 187, "Unmult (Alight)", "Keying", "Matte from brightness with feather and cleanup (Alight Motion's Unmult)",
+            listOf(
+                FxParamDef("Black level", 0f, 255f, 0f, "", step = 1f),
+                FxParamDef("Softness", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Feather", 0f, 10f, 10f, " px", step = 0.5f),
+                FxParamDef("Cleanup", -10f, 10f, 0f, " px", step = 0.5f),
+                FxParamDef("Edge gamma", 0.5f, 3f, 1f, "", step = 0.05f),
+                FxParamDef("Preserve luma", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Preview matte", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            DENOISE_AM, 189, "Denoise (Alight)", "Blur", "Spiral-sampler denoise (Alight Motion's Denoise)",
+            listOf(
+                FxParamDef("Samples", 10f, 100f, 60f, "", step = 1f),
+                FxParamDef("Pixel multiplier", 0.1f, 3f, 1.5f, "", step = 0.1f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Strength", 0f, 1f, 0f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            MINIMAX_AM, 190, "Minimax (Alight)", "Blur", "Separable min / max filter (Alight Motion's Minimax)",
+            listOf(
+                FxParamDef("Operation", 0f, 1f, 1f, "", step = 1f),
+                FxParamDef("Radius", 0f, 50f, 5f, " px", step = 1f),
+                FxParamDef("Channel", 0f, 4f, 4f, "", step = 1f),
+                FxParamDef("Direction", 0f, 2f, 0f, "", step = 1f),
+                FxParamDef("Keep edge", 0f, 1f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            RGBGLITCH_AM, 191, "RGB Glitch (Alight)", "Distort", "Slice-shift glitch with channel swaps (Alight Motion's RGB Glitch)",
+            listOf(
+                FxParamDef("Progress A", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("Progress B", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Progress C", 0f, 1f, 0.2f, "", step = 0.01f),
+                FxParamDef("Progress D", 0f, 1f, 0.1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            FISHEYE_AM, 192, "Fisheye / Anti-Fisheye (Alight)", "Lens", "Tan / atan radial fisheye warp (Alight Motion's Fisheye)",
+            listOf(
+                FxParamDef("Power", -2f, 2f, 0f, "", step = 0.01f),
+                FxParamDef("Centre X", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Centre Y", 0f, 1f, 0.5f, "", step = 0.01f),
+                FxParamDef("Aspect mode", 0f, 2f, 1f, "", step = 1f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            VORTEX_BLUR_AM, 193, "Chromatic Vortex Blur (Alight)", "Blur", "Per-channel swirl blur toward the centre (Alight Motion's Chromatic Vortex Blur)",
+            listOf(
+                FxParamDef("Strength", -0.5f, 0.5f, 0.1f, "", step = 0.01f),
+                FxParamDef("Radius", 0f, 0.8f, 0.3f, "", step = 0.01f),
+                FxParamDef("Color aberration", -1f, 1f, 0.15f, "", step = 0.01f),
+                FxParamDef("Centre channel", 0f, 2f, 1f, "", step = 1f),
+                FxParamDef("Mode", 0f, 3f, 2f, "", step = 1f),
+                FxParamDef("Centre point", 0f, 16777215f, 8390656f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            REFRACTION_AM, 194, "Refraction Warp (Alight)", "Distort", "Cosine heightfield refraction with reflections (Alight Motion's Refraction Warp)",
+            listOf(
+                FxParamDef("Auto progress", 0f, 1f, 1f, "", step = 1f),
+                FxParamDef("Progress", 0f, 10f, 1f, "", step = 0.1f),
+                FxParamDef("Speed", 0f, 5f, 1f, "", step = 0.1f),
+                FxParamDef("Scale", 0.1f, 5f, 1f, "", step = 0.1f),
+                FxParamDef("Position", 0f, 16777215f, 8390656f, "", step = 1f),
+                FxParamDef("Intensity", 0f, 10f, 2.4f, "", step = 0.1f),
+                FxParamDef("Frequency", 0f, 20f, 6f, "", step = 0.5f)
+            )
+        ),
+        FxDef(
+            TWITCH_AM, 197, "Twitch (Alight)", "Blur", "Jittered motion-blur shake (Alight Motion's Twitch)",
+            listOf(
+                FxParamDef("Amplitude", 0f, 0.5f, 0.115f, "", step = 0.005f),
+                FxParamDef("Shake interval", 0.01f, 1f, 0.03f, " s", step = 0.01f),
+                FxParamDef("Samples", 4f, 32f, 16f, "", step = 1f),
+                FxParamDef("Angle", -180f, 180f, 0f, "°", step = 1f)
+            )
+        ),
+        FxDef(
+            TURBULENT_DISPLACE2_AM, 198, "Turbulent Displace 2 (Alight)", "Distort", "Octave turbulence displacement in six direction modes (Alight Motion's Turbulent Displace 2)",
+            listOf(
+                FxParamDef("Intensity", 0f, 2.5f, 0.25f, "", step = 0.05f),
+                FxParamDef("Evolution", 0f, 100f, 0f, "", step = 0.5f),
+                FxParamDef("Direction", 0f, 5f, 4f, "", step = 1f),
+                FxParamDef("Scale", 0.1f, 10f, 1f, "", step = 0.1f),
+                FxParamDef("Stretch", -5f, 5f, 0f, "", step = 0.1f),
+                FxParamDef("Seed", 0f, 10f, 0f, "", step = 0.5f),
+                FxParamDef("Single axis", 0f, 1f, 1f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            SHAPEFIELD_AM, 200, "Shape Field (Alight)", "Stylize", "Parallax grid of the layer's own tiles (Alight Motion's Shape Field)",
+            listOf(
+                FxParamDef("Position X", -1000f, 1000f, 0f, "", step = 10f),
+                FxParamDef("Position Y", -1000f, 1000f, 0f, "", step = 10f),
+                FxParamDef("Position Z", 0f, 100f, 0f, "", step = 1f),
+                FxParamDef("Density", 0f, 1f, 0.3f, "", step = 0.01f),
+                FxParamDef("Evolution", 0f, 100f, 0f, "", step = 0.5f),
+                FxParamDef("Seed", 0f, 100f, 0f, "", step = 1f),
+                FxParamDef("Scale", 0.1f, 10f, 1f, "", step = 0.1f)
+            )
+        ),
+        FxDef(
+            HALFTONE_DOTS_AM, 203, "Halftone Dots 2 (Alight)", "Stylize", "Sine-product dot screen over luma (Alight Motion's Halftone Dots)",
+            listOf(
+                FxParamDef("Dots mode", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Frequency", 1f, 100f, 45f, "", step = 1f),
+                FxParamDef("Angle", 0f, 360f, 33f, "°", step = 1f),
+                FxParamDef("Relative width", 0.1f, 3f, 1f, "", step = 0.1f),
+                FxParamDef("Sharpness", 0.1f, 10f, 4f, "", step = 0.1f),
+                FxParamDef("Lighten", -5f, 5f, 0f, "", step = 0.1f),
+                FxParamDef("Smooth source", 0f, 2f, 0f, "", step = 0.1f)
+            )
+        ),
+        FxDef(
+            CC_GLASS_AM, 205, "Glass Surface (Alight)", "Distort", "Bump-lit glass from the layer's own content (Alight Motion's Glass Surface)",
+            listOf(
+                FxParamDef("Property", 0f, 4f, 0f, "", step = 1f),
+                FxParamDef("Softness", 1f, 100f, 20f, "", step = 1f),
+                FxParamDef("Height", 0f, 100f, 25f, "", step = 1f),
+                FxParamDef("Displacement", 0f, 100f, 0f, "", step = 1f),
+                FxParamDef("Light type", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Light intensity", 0f, 200f, 100f, "", step = 1f),
+                FxParamDef("Light color", 0f, 16777215f, 16777215f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            BOKEH_AM, 208, "Bokeh Blur (Alight)", "Blur", "Highlight-weighted golden-angle bokeh (Alight Motion's Bokeh Blur)",
+            listOf(
+                FxParamDef("Blur shape", 0f, 3f, 0f, "", step = 1f),
+                FxParamDef("Blur width", 0f, 3f, 1f, "", step = 0.1f),
+                FxParamDef("Blur height", 0f, 3f, 1f, "", step = 0.1f),
+                FxParamDef("Blur radius", 0f, 0.2f, 0.02f, "", step = 0.005f),
+                FxParamDef("Highlight threshold", 0f, 1f, 0.5f, "", step = 0.05f),
+                FxParamDef("Highlight gain", 0f, 10f, 4f, "", step = 0.5f),
+                FxParamDef("Quality", 8f, 128f, 48f, "", step = 8f)
+            )
+        ),
+        FxDef(
+            LENSBLUR_OBS_AM, 209, "Bokeh Lens Blur (Alight)", "Blur", "Golden-angle lens bokeh with blend modes (Alight Motion's Bokeh Lens Blur)",
+            listOf(
+                FxParamDef("Iterations", 10f, 200f, 100f, "", step = 10f),
+                FxParamDef("Progress", 0f, 2f, 0f, "", step = 0.05f),
+                FxParamDef("Radius", 0f, 3f, 1f, "", step = 0.1f),
+                FxParamDef("Brightness", 0f, 3f, 1f, "", step = 0.1f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Blend mode", 0f, 2f, 0f, "", step = 1f)
+            )
+        ),
+        FxDef(
+            SOLID_WIPE_AM, 210, "Solid Color Wipe (Alight)", "Color", "Rotated solid-colour band wipe (Alight Motion's Solid Color Wipe)",
+            listOf(
+                FxParamDef("Fill color", 0f, 16777215f, 0f, "", step = 1f),
+                FxParamDef("Fill alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Blend mode", 0f, 2f, 0f, "", step = 1f),
+                FxParamDef("Start", 0f, 1f, 0f, "", step = 0.01f),
+                FxParamDef("End", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Angle", -360f, 360f, 0f, "°", step = 1f)
+            )
+        ),
+        FxDef(
+            SOFTBLOOM_AM, 212, "Softbloom (Alight)", "Light", "Threshold bloom with the def's own gaussian kernel (Alight Motion's Softbloom)",
+            listOf(
+                FxParamDef("Strength", 0f, 10f, 1f, "", step = 0.1f),
+                FxParamDef("Intensity", 0f, 5f, 1.5f, "", step = 0.1f),
+                FxParamDef("Threshold", 0f, 1f, 0.15f, "", step = 0.01f),
+                FxParamDef("Stretch X", 0f, 3f, 1f, "", step = 0.1f),
+                FxParamDef("Stretch Y", 0f, 3f, 1f, "", step = 0.1f),
+                FxParamDef("Glow alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
+            LENSD_AM, 213, "Lens Distortion+ (Alight)", "Lens", "Chromatic barrel warp with channel-spread blur (Alight Motion's Lens Distortion+)",
+            listOf(
+                FxParamDef("Offset mode", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Amount", -2f, 2f, -0.15f, "", step = 0.01f),
+                FxParamDef("Strength", 0f, 300f, 100f, "", step = 1f),
+                FxParamDef("Blur max", 0f, 1f, 0.2f, "", step = 0.01f),
+                FxParamDef("Aberration max", 0f, 3f, 1.2f, "", step = 0.1f),
+                FxParamDef("Iterations", 2f, 100f, 50f, "", step = 1f),
+                FxParamDef("Brightness", 0f, 3f, 1f, "", step = 0.1f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -2170,6 +2516,24 @@ object ClipFxLibrary {
         // Optic Compensation's EXT defaults are the def's own: position (0, 0),
         // stretch (1, 1), hardness 1.
         OPTIC_COMP_AM -> listOf(0f, 0f, 1f, 1f, 1f, 0f, 0f)
+        // The second-wave ports' EXT / EXT2 defaults are Alight's own def defaults.
+        UNMULT_AM -> listOf(1f, 0f, 0f, 0f, 0f, 0f, 0f)
+        REFRACTION_AM -> listOf(
+            0.5f, 8f, 7f, 60f, 700f, 0.012f, 200f,
+            0.2f, 0.3f, 0.3f, 1f, 0f, 0f, 0f
+        )
+        TURBULENT_DISPLACE2_AM -> listOf(0f, 6f, 0f, packPoint(0f, 0f), packPoint(0f, 0f), 0f, 0f)
+        SHAPEFIELD_AM -> listOf(
+            0.5f, 0f, 0.5f, 0f, 15f, 1f, 1f,
+            1f, 0f, 0f, 0xFF55AA.toFloat(), 0x55AAFF.toFloat(), 0xFFAA55.toFloat(), 1f
+        )
+        HALFTONE_DOTS_AM -> listOf(0xFFFFFF.toFloat(), 0f, 0f, 0f, 1f, 0f, 0f)
+        CC_GLASS_AM -> listOf(
+            50f, 0.5f, 0.5f, 0f, 40f, 50f, 50f,
+            0.05f, 0f, 0f, 0f, 0f, 0f, 0f
+        )
+        SOLID_WIPE_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
+        LENSD_AM -> listOf(1f, 1f, 1f, 0f, 0f, 0f, 0f)
         else -> emptyList()
     }
 
@@ -2208,6 +2572,14 @@ object ClipFxLibrary {
         COLORGRAD3_AM -> 173
         DEEP_GLOW_AM -> 176
         OPTIC_COMP_AM -> 184
+        UNMULT_AM -> 188
+        REFRACTION_AM -> 195
+        TURBULENT_DISPLACE2_AM -> 199
+        SHAPEFIELD_AM -> 201
+        HALFTONE_DOTS_AM -> 204
+        CC_GLASS_AM -> 206
+        SOLID_WIPE_AM -> 211
+        LENSD_AM -> 214
         else -> null
     }
 
@@ -2223,6 +2595,9 @@ object ClipFxLibrary {
         LIGHTSWEEP_AM -> 171
         COLORGRAD3_AM -> 174
         DEEP_GLOW_AM -> 177
+        REFRACTION_AM -> 196
+        SHAPEFIELD_AM -> 202
+        CC_GLASS_AM -> 207
         else -> null
     }
 

@@ -1721,9 +1721,11 @@ $layers
         )
         val c = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
         val box = 1080f * 130f / 360f
-        // size 100x50 renders 200x100 (half extent), then scaleassist x2 on both axes: 400x200.
+        // size 100x50 renders 200x100 (half extent). scaleassist axis 3 (X,-Y) at scale 2,
+        // damp 1: X doubles (400) but Y takes 1 - (2 - 1) * 1 = 0 — the def's squash law
+        // (the pre-v180 uniform composition wrongly doubled both axes).
         assertEquals(400f / box, c.shapeScaleX, 0.001f)
-        assertEquals(200f / box, c.shapeScaleY, 0.001f)
+        assertEquals(0f, c.shapeScaleY, 0.001f)
         assertEquals(400f / box * 100f, c.scalePercent, 0.01f)
     }
 

@@ -27,6 +27,9 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                           : t == FX_LIGHTSWEEP_AM_EXT2 ? FX_LIGHTSWEEP_AM_EXT
                           : t == FX_COLORGRAD3_AM_EXT2 ? FX_COLORGRAD3_AM_EXT
                           : t == FX_DEEP_GLOW_AM_EXT2 ? FX_DEEP_GLOW_AM_EXT
+                          : t == FX_REFRACTION_AM_EXT2 ? FX_REFRACTION_AM_EXT
+                          : t == FX_SHAPEFIELD_AM_EXT2 ? FX_SHAPEFIELD_AM_EXT
+                          : t == FX_CC_GLASS_AM_EXT2 ? FX_CC_GLASS_AM_EXT
                                                          : FX_NONE;
         if (ext2Ext != FX_NONE) {
             if (extFoldedOp >= 0 && extFoldedType == ext2Ext) {
@@ -73,6 +76,14 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_COLORGRAD3_AM_EXT ? FX_COLORGRAD3_AM
                            : t == FX_DEEP_GLOW_AM_EXT ? FX_DEEP_GLOW_AM
                            : t == FX_OPTIC_COMP_AM_EXT ? FX_OPTIC_COMP_AM
+                           : t == FX_UNMULT_AM_EXT ? FX_UNMULT_AM
+                           : t == FX_REFRACTION_AM_EXT ? FX_REFRACTION_AM
+                           : t == FX_TURBULENT2_AM_EXT ? FX_TURBULENT2_AM
+                           : t == FX_SHAPEFIELD_AM_EXT ? FX_SHAPEFIELD_AM
+                           : t == FX_HALFTONE_DOTS_AM_EXT ? FX_HALFTONE_DOTS_AM
+                           : t == FX_CC_GLASS_AM_EXT ? FX_CC_GLASS_AM
+                           : t == FX_SOLID_WIPE_AM_EXT ? FX_SOLID_WIPE_AM
+                           : t == FX_LENSD_AM_EXT ? FX_LENSD_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -116,6 +127,13 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_PARTX_AM && t != FX_EDGELINE_AM && t != FX_LIGHTSWEEP_AM &&
             t != FX_COLORGRAD3_AM && t != FX_DEEP_GLOW_AM && t != FX_SPILL_CLEANUP_AM &&
             t != FX_OPTIC_COMP_AM &&
+            t != FX_NEGATIVE_AM && t != FX_TRITONE_AM && t != FX_UNMULT_AM &&
+            t != FX_DENOISE_AM && t != FX_MINIMAX_AM && t != FX_RGBGLITCH_AM &&
+            t != FX_FISHEYE_AM && t != FX_VORTEX_BLUR_AM && t != FX_REFRACTION_AM &&
+            t != FX_TWITCH_AM && t != FX_TURBULENT2_AM && t != FX_SHAPEFIELD_AM &&
+            t != FX_HALFTONE_DOTS_AM && t != FX_CC_GLASS_AM && t != FX_BOKEH_AM &&
+            t != FX_LENSBLUR_OBS_AM && t != FX_SOLID_WIPE_AM && t != FX_SOFTBLOOM_AM &&
+            t != FX_LENSD_AM &&
             t != FX_MB4_POS && t != FX_MB4_SCALE && t != FX_MB4_ANGLE) {
             owner = -1;
             extFoldedOp = -1;
@@ -377,6 +395,22 @@ FxShaderRef fxShaderOf(int type) {
         case FX_HALFTONE_LINES_AM: r = {FXG_WARP, 27}; break;
         case FX_TURBULENCE2_AM: r = {FXG_STYLE, 19}; break;
         case FX_CHECKER2_AM: r = {FXG_STYLE, 20}; break;
+        // v180 (build 143): Queue 15(j) shaded half (the dedicated passes stay FXG_NONE).
+        case FX_NEGATIVE_AM: r = {FXG_COLOR, 27}; break;
+        case FX_TRITONE_AM: r = {FXG_COLOR, 28}; break;
+        case FX_DENOISE_AM: r = {FXG_BLUR2, 13}; break;
+        case FX_BOKEH_AM: r = {FXG_BLUR2, 14}; break;
+        case FX_LENSBLUR_OBS_AM: r = {FXG_BLUR2, 15}; break;
+        case FX_VORTEX_BLUR_AM: r = {FXG_BLUR2, 16}; break;
+        case FX_TWITCH_AM: r = {FXG_BLUR2, 17}; break;
+        case FX_RGBGLITCH_AM: r = {FXG_WARP, 28}; break;
+        case FX_FISHEYE_AM: r = {FXG_WARP, 29}; break;
+        case FX_REFRACTION_AM: r = {FXG_WARP, 30}; break;
+        case FX_TURBULENT2_AM: r = {FXG_WARP, 31}; break;
+        case FX_CC_GLASS_AM: r = {FXG_WARP, 32}; break;
+        case FX_SOLID_WIPE_AM: r = {FXG_WARP, 33}; break;
+        case FX_SHAPEFIELD_AM: r = {FXG_STYLE, 21}; break;
+        case FX_HALFTONE_DOTS_AM: r = {FXG_STYLE, 22}; break;
         default: break;
     }
     return r;
@@ -544,6 +578,26 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_SPILL_CLEANUP_AM: return false;   // the spill composite reshapes alpha even at strength 0
         // v179 tier:
         case FX_OPTIC_COMP_AM: return false;   // the def's factor alpha is tex.a + 1 / (2 x iterations), never the plain layer
+        // v180 tier (Queue 15(j)):
+        case FX_NEGATIVE_AM: return false;   // always inverts the luma
+        case FX_TRITONE_AM: return false;   // the ramp replaces the colour even at blend 0
+        case FX_UNMULT_AM: return false;   // the matte rewrite always bites
+        case FX_DENOISE_AM: return false;   // the tail multiplies by tex.a even at alpha 0
+        case FX_MINIMAX_AM: return p[1] < 1.f;   // int(radius) 0: both passes read the centre tap only
+        case FX_RGBGLITCH_AM: return p[1] <= 0.0001f;   // progressb 0 is the def's own early-out
+        case FX_FISHEYE_AM: return false;   // power 0 still re-multiplies rgb by src.a in the def's tail
+        case FX_VORTEX_BLUR_AM: return false;   // strength 0 still averages the radial line of taps
+        case FX_REFRACTION_AM: return false;   // the -180 degree / scale frame applies even at intensity 0
+        case FX_TWITCH_AM: return false;   // the def forces alpha 1 even at amplitude 0
+        case FX_TURBULENT2_AM: return std::fabs(p[0]) < 0.000001f;   // intensity 0: p collapses to 0 in every direction mode
+        case FX_SHAPEFIELD_AM: return false;   // the field replaces the picture
+        case FX_HALFTONE_DOTS_AM: return false;   // the dot screen always paints
+        case FX_CC_GLASS_AM: return false;   // the lighting re-grades even at displacement 0
+        case FX_BOKEH_AM: return false;   // alpha is forced to 1 even at radius 0
+        case FX_LENSBLUR_OBS_AM: return false;   // the bright / blend composite always applies
+        case FX_SOLID_WIPE_AM: return p[2] <= 0.0001f;   // alpha 0: the mix keeps the pixel
+        case FX_SOFTBLOOM_AM: return p[0] <= 0.0001f;   // the def's own gate (strength > 0.0001)
+        case FX_LENSD_AM: return false;   // the chromabbr stage warps even before the spread average
         default: return false;
     }
 }
@@ -4014,5 +4068,1013 @@ void fxExtrudeAmPixel(const FxOp& op, bool flat, float ax, float ay, float picW,
     }
     for (int k = 0; k < 4; ++k) out[k] = res[k] * amask;
 }
+
+// ---- v180 (build 143): Queue 15(j) CPU twins (defs: hunt-staging/round5/SOURCES.md).
+namespace {
+
+void q15jUnpack(float packed, float rgb[3]) {
+    const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packed)));
+    rgb[0] = ((pk >> 16) & 0xFF) / 255.f;
+    rgb[1] = ((pk >> 8) & 0xFF) / 255.f;
+    rgb[2] = (pk & 0xFF) / 255.f;
+}
+
+void q15jSample(const FxExtrudeSampler& s, int tex, float u, float v, float out[4]) {
+    if (s.sample) {
+        s.sample(s.ctx, tex, u, v, out);
+    } else {
+        out[0] = out[1] = out[2] = out[3] = 0.f;
+    }
+}
+
+float q15jMax3(const float c[4]) { return std::max(c[0], std::max(c[1], c[2])); }
+
+float q15jSstep(float e0, float e1, float x) { return fxSstep(e0, e1, x); }
+
+}  // namespace
+
+void fxNegativeAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                       float grainSeed, float out[4]) {
+    // AM's negative (Ultra original; TrueMotion agrees): the inverted luma, unsharp
+    // against the 8 neighbours at the def's fixed 0.0015 offsets, then brightness /
+    // contrast / the black-white remap, then the time-hash grain. The def writes
+    // vec4(lum, src.a) as the pixel; the twin returns that literal write (the
+    // kFxColor mode derives its straight colour by dividing by the alpha, like
+    // modes 24-26 there).
+    const float W[3] = {0.299f, 0.587f, 0.114f};
+    float c[4];
+    q15jSample(s, 0, ax, ay, c);
+    auto invLum = [&](float u, float v) {
+        float t[4];
+        q15jSample(s, 0, u, v, t);
+        return (1.f - t[0]) * W[0] + (1.f - t[1]) * W[1] + (1.f - t[2]) * W[2];
+    };
+    float lum = invLum(ax, ay);
+    const float st = 0.0015f;
+    float blurred = 0.f;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) continue;
+            blurred += invLum(ax + dx * st, ay + dy * st);
+        }
+    blurred /= 8.f;
+    lum = lum + (lum - blurred) * op.p[4];
+    lum += op.p[1];
+    lum = (lum - 0.5f) * op.p[0] + 0.5f;
+    lum = (lum - op.p[2]) / std::max(op.p[3] - op.p[2], 0.001f);
+    lum = std::min(1.f, std::max(0.f, lum));
+    // grain: (hash(uv * screenSize + fract(time * 100)) - 0.5) * grainAmount; the
+    // twin takes the hash input's fractional seed raw (the GLSL uses gl_FragCoord
+    // + fract(uFrame * 100 / 24)) — hash per the def: fract(sin-free 0.1031 hash).
+    float hx = ax * 1000.f + grainSeed, hy = ay * 1000.f + grainSeed;
+    // hash(vec2 p): p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33);
+    // return fract((p3.x + p3.y) * p3.z)
+    float qx = hx * 0.1031f, qy = hy * 0.1031f, qz = hx * 0.1031f;
+    qx -= std::floor(qx); qy -= std::floor(qy); qz -= std::floor(qz);
+    const float dotp = qx * (qy + 33.33f) + qy * (qz + 33.33f) + qz * (qx + 33.33f);
+    qx += dotp; qy += dotp; qz += dotp;
+    float h = (qx + qy) * qz;
+    h -= std::floor(h);
+    lum = std::min(1.f, std::max(0.f, lum + (h - 0.5f) * op.p[5]));
+    // the def's literal write: vec4(lum, src.a) into the premultiplied buffer
+    out[0] = out[1] = out[2] = lum;
+    out[3] = c[3];
+}
+
+void fxTritoneAmPixel(const FxOp& op, const float tex[4], float out[4]) {
+    // AM's tritone (Ultra original): lum of the premultiplied sample drives the
+    // shadows -> midtones -> highlights ramp; the mix back uses the sample's rgb;
+    // the def writes vec4(finalCol, 1) * src.a and the twin returns that literal
+    // write (the kFxColor mode divides by the alpha, like modes 24-26 there).
+    float hi[3], mid[3], sh[3];
+    q15jUnpack(op.p[0], hi);
+    q15jUnpack(op.p[2], mid);
+    q15jUnpack(op.p[4], sh);
+    const float lum = tex[0] * 0.299f + tex[1] * 0.587f + tex[2] * 0.114f;
+    float tri[3];
+    for (int k = 0; k < 3; ++k)
+        tri[k] = lum < 0.5f ? sh[k] + (mid[k] - sh[k]) * (lum * 2.f)
+                            : mid[k] + (hi[k] - mid[k]) * ((lum - 0.5f) * 2.f);
+    // the def's literal write: vec4(mix(tritoneCol, src.rgb, blend), 1) * src.a
+    for (int k = 0; k < 3; ++k) out[k] = (tri[k] * (1.f - op.p[6]) + tex[k] * op.p[6]) * tex[3];
+    out[3] = tex[3];
+}
+
+void fxUnmultAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                     const FxExtrudeSampler& s, float out[4]) {
+    // AM's unmult (Ultra original), line by line. col = the premultiplied sample.
+    float col[4];
+    q15jSample(s, 0, ax, ay, col);
+    const float pxX = 1.f / std::max(picW, 1.f), pxY = 1.f / std::max(picH, 1.f);
+    const float thr = std::min(1.f, std::max(0.f, op.p[0] / 255.f));
+    const float soft = std::max(op.p[1], 0.f) * 0.25f;
+    auto baseAlpha = [&](const float c[4]) {
+        float t = (q15jMax3(c) - thr) / std::max((thr + soft) - thr, 1e-6f);
+        t = std::min(1.f, std::max(0.f, t));
+        t = t * t * (3.f - 2.f * t);
+        return std::pow(std::min(1.f, std::max(0.f, t)), op.p[4]);
+    };
+    const float aBase = baseAlpha(col);
+    // feather: 5-tap cross at featherPx, mix(base, avg, 0.75)
+    float aFeather = aBase;
+    if (op.p[2] > 0.0001f) {
+        const float f = std::min(10.f, std::max(0.f, op.p[2]));
+        float l[4], r[4], t[4], b[4];
+        q15jSample(s, 0, ax - pxX * f, ay, l);
+        q15jSample(s, 0, ax + pxX * f, ay, r);
+        q15jSample(s, 0, ax, ay - pxY * f, t);
+        q15jSample(s, 0, ax, ay + pxY * f, b);
+        const float avg = q15jMax3(col) * 0.4f +
+                          (q15jMax3(l) + q15jMax3(r) + q15jMax3(t) + q15jMax3(b)) * 0.15f;
+        aFeather = aBase + (avg - aBase) * 0.75f;
+    }
+    // cleanup: choke (min) / spread (max) of the cross at |cleanupPx|
+    float aClean;
+    const float cp = std::fabs(op.p[3]);
+    if (cp < 0.001f) {
+        aClean = q15jMax3(col);
+    } else {
+        float l[4], r[4], t[4], b[4];
+        q15jSample(s, 0, ax - pxX * cp, ay, l);
+        q15jSample(s, 0, ax + pxX * cp, ay, r);
+        q15jSample(s, 0, ax, ay - pxY * cp, t);
+        q15jSample(s, 0, ax, ay + pxY * cp, b);
+        const float spread = std::max(q15jMax3(col), std::max(std::max(q15jMax3(l), q15jMax3(r)), std::max(q15jMax3(t), q15jMax3(b))));
+        const float choke = std::min(q15jMax3(col), std::min(std::min(q15jMax3(l), q15jMax3(r)), std::min(q15jMax3(t), q15jMax3(b))));
+        aClean = op.p[3] >= 0.f ? spread : choke;
+    }
+    const float mAmt = std::min(1.f, std::max(0.f, cp / 10.f));
+    const float aMatte = aFeather + (aClean - aFeather) * mAmt;
+    const float aOut = aMatte * col[3];
+    if (op.p[6] > 0.5f) {
+        out[0] = out[1] = out[2] = aOut;
+        out[3] = aOut;
+        return;
+    }
+    for (int k = 0; k < 3; ++k) {
+        float v = op.p[5] > 0.5f ? col[k] / std::max(aMatte, 1e-4f) : col[k];
+        out[k] = std::min(1.f, std::max(0.f, v));
+    }
+    out[3] = aOut;
+}
+
+void fxDenoiseAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s, float out[4]) {
+    // AM's denoise (the Sir Bird spiral): resolution hard-coded (512, 512) by the def.
+    float tex[4];
+    q15jSample(s, 0, ax, ay, tex);
+    const float samples = op.p[0];
+    const float sampleRadius = std::sqrt(std::max(samples, 0.f));
+    const float sampleTrueRadius = 0.5f / std::max(sampleRadius * sampleRadius, 1e-6f);
+    const float spx = 1.f / 512.f, spy = 1.f / 512.f;
+    float centre[3] = {tex[0], tex[1], tex[2]};
+    float cl = std::sqrt(centre[0] * centre[0] + centre[1] * centre[1] + centre[2] * centre[2]);
+    float cn[3] = {0.f, 0.f, 0.f};
+    if (cl > 1e-6f) { cn[0] = centre[0] / cl; cn[1] = centre[1] / cl; cn[2] = centre[2] / cl; }
+    const float centreSat = cl;
+    const float GA = 2.3999632f;
+    const float cs = std::cos(GA), sn = std::sin(GA);
+    // sample2D = mat2(cos, sin, -sin, cos) (column-major): v' = (c*x - s*y, s*x + c*y)
+    float prx = 0.f, pry = 1.f;
+    float acc[3] = {0.f, 0.f, 0.f};
+    float influenceSum = 0.f;
+    for (int xi = 0; xi < 200; ++xi) {
+        const float x = (float)xi;
+        if (x > samples) break;
+        const float nx = cs * prx - sn * pry, ny = sn * prx + cs * pry;
+        prx = nx; pry = ny;
+        float ox = op.p[1] * prx * std::sqrt(x) * 0.5f;
+        float oy = op.p[1] * pry * std::sqrt(x) * 0.5f;
+        float infl = 1.f - sampleTrueRadius * std::pow(std::max(ox * ox + oy * oy, 0.f), 0.6f);
+        ox *= spx; oy *= spy;
+        float smp[4];
+        q15jSample(s, 0, ax + ox, ay + oy, smp);
+        infl = infl * infl * infl;
+        float sl = std::sqrt(smp[0] * smp[0] + smp[1] * smp[1] + smp[2] * smp[2]);
+        float dn = 0.f;
+        if (sl > 1e-6f) dn = cn[0] * smp[0] / sl + cn[1] * smp[1] / sl + cn[2] * smp[2] / sl;
+        infl *= std::pow(std::max(0.5f + 0.5f * dn, 0.f), 20.f) *
+                std::pow(std::max(1.f - std::fabs(sl - centreSat), 0.f), 8.f);
+        influenceSum += infl;
+        for (int k = 0; k < 3; ++k) acc[k] += smp[k] * infl;
+    }
+    float col[3];
+    for (int k = 0; k < 3; ++k) col[k] = influenceSum != 0.f ? acc[k] / influenceSum : 0.f;
+    const float alpha = op.p[2];
+    for (int k = 0; k < 3; ++k) out[k] = (tex[k] + (col[k] - tex[k]) * alpha) * tex[3];
+    out[3] = (tex[3] + (1.f - tex[3]) * alpha) * tex[3];
+}
+
+void fxMinimaxAmPixel(const FxOp& op, int pass, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]) {
+    // AM's minimaxblur: one separable pass. In pass 1 the input is the hblur buffer
+    // (tex 0 here) and tex 1 is the original (keepEdge). direction: pass 0 is the
+    // horizontal (passthrough when direction == 2); pass 1 the vertical (a plain
+    // copy of hblur when direction == 1).
+    const int operation = (int)std::lround(op.p[0]);
+    const int channel = (int)std::lround(op.p[2]);
+    const int direction = (int)std::lround(op.p[3]);
+    if (pass == 0 && direction == 2) { q15jSample(s, 0, ax, ay, out); return; }
+    if (pass == 1 && direction == 1) { q15jSample(s, 0, ax, ay, out); return; }
+    const int r = (int)op.p[1];  // int(radius): truncation, like the def
+    const float tx = 1.f / std::max(picW, 1.f), ty = 1.f / std::max(picH, 1.f);
+    float result[4];
+    q15jSample(s, 0, ax, ay, result);
+    for (int i = -50; i <= 50; ++i) {
+        if (i < -r || i > r) continue;
+        const float u = pass == 0 ? ax + i * tx : ax;
+        const float v = pass == 0 ? ay : ay + i * ty;
+        float smp[4];
+        q15jSample(s, 0, u, v, smp);
+        if (channel == 4) {
+            for (int k = 0; k < 4; ++k)
+                result[k] = operation == 1 ? std::max(result[k], smp[k]) : std::min(result[k], smp[k]);
+        } else {
+            const float rv = result[channel], sv = smp[channel];
+            if ((operation == 1 && sv > rv) || (operation == 0 && sv < rv))
+                for (int k = 0; k < 4; ++k) result[k] = smp[k];
+        }
+    }
+    if (pass == 1 && op.p[4] > 0.5f) {
+        float orig[4];
+        q15jSample(s, 1, ax, ay, orig);
+        const float ef = std::min(1.f, std::max(0.f, op.p[1] * tx * 10.f));
+        for (int k = 0; k < 4; ++k) result[k] = orig[k] + (result[k] - orig[k]) * ef;
+    }
+    for (int k = 0; k < 4; ++k) out[k] = result[k];
+}
+
+void fxRgbGlitchAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s, float out[4]) {
+    // AM's rgbglitch (Glitch RGB): slices + one channel, clocked by progressa.
+    float tex[4];
+    q15jSample(s, 0, ax, ay, tex);
+    if (op.p[1] <= 0.f) { for (int k = 0; k < 4; ++k) out[k] = tex[k]; return; }
+    const float time = std::floor(op.p[0] * 0.6f * 60.f);
+    auto rnd = [](float x, float y) {
+        float v = std::sin(x * 12.9898f + y * 4.1414f) * 43758.5453f;
+        return v - std::floor(v);
+    };
+    float outCol[3] = {tex[0], tex[1], tex[2]};
+    const float maxOffset = op.p[1] / 2.f;
+    for (int i = 0; i < 1000; ++i) {
+        if ((float)i >= 10.f * op.p[1]) break;
+        const float sliceY = rnd(time, 2345.f + (float)i);
+        const float sliceH = rnd(time, 9035.f + (float)i) * op.p[3];
+        const float hOffset = -maxOffset + rnd(time, 9625.f + (float)i) * (maxOffset - (-maxOffset));
+        float top = sliceY + sliceH;
+        top -= std::floor(top);
+        const float inside = (ay >= sliceY ? 1.f : 0.f) - (ay >= top ? 1.f : 0.f);
+        if (inside == 1.f) {
+            float smp[4];
+            q15jSample(s, 0, ax + hOffset, ay, smp);
+            outCol[0] = smp[0]; outCol[1] = smp[1]; outCol[2] = smp[2];
+        }
+    }
+    const float maxColOffset = op.p[2] / 6.f;
+    const float r0 = rnd(time, 9545.f);
+    const float cox = -maxColOffset + rnd(time, 9545.f) * (2.f * maxColOffset);
+    const float coy = -maxColOffset + rnd(time, 7205.f) * (2.f * maxColOffset);
+    float cs_[4];
+    q15jSample(s, 0, ax + cox, ay + coy, cs_);
+    if (r0 < 0.33f) outCol[0] = cs_[0];
+    else if (r0 < 0.66f) outCol[1] = cs_[1];
+    else outCol[2] = cs_[2];
+    for (int k = 0; k < 3; ++k) out[k] = outCol[k] * tex[3];
+    out[3] = tex[3];
+}
+
+void fxFisheyeAmPixel(const FxOp& op, float ax, float ay, float aspect,
+                      const FxExtrudeSampler& s, float out[4]) {
+    // AM's fisheye_antifisheye (Ultra original), in layer space (prop = aspect).
+    const float prop = aspect;
+    const bool am = op.p[3] != 0.f;
+    const float mx = op.p[1], my = am ? op.p[2] / prop : op.p[2];
+    const float wx = ax, wy = am ? ay / prop : ay;
+    const float dx = wx - mx, dy = wy - my;
+    const float r = std::sqrt(dx * dx + dy * dy);
+    const float k = op.p[0] * 3.14159265f;
+    float bind = 1.f;
+    if (k > 0.f) bind = std::sqrt(mx * mx + my * my);
+    else if (k < 0.f) bind = prop < 1.f ? mx : my;
+    float ux, uy;
+    if (k > 0.f) {
+        const float f = r > 1e-9f ? std::tan(r * k) * bind / std::tan(bind * k) / r : 1.f;
+        ux = mx + dx * f; uy = my + dy * f;
+    } else if (k < 0.f) {
+        const float kk = -k * 10.f;
+        const float f = r > 1e-9f ? std::atan(r * kk) * bind / std::atan(kk * bind) / r : 1.f;
+        ux = mx + dx * f; uy = my + dy * f;
+    } else { ux = wx; uy = wy; }
+    if (am) uy *= prop;
+    ux = std::min(1.f, std::max(0.f, ux));
+    uy = std::min(1.f, std::max(0.f, uy));
+    float src[4];
+    q15jSample(s, 0, ux, uy, src);
+    // the def's literal write: vec4(src.rgb, 1.0) * (src.a * alpha)
+    const float a = src[3] * op.p[4];
+    out[0] = src[0] * a;
+    out[1] = src[1] * a;
+    out[2] = src[2] * a;
+    out[3] = a;
+}
+
+// ---- v180 twins, second half (written in the fourth 15(j) attempt; the defs are
+// the staged Ultra originals in hunt-staging/round5 + the TrueMotion SkSL in
+// defs-batch8, read in full for this link).
+
+void fxVortexBlurAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         const FxExtrudeSampler& s, float out[4]) {
+    // AM's chromaticvortexblur (stock def via Ultra), verbatim. (ax, ay) is the
+    // def's acScreenNorm; acLayerCenter is the picture centre (full-frame layers,
+    // the corpus case); CENTER = centerPoint * (-1, -1) in px, the y of diff1
+    // flipped by the screen height as the def does.
+    const float radius = op.p[1];
+    const float texelX = 1.f / std::max(picW, 1.f);
+    const int pk = (int)std::lround(op.p[5]);
+    const float diffX = (picW * 0.5f + (float)(pk / 4096 - 2048)) / std::max(picW, 1.f);
+    const float diffY = (picH - (picH * 0.5f + (float)(pk % 4096 - 2048))) / std::max(picH, 1.f);
+    float convX = 1.f, convY = 1.f;
+    if (picH > picW) convY = picH / std::max(picW, 1.f);
+    else convX = picW / std::max(picH, 1.f);
+    auto getBlurred = [&](float T, float col[4]) {
+        float uvx = (ax - diffX) * convX, uvy = (ay - diffY) * convY;
+        const float dist = std::sqrt(uvx * uvx + uvy * uvy);
+        if (!(dist < radius)) {
+            q15jSample(s, 0, uvx / convX + diffX, uvy / convY + diffY, col);
+            return;
+        }
+        const float localPower = (radius - dist) / radius;
+        const float aMap = T <= 0.5f ? T / 0.5f : (1.f - T) / 0.5f;
+        const float theta0 = localPower * localPower * aMap * 8.f * 3.14159f;
+        const float speed = std::fabs(dist * theta0 / texelX * 10.f);
+        const float nSamples = std::min(2000.01f, std::max(1.01f, speed));
+        const float vx = uvx / nSamples, vy = uvy / nSamples;
+        float cx = 0.f, cy = 0.f, count = 0.f;
+        float acc[4] = {0.f, 0.f, 0.f, 0.f};
+        const float d0 = std::max(radius - std::fabs(op.p[0]) * localPower, dist);
+        for (float d = d0; d <= radius; d += 1.f / nSamples) {
+            const float percent = (radius - d) / radius;
+            const float ccx = uvx - cx, ccy = uvy - cy;
+            cx += vx; cy += vy;
+            const float th = percent * percent * aMap * 8.f * 3.14159f;
+            const float S = std::sin(th), C = std::cos(th);
+            float smp[4];
+            q15jSample(s, 0, (ccx * C - ccy * S) / convX + diffX,
+                       (ccx * S + ccy * C) / convY + diffY, smp);
+            for (int k = 0; k < 4; ++k) acc[k] += smp[k];
+            count += 1.f;
+        }
+        for (int k = 0; k < 4; ++k) col[k] = acc[k] / count;
+    };
+    const int centerChannel = (int)std::lround(op.p[3]);
+    float off[3];
+    if (centerChannel == 0) { off[0] = 0.f; off[1] = -1.f; off[2] = 1.f; }
+    else if (centerChannel == 1) { off[0] = -1.f; off[1] = 0.f; off[2] = 1.f; }
+    else { off[0] = -1.f; off[1] = 1.f; off[2] = 0.f; }
+    float rb[4], gb[4], bb[4];
+    getBlurred((1.f + off[0] * op.p[2]) * op.p[0], rb);
+    getBlurred((1.f + off[1] * op.p[2]) * op.p[0], gb);
+    getBlurred((1.f + off[2] * op.p[2]) * op.p[0], bb);
+    const float oc[4] = {rb[0], gb[1], bb[2], (rb[3] + gb[3] + bb[3]) / 3.f};
+    const float midA = centerChannel == 0 ? rb[3] : centerChannel == 1 ? gb[3] : bb[3];
+    const int mode = (int)std::lround(op.p[4]);
+    if (mode == 0) {
+        for (int k = 0; k < 4; ++k) out[k] = oc[k] * midA;
+    } else if (mode == 1) {
+        const float m[4] = {oc[0] / 3.f, oc[1] / 3.f, oc[2] / 3.f, (oc[0] + oc[1] + oc[2]) / 3.f};
+        const float midRgb[3] = {centerChannel == 0 ? rb[0] : centerChannel == 1 ? gb[0] : bb[0],
+                                 centerChannel == 0 ? rb[1] : centerChannel == 1 ? gb[1] : bb[1],
+                                 centerChannel == 0 ? rb[2] : centerChannel == 1 ? gb[2] : bb[2]};
+        const float l = midRgb[0] * 0.2126f + midRgb[1] * 0.7152f + midRgb[2] * 0.0722f;
+        for (int k = 0; k < 4; ++k) out[k] = l + m[k] * (1.f - l);
+    } else if (mode == 2) {
+        out[0] = oc[0]; out[1] = oc[1]; out[2] = oc[2]; out[3] = midA;
+    } else {
+        for (int k = 0; k < 4; ++k) out[k] = oc[k] * oc[3];
+    }
+}
+
+void fxRefractionAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         float timeSec, const FxExtrudeSampler& s, float out[4]) {
+    // AM's refractionwarp (Ultra original), pass 1 only — pass 0 is a dead copy
+    // of the input in the def. iResolution is the picture size in this pipeline.
+    float tex[4];
+    q15jSample(s, 0, ax, ay, tex);
+    const float time = op.p[0] > 0.5f ? op.p[1] + timeSec * op.p[2] : op.p[1];
+    const int pk = (int)std::lround(op.p[4]);
+    const float posX = (float)(pk / 4096 - 2048), posY = (float)(pk % 4096 - 2048);
+    // umefx = norm / scale, rotated by rot2m(-pi) (== negated), then the position
+    // offset (-x, -y) / 500; p = (-umefx.x, umefx.y).
+    const float sc = op.p[3] != 0.f ? op.p[3] : 1.f;
+    const float px = -(-(ax / sc) - posX / 500.f);
+    const float py = -(ay / sc) - posY / 500.f;
+    auto colFn = [&](float cx0, float cy0) {
+        const float dTheta = 2.f * 3.14159265f / op.q[2];
+        float sum = 0.f;
+        const int steps = (int)op.q[1];
+        for (int i = 0; i < steps; ++i) {
+            const float theta = dTheta * (float)i;
+            const float ct = std::cos(theta), st = std::sin(theta);
+            const float adjx = cx0 + ct * time * op.r[0] + time * op.r[1];
+            const float adjy = cy0 - st * time * op.r[0] + time * op.r[2];
+            sum += std::cos((adjx * ct - adjy * st) * op.p[6]) * op.p[5];
+        }
+        return std::cos(sum);
+    };
+    const float cc1 = colFn(px, py);
+    const float dx = op.q[0] * (cc1 - colFn(px + picW / op.q[3], py)) / op.q[3];
+    const float dy = op.q[0] * (cc1 - colFn(px, py + picH / op.q[3])) / op.q[3];
+    float alphaa = 1.f + dx * dy * op.q[4];
+    const float ddx = dx - op.q[5], ddy = dy - op.q[5];
+    if (ddx > 0.f && ddy > 0.f) alphaa = std::pow(op.r[3], ddx * ddy * (op.q[6] * 1000.f));
+    float smp[4];
+    q15jSample(s, 0, px + dx * 2.f, -(py + dy * 2.f), smp);
+    for (int k = 0; k < 4; ++k) out[k] = tex[k] + (smp[k] * alphaa - tex[k]) * op.r[3];
+}
+
+void fxTwitchAmPixel(const FxOp& op, float ax, float ay, float timeSec,
+                     const FxExtrudeSampler& s, float out[4]) {
+    // AM's smartMotionBlurShake (Ultra "Twitch"): the stepwise shake average.
+    // rand(vec2(t, 0)) = fract(sin(t * 12.9898) * 43758.5453).
+    const float t = std::floor(timeSec / op.p[1]);
+    const float sv = std::sin(t * 12.9898f) * 43758.5453f;
+    const float jitter = ((sv - std::floor(sv)) - 0.5f) * 2.f;
+    const float rad = op.p[3] * 3.14159265f / 180.f;
+    const float shx = std::cos(rad) * jitter * op.p[0];
+    const float shy = std::sin(rad) * jitter * op.p[0];
+    const int n = (int)std::min(32.f, std::max(1.f, op.p[2]));
+    float acc[3] = {0.f, 0.f, 0.f};
+    for (int i = 0; i < n; ++i) {
+        // the def divides by (N - 1); the slider keeps N >= 4, the guard only
+        // covers a hand-set N of 1.
+        const float f = n > 1 ? (float)i / (float)(n - 1) : 0.f;
+        float smp[4];
+        q15jSample(s, 0, std::min(1.f, std::max(0.f, ax + shx * f)),
+                   std::min(1.f, std::max(0.f, ay + shy * f)), smp);
+        acc[0] += smp[0]; acc[1] += smp[1]; acc[2] += smp[2];
+    }
+    out[0] = acc[0] / n; out[1] = acc[1] / n; out[2] = acc[2] / n; out[3] = 1.f;
+}
+
+void fxTurbulent2AmUv(const FxOp& op, float ax, float ay, float aspect, float outUv[2]) {
+    // AM's turbulentdisplace2 (TrueMotion afterz-112), the displaced coordinate.
+    // screenSpace picks the screen frame in AM; this pipeline is layer-local, so
+    // both branches run the layer frame (every corpus instance has it off).
+    const int pkPos = (int)std::lround(op.q[3]);
+    const int pkPar = (int)std::lround(op.q[4]);
+    float stx = ax * aspect + (-(float)(pkPos / 4096 - 2048)) / 500.f;
+    float sty = ay + ((float)(pkPos % 4096 - 2048)) / 500.f;
+    const float parx = (-(float)(pkPar / 4096 - 2048)) / 100.f;
+    const float pary = ((float)(pkPar % 4096 - 2048)) / 100.f;
+    const float svx = op.p[4] < 0.f ? op.p[3] - op.p[4] : op.p[3];
+    const float svy = op.p[4] < 0.f ? op.p[3] : op.p[3] + op.p[4];
+    const int dir = (int)std::lround(op.p[2]);
+    float scx, scy;
+    if (op.p[6] > 0.5f) {
+        if (dir == 0) { scx = 0.f; scy = sty - 0.5f; }
+        else if (dir == 1) { scx = stx - 0.5f; scy = 0.f; }
+        else if (dir == 2 || dir == 4) { scx = stx - 0.5f; scy = sty - 0.5f; }
+        else if (dir == 5) {
+            const float ex = stx - 0.5f, ey = sty - 0.5f;
+            scx = 0.f; scy = std::sqrt(ex * ex + ey * ey);
+        } else {
+            scx = std::fabs(std::atan2(stx - 0.5f, sty - 0.5f) / 6.28318f) * 2.f; scy = 0.f;
+        }
+    } else { scx = stx - 0.5f; scy = sty - 0.5f; }
+    const int oct = (int)std::lround(op.q[1]);
+    auto field = [&](float fx0, float fy0, float evo) {
+        return fxTurbulence(fx0, fy0, oct, parx, pary, evo) + (op.q[2] - 0.25f);
+    };
+    float p = field((scx - 0.5f) * svx + 0.5f, (scy - 0.5f) * svy + 0.5f,
+                    op.p[1] + 7391.935f * op.p[5]) * (op.p[0] * 2.f);
+    float uvx = ax, uvy = ay;
+    auto radial = [&](float amt) {
+        const float nx = uvx - 0.5f, ny = uvy - 0.5f;
+        const float nl = std::sqrt(nx * nx + ny * ny);
+        // GLSL normalize(0) is undefined; the exact centre keeps the pixel (the
+        // def's own drivers do the same in practice).
+        if (nl > 1e-9f) { uvx += nx / nl * amt; uvy += ny / nl * amt; }
+    };
+    auto rotUv = [&](float a) {
+        const float cq = std::cos(a), sq = std::sin(a);
+        const float rx = uvx * cq - uvy * sq, ry = uvx * sq + uvy * cq;
+        uvx = rx; uvy = ry;
+    };
+    if (dir == 0) uvx += p;
+    else if (dir == 1) uvy += p;
+    else if (dir == 2) {
+        uvx += p;
+        uvy += field(scx * svx + 0.5f, scy * svy + 0.5f,
+                     op.p[1] + 3937.7249f * (op.p[5] + 6.3379f)) * (op.p[0] * 2.f);
+    } else if (dir == 4) {
+        const float q = field(scx * svx + 0.5f, scy * svy + 0.5f,
+                              op.p[1] + 3937.7249f * (op.p[5] + 6.3379f)) * (op.p[0] * 2.f);
+        radial(p);
+        rotUv(q);
+    } else if (dir == 5) {
+        rotUv(p);
+    } else {
+        radial(p);
+    }
+    outUv[0] = uvx; outUv[1] = uvy;
+}
+
+namespace {
+
+float q15jFract(float v) { return v - std::floor(v); }
+
+float q15jRand4(float x, float y, float z, float w) {
+    return q15jFract(std::sin(x * 12.9898f + y * 78.233f + z * 193.71f + w * 397.318f) *
+                     43758.5453123f);
+}
+
+float q15jRand3(float x, float y, float z) {
+    return q15jFract(std::sin(x * 12.9898f + y * 78.233f + z * 193.71f) * 43758.5453123f);
+}
+
+void q15jRgb2Hsv(const float c[3], float h[3]) {
+    // shapefield's rgb2hsv, step for step.
+    float p[4], q[4];
+    if (c[1] >= c[2]) { p[0] = c[1]; p[1] = c[2]; p[2] = 0.f; p[3] = -1.f / 3.f; }
+    else { p[0] = c[2]; p[1] = c[1]; p[2] = 2.f / 3.f; p[3] = -1.f; }
+    if (c[0] >= p[0]) { q[0] = c[0]; q[1] = p[1]; q[2] = p[2]; q[3] = p[0]; }
+    else { q[0] = p[0]; q[1] = p[1]; q[2] = p[3]; q[3] = c[0]; }
+    const float d = q[0] - std::min(q[3], q[1]);
+    const float e = 1.0e-10f;
+    h[0] = std::fabs(q[2] + (q[3] - q[1]) / (6.f * d + e));
+    h[1] = d / (q[0] + e);
+    h[2] = q[0];
+}
+
+void q15jHsv2Rgb(const float c[3], float o[3]) {
+    const float K[3] = {1.f, 2.f / 3.f, 1.f / 3.f};
+    for (int k = 0; k < 3; ++k) {
+        const float pk = std::fabs(q15jFract(c[0] + K[k]) * 6.f - 3.f);
+        const float cl = std::min(1.f, std::max(0.f, pk - 1.f));
+        o[k] = c[2] * (1.f + (cl - 1.f) * c[1]);
+    }
+}
+
+void q15jMixColors(const float a[4], const float b[4], float t, bool interpHue, float o[4]) {
+    if (interpHue) {
+        float ha[3], hb[3];
+        q15jRgb2Hsv(a, ha);
+        q15jRgb2Hsv(b, hb);
+        float hm[3] = {ha[0] + (hb[0] - ha[0]) * t, ha[1] + (hb[1] - ha[1]) * t,
+                       ha[2] + (hb[2] - ha[2]) * t};
+        q15jHsv2Rgb(hm, o);
+    } else {
+        for (int k = 0; k < 3; ++k) o[k] = a[k] + (b[k] - a[k]) * t;
+    }
+    o[3] = a[3] + (b[3] - a[3]) * t;
+}
+
+void q15jShapeColor(const FxOp& op, float idx, float idy, float idz, float layerDepth,
+                    float o[4]) {
+    float c1[4], c2[4], c3[4];
+    q15jUnpack(op.r[3], c1); q15jUnpack(op.r[4], c2); q15jUnpack(op.r[5], c3);
+    c1[3] = c2[3] = c3[3] = 1.f;
+    const bool interpHue = op.r[6] >= 4.f;
+    const int coloring = (int)std::lround(op.r[2]);
+    const float rr4 = q15jRand4(idx, idy, idz, 0.1974f);
+    switch (coloring) {
+        case 1: for (int k = 0; k < 4; ++k) o[k] = c1[k]; break;
+        case 2: for (int k = 0; k < 4; ++k) o[k] = c1[k] * rr4; break;
+        case 3: q15jMixColors(c1, c2, rr4, interpHue, o); break;
+        case 4: {
+            float t1[4];
+            const float rx = q15jRand4(idx, idy, idz, 5.124f);
+            const float ry = q15jRand4(idx, idy, idz, 3.0f);
+            q15jMixColors(c1, c2, rx, interpHue, t1);
+            q15jMixColors(t1, c3, ry, interpHue, o);
+            break;
+        }
+        case 5: for (int k = 0; k < 4; ++k) o[k] = c1[k] * layerDepth; break;
+        case 6: q15jMixColors(c1, c2, layerDepth, interpHue, o); break;
+        case 7:
+            if (layerDepth < 0.5f) q15jMixColors(c1, c2, layerDepth * 2.f, interpHue, o);
+            else q15jMixColors(c2, c3, (layerDepth - 0.5f) * 2.f, interpHue, o);
+            break;
+        case 8: {
+            float t1[4];
+            q15jMixColors(c1, c2, rr4, interpHue, t1);
+            q15jMixColors(c3, t1, layerDepth, interpHue, o);
+            break;
+        }
+        default: o[0] = o[1] = o[2] = o[3] = 0.f; break;
+    }
+}
+
+void q15jShapeGrid(const FxOp& op, float stx, float sty, float layerIdx, float layerDepth,
+                   float picW, float picH, const FxExtrudeSampler& s, float o[4]) {
+    stx *= 10.f; sty *= 10.f;
+    float uvx = q15jFract(stx), uvy = q15jFract(sty);
+    const float idx = std::floor(stx), idy = std::floor(sty);
+    float size = op.q[0];
+    if (op.q[2] >= 0.0001f)
+        size = std::min(size, size * (1.f + (q15jRand4(idx, idy, layerIdx, 0.351f) - 0.5f) * op.q[2]));
+    const float angle = op.q[3] < 0.0001f ? 0.f
+        : (q15jRand4(idx, idy, layerIdx, 0.2793f) - 0.5f) * op.q[3] * 12.56636f;
+    const float rr = q15jRand3(idx, idy, layerIdx);
+    size *= fxSstep(rr, rr + 0.008f, op.p[3]);
+    if (size < 0.00001f) { o[0] = o[1] = o[2] = o[3] = 0.f; return; }
+    uvx -= 0.5f; uvy -= 0.5f;
+    if (picW > picH) uvy *= picW / picH; else uvx *= picH / picW;
+    uvx /= size; uvy /= size;
+    const float maxDisplace = 1.f / size - 1.f;
+    float dispx, dispy;
+    if (std::fabs(op.p[4]) > 0.001f) {
+        const float fl = std::floor(op.p[4]), fr = q15jFract(op.p[4]);
+        const float ax0 = q15jRand4(idx + fl, idy + fl, layerIdx + fl, 5.124f);
+        const float ay0 = q15jRand4(idx + fl, idy + fl, layerIdx + fl, 3.0f);
+        const float ax1 = q15jRand4(idx + fl + 1.f, idy + fl + 1.f, layerIdx + fl + 1.f, 5.124f);
+        const float ay1 = q15jRand4(idx + fl + 1.f, idy + fl + 1.f, layerIdx + fl + 1.f, 3.0f);
+        dispx = ax0 + (ax1 - ax0) * fr;
+        dispy = ay0 + (ay1 - ay0) * fr;
+    } else {
+        dispx = q15jRand4(idx, idy, layerIdx, 5.124f);
+        dispy = q15jRand4(idx, idy, layerIdx, 3.0f);
+    }
+    const float amp = std::max(1.f, maxDisplace) * op.r[0];
+    uvx += std::min(maxDisplace, std::max(-maxDisplace, (dispx - 0.5f) * amp));
+    uvy += std::min(maxDisplace, std::max(-maxDisplace, (dispy - 0.5f) * amp));
+    const float ra = angle + op.q[1] * 0.0174532925f;
+    const float rc = std::cos(ra), rs = std::sin(ra);
+    const float rx2 = uvx * rc + uvy * rs, ry2 = -uvx * rs + uvy * rc;
+    uvx = rx2 + 0.5f; uvy = 1.f - (ry2 + 0.5f);
+    float tex[4];
+    q15jSample(s, 0, uvx, uvy, tex);
+    float blend[4];
+    q15jShapeColor(op, idx, idy, layerIdx, layerDepth, blend);
+    const bool lockLum = (int)std::lround(op.r[6]) & 1;
+    const bool lockSat = (int)std::lround(op.r[6]) & 2;
+    if (lockLum || lockSat) {
+        float th[3] = {0.f, 0.f, 0.f}, bh[3] = {0.f, 0.f, 0.f};
+        if (tex[3] > 0.f) { const float t3[3] = {tex[0] / tex[3], tex[1] / tex[3], tex[2] / tex[3]}; q15jRgb2Hsv(t3, th); }
+        if (blend[3] > 0.f) { const float b3[3] = {blend[0] / blend[3], blend[1] / blend[3], blend[2] / blend[3]}; q15jRgb2Hsv(b3, bh); }
+        if (lockLum) bh[2] = th[2];
+        if (lockSat) bh[1] = th[1];
+        const float hm[3] = {th[0] + (bh[0] - th[0]) * blend[3], th[1] + (bh[1] - th[1]) * blend[3],
+                             th[2] + (bh[2] - th[2]) * blend[3]};
+        float rgb[3];
+        q15jHsv2Rgb(hm, rgb);
+        for (int k = 0; k < 3; ++k) o[k] = rgb[k] * tex[3];
+        o[3] = tex[3];
+    } else {
+        for (int k = 0; k < 3; ++k) {
+            const float ts = tex[3] > 0.f ? tex[k] / tex[3] : 0.f;
+            const float bs = blend[3] > 0.f ? blend[k] / blend[3] : 0.f;
+            o[k] = (ts + (bs - ts) * blend[3]) * tex[3];
+        }
+        o[3] = tex[3];
+    }
+}
+
+}  // namespace
+
+void fxShapefieldAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         const FxExtrudeSampler& s, float out[4]) {
+    // AM's shapefield (TrueMotion afterz-147), verbatim: the parallax shape-cell
+    // stack, back layers first. l2s is the identity in this pipeline.
+    float stx = ax, sty = 1.f - ay;
+    stx -= 0.5f; sty -= 0.5f;
+    stx *= picW / std::max(picH, 1.f);
+    const float scale6 = op.p[6] * 6.f;
+    stx /= scale6; sty /= scale6;
+    const float parx = op.p[0] / 1000.f + 25.35f, pary = op.p[1] / 1000.f + 25.35f;
+    const float depth = op.p[2] / 100.f;
+    const float f = q15jFract(depth), base = std::floor(depth);
+    const float seed5 = op.p[5] / 5.f;
+    float res[4] = {0.f, 0.f, 0.f, 0.f};
+    const int blendMode = (int)std::lround(op.r[1]);
+    for (float i = op.q[4] - 1.f; i >= 0.f; i -= 1.f) {
+        const float k = ((1.f + i) - f) / 9.f;
+        float cell[4];
+        const float layerDepth = fxSstep(op.q[4], op.q[4] * (0.9999f - op.q[5]), (i + 1.f) - f);
+        q15jShapeGrid(op, stx * k + parx, sty * k + pary, base + i + seed5, layerDepth,
+                      picW, picH, s, cell);
+        for (int c = 0; c < 4; ++c) cell[c] *= op.q[6] * layerDepth;
+        if (blendMode == 1 || blendMode == 2) {
+            float fg[3], bg[3];
+            for (int c = 0; c < 3; ++c) {
+                fg[c] = cell[3] < 0.0001f ? (blendMode == 1 ? 0.f : 1.f) : cell[c] / cell[3];
+                bg[c] = res[3] < 0.0001f ? (blendMode == 1 ? 1.f : 0.f) : res[c] / res[3];
+            }
+            float nb[4];
+            for (int c = 0; c < 3; ++c)
+                nb[c] = blendMode == 1 ? fg[c] * bg[c] : 1.f - (1.f - fg[c]) * (1.f - bg[c]);
+            nb[3] = 1.f;
+            for (int c = 0; c < 4; ++c) res[c] = res[c] * (1.f - cell[3]) + nb[c] * cell[3];
+        } else {
+            for (int c = 0; c < 4; ++c) res[c] = res[c] * (1.f - cell[3]) + cell[c];
+        }
+    }
+    for (int k = 0; k < 4; ++k) out[k] = res[k];
+}
+
+void fxHalftoneDotsAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                           const FxExtrudeSampler& s, float out[4]) {
+    // AM's halftone_dots (Ultra original; NOT the native halftonedots): the
+    // sin-product dot screen in pixel space over the (optionally smoothed) luma.
+    float src[4];
+    q15jSample(s, 0, ax, ay, src);
+    auto luma = [](const float c[4]) { return c[0] * 0.2126f + c[1] * 0.7152f + c[2] * 0.0722f; };
+    float grey;
+    if (op.p[6] <= 0.f) {
+        grey = luma(src);
+    } else {
+        const float r = std::min(2.f, op.p[6]);
+        const float ox = r / std::max(picW, 1.f), oy = r / std::max(picH, 1.f);
+        float acc = 0.f, w = 0.f;
+        for (int j = -1; j <= 1; ++j)
+            for (int i = -1; i <= 1; ++i) {
+                float smp[4];
+                q15jSample(s, 0, ax + i * ox, ay + j * oy, smp);
+                const float ww = (i == 0 && j == 0) ? 2.f : 1.f;
+                acc += luma(smp) * ww;
+                w += ww;
+            }
+        grey = acc / std::max(w, 1.f);
+    }
+    const float uvSx = ax + op.q[2] / std::max(picW, 1.f);
+    const float uvSy = ay - op.q[3] / std::max(picH, 1.f);
+    float px = (uvSx - 0.5f) * picW, py = (uvSy - 0.5f) * picH;
+    const float ang = op.p[2] * 3.14159265f / 180.f;
+    const float ca = std::cos(ang), sa = std::sin(ang);
+    float qx = (ca * px + sa * py) * op.p[3], qy = (-sa * px + ca * py);
+    const float patScale = op.p[1] * 0.06f;
+    qx *= patScale; qy *= patScale;
+    const float pat = std::sin(qx) * std::sin(qy) * 4.f;
+    const float v = grey * 10.f - 5.f + pat + op.p[5];
+    const float sm = std::max(op.p[4], 0.0001f);
+    float m = fxSstep(-sm, sm, v);
+    if ((int)std::lround(op.p[0]) == 1) m = 1.f - m;
+    float c1[3], c0[3];
+    q15jUnpack(op.q[0], c1);
+    q15jUnpack(op.q[1], c0);
+    const float a = src[3] * op.q[4];
+    for (int k = 0; k < 3; ++k) out[k] = (c0[k] + (c1[k] - c0[k]) * m) * a;
+    out[3] = a;
+}
+
+void fxCcGlassAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                      float out[4]) {
+    // AM's cc_glass (Ultra "Glass Surface"): the bump gradient comes from the
+    // layer's own content (the def's bumpMap is the content texture).
+    const float soft = std::max(op.p[1], 1.f) * 0.001f;
+    const int prop = (int)std::lround(op.p[0]);
+    auto val = [&](const float c[4]) {
+        switch (prop) {
+            case 1: return c[0];
+            case 2: return c[1];
+            case 3: return c[2];
+            case 4: return c[3];
+            default: return c[0] * 0.299f + c[1] * 0.587f + c[2] * 0.114f;
+        }
+    };
+    float sl[4], sr[4], su[4], sd[4];
+    q15jSample(s, 0, ax - soft, ay, sl);
+    q15jSample(s, 0, ax + soft, ay, sr);
+    q15jSample(s, 0, ax, ay + soft, su);
+    q15jSample(s, 0, ax, ay - soft, sd);
+    float nx = val(sl) - val(sr), ny = val(sd) - val(su), nz = 1.f / (op.p[2] * 0.1f);
+    const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+    if (std::isfinite(nl) && nl > 0.f) { nx /= nl; ny /= nl; nz /= nl; }
+    else { nx = 0.f; ny = 0.f; nz = 1.f; }  // height 0: the def's normal degenerates to +z
+    float src[4];
+    q15jSample(s, 0, ax + nx * (op.p[3] * 0.01f), ay + ny * (op.p[3] * 0.01f), src);
+    float lx, ly, lz;
+    if ((int)std::lround(op.p[4]) == 0) {
+        const float rad = (op.q[3] - 90.f) * 3.14159265f / 180.f;
+        const float hrad = (op.q[0] * 0.9f) * 3.14159265f / 180.f;
+        lx = std::cos(rad) * std::cos(hrad);
+        ly = std::sin(rad) * std::cos(hrad);
+        lz = std::sin(hrad);
+    } else {
+        lx = op.q[1] - ax; ly = op.q[2] - ay; lz = op.q[0] * 0.01f;
+    }
+    const float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+    if (ll > 0.f) { lx /= ll; ly /= ll; lz /= ll; }
+    float hx = lx, hy = ly, hz = lz + 1.f;
+    const float hl = std::sqrt(hx * hx + hy * hy + hz * hz);
+    if (hl > 0.f) { hx /= hl; hy /= hl; hz /= hl; }
+    const float diff = std::max(nx * lx + ny * ly + nz * lz, 0.f);
+    const float spec = std::pow(std::max(nx * hx + ny * hy + nz * hz, 0.f),
+                                1.f / std::max(op.r[0], 0.001f));
+    float lc[3];
+    q15jUnpack(op.p[6], lc);
+    const float inten = op.p[5] * 0.01f;
+    for (int k = 0; k < 3; ++k) {
+        const float amb = src[k] * (op.q[4] * 0.01f);
+        const float dif = src[k] * diff * (op.q[5] * 0.01f) * lc[k] * inten;
+        const float specBase = lc[k] * spec * (op.q[6] * 0.01f) * inten;
+        const float specCol = specBase + (specBase * src[k] - specBase) * (op.r[1] * 0.01f);
+        out[k] = amb + dif + specCol;
+    }
+    out[3] = src[3];
+}
+
+void fxBokehAmPixel(const FxOp& op, float ax, float ay, float aspect,
+                    const FxExtrudeSampler& s, float out[4]) {
+    // AM's cinematic_bokeh (Ultra "Bokeh Blur"): the golden-spiral average with
+    // polygon radius modulation and highlight weighting; alpha is forced to 1.
+    const float iterations = op.p[6];
+    const float sides = op.p[0];
+    float acc[3] = {0.f, 0.f, 0.f};
+    float tot = 0.f;
+    for (int i = 0; i < 128; ++i) {
+        if ((float)i >= iterations) break;
+        const float fi = (float)i;
+        const float theta = fi * 2.39996323f;
+        float rad = std::sqrt(fi) / std::sqrt(std::max(iterations, 1e-6f));
+        if (sides > 2.5f) {
+            const float deg = 2.f * 3.14159265f / sides;
+            rad *= 1.f / std::cos(std::fmod(theta, deg) - deg * 0.5f);
+        }
+        float ox = std::cos(theta) * rad * op.p[3] * (op.p[1] / aspect);
+        float oy = std::sin(theta) * rad * op.p[3] * op.p[2];
+        float smp[4];
+        q15jSample(s, 0, ax + ox, ay + oy, smp);
+        const float lum = smp[0] * 0.299f + smp[1] * 0.587f + smp[2] * 0.114f;
+        const float wgt = std::pow(std::max(0.f, (lum - op.p[4]) / (1.f - std::min(0.99f, op.p[4]))),
+                                   op.p[5]) + 0.01f;
+        for (int k = 0; k < 3; ++k) acc[k] += smp[k] * wgt;
+        tot += wgt;
+    }
+    for (int k = 0; k < 3; ++k) out[k] = acc[k] / tot;
+    out[3] = 1.f;
+}
+
+void fxLensBlurObsAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                          float out[4]) {
+    // AM's lensblurobs (Ultra "Bokeh Lens Blur"): the pow-4 weighted spiral, then
+    // the def's three-way blend composite.
+    float tex[4];
+    q15jSample(s, 0, ax, ay, tex);
+    const float rad = 0.8f - 0.8f * ((op.p[1] + 0.15f) * 6.283f);
+    float r = op.p[2];
+    float vax = 0.f, vay = rad * 0.01f / std::sqrt(std::max(op.p[0], 1e-6f));
+    const float cs = std::cos(2.3999632f), sn = std::sin(2.3999632f);
+    float acc[3] = {0.f, 0.f, 0.f}, div[3] = {0.f, 0.f, 0.f};
+    for (float j = 0.f; j < op.p[0]; j += 1.f) {
+        r += 1.f / r;
+        const float tx2 = cs * vax - sn * vay, ty2 = sn * vax + cs * vay;
+        vax = tx2; vay = ty2;
+        float smp[4];
+        q15jSample(s, 0, ax + (r - 1.f) * vax, ay + (r - 1.f) * vay, smp);
+        for (int k = 0; k < 3; ++k) {
+            const float b = std::pow(smp[k], 4.f);
+            acc[k] += smp[k] * b;
+            div[k] += b;
+        }
+    }
+    float factor[4];
+    for (int k = 0; k < 3; ++k) factor[k] = acc[k] / div[k];
+    factor[3] = 1.f;
+    // factor = mix(texColorX = (0, 0, 0, tex.a), fragColor, alpha)
+    for (int k = 0; k < 3; ++k) factor[k] *= op.p[4];
+    factor[3] = tex[3] + (1.f - tex[3]) * op.p[4];
+    const int blendMode = (int)std::lround(op.p[5]);
+    if (blendMode == 1) {
+        for (int k = 0; k < 4; ++k) factor[k] *= op.p[3];
+        const float ca = 1.f - factor[3];
+        for (int k = 0; k < 3; ++k) out[k] = (tex[3] > 0.f ? tex[k] / tex[3] : 0.f) * (factor[k] + ca) * tex[3];
+        out[3] = tex[3];
+    } else if (blendMode == 2) {
+        for (int k = 0; k < 4; ++k) factor[k] *= op.p[3];
+        for (int k = 0; k < 3; ++k)
+            out[k] = (1.f - (1.f - (tex[3] > 0.f ? tex[k] / tex[3] : 0.f)) * (1.f - factor[k])) * tex[3];
+        out[3] = tex[3];
+    } else {
+        for (int k = 0; k < 4; ++k) out[k] = factor[k] * op.p[3] * tex[3];
+    }
+}
+
+void fxSolidWipeAmPixel(const FxOp& op, float ax, float ay, const float tex[4], float out[4]) {
+    // AM's solid_color_wipe (Ultra original): the wipe2 mask along the angle,
+    // the solidcolor blend switch inside it.
+    const float rad = op.p[6] * 0.0174533f;
+    const float vx = std::cos(rad), vy = -std::sin(rad);
+    const float p = (ax - 0.5f) * vx + (ay - 0.5f) * vy + 0.5f;
+    const float feather = op.q[0] / 100.f;
+    auto sstepRev = [](float e0, float e1, float x) {
+        if (e0 == e1) return x >= e0 ? 1.f : 0.f;
+        return fxSstep(e0, e1, x);
+    };
+    const float p0 = sstepRev(op.p[4] - feather, op.p[4], p);
+    const float p1 = 1.f - sstepRev(op.p[5], op.p[5] + feather, p);
+    const float mask = std::min(1.f, std::max(0.f, p0 * p1));
+    float fill[3];
+    q15jUnpack(op.p[0], fill);
+    float result[4];
+    const int blendMode = (int)std::lround(op.p[3]);
+    for (int k = 0; k < 3; ++k) {
+        const float straight = tex[3] > 0.f ? tex[k] / tex[3] : 0.f;
+        result[k] = (blendMode == 1 ? straight * fill[k]
+                     : blendMode == 2 ? 1.f - (1.f - straight) * (1.f - fill[k])
+                                      : fill[k]) * tex[3];
+    }
+    result[3] = tex[3];
+    const float mAmt = op.p[2] * mask;
+    for (int k = 0; k < 4; ++k) out[k] = tex[k] + (result[k] - tex[k]) * mAmt;
+}
+
+float fxSoftbloomAmKernel(float strength, float screenW, float screenH) {
+    // softblooom's numBlurPixelsPerSide: strength / 2 x 1.14 / 4 / 3 x the screen
+    // diagonal (the def's length(screenSize)).
+    return strength / 2.f * 1.14f / 4.f / 3.f *
+           std::sqrt(screenW * screenW + screenH * screenH);
+}
+
+void fxSoftbloomAmExtract(const float tex[4], float threshold, float out[4]) {
+    const float lum = tex[0] * 0.299f + tex[1] * 0.587f + tex[2] * 0.114f;
+    const float mask = fxSstep(threshold, threshold + 0.05f, lum);
+    out[0] = tex[0] * mask; out[1] = tex[1] * mask; out[2] = tex[2] * mask; out[3] = 1.f;
+}
+
+void fxSoftbloomAmComposite(const FxOp& op, const float base[4], const float bloom[4],
+                            float out[4]) {
+    // boostSaturation(bloom * intensity, 0) is the identity (mix factor 1), so the
+    // composite is base * alpha + bloom * intensity * galpha, alpha = base.a.
+    for (int k = 0; k < 3; ++k) out[k] = base[k] * op.p[6] + bloom[k] * op.p[1] * op.p[5];
+    out[3] = base[3];
+}
+
+void fxChromabbrAmPixel(const FxOp& op, float ax, float ay, float aspect,
+                        const FxExtrudeSampler& s, float out[4]) {
+    // AM's chromabbr as lensd's first pass: amp / new forwarded from the lensd op
+    // (slots p[1] / q[1]), rgbsplit 0 and alphaa 1 at their def defaults, so all
+    // three channels sample the same warped coordinate.
+    float tex[4];
+    q15jSample(s, 0, ax, ay, tex);
+    float kcube = op.p[1];
+    if (kcube < -1.f) kcube = -kcube * kcube;
+    float osx = 1.f, osy = 1.f;
+    if (aspect < 1.f) osx = aspect; else osy = 1.f / std::max(aspect, 1e-6f);
+    auto warp = [&](float kk, float uvx, float uvy, float* ox, float* oy) {
+        if (op.q[1] > 0.5f) {
+            const float sx = uvx * osx, sy = uvy * osy;
+            const float tx = sx - osx * 0.5f, ty = sy - osy * 0.5f;
+            const float r2 = tx * tx + ty * ty;
+            const float f = kcube == 0.f ? 1.f + r2 * kk
+                                         : 1.f + r2 * (kk + kcube * std::sqrt(r2));
+            *ox = (f * tx + osx * 0.5f) / osx;
+            *oy = (f * ty + osy * 0.5f) / osy;
+        } else {
+            const float tx = uvx - 0.5f, ty = uvy - 0.5f;
+            const float r2 = tx * tx + ty * ty;
+            const float f = kcube == 0.f ? 1.f + r2 * kk
+                                         : 1.f + r2 * (kk + kcube * std::sqrt(r2));
+            *ox = f * tx + 0.5f;
+            *oy = f * ty + 0.5f;
+        }
+    };
+    float ux, uy;
+    warp(0.f, ax, ay, &ux, &uy);
+    float smp[4];
+    q15jSample(s, 0, ux, uy, smp);
+    out[0] = smp[0] * tex[3];
+    out[1] = smp[1] * tex[3];
+    out[2] = smp[2] * tex[3];
+    out[3] = tex[3];
+}
+
+void fxLensdAmPixel(const FxOp& op, float ax, float ay, float picW,
+                    const FxExtrudeSampler& s, float out[4]) {
+    // AM's lensd main pass: the channel-spread average over scaled samples of
+    // xdist (tex 1). tex 0 is the layer picture (the mix base).
+    float tex[4];
+    q15jSample(s, 0, ax, ay, tex);
+    const float blur = -op.p[3] * (op.p[2] / std::max(picW, 1.f));
+    const float aberration = 1.f + op.p[4];
+    const int ni = (int)op.p[5];
+    const int cs = (int)(op.p[5] / aberration);
+    const float mid = (float)(cs + 1) / 2.f;
+    const float lo[3] = {(float)(ni - cs), (float)((ni - cs) / 2), 0.f};
+    const float hi[3] = {(float)ni, (float)((ni + cs) / 2), (float)cs};
+    const float bpi = blur / (float)(ni - 1);
+    float colour[3] = {0.f, 0.f, 0.f};
+    for (float i = 0.f; i < op.p[5]; i += 1.f) {
+        const float scale = 1.f + bpi * i;
+        float smp[4];
+        q15jSample(s, 1, 0.5f + (ax - 0.5f) * scale, 0.5f + (ay - 0.5f) * scale, smp);
+        for (int c = 0; c < 3; ++c) {
+            if (i >= lo[c] && i < hi[c]) {
+                const float kk = (i + 1.f) - lo[c];
+                colour[c] += smp[c] * (mid - std::fabs(mid - kk)) / mid;
+            }
+        }
+    }
+    const float denom = 0.5f * (float)(cs + 1);
+    // factor = newLayer(texColorX, fragColor) * bright; texColorX = (0, 0, 0, tex.a)
+    // and fragColor.a = 0, so newLayer = (fragColor.rgb, tex.a).
+    const float factor[4] = {colour[0] / denom * op.p[6], colour[1] / denom * op.p[6],
+                             colour[2] / denom * op.p[6], tex[3] * op.p[6]};
+    if (op.p[0] > 0.5f) {
+        for (int k = 0; k < 4; ++k) out[k] = factor[k];
+    } else {
+        for (int k = 0; k < 4; ++k) out[k] = (tex[k] + (factor[k] - tex[k]) * op.q[0]) * tex[3];
+    }
+}
+
 
 }  // namespace am

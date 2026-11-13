@@ -169,6 +169,26 @@ object AlightXmlImporter {
     // v177: the tier-5 batch (defs-batch8). 3colorgrad's id has no ".effects.".
     const val BBMAKER = "com.alightcreative.effects.bbmaker"
     const val OPTICCOMPESATION = "com.alightcreative.effects.opticcompesation"
+    // v180: the Queue-15j second-wave batch (defs-batch8 + round5 originals).
+    const val NEGATIVE = "com.alightcreative.effects.negative"
+    const val TRITONE = "com.alightcreative.effects.tritone"
+    const val UNMULT = "com.alightcreative.effects.unmult"
+    const val DENOISE = "com.alightcreative.effects.denoise"
+    const val MINIMAXBLUR = "com.alightcreative.effects.minimaxblur"
+    const val RGBGLITCH = "com.alightcreative.effects.rgbglitch"
+    const val FISHEYE = "com.alightcreative.effects.fisheye_antifisheye"
+    const val VORTEXBLUR = "com.alightcreative.effects.chromaticvortexblur"
+    const val REFRACTIONWARP = "com.alightcreative.effects.refractionwarp"
+    const val TWITCHFX = "com.alightcreative.effects.smartMotionBlurShake"
+    const val TURBULENT2 = "com.alightcreative.effects.turbulentdisplace2"
+    const val SHAPEFIELD = "com.alightcreative.effects.shapefield"
+    const val HALFTONEDOTS2 = "com.alightcreative.effects.halftone_dots"
+    const val CCGLASS = "com.alightcreative.effects.cc_glass"
+    const val BOKEHBLUR = "com.creative.cinematic_bokeh"
+    const val LENSBLUROBS = "com.alightcreative.effects.lensblurobs"
+    const val SOLIDWIPE = "com.alightcreative.effects.solid_color_wipe"
+    const val SOFTBLOOOM = "com.alightcreative.effects.softblooom"
+    const val LENSDIST = "com.alightcreative.effects.lensd"
     const val UNSHARPMASK = "com.alightcreative.effects.unsharpmask"
     const val NEWSHARPEN = "com.alightcreative.effects.newsharpen"
     const val GRADSHADOW = "com.alightcreative.effects.gradshadow"
@@ -2801,6 +2821,25 @@ object AlightXmlImporter {
                 SPILL_CLEANUP -> applySpillCleanupAm(fx, clip, ctx)
                 MOBLURPLUS -> applyMotionBlur(fx, clip, ctx)
                 OPTICCOMPESATION -> applyOpticCompAm(fx, clip, ctx)
+                NEGATIVE -> applyNegativeAm(fx, clip, ctx)
+                TRITONE -> applyTritoneAm(fx, clip, ctx)
+                UNMULT -> applyUnmultAm(fx, clip, ctx)
+                DENOISE -> applyDenoiseAm(fx, clip, ctx)
+                MINIMAXBLUR -> applyMinimaxAm(fx, clip, ctx)
+                RGBGLITCH -> applyRgbGlitchAm(fx, clip, ctx)
+                FISHEYE -> applyFisheyeAm(fx, clip, ctx)
+                VORTEXBLUR -> applyVortexBlurAm(fx, clip, ctx)
+                REFRACTIONWARP -> applyRefractionAm(fx, clip, ctx)
+                TWITCHFX -> applyTwitchAm(fx, clip, ctx)
+                TURBULENT2 -> applyTurbulent2Am(fx, clip, ctx)
+                SHAPEFIELD -> applyShapefieldAm(fx, clip, ctx)
+                HALFTONEDOTS2 -> applyHalftoneDotsAm(fx, clip, ctx)
+                CCGLASS -> applyCcGlassAm(fx, clip, ctx)
+                BOKEHBLUR -> applyBokehAm(fx, clip, ctx)
+                LENSBLUROBS -> applyLensBlurObsAm(fx, clip, ctx)
+                SOLIDWIPE -> applySolidWipeAm(fx, clip, ctx)
+                SOFTBLOOOM -> applySoftblooomAm(fx, clip, ctx)
+                LENSDIST -> applyLensdAm(fx, clip, ctx)
                 PULSEOPACITY2 -> applyPulseOpacity2(fx, clip, ctx, durMs)
                 SHAKE -> applyShake(fx, clip, ctx, durMs)
                 FLIP -> applyFlip(fx, clip, ctx, durMs)
@@ -3166,15 +3205,69 @@ object AlightXmlImporter {
      * Alight's own smoothing of the curve and is not reproduced.
      */
     private fun applyScaleAssist(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
-        val w = ctx.warnings
         val props = fxProps(fx)
-        val axis = props["axis"]?.scalarAt(0f)?.toInt() ?: 3
-        if (axis != 3) {
-            w += "Effect scaleassist: axis " + axis + " is not supported yet: skipped"
-            return clip0
-        }
+        val axis = props["axis"]?.scalarAt(0f)?.toInt() ?: 2
+        val damp = props["damp"]?.scalarAt(0f) ?: 1f
         val scaleT = props["scale"] ?: return clip0
-        return composeScaleMultiplier(clip0, scaleT, durMs)
+        return composeScaleAssist(clip0, scaleT, axis, damp, durMs)
+    }
+
+    /**
+     * scaleassist's per-axis composition (the def's legacyScript animate(), hunt round 5):
+     * with s = the `scale` track's value and d = `damp`, axis 0 (X) scales X by s only,
+     * axis 1 (Y) scales Y by s only, axis 2 (X,Y) scales X by s and Y by s * d, and axis 3
+     * (X,-Y) scales X by s and Y by 1 - (s - 1) * d — the squash the ST Intro presets use
+     * (peak s 1.175 at damp 1 = Y factor 0.825, NOT a uniform 1.175; the old uniform
+     * composition got exactly that wrong). The composition rides the layer's SCALE keys
+     * like [composeScaleMultiplier]: the key's `a` takes the X factor, its `b` (a shape's
+     * height) the Y factor. Corpus: ST Intro x4 axis 3 damp 1, omniframe-warps x5 axis 2
+     * damp 1 (uniform, as before).
+     */
+    private fun composeScaleAssist(
+        clip0: TimelineClip, scaleT: Track, axis: Int, damp: Float, durMs: Long
+    ): TimelineClip {
+        fun fxOf(s: Float): Float = if (axis == 1) 1f else s
+        fun fyOf(s: Float): Float = when (axis) {
+            0 -> 1f
+            1 -> s
+            2 -> s * damp
+            3 -> 1f - (s - 1f) * damp
+            else -> s
+        }
+        val baseKeys = clip0.keyframes[AnimProp.SCALE]
+        if (scaleT.keys.size >= 2) {
+            val times = ((baseKeys?.map { it.timeMs } ?: emptyList()) +
+                scaleT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } + listOf(0L, durMs))
+                .distinct().sorted()
+            val keys = times.map { t ->
+                val base = baseKeys?.valueAt(t)
+                val baseA = base?.first ?: clip0.scalePercent
+                val baseB = base?.second ?: if (clip0.type == LayerType.SHAPE) clip0.shapeScaleY * 100f else 0f
+                val s = scaleT.scalarAt(if (durMs > 0L) t.toFloat() / durMs else 0f)
+                Keyframe(t, baseA * fxOf(s), baseB * fyOf(s), Easing.LINEAR)
+            }.distinctBy { it.timeMs }
+            val firstA = keys.firstOrNull()?.a ?: clip0.scalePercent
+            var clip = clip0.copy(scalePercent = firstA, keyframes = clip0.keyframes + (AnimProp.SCALE to keys))
+            if (clip0.type == LayerType.SHAPE) {
+                clip = clip.copy(
+                    shapeScaleX = firstA / 100f,
+                    shapeScaleY = clip0.shapeScaleY * fyOf(scaleT.scalarAt(0f))
+                )
+            }
+            return clip
+        }
+        val s = scaleT.scalarAt(0f)
+        val fxF = fxOf(s)
+        val fyF = fyOf(s)
+        if (abs(fxF - 1f) <= 1e-4f && abs(fyF - 1f) <= 1e-4f) return clip0
+        var clip = clip0.copy(scalePercent = clip0.scalePercent * fxF)
+        if (clip0.type == LayerType.SHAPE) {
+            clip = clip.copy(shapeScaleX = clip0.shapeScaleX * fxF, shapeScaleY = clip0.shapeScaleY * fyF)
+        }
+        if (baseKeys != null) {
+            clip = clip.copy(keyframes = clip.keyframes + (AnimProp.SCALE to baseKeys.map { it.copy(a = it.a * fxF, b = it.b * fyF) }))
+        }
+        return clip
     }
 
     /**
@@ -4489,6 +4582,327 @@ object AlightXmlImporter {
             0f, 0f
         ) + tailsOf(trackTail(distT), trackTail(strT))
         return addFx(clip0, ctx, ClipFxLibrary.OPTIC_COMP_AM, values, short)
+    }
+
+    /** `negative` -> [ClipFxLibrary.NEGATIVE_AM]: every property is a plain scalar at the
+     * def's own defaults; nothing is keyframed in the corpus. */
+    private fun applyNegativeAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "negative"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val values = listOf(
+            fv("contrast", 1.4f), fv("brightness", 0f), fv("blackPoint", 0.08f), fv("whitePoint", 0.92f),
+            fv("sharpness", 0.6f), fv("grainAmount", 0.03f), fv("frameBlend", 0f)
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.NEGATIVE_AM, values, short)
+    }
+
+    /** `tritone` -> [ClipFxLibrary.TRITONE_AM] from the Ultra ORIGINAL def (the TrueMotion
+     * vs.tritone is a different effect): three colour ramps + blend, all constant; each
+     * colour's alpha rides the slot behind it (carried, never read). */
+    private fun applyTritoneAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "tritone"
+        val props = fxProps(fx)
+        val (hi, hiA) = props["highlights"]?.colorParts(w, short, "highlights") ?: (0xFFFFFF.toFloat() to 1f)
+        val (mid, midA) = props["midtones"]?.colorParts(w, short, "midtones") ?: (0x71533B.toFloat() to 1f)
+        val (sh, shA) = props["shadows"]?.colorParts(w, short, "shadows") ?: (0f to 1f)
+        val values = listOf(
+            hi, hiA, mid, midA, sh, shA,
+            props["blend"]?.firstValue(w, short, "blend") ?: 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.TRITONE_AM, values, short)
+    }
+
+    /** `unmult` -> [ClipFxLibrary.UNMULT_AM] (+ EXT quality, inert in the port). */
+    private fun applyUnmultAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "unmult"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val values = listOf(
+            fv("blackLevel", 0f), fv("softness", 1f), fv("featherPx", 10f), fv("cleanupPx", 0f),
+            fv("edgeGamma", 1f), boolOf(props["preserveLuma"], false), boolOf(props["previewMatte"], false),
+            fv("quality", 1f), 0f, 0f, 0f, 0f, 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.UNMULT_AM, values, short)
+    }
+
+    /** `denoise` -> [ClipFxLibrary.DENOISE_AM]; its property names are the def's uppercase
+     * ones, and `strength` is stored though the def's shader never reads it. */
+    private fun applyDenoiseAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "denoise"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val values = listOf(
+            fv("SAMPLES", 60f), fv("PIXEL_MULTIPLIER", 1.5f), fv("alpha", 1f), fv("strength", 0f),
+            0f, 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.DENOISE_AM, values, short)
+    }
+
+    /** `minimaxblur` -> [ClipFxLibrary.MINIMAX_AM]; a keyframed `radius` rides the tail. */
+    private fun applyMinimaxAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "minimaxblur"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val radiusT = props["radius"]
+        val values = listOf(
+            fv("operation", 1f), radiusT?.scalarAtEased(0f) ?: 5f, fv("channel", 4f), fv("direction", 0f),
+            boolOf(props["keepEdge"], false), 0f, 0f
+        ) + tailsOf(trackTail(radiusT))
+        return addFx(clip0, ctx, ClipFxLibrary.MINIMAX_AM, values, short)
+    }
+
+    /** `rgbglitch` -> [ClipFxLibrary.RGBGLITCH_AM]; a keyframed `progressa` rides the tail. */
+    private fun applyRgbGlitchAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "rgbglitch"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val paT = props["progressa"]
+        val values = listOf(
+            paT?.scalarAtEased(0f) ?: 0f, fv("progressb", 0.5f), fv("progressc", 0.2f), fv("progressd", 0.1f),
+            0f, 0f, 0f
+        ) + tailsOf(trackTail(paT))
+        return addFx(clip0, ctx, ClipFxLibrary.RGBGLITCH_AM, values, short)
+    }
+
+    /** `fisheye_antifisheye` -> [ClipFxLibrary.FISHEYE_AM]; keyframed `power` / `centerX`
+     * ride the tails (centerY is never keyframed in the corpus and stays first-value). */
+    private fun applyFisheyeAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "fisheye"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val powerT = props["power"]
+        val cxT = props["centerX"]
+        val values = listOf(
+            powerT?.scalarAtEased(0f) ?: 0f, cxT?.scalarAtEased(0f) ?: 0.5f, fv("centerY", 0.5f),
+            fv("aspectMode", 1f), fv("alpha", 1f), 0f, 0f
+        ) + tailsOf(trackTail(powerT), trackTail(cxT))
+        return addFx(clip0, ctx, ClipFxLibrary.FISHEYE_AM, values, short)
+    }
+
+    /** `chromaticvortexblur` -> [ClipFxLibrary.VORTEX_BLUR_AM]; `centerPoint` is never
+     * serialised (the def default (0, 0) is neutral); a keyframed `strength` rides the tail. */
+    private fun applyVortexBlurAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "vortexblur"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val strT = props["strength"]
+        val values = listOf(
+            strT?.scalarAtEased(0f) ?: 0.1f, fv("radius", 0.3f), fv("colorAberration", 0.15f),
+            fv("centerChannel", 1f), fv("mode", 2f), ClipFxLibrary.packPoint(0f, 0f), 0f
+        ) + tailsOf(trackTail(strT))
+        return addFx(clip0, ctx, ClipFxLibrary.VORTEX_BLUR_AM, values, short)
+    }
+
+    /** `refractionwarp` -> [ClipFxLibrary.REFRACTION_AM] (pass 1 of the def only); a
+     * keyframed `intensity` rides the tail past the EXT2 group. */
+    private fun applyRefractionAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "refraction"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (posX, posY) = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val intT = props["intensity"]
+        val values = listOf(
+            boolOf(props["autop"], true), fv("PROGRESS", 1f), fv("SPEEED", 1f), fv("scale", 1f),
+            ClipFxLibrary.packPoint(posX, posY), intT?.scalarAtEased(0f) ?: 2.4f, fv("frequency", 6f),
+            fv("emboss", 0.5f), fv("steps", 8f), fv("angle", 7f), fv("delta", 60f), fv("gain", 700f),
+            fv("reflectionCutOff", 0.012f), fv("reflectionIntensity", 200f),
+            fv("speed", 0.2f), fv("speed_x", 0.3f), fv("speed_y", 0.3f), fv("alpha", 1f),
+            0f, 0f, 0f
+        ) + tailsOf(trackTail(intT))
+        return addFx(clip0, ctx, ClipFxLibrary.REFRACTION_AM, values, short)
+    }
+
+    /** `smartMotionBlurShake` -> [ClipFxLibrary.TWITCH_AM]; a keyframed `amplitude` rides
+     * the tail. `samples` can exceed the shader's 32-tap clamp in the corpus (41) — the
+     * clamp is the def's own, applied in the shader. */
+    private fun applyTwitchAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "twitch"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val ampT = props["amplitude"]
+        val values = listOf(
+            ampT?.scalarAtEased(0f) ?: 0.115f, fv("shakeInterval", 0.03f), fv("samples", 16f), fv("angle", 0f),
+            0f, 0f, 0f
+        ) + tailsOf(trackTail(ampT))
+        return addFx(clip0, ctx, ClipFxLibrary.TWITCH_AM, values, short)
+    }
+
+    /** `turbulentdisplace2` -> [ClipFxLibrary.TURBULENT_DISPLACE2_AM]; `direction` is
+     * serialised as the def's option VALUE (its default 4 proves values, not indices), so
+     * it passes straight through; a keyframed `intensity` rides the tail past the EXT group. */
+    private fun applyTurbulent2Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "turbulent2"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (posX, posY) = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val (parX, parY) = props["parr"]?.firstPoint(w, short, "parr", 0f, 0f) ?: (0f to 0f)
+        val intT = props["intensity"]
+        val values = listOf(
+            intT?.scalarAtEased(0f) ?: 0.25f, fv("evolution", 0f), fv("direction", 4f), fv("scale", 1f),
+            fv("stretch", 0f), fv("seed", 0f), boolOf(props["singleAxis"], true),
+            boolOf(props["screenSpace"], false), fv("octaves", 6f), fv("offs", 0f),
+            ClipFxLibrary.packPoint(posX, posY), ClipFxLibrary.packPoint(parX, parY), 0f, 0f
+        ) + tailsOf(trackTail(intT))
+        return addFx(clip0, ctx, ClipFxLibrary.TURBULENT_DISPLACE2_AM, values, short)
+    }
+
+    /** `shapefield` -> [ClipFxLibrary.SHAPEFIELD_AM]; `pos` is one vec3 property (absent =
+     * the def default (0, 0, 0)); keyframed `evolution` / `shapeSize` ride the tails past
+     * the EXT2 group, in [AmFxEval]'s declared order. Colour alphas are 0xFF across the
+     * corpus, so the packed RGB slots are exact. */
+    private fun applyShapefieldAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "shapefield"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val posT = props["pos"]
+        if (posT != null && posT.keys.size >= 2) {
+            w += "Effect shapefield: keyframed pos is not supported yet: the first value is used"
+        }
+        val pos = posT?.first() ?: emptyList()
+        val evoT = props["evolution"]
+        val sizeT = props["shapeSize"]
+        val flags = (if (boolOf(props["lockLuminance"], true) > 0.5f) 1f else 0f) +
+            (if (boolOf(props["lockSaturation"], false) > 0.5f) 2f else 0f) +
+            (if (boolOf(props["interpHue"], false) > 0.5f) 4f else 0f)
+        val values = listOf(
+            pos.getOrNull(0) ?: 0f, pos.getOrNull(1) ?: 0f, pos.getOrNull(2) ?: 0f,
+            fv("density", 0.3f), evoT?.scalarAtEased(0f) ?: 0f, fv("seed", 0f), fv("scale", 1f),
+            sizeT?.scalarAtEased(0f) ?: 0.5f, fv("shapeAngle", 0f), fv("sizeVariance", 0.5f),
+            fv("angleVariance", 0f), fv("layerCount", 15f), fv("fade", 1f), fv("alpha", 1f),
+            fv("slack", 1f), fv("blendMode", 0f), fv("coloring", 0f),
+            props["color1"]?.packedColor(w, short, "color1") ?: 0xFF55AA.toFloat(),
+            props["color2"]?.packedColor(w, short, "color2") ?: 0x55AAFF.toFloat(),
+            props["color3"]?.packedColor(w, short, "color3") ?: 0xFFAA55.toFloat(),
+            flags
+        ) + tailsOf(trackTail(evoT), trackTail(sizeT))
+        return addFx(clip0, ctx, ClipFxLibrary.SHAPEFIELD_AM, values, short)
+    }
+
+    /** `halftone_dots` -> [ClipFxLibrary.HALFTONE_DOTS_AM] (distinct from the native
+     * halftonedots); all parameters constant in the corpus. */
+    private fun applyHalftoneDotsAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "halftone_dots"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val values = listOf(
+            fv("dotsMode", 0f), fv("dotsFrequency", 45f), fv("dotsAngle", 33f), fv("dotsRelWidth", 1f),
+            fv("dotsSharpness", 4f), fv("dotsLighten", 0f), fv("smoothSource", 0f),
+            props["color1"]?.packedColor(w, short, "color1") ?: 0xFFFFFF.toFloat(),
+            props["color0"]?.packedColor(w, short, "color0") ?: 0f,
+            fv("shiftX", 0f), fv("shiftY", 0f), fv("alpha", 1f), 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.HALFTONE_DOTS_AM, values, short)
+    }
+
+    /** `cc_glass` -> [ClipFxLibrary.CC_GLASS_AM]; `lightPosition` serialises as raw
+     * normalised components (not AM point units), so it rides two plain slots. */
+    private fun applyCcGlassAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "cc_glass"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (lpX, lpY) = props["lightPosition"]?.firstPoint(w, short, "lightPosition", 0.5f, 0.5f) ?: (0.5f to 0.5f)
+        val values = listOf(
+            fv("property", 0f), fv("softness", 20f), fv("height", 25f), fv("displacement", 0f),
+            fv("lightType", 0f), fv("lightIntensity", 100f),
+            props["lightColor"]?.packedColor(w, short, "lightColor") ?: 0xFFFFFF.toFloat(),
+            fv("lightHeight", 50f), lpX, lpY, fv("lightDirection", 0f),
+            fv("ambient", 40f), fv("diffuse", 50f), fv("specular", 50f),
+            fv("roughness", 0.05f), fv("metal", 0f), 0f, 0f, 0f, 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.CC_GLASS_AM, values, short)
+    }
+
+    /** `cinematic_bokeh` (id com.creative.cinematic_bokeh) -> [ClipFxLibrary.BOKEH_AM];
+     * keyframed `blurRadius` / `blurWidth` / `blurHeight` ride the tails. */
+    private fun applyBokehAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "bokeh"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val radT = props["blurRadius"]
+        val widT = props["blurWidth"]
+        val heiT = props["blurHeight"]
+        val values = listOf(
+            fv("blurShape", 0f), widT?.scalarAtEased(0f) ?: 1f, heiT?.scalarAtEased(0f) ?: 1f,
+            radT?.scalarAtEased(0f) ?: 0.02f, fv("highlightThreshold", 0.5f), fv("highlightGain", 4f),
+            fv("quality", 48f)
+        ) + tailsOf(trackTail(radT), trackTail(widT), trackTail(heiT))
+        return addFx(clip0, ctx, ClipFxLibrary.BOKEH_AM, values, short)
+    }
+
+    /** `lensblurobs` -> [ClipFxLibrary.LENSBLUR_OBS_AM]; a keyframed `progressa` rides
+     * the tail. */
+    private fun applyLensBlurObsAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "lensblurobs"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val progT = props["progressa"]
+        val values = listOf(
+            fv("ITERATIONS", 100f), progT?.scalarAtEased(0f) ?: 0f, fv("RADIUS", 1f), fv("bright", 1f),
+            fv("alpha", 1f), fv("blendMode", 0f), 0f
+        ) + tailsOf(trackTail(progT))
+        return addFx(clip0, ctx, ClipFxLibrary.LENSBLUR_OBS_AM, values, short)
+    }
+
+    /** `solid_color_wipe` -> [ClipFxLibrary.SOLID_WIPE_AM]; the fill colour's alpha rides
+     * its own slot though the def never reads it. All parameters constant in the corpus. */
+    private fun applySolidWipeAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "solid_wipe"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (fill, fillA) = props["fillColor"]?.colorParts(w, short, "fillColor") ?: (0f to 1f)
+        val values = listOf(
+            fill, fillA, fv("alpha", 1f), fv("blendMode", 0f), fv("start", 0f), fv("end", 1f),
+            fv("angle", 0f), fv("feather", 0f), 0f, 0f, 0f, 0f, 0f, 0f
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.SOLID_WIPE_AM, values, short)
+    }
+
+    /** `softblooom` -> [ClipFxLibrary.SOFTBLOOM_AM]; `glowStretch` is one vec2 property. */
+    private fun applySoftblooomAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "softblooom"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val (gsX, gsY) = props["glowStretch"]?.firstPoint(w, short, "glowStretch", 1f, 1f) ?: (1f to 1f)
+        val values = listOf(
+            fv("strength", 1f), fv("intensity", 1.5f), fv("threshold", 0.15f), gsX, gsY,
+            fv("galpha", 1f), fv("alpha", 1f)
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.SOFTBLOOM_AM, values, short)
+    }
+
+    /** `lensd` -> [ClipFxLibrary.LENSD_AM]; a keyframed `amp` rides the tail past the
+     * EXT group. */
+    private fun applyLensdAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "lensd"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float = props[prop]?.firstValue(w, short, prop) ?: fallback
+        val ampT = props["amp"]
+        val values = listOf(
+            boolOf(props["offs"], false), ampT?.scalarAtEased(0f) ?: -0.15f, fv("strength", 100f),
+            fv("blurMax", 0.2f), fv("aberrationMax", 1.2f), fv("numIters", 50f), fv("bright", 1f),
+            fv("alpha", 1f), boolOf(props["new"], true), fv("iter", 1f), 0f, 0f, 0f, 0f
+        ) + tailsOf(trackTail(ampT))
+        return addFx(clip0, ctx, ClipFxLibrary.LENSD_AM, values, short)
     }
 
     /**

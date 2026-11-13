@@ -635,6 +635,150 @@ enum FxType : int {
     // (AM units, / 500 in the shader), [2] stretch x, [3] stretch y, [4] hardness.
     FX_OPTIC_COMP_AM = 183,
     FX_OPTIC_COMP_AM_EXT = 184,
+    // v180 (build 143): Queue 15(j) — the second-wave community ids (hunt round 5:
+    // original-format defs from AlightMotionUltra + the TrueMotion conversions in
+    // defs-batch8; per-id verdicts in hunt-staging/round5/SOURCES.md). Two of the 22
+    // stay parked: ripplelight (the two staged defs are different versions — the
+    // Ultra original lacks the instances' fixedUV, the conversion lacks their
+    // lightColor) and bccfilmglow (33 shader-read floats exceed the 21-slot op).
+    FX_NEGATIVE_AM = 185,   // negative (double-sourced): invert -> luma -> unsharp ->
+                            // brightness / contrast -> black/white point remap -> grain.
+                            // p: [0] contrast, [1] brightness, [2] blackPoint,
+                            // [3] whitePoint, [4] sharpness, [5] grainAmount. kFxColor 27.
+    FX_TRITONE_AM = 186,    // tritone (Ultra original; the TrueMotion vs.tritone is a
+                            // DIFFERENT effect): the luma ramp shadows -> midtones ->
+                            // highlights, mixed back by blend. p: [0] highlights packed,
+                            // [1] its alpha, [2] midtones packed, [3] its alpha,
+                            // [4] shadows packed, [5] its alpha, [6] blend. kFxColor 28.
+    FX_UNMULT_AM = 187,     // unmult (Ultra original): matte alpha from max(rgb) with
+                            // threshold / softness / gamma, a 5-tap feather, a choke /
+                            // spread cleanup, optional luma-preserving unmultiply.
+                            // p: [0] blackLevel (0..255), [1] softness, [2] featherPx,
+                            // [3] cleanupPx, [4] edgeGamma, [5] preserveLuma, [6] previewMatte.
+                            // q: [0] quality (declared by the def, never read — inert).
+                            // Dedicated pass (it rewrites alpha).
+    FX_UNMULT_AM_EXT = 188,
+    FX_DENOISE_AM = 189,    // denoise (TrueMotion conversion of skexnxxdenoise): the
+                            // "Sir Bird" golden-spiral denoise at a hard-coded 512x512
+                            // resolution; `strength` is declared but never read.
+                            // p: [0] SAMPLES, [1] PIXEL_MULTIPLIER, [2] alpha,
+                            // [3] strength (inert). kFxBlur2 mode 13.
+    FX_MINIMAX_AM = 190,    // minimaxblur (Ultra original): separable min / max over a
+                            // radius, per colour or by one channel. p: [0] operation
+                            // (0 min, 1 max), [1] radius (KEYFRAMED: AmFxEval tail),
+                            // [2] channel (0..3, 4 colour), [3] direction (0 both,
+                            // 1 H only, 2 V only), [4] keepEdge. Dedicated 2-pass chain.
+    FX_RGBGLITCH_AM = 191,  // rgbglitch (Ultra original + TrueMotion agree): random
+                            // horizontal slices + one channel offset, clocked by
+                            // floor(progressa * 36). p: [0] progressa (KEYFRAMED tail),
+                            // [1] progressb, [2] progressc, [3] progressd. kFxWarp 28.
+    FX_FISHEYE_AM = 192,    // fisheye_antifisheye (Ultra original): tan / atan radial
+                            // remap around the centre. p: [0] power (KEYFRAMED tail),
+                            // [1] centerX, [2] centerY, [3] aspectMode, [4] alpha.
+                            // kFxWarp mode 29.
+    FX_VORTEX_BLUR_AM = 193,  // chromaticvortexblur (AM's stock def via Ultra): the
+                            // swirl-family rotational blur per channel with centre-
+                            // channel offsets. p: [0] strength (KEYFRAMED tail),
+                            // [1] radius, [2] colorAberration, [3] centerChannel,
+                            // [4] mode, [5] centerPoint packed (def (0, 0) = the
+                            // layer centre). kFxBlur2 mode 16.
+    FX_REFRACTION_AM = 194,   // refractionwarp (Ultra original + TrueMotion agree):
+                            // the cos-field refraction (Shadertoy lineage). p: [0] autop,
+                            // [1] PROGRESS, [2] SPEEED, [3] scale, [4] position packed
+                            // (def (0, 0), neutral in the shader), [5] intensity
+                            // (KEYFRAMED tail), [6] frequency. q: [0] emboss, [1] steps,
+                            // [2] angle, [3] delta, [4] gain, [5] reflectionCutOff,
+                            // [6] reflectionIntensity. r: [0] speed, [1] speed_x,
+                            // [2] speed_y, [3] alpha. kFxWarp mode 30.
+    FX_REFRACTION_AM_EXT = 195,
+    FX_REFRACTION_AM_EXT2 = 196,
+    FX_TWITCH_AM = 197,     // smartMotionBlurShake (Ultra "Twitch"): a stepwise random
+                            // shake vector, averaged over N samples. p: [0] amplitude
+                            // (KEYFRAMED tail), [1] shakeInterval (s), [2] samples,
+                            // [3] angle (deg). kFxBlur2 mode 17.
+    FX_TURBULENT2_AM = 198,   // turbulentdisplace2 (TrueMotion afterz 112.xml): AM's
+                            // turbulence() field applied per direction mode. p:
+                            // [0] intensity (KEYFRAMED tail), [1] evolution,
+                            // [2] direction, [3] scale, [4] stretch, [5] seed,
+                            // [6] singleAxis. q: [0] screenSpace, [1] octaves,
+                            // [2] offs, [3] position packed, [4] parr packed (both
+                            // points (0, 0) in the def: neutral offsets). kFxWarp 31.
+    FX_TURBULENT2_AM_EXT = 199,
+    FX_SHAPEFIELD_AM = 200,   // shapefield (TrueMotion afterz 147.xml): a grid of
+                            // shape cells, each cell showing the layer picture tinted
+                            // by the colouring mode, layered back to front. p:
+                            // [0] pos x, [1] pos y, [2] pos z, [3] density,
+                            // [4] evolution (KEYFRAMED tail), [5] seed, [6] scale.
+                            // q: [0] shapeSize (KEYFRAMED tail), [1] shapeAngle,
+                            // [2] sizeVariance, [3] angleVariance, [4] layerCount,
+                            // [5] fade, [6] alpha. r: [0] slack, [1] blendMode,
+                            // [2] coloring, [3] color1 packed, [4] color2 packed,
+                            // [5] color3 packed, [6] flags (lockLuminance 1 +
+                            // lockSaturation 2 + interpHue 4). The colours' alphas
+                            // are 0xFF in the def defaults and every corpus
+                            // instance, so only rgb rides. kFxStyle mode 21.
+    FX_SHAPEFIELD_AM_EXT = 201,
+    FX_SHAPEFIELD_AM_EXT2 = 202,
+    FX_HALFTONE_DOTS_AM = 203,  // halftone_dots (Ultra original; NOT halftonedots,
+                            // native 71): the sin-product dot screen in pixel space.
+                            // p: [0] dotsMode, [1] dotsFrequency, [2] dotsAngle,
+                            // [3] dotsRelWidth, [4] dotsSharpness, [5] dotsLighten,
+                            // [6] smoothSource. q: [0] color1 packed, [1] color0
+                            // packed, [2] shiftX, [3] shiftY, [4] alpha.
+                            // kFxStyle mode 22.
+    FX_HALFTONE_DOTS_AM_EXT = 204,
+    FX_CC_GLASS_AM = 205,   // cc_glass (Ultra "Glass Surface"): bump gradient from the
+                            // layer itself, refraction offset, Blinn-Phong light.
+                            // p: [0] property, [1] softness, [2] height,
+                            // [3] displacement, [4] lightType, [5] lightIntensity,
+                            // [6] lightColor packed (its alpha is never read).
+                            // q: [0] lightHeight, [1] lightPosition x, [2] lightPosition
+                            // y (the def's point is in NORM units, default (0.5, 0.5) —
+                            // two raw slots, not a packed AM point), [3] lightDirection,
+                            // [4] ambient, [5] diffuse, [6] specular.
+                            // r: [0] roughness, [1] metal. kFxWarp mode 32.
+    FX_CC_GLASS_AM_EXT = 206,
+    FX_CC_GLASS_AM_EXT2 = 207,
+    FX_BOKEH_AM = 208,      // cinematic_bokeh (Ultra "Bokeh Blur"): golden-spiral
+                            // bokeh with polygon shape modulation + highlight
+                            // weighting. p: [0] blurShape, [1] blurWidth,
+                            // [2] blurHeight, [3] blurRadius (KEYFRAMED tail),
+                            // [4] highlightThreshold, [5] highlightGain, [6] quality.
+                            // kFxBlur2 mode 14.
+    FX_LENSBLUR_OBS_AM = 209,  // lensblurobs (Ultra "Bokeh Lens Blur"): the pow-4
+                            // weighted spiral bokeh. p: [0] ITERATIONS,
+                            // [1] progressa (KEYFRAMED tail), [2] RADIUS,
+                            // [3] bright, [4] alpha, [5] blendMode. kFxBlur2 mode 15.
+    FX_SOLID_WIPE_AM = 210,   // solid_color_wipe (Ultra original): the wipe2 mask
+                            // along the angle over the layer, filled with the solid
+                            // colour through the solidcolor blend switch. p:
+                            // [0] fillColor packed, [1] its alpha, [2] alpha,
+                            // [3] blendMode, [4] start, [5] end, [6] angle.
+                            // q: [0] feather. kFxWarp mode 33.
+    FX_SOLID_WIPE_AM_EXT = 211,
+    FX_SOFTBLOOM_AM = 212,  // softblooom (TrueMotion legacy amz_417): threshold
+                            // extract at half res, the def's OWN incremental-gaussian
+                            // blur (GPU Gems paired taps; adjSigma = kernelSize /
+                            // 2.14596602, kernelSize = strength / 2 x 1.14 / 4 / 3 x
+                            // the canvas diagonal — fxSoftbloomAmKernel), composite.
+                            // (Open item 2 of the 15(j) banked findings, resolved for
+                            // the DEF's kernel over the WIP header's host-gaussian
+                            // sketch: the staged def IS Light Glow's blurInternal
+                            // with stretch / aspect terms, so the chain mirrors
+                            // fxLightGlowAm's shape.)
+                            // p: [0] strength, [1] intensity, [2] threshold,
+                            // [3] glowStretch x, [4] glowStretch y, [5] galpha,
+                            // [6] alpha. Dedicated chain (Renderer::fxSoftbloomAm);
+                            // the def gates the whole effect on strength > 0.0001.
+    FX_LENSD_AM = 213,      // lensd (Ultra "Lens Distortion+"): a chromabbr pass
+                            // (its own Ultra def; amp / new forwarded by name,
+                            // rgbsplit / alphaa at their defaults) into xdist, then
+                            // the channel-spread average over scaled samples of it.
+                            // The whole chain repeats `iter` times. p: [0] offs,
+                            // [1] amp (KEYFRAMED tail), [2] strength, [3] blurMax,
+                            // [4] aberrationMax, [5] numIters, [6] bright.
+                            // q: [0] alpha, [1] new, [2] iter. Dedicated chain.
+    FX_LENSD_AM_EXT = 214,
     FX_MAX = FX_COPY_BG
 };
 
@@ -1330,6 +1474,79 @@ void fxElectricEdgesAmPixel(const FxOp& op, float ax, float ay, float picW, floa
 // costs a few hundred samples — the host test uses tiny pictures.
 void fxSmoothEdgesAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
                           const FxExtrudeSampler& s, float out[4]);
+
+// ---- v180 (build 143): Queue 15(j) CPU twins (the GLSL twins live in fx_shaders.h
+// modes / renderer_effects.cpp dedicated programs; slot layouts on the FX_ constants).
+// Sampler convention like the extrude tier: tex 0 = the layer picture, sampled at
+// layer-norm (u, v) with v = 1 at the top; the engine's textures are CLAMP_TO_EDGE
+// (like AM's own samplers), so the host test's samplers clamp the same way.
+// negative: the inverted-luma chain at one pixel (the 3x3 taps are read through the
+// sampler at the def's fixed 0.0015 offsets); `grainSeed` is the def's
+// fract(time * 100) term (the GLSL derives it from uFrame, the twin takes it raw).
+void fxNegativeAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                       float grainSeed, float out[4]);
+// tritone: the luma ramp at one pixel (tex = the sampled premultiplied pixel).
+void fxTritoneAmPixel(const FxOp& op, const float tex[4], float out[4]);
+// unmult: the matte chain at one pixel (cross taps at BOTH the feather and the
+// cleanup offsets are read through the sampler, exactly like the GLSL).
+void fxUnmultAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                     const FxExtrudeSampler& s, float out[4]);
+// denoise: the Sir Bird spiral average at one pixel (512x512 hard-coded res).
+void fxDenoiseAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                      float out[4]);
+// minimaxblur: ONE axis pass at one pixel (pass 0 = horizontal over tex 0;
+// pass 1 = vertical over tex 0 with tex 1 = the original, for keepEdge).
+void fxMinimaxAmPixel(const FxOp& op, int pass, float ax, float ay, float picW, float picH,
+                      const FxExtrudeSampler& s, float out[4]);
+// rgbglitch: the slice + channel-offset composite at one pixel.
+void fxRgbGlitchAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                        float out[4]);
+// fisheye_antifisheye: the remapped sample at one pixel.
+void fxFisheyeAmPixel(const FxOp& op, float ax, float ay, float aspect,
+                      const FxExtrudeSampler& s, float out[4]);
+// chromaticvortexblur: the three rotational blurs + the mode composite at one pixel.
+void fxVortexBlurAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         const FxExtrudeSampler& s, float out[4]);
+// refractionwarp: the cos-field sample at one pixel; `timeSec` is AM's acTime
+// (the GLSL derives it from uFrame at the grain clock, the twin takes it raw).
+void fxRefractionAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         float timeSec, const FxExtrudeSampler& s, float out[4]);
+// smartMotionBlurShake: the stepwise shake average at one pixel.
+void fxTwitchAmPixel(const FxOp& op, float ax, float ay, float timeSec,
+                     const FxExtrudeSampler& s, float out[4]);
+// turbulentdisplace2: the displaced sample COORDINATE (the sampler read itself is
+// the identity warp afterwards). aspect = picW / picH.
+void fxTurbulent2AmUv(const FxOp& op, float ax, float ay, float aspect, float outUv[2]);
+// shapefield: the layered shape-cell composite at one pixel.
+void fxShapefieldAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                         const FxExtrudeSampler& s, float out[4]);
+// halftone_dots: the dot-screen composite at one pixel.
+void fxHalftoneDotsAmPixel(const FxOp& op, float ax, float ay, float picW, float picH,
+                           const FxExtrudeSampler& s, float out[4]);
+// cc_glass: the bump-normal lighting at one pixel (bumpMap = the layer itself).
+void fxCcGlassAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                      float out[4]);
+// cinematic_bokeh: the golden-spiral highlight-weighted average at one pixel.
+void fxBokehAmPixel(const FxOp& op, float ax, float ay, float aspect,
+                    const FxExtrudeSampler& s, float out[4]);
+// lensblurobs: the pow-4 weighted spiral bokeh + blend switch at one pixel.
+void fxLensBlurObsAmPixel(const FxOp& op, float ax, float ay, const FxExtrudeSampler& s,
+                          float out[4]);
+// solid_color_wipe: the wipe composite at one pixel (tex = the sampled pixel).
+void fxSolidWipeAmPixel(const FxOp& op, float ax, float ay, const float tex[4], float out[4]);
+// softblooom: the extract stage (half res) and the composite stage as pure pixels.
+void fxSoftbloomAmExtract(const float tex[4], float threshold, float out[4]);
+void fxSoftbloomAmComposite(const FxOp& op, const float base[4], const float bloom[4], float out[4]);
+// lensd: the chromabbr pass pixel (tex 0 = the layer) and the main pass pixel
+// (tex 0 = the layer, tex 1 = the chromabbr output in xdist); picW is the screen
+// width the main pass's strength / screen-width term divides by.
+void fxChromabbrAmPixel(const FxOp& op, float ax, float ay, float aspect,
+                        const FxExtrudeSampler& s, float out[4]);
+void fxLensdAmPixel(const FxOp& op, float ax, float ay, float picW,
+                    const FxExtrudeSampler& s, float out[4]);
+// softblooom: the def's blur kernel size (numBlurPixelsPerSide) for a strength on a
+// screenW x screenH canvas — the same law fxLightGlowAmKernel pins for Light Glow.
+float fxSoftbloomAmKernel(float strength, float screenW, float screenH);
 
 // Posterize: one channel 0..1 snapped to `levels` steps.
 float fxPosterize(float v, float levels);

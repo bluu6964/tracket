@@ -1,19 +1,22 @@
 // GLSL ES 3.00 sources of the v140 effects. Four programs, each with a `uMode` branch (see fxShaderOf in fx_plan.cpp):
 //   kFxBlur2  : 0 directional blur, 1 radial blur (spin / zoom), 2 sharpen, 3 lens blur, 4 tilt-shift, 5 surface blur, 6 light rays,
-//               7 long shadow, 8 spin blur (Alight), 9 streaks (Alight), 10 / 11 / 12 motion blur 4 position / scale / angle (Alight)
+//               7 long shadow, 8 spin blur (Alight), 9 streaks (Alight), 10 / 11 / 12 motion blur 4 position / scale / angle (Alight),
+//               13 denoise (Alight), 14 cinematic bokeh (Alight), 15 lens blur obs (Alight), 16 chromatic vortex blur (Alight),
+//               17 twitch / smart motion blur shake (Alight)
 //   kFxColor  : 0 exposure, 1 brightness & contrast, 2 hue / saturation, 3 levels, 4 colour balance, 5 tint, 6 posterize,
 //               7 invert, 8 black & white, 9 threshold, 10 temperature, 11 shadows / highlights, 12 colour pop, 13 cinematic, 14 solarize,
 //               15 colour tune (Alight), 16 solid colour (Alight), 17 replace colour (Alight), 18 colour balance (Alight), 19 colour temperature (Alight),
 //               20 colour tint (Alight), 21 colour hot (Alight), 22 colorize (Alight), 23 highlights & shadows (Alight), 24 spot colour (Alight),
-//               25 threshold (Alight), 26 spectral map (Alight)
+//               25 threshold (Alight), 26 spectral map (Alight), 27 negative (Alight), 28 tritone (Alight)
 //   kFxWarp   : 0 wave warp, 1 twirl, 2 bulge, 3 mirror, 4 kaleidoscope, 5 turbulent displace, 6 ripple, 7 lens distortion, 8 polar, 9 tile, 10 camera shake,
 //               11 Alight mirror (whole-layer flip + blend), 12 stretch segment (Alight), 13 swirl (Alight), 14 halftone dots (Alight), 15 offset (Alight),
 //               16 radial wipe (Alight), 17 hex shift (Alight), 18 wave warp 2 (Alight), 19 circular ripple (Alight), 20 stretch (Alight), 21 squeeze (Alight),
 //               22 fractal warp (Alight), 23 stripes (Alight), 24 turbulent displace 3 (Alight), 25 roughen edges (Alight), 26 bend warp (Alight),
-//               27 halftone lines (Alight)
+//               27 halftone lines (Alight), 28 rgb glitch (Alight), 29 fisheye / anti-fisheye (Alight), 30 refraction warp (Alight),
+//               31 turbulent displace 2 (Alight), 32 cc glass (Alight), 33 solid colour wipe (Alight)
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare,
 //               14 find edges (Alight), 15 dissolve (Alight), 16 simple stars (Alight), 17 dots (Alight), 18 ridges (Alight),
-//               19 clouds / turbulence 2 (Alight), 20 checkerboard 2 (Alight)
+//               19 clouds / turbulence 2 (Alight), 20 checkerboard 2 (Alight), 21 shape field (Alight), 22 halftone dots (Alight)
 // All of them work on the premultiplied picture the layer shader uses (top of the picture at v = 1), take the raw slider
 // values in uP[0..6] (documented at FxType in fx_plan.h) and write a premultiplied picture. Texture reads inside loops
 // and branches use textureLod (the pictures have no mip levels), so there are no undefined derivatives.
@@ -361,7 +364,7 @@ void main() {
             acc += tap(cen + temp);
         }
         oColor = acc / float(max(nSamples, 1));
-    } else {
+    } else if (uMode == 7) {
         // Long shadow: the layer's own silhouette, extruded along the angle and laid UNDER the layer in
         // the shadow colour. Coverage at a pixel = the source alpha found marching from the pixel back
         // against the shadow direction; Solidity blends between an averaged (soft) and a max (hard)
@@ -390,6 +393,178 @@ void main() {
         float cov = mix(sum / max(wsum, 1e-4), mx, solid) * alpha;
         float sa2 = cov * (1.0 - c0.a);
         oColor = vec4(c0.rgb + scol * sa2, clamp(c0.a + sa2, 0.0, 1.0));
+    } else if (uMode == 13) {
+        // v180: Alight's Denoise (the TrueMotion conversion of skexnxxdenoise):
+        // the "Sir Bird" golden-spiral average at the def's hard-coded 512 x 512
+        // resolution, centre-direction / saturation weighted; `strength` (uP[3])
+        // is declared by the def but never read. uP: SAMPLES, PIXEL_MULTIPLIER,
+        // alpha, strength (inert). fxDenoiseAmPixel in fx_plan.cpp is the twin.
+        float samples = uP[0];
+        float sampleRadius = sqrt(max(samples, 0.0));
+        float sampleTrueRadius = 0.5 / max(sampleRadius * sampleRadius, 1e-6);
+        vec3 centre = c0.rgb;
+        float cl = length(centre);
+        vec3 cn = cl > 1e-6 ? centre / cl : vec3(0.0);
+        float csA = cos(2.3999632), snA = sin(2.3999632);
+        vec2 pr = vec2(0.0, 1.0);
+        vec3 acc = vec3(0.0);
+        float influenceSum = 0.0;
+        for (int i = 0; i < 200; i++) {
+            float x = float(i);
+            if (x > samples) break;
+            pr = vec2(csA * pr.x - snA * pr.y, snA * pr.x + csA * pr.y);
+            vec2 o = uP[1] * pr * sqrt(x) * 0.5;
+            float infl = 1.0 - sampleTrueRadius * pow(max(dot(o, o), 0.0), 0.6);
+            vec4 smp = tap(vUv + o / 512.0);
+            infl = infl * infl * infl;
+            float sl = length(smp.rgb);
+            float dn = sl > 1e-6 ? dot(cn, smp.rgb / sl) : 0.0;
+            infl *= pow(max(0.5 + 0.5 * dn, 0.0), 20.0) *
+                    pow(max(1.0 - abs(sl - cl), 0.0), 8.0);
+            influenceSum += infl;
+            acc += smp.rgb * infl;
+        }
+        vec3 colr = influenceSum != 0.0 ? acc / influenceSum : vec3(0.0);
+        oColor = vec4(mix(c0.rgb, colr, uP[2]) * c0.a, mix(c0.a, 1.0, uP[2]) * c0.a);
+    } else if (uMode == 14) {
+        // v180: Alight's Cinematic Bokeh (Ultra "Bokeh Blur"): the golden-spiral
+        // average with polygon radius modulation and highlight weighting; alpha
+        // is forced to 1. uP: blurShape, blurWidth, blurHeight, blurRadius,
+        // highlightThreshold, highlightGain, quality. fxBokehAmPixel is the twin.
+        float iterations = uP[6];
+        vec3 acc = vec3(0.0);
+        float tot = 0.0;
+        for (int i = 0; i < 128; i++) {
+            if (float(i) >= iterations) break;
+            float fi = float(i);
+            float theta = fi * 2.39996323;
+            float rad = sqrt(fi) / sqrt(max(iterations, 1e-6));
+            if (uP[0] > 2.5) {
+                float deg = 6.2831853 / uP[0];
+                rad *= 1.0 / cos(mod(theta, deg) - deg * 0.5);
+            }
+            vec2 off = vec2(cos(theta), sin(theta)) * rad * uP[3];
+            off.x *= uP[1] / uAspect;
+            off.y *= uP[2];
+            vec3 colr = tap(vUv + off).rgb;
+            float lum = dot(colr, vec3(0.299, 0.587, 0.114));
+            float wgt = pow(max(0.0, (lum - uP[4]) / (1.0 - min(0.99, uP[4]))), uP[5]) + 0.01;
+            acc += colr * wgt;
+            tot += wgt;
+        }
+        oColor = vec4(acc / tot, 1.0);
+    } else if (uMode == 15) {
+        // v180: Alight's Lens Blur OBS (Ultra "Bokeh Lens Blur"): the pow-4
+        // weighted spiral bokeh, then the def's normal / multiply / screen
+        // composite over the layer. uP: ITERATIONS, progressa, RADIUS, bright,
+        // alpha, blendMode. fxLensBlurObsAmPixel in fx_plan.cpp is the twin.
+        float rad = 0.8 - 0.8 * ((uP[1] + 0.15) * 6.283);
+        float r = uP[2];
+        vec2 va = vec2(0.0, rad * 0.01 / sqrt(max(uP[0], 1e-6)));
+        float csA = cos(2.3999632), snA = sin(2.3999632);
+        vec3 acc = vec3(0.0), divv = vec3(0.0);
+        for (float j = 0.0; j < uP[0]; j += 1.0) {
+            r += 1.0 / r;
+            va = vec2(csA * va.x - snA * va.y, snA * va.x + csA * va.y);
+            vec3 colr = tap(vUv + (r - 1.0) * va).rgb;
+            vec3 bk = pow(colr, vec3(4.0));
+            acc += colr * bk;
+            divv += bk;
+        }
+        vec4 factor = vec4(acc / divv, 1.0);
+        factor.rgb *= uP[4];
+        factor.a = mix(c0.a, 1.0, uP[4]);
+        vec3 straight = c0.a > 0.0 ? c0.rgb / c0.a : vec3(0.0);
+        if (uP[5] > 1.5) {
+            factor *= uP[3];
+            oColor = vec4(1.0 - (1.0 - straight) * (1.0 - factor.rgb), 1.0) * c0.a;
+        } else if (uP[5] > 0.5) {
+            factor *= uP[3];
+            oColor = vec4(straight * (factor.rgb + (1.0 - factor.a)), 1.0) * c0.a;
+        } else {
+            oColor = factor * uP[3] * c0.a;
+        }
+    } else if (uMode == 16) {
+        // v180: Alight's Chromatic Vortex Blur (AM's stock def via Ultra): three
+        // rotational blurs (one per channel, centre-channel offsets), composited
+        // per mode. uP: strength, radius, colorAberration, centerChannel, mode,
+        // centerPoint packed (the def's (0, 0) default is the layer centre).
+        // fxVortexBlurAmPixel in fx_plan.cpp is the twin.
+        float picW = 1.0 / uTexel.x;
+        float picH = 1.0 / uTexel.y;
+        float pk = floor(clamp(uP[5], 0.0, 16777215.0) + 0.5);
+        vec2 diff = vec2((picW * 0.5 + (floor(pk / 4096.0) - 2048.0)) / picW,
+                         (picH - (picH * 0.5 + (mod(pk, 4096.0) - 2048.0))) / picH);
+        vec2 convRate = vec2(1.0);
+        if (picH > picW) convRate.y = picH / picW; else convRate.x = picW / picH;
+        vec3 offv = uP[3] < 0.5 ? vec3(0.0, -1.0, 1.0)
+                    : uP[3] < 1.5 ? vec3(-1.0, 0.0, 1.0) : vec3(-1.0, 1.0, 0.0);
+        vec4 blurs[3];
+        for (int ch = 0; ch < 3; ch++) {
+            float T = (1.0 + offv[ch] * uP[2]) * uP[0];
+            vec2 UV = (vUv - diff) * convRate;
+            float dist = length(UV);
+            vec4 colr;
+            if (dist < uP[1]) {
+                float localPower = (uP[1] - dist) / uP[1];
+                float aMap = T <= 0.5 ? T / 0.5 : (1.0 - T) / 0.5;
+                float theta0 = localPower * localPower * aMap * 8.0 * 3.14159;
+                float speed = abs(dist * theta0 / uTexel.x * 10.0);
+                float nSamples = clamp(speed, 1.01, 2000.01);
+                vec2 v = UV / nSamples;
+                vec2 cc2 = vec2(0.0);
+                vec4 acc = vec4(0.0);
+                float count = 0.0;
+                float d0 = max(uP[1] - abs(uP[0]) * localPower, dist);
+                for (float d = d0; d <= uP[1]; d += 1.0 / nSamples) {
+                    float percent = (uP[1] - d) / uP[1];
+                    vec2 ccp = UV - cc2;
+                    cc2 += v;
+                    float th = percent * percent * aMap * 8.0 * 3.14159;
+                    float S = sin(th), C = cos(th);
+                    vec2 res = vec2(ccp.x * C - ccp.y * S, ccp.x * S + ccp.y * C) / convRate + diff;
+                    acc += tap(res);
+                    count += 1.0;
+                }
+                colr = acc / count;
+            } else {
+                colr = tap(UV / convRate + diff);
+            }
+            blurs[ch] = colr;
+        }
+        vec4 oc = vec4(blurs[0].r, blurs[1].g, blurs[2].b,
+                       (blurs[0].a + blurs[1].a + blurs[2].a) / 3.0);
+        vec4 midB = uP[3] < 0.5 ? blurs[0] : uP[3] < 1.5 ? blurs[1] : blurs[2];
+        if (uP[4] < 0.5) {
+            oColor = oc * midB.a;
+        } else if (uP[4] < 1.5) {
+            vec4 m = vec4(oc.rgb / 3.0, (oc.r + oc.g + oc.b) / 3.0);
+            vec4 l = vec4(dot(midB.rgb, vec3(0.2126, 0.7152, 0.0722)));
+            oColor = l + m * (1.0 - l.a);
+        } else if (uP[4] < 2.5) {
+            oColor = vec4(oc.rgb, midB.a);
+        } else {
+            oColor = oc * oc.a;
+        }
+    } else if (uMode == 17) {
+        // v180: Alight's Twitch (smartMotionBlurShake): the stepwise random shake
+        // vector averaged over N samples; the clock is the timeline frame
+        // (uFrame / 24 s), the def's acTime. uP: amplitude, shakeInterval,
+        // samples, angle. fxTwitchAmPixel in fx_plan.cpp is the twin.
+        float t = floor((float(uFrame) / 24.0) / uP[1]);
+        float jitter = (fract(sin(t * 12.9898) * 43758.5453) - 0.5) * 2.0;
+        float radA = radians(uP[3]);
+        vec2 shakeVec = vec2(cos(radA), sin(radA)) * jitter * uP[0];
+        int n = int(clamp(uP[2], 1.0, 32.0));
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < 32; i++) {
+            if (i >= n) break;
+            float f = n > 1 ? float(i) / float(n - 1) : 0.0;
+            acc += tap(clamp(vUv + shakeVec * f, 0.0, 1.0)).rgb;
+        }
+        oColor = vec4(acc / float(n), 1.0);
+    } else {
+        oColor = c0;
     }
 }
 )";
@@ -401,6 +576,7 @@ inline const char* kColor = "#version 300 es\n"
 R"(precision highp float;
 precision highp int;
 uniform sampler2D uTex;
+uniform int uFrame;
 uniform int uMode;
 uniform float uP[7];
 uniform float uQ[7];
@@ -839,6 +1015,51 @@ void main() {
         res = res * yuv2rgb;
         vec4 rp = vec4(res * bscale * c.a, c.a);
         o = (c + (rp - c) * uP[2]).rgb / c.a;
+    } else if (uMode == 27) {
+        // v180: Alight's Negative (Ultra original), verbatim on the premultiplied
+        // pixel: invert -> luma (the def's 0.299 / 0.587 / 0.114 weights) ->
+        // unsharp against the 8 neighbours at the def's fixed 0.0015 offsets ->
+        // brightness / contrast -> the black / white point remap -> the time-hash
+        // grain (the def hashes uv * screenSize + fract(time * 100); here
+        // gl_FragCoord + fract(uFrame * 100 / 24)). The result is divided by c.a
+        // like every AM mode here, so the epilogue's re-premultiply restores the
+        // def's vec4(lum, src.a) write (opaque pixels exact). uP = (contrast,
+        // brightness, blackPoint, whitePoint, sharpness, grainAmount).
+        // fxNegativeAmPixel in fx_plan.cpp is the twin.
+        vec3 NW = vec3(0.299, 0.587, 0.114);
+        float lum = dot(1.0 - c.rgb, NW);
+        const vec2 offs[8] = vec2[](vec2(-1.0, 1.0), vec2(0.0, 1.0), vec2(1.0, 1.0),
+                                    vec2(-1.0, 0.0), vec2(1.0, 0.0),
+                                    vec2(-1.0, -1.0), vec2(0.0, -1.0), vec2(1.0, -1.0));
+        float blurred = 0.0;
+        for (int i = 0; i < 8; i++)
+            blurred += dot(1.0 - texture(uTex, vUv + offs[i] * 0.0015).rgb, NW);
+        blurred /= 8.0;
+        lum += (lum - blurred) * uP[4];
+        lum += uP[1];
+        lum = (lum - 0.5) * uP[0] + 0.5;
+        lum = clamp((lum - uP[2]) / max(uP[3] - uP[2], 0.001), 0.0, 1.0);
+        float grain = (amHash(gl_FragCoord.xy + fract(float(uFrame) / 24.0 * 100.0)) - 0.5) * uP[5];
+        lum = clamp(lum + grain, 0.0, 1.0);
+        o = vec3(lum) / c.a;
+    } else if (uMode == 28) {
+        // v180: Alight's Tritone (Ultra original; the TrueMotion vs.tritone is a
+        // different effect): the premultiplied luma drives the shadows ->
+        // midtones -> highlights ramp, mixed back over the pixel by blend; the
+        // def writes vec4(mix, 1) * src.a, reached here by dividing the
+        // premultiplied mix by c.a before the epilogue. uP = (highlights packed,
+        // its alpha, midtones packed, its alpha, shadows packed, its alpha,
+        // blend) — the def reads the colours as rgb only (their alphas are
+        // carried, unused). fxTritoneAmPixel in fx_plan.cpp is the twin.
+        float pkH = floor(clamp(uP[0], 0.0, 16777215.0) + 0.5);
+        float pkM = floor(clamp(uP[2], 0.0, 16777215.0) + 0.5);
+        float pkS = floor(clamp(uP[4], 0.0, 16777215.0) + 0.5);
+        vec3 cH = vec3(mod(floor(pkH / 65536.0), 256.0), mod(floor(pkH / 256.0), 256.0), mod(pkH, 256.0)) / 255.0;
+        vec3 cM = vec3(mod(floor(pkM / 65536.0), 256.0), mod(floor(pkM / 256.0), 256.0), mod(pkM, 256.0)) / 255.0;
+        vec3 cS = vec3(mod(floor(pkS / 65536.0), 256.0), mod(floor(pkS / 256.0), 256.0), mod(pkS, 256.0)) / 255.0;
+        float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 tri = lum < 0.5 ? mix(cS, cM, lum * 2.0) : mix(cM, cH, (lum - 0.5) * 2.0);
+        o = mix(tri, c.rgb, uP[6]) / c.a;
     }
     o = clamp(o + amDither(), 0.0, 1.0);
     oColor = vec4(o * c.a, c.a);
@@ -876,6 +1097,38 @@ float amHexRand(vec2 co) {
     float dt = dot(co, vec2(719.310, 178.233));
     float sn = mod(dt, 3.14);
     return fract(sin(sn) * 33758.5453);
+}
+// Alight rgbglitch's slice hash (mode 28).
+float amGlitchRnd(float x, float y) {
+    return fract(sin(x * 12.9898 + y * 4.1414) * 43758.5453);
+}
+// Alight refractionwarp's cos field (the def's col(); mode 30).
+float amRefractionCol(vec2 coord, float time) {
+    float deltaTheta = 2.0 * 3.14159265 / uQ[2];
+    float col = 0.0;
+    for (int i = 0; i < 15; i++) {
+        if (i >= int(uQ[1])) break;
+        float theta = deltaTheta * float(i);
+        float ct = cos(theta), st = sin(theta);
+        vec2 adjc = coord;
+        adjc.x += ct * time * uR[0] + time * uR[1];
+        adjc.y -= st * time * uR[0] - time * uR[2];
+        col += cos((adjc.x * ct - adjc.y * st) * uP[6]) * uP[5];
+    }
+    return cos(col);
+}
+// Alight cc_glass's property pick (mode 32).
+float amGlassVal(vec4 col) {
+    if (uP[0] > 3.5) return col.a;
+    if (uP[0] > 2.5) return col.b;
+    if (uP[0] > 1.5) return col.g;
+    if (uP[0] > 0.5) return col.r;
+    return dot(col.rgb, vec3(0.299, 0.587, 0.114));
+}
+// solidcolour wipe's smoothstepRev: a step when the edges coincide (mode 33).
+float amSstepRev(float e0, float e1, float x) {
+    if (e0 == e1) return step(e0, x);
+    return amSstep(e0, e1, x);
 }
 
 // Ashima simplex noise (the snoise of AM's turbulentdisplace3 / roughenedges / ridges
@@ -1548,6 +1801,211 @@ void main() {
         oColor = vec4(mix(c1, c2, p), 1.0) * tex.a;
         return;
     }
+    if (uMode == 28) {
+        // v180: Alight's RGB Glitch (Ultra original): horizontal slices jump
+        // sideways, then one channel is taken from an offset sample; the clock
+        // is floor(progressa * 36) (the def's floor(progressa * 0.6 * 60)).
+        // uP: progressa, progressb, progressc, progressd. fxRgbGlitchAmPixel
+        // in fx_plan.cpp is the twin.
+        vec4 tex = textureLod(uTex, vUv, 0.0);
+        if (uP[1] <= 0.0) { oColor = tex; return; }
+        float time = floor(uP[0] * 36.0);
+        vec3 outCol = tex.rgb;
+        float maxOffset = uP[1] / 2.0;
+        for (int i = 0; i < 1000; i++) {
+            if (float(i) >= 10.0 * uP[1]) break;
+            float sliceY = amGlitchRnd(time, 2345.0 + float(i));
+            float sliceH = amGlitchRnd(time, 9035.0 + float(i)) * uP[3];
+            float hOffset = -maxOffset + amGlitchRnd(time, 9625.0 + float(i)) * (2.0 * maxOffset);
+            float top = fract(sliceY + sliceH);
+            float inside = step(sliceY, vUv.y) - step(top, vUv.y);
+            if (inside == 1.0)
+                outCol = textureLod(uTex, vec2(vUv.x + hOffset, vUv.y), 0.0).rgb;
+        }
+        float maxColOffset = uP[2] / 6.0;
+        float r0 = amGlitchRnd(time, 9545.0);
+        vec2 coff = vec2(-maxColOffset + r0 * (2.0 * maxColOffset),
+                         -maxColOffset + amGlitchRnd(time, 7205.0) * (2.0 * maxColOffset));
+        vec4 cs2 = textureLod(uTex, vUv + coff, 0.0);
+        if (r0 < 0.33) outCol.r = cs2.r;
+        else if (r0 < 0.66) outCol.g = cs2.g;
+        else outCol.b = cs2.b;
+        oColor = vec4(outCol * tex.a, tex.a);
+        return;
+    }
+    if (uMode == 29) {
+        // v180: Alight's Fisheye / Anti-Fisheye (Ultra original): the tan / atan
+        // radial remap around the centre, the sample coordinate clamped like
+        // the def. uP: power, centerX, centerY, aspectMode, alpha.
+        // fxFisheyeAmPixel in fx_plan.cpp is the twin.
+        float prop = uAspect;
+        bool am2 = uP[3] != 0.0;
+        vec2 m = vec2(uP[1], am2 ? uP[2] / prop : uP[2]);
+        vec2 w = vec2(vUv.x, am2 ? vUv.y / prop : vUv.y);
+        vec2 d = w - m;
+        float r = length(d);
+        float k = uP[0] * PI;
+        float bind = 1.0;
+        if (k > 0.0) bind = length(m);
+        else if (k < 0.0) bind = prop < 1.0 ? m.x : m.y;
+        vec2 u2 = w;
+        if (k > 0.0) {
+            float f = r > 1e-9 ? tan(r * k) * bind / tan(bind * k) / r : 1.0;
+            u2 = m + d * f;
+        } else if (k < 0.0) {
+            float kk = -k * 10.0;
+            float f = r > 1e-9 ? atan(r * kk) * bind / atan(kk * bind) / r : 1.0;
+            u2 = m + d * f;
+        }
+        if (am2) u2.y *= prop;
+        u2 = clamp(u2, 0.0, 1.0);
+        vec4 src = textureLod(uTex, u2, 0.0);
+        float a = src.a * uP[4];
+        oColor = vec4(src.rgb * a, a);
+        return;
+    }
+    if (uMode == 30) {
+        // v180: Alight's Refraction Warp (Ultra original, pass 1 only — pass 0
+        // is a dead copy): the cos-field refraction; the clock is the timeline
+        // frame when autop is on. uP: autop, PROGRESS, SPEEED, scale, position
+        // packed, intensity, frequency; uQ: emboss, steps, angle, delta, gain,
+        // reflectionCutOff, reflectionIntensity; uR: speed, speed_x, speed_y,
+        // alpha. fxRefractionAmPixel in fx_plan.cpp is the twin.
+        vec4 tex = textureLod(uTex, vUv, 0.0);
+        float time = uP[0] > 0.5 ? uP[1] + (float(uFrame) / 24.0) * uP[2] : uP[1];
+        vec2 pos = amUnpackPoint(uP[4]);
+        float sc = uP[3] != 0.0 ? uP[3] : 1.0;
+        vec2 ume = vec2(-(vUv.x / sc) - pos.x / 500.0, -(vUv.y / sc) - pos.y / 500.0);
+        vec2 p = vec2(-ume.x, ume.y);
+        float cc1 = amRefractionCol(p, time);
+        float dx = uQ[0] * (cc1 - amRefractionCol(p + vec2((1.0 / uTexel.x) / uQ[3], 0.0), time)) / uQ[3];
+        float dy = uQ[0] * (cc1 - amRefractionCol(p + vec2(0.0, (1.0 / uTexel.y) / uQ[3]), time)) / uQ[3];
+        float alphaa = 1.0 + dx * dy * uQ[4];
+        float ddx = dx - uQ[5], ddy = dy - uQ[5];
+        if (ddx > 0.0 && ddy > 0.0) alphaa = pow(uR[3], ddx * ddy * (uQ[6] * 1000.0));
+        vec4 colr = textureLod(uTex, vec2(p.x + dx * 2.0, -(p.y + dy * 2.0)), 0.0) * alphaa;
+        oColor = mix(tex, colr, uR[3]);
+        return;
+    }
+    if (uMode == 31) {
+        // v180: Alight's Turbulent Displace 2 (TrueMotion afterz-112): AM's
+        // turbulence() field applied per direction mode (0 X, 1 Y, 2 XY,
+        // 3 radial, 4 radial + twist, 5 twist) — turbulentdisplace3's sibling
+        // (mode 24) with the scale MULTIPLYING the sample coordinate and this
+        // def's own slot layout. uP: intensity, evolution, direction, scale,
+        // stretch, seed, singleAxis; uQ: screenSpace (carried; this pipeline is
+        // layer-local either way), octaves, offs, position packed, parallax
+        // packed. fxTurbulent2AmUv in fx_plan.cpp is the twin.
+        vec2 st = vUv;
+        st.x *= uAspect;
+        vec2 pos = amUnpackPoint(uQ[3]);
+        vec2 par = amUnpackPoint(uQ[4]) * vec2(-1.0, 1.0) / 100.0;
+        st += pos * vec2(-1.0, 1.0) / 500.0;
+        vec2 scaleVec = uP[4] < 0.0 ? vec2(uP[3] - uP[4], uP[3]) : vec2(uP[3], uP[3] + uP[4]);
+        int dir = int(uP[2] + 0.5);
+        vec2 sc;
+        if (uP[6] < 0.5) sc = st - 0.5;
+        else if (dir == 0) sc = vec2(0.0, st.y - 0.5);
+        else if (dir == 1) sc = vec2(st.x - 0.5, 0.0);
+        else if (dir == 2 || dir == 4) sc = st - 0.5;
+        else if (dir == 5) sc = vec2(0.0, length(st - 0.5));
+        else sc = vec2(abs(atan(st.x - 0.5, st.y - 0.5) / 6.28318) * 2.0, 0.0);
+        int oct = int(clamp(uQ[1], 1.0, 9.0) + 0.5);
+        float p = amTurbulence((sc - 0.5) * scaleVec + 0.5, oct, par, uP[1] + 7391.935 * uP[5]);
+        p += (uQ[2] - 0.25);
+        p *= uP[0] * 2.0;
+        vec2 suv = vUv;
+        vec2 radial = suv - 0.5;
+        float rl = length(radial);
+        vec2 rdir = rl > 0.000001 ? radial / rl : vec2(0.0);
+        if (dir == 0) {
+            suv.x += p;
+        } else if (dir == 1) {
+            suv.y += p;
+        } else if (dir == 2) {
+            float q = amTurbulence(sc * scaleVec + 0.5, oct, par, uP[1] + 3937.7249 * (uP[5] + 6.3379));
+            q += (uQ[2] - 0.25);
+            q *= uP[0] * 2.0;
+            suv.x += p;
+            suv.y += q;
+        } else if (dir == 4) {
+            float q = amTurbulence(sc * scaleVec + 0.5, oct, par, uP[1] + 3937.7249 * (uP[5] + 6.3379));
+            q += (uQ[2] - 0.25);
+            q *= uP[0] * 2.0;
+            suv += rdir * p;
+            float cq = cos(q), sq = sin(q);
+            suv = vec2(cq * suv.x - sq * suv.y, sq * suv.x + cq * suv.y);
+        } else if (dir == 5) {
+            float cq = cos(p), sq = sin(p);
+            suv = vec2(cq * suv.x - sq * suv.y, sq * suv.x + cq * suv.y);
+        } else {
+            suv += rdir * p;
+        }
+        float inside = step(0.0, suv.x) * step(suv.x, 1.0) * step(0.0, suv.y) * step(suv.y, 1.0);
+        oColor = ((all(greaterThanEqual(suv, vec2(0.0))) && all(lessThanEqual(suv, vec2(1.0))))
+            ? textureLod(uTex, suv, 0.0) : vec4(0.0)) * inside;
+        return;
+    }
+    if (uMode == 32) {
+        // v180: Alight's CC Glass (Ultra "Glass Surface"): the bump gradient
+        // from the layer's own content, a refraction offset, Blinn-Phong
+        // light. uP: property, softness, height, displacement, lightType,
+        // lightIntensity, lightColor packed; uQ: lightHeight, lightPosition
+        // x / y, lightDirection, ambient, diffuse, specular; uR: roughness,
+        // metal. fxCcGlassAmPixel in fx_plan.cpp is the twin.
+        float soft = max(uP[1], 1.0) * 0.001;
+        vec3 n = vec3(
+            amGlassVal(textureLod(uTex, vUv + vec2(-soft, 0.0), 0.0)) -
+                amGlassVal(textureLod(uTex, vUv + vec2(soft, 0.0), 0.0)),
+            amGlassVal(textureLod(uTex, vUv + vec2(0.0, -soft), 0.0)) -
+                amGlassVal(textureLod(uTex, vUv + vec2(0.0, soft), 0.0)),
+            1.0 / (uP[2] * 0.1));
+        float nl = length(n);
+        n = (nl > 0.0 && nl < 1e30) ? n / nl : vec3(0.0, 0.0, 1.0);  // height 0 degenerates to +z
+        vec4 src = textureLod(uTex, vUv + n.xy * (uP[3] * 0.01), 0.0);
+        vec3 lDir;
+        if (uP[4] < 0.5) {
+            float rad = (uQ[3] - 90.0) * (PI / 180.0);
+            float hrad = (uQ[0] * 0.9) * (PI / 180.0);
+            lDir = normalize(vec3(cos(rad) * cos(hrad), sin(rad) * cos(hrad), sin(hrad)));
+        } else {
+            lDir = normalize(vec3(uQ[1] - vUv.x, uQ[2] - vUv.y, uQ[0] * 0.01));
+        }
+        vec3 halfDir = normalize(lDir + vec3(0.0, 0.0, 1.0));
+        float diff = max(dot(n, lDir), 0.0);
+        float spec = pow(max(dot(n, halfDir), 0.0), 1.0 / max(uR[0], 0.001));
+        float pk = floor(clamp(uP[6], 0.0, 16777215.0) + 0.5);
+        vec3 lc = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        float inten = uP[5] * 0.01;
+        vec3 ambCol = src.rgb * (uQ[4] * 0.01);
+        vec3 diffCol = src.rgb * diff * (uQ[5] * 0.01) * lc * inten;
+        vec3 specBase = lc * spec * (uQ[6] * 0.01) * inten;
+        vec3 specCol = mix(specBase, specBase * src.rgb, uR[1] * 0.01);
+        oColor = vec4(ambCol + diffCol + specCol, src.a);
+        return;
+    }
+    if (uMode == 33) {
+        // v180: Alight's Solid Color Wipe (Ultra original): the wipe2 mask
+        // along the angle, the solidcolor blend switch inside it. uP:
+        // fillColor packed, its alpha (carried, unread by the def), alpha,
+        // blendMode, start, end, angle; uQ[0]: feather. fxSolidWipeAmPixel
+        // in fx_plan.cpp is the twin.
+        vec4 tex = textureLod(uTex, vUv, 0.0);
+        float rad = uP[6] * 0.0174533;
+        vec2 v = vec2(cos(rad), -sin(rad));
+        float p = dot(vUv - 0.5, v) + 0.5;
+        float feather = uQ[0] / 100.0;
+        float p0 = amSstepRev(uP[4] - feather, uP[4], p);
+        float p1 = 1.0 - amSstepRev(uP[5], uP[5] + feather, p);
+        float mask = clamp(p0 * p1, 0.0, 1.0);
+        float pk = floor(clamp(uP[0], 0.0, 16777215.0) + 0.5);
+        vec3 fill = vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+        vec3 straight = tex.a > 0.0 ? tex.rgb / tex.a : vec3(0.0);
+        vec3 res = uP[3] > 1.5 ? 1.0 - (1.0 - straight) * (1.0 - fill)
+                   : uP[3] > 0.5 ? straight * fill : fill;
+        oColor = mix(tex, vec4(res, 1.0) * tex.a, uP[2] * mask);
+        return;
+    }
     vec2 p = toP(vUv);
     vec2 q = p;
     vec2 qr = q, qb = q;  // the red / blue sample positions of the lens distortion colour fringes
@@ -1760,6 +2218,99 @@ vec2 amUnpackPoint(float pk) {
 vec3 amUnpackColor(float pk) {
     pk = floor(clamp(pk, 0.0, 16777215.0) + 0.5);
     return vec3(mod(floor(pk / 65536.0), 256.0), mod(floor(pk / 256.0), 256.0), mod(pk, 256.0)) / 255.0;
+}
+// Alight shapefield's hashes and colour maths (mode 21); the CPU twins are
+// q15jRand4 / q15jRgb2Hsv / q15jShapeColor in fx_plan.cpp.
+float amSfRand4(vec4 v) {
+    return fract(sin(dot(v, vec4(12.9898, 78.233, 193.71, 397.318))) * 43758.5453123);
+}
+float amSfRand3(vec3 v) {
+    return fract(sin(dot(v, vec3(12.9898, 78.233, 193.71))) * 43758.5453123);
+}
+vec2 amSfRandVec2(vec3 v) {
+    return vec2(amSfRand4(vec4(v, 5.124)), amSfRand4(vec4(v, 3.0)));
+}
+vec3 amSfRgb2Hsv(vec3 c) {
+    vec4 p = c.g >= c.b ? vec4(c.g, c.b, 0.0, -1.0 / 3.0) : vec4(c.b, c.g, 2.0 / 3.0, -1.0);
+    vec4 q = c.r >= p.x ? vec4(c.r, p.y, p.z, p.x) : vec4(p.x, p.y, p.w, c.r);
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+vec3 amSfHsv2Rgb(vec3 c) {
+    vec3 p = abs(fract(c.xxx + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+    return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+}
+vec4 amSfMixColors(vec4 a, vec4 b, float t) {
+    if (uR[6] > 3.5) {  // the interpHue flag (bit 4 of uR[6], values 0..7)
+        return vec4(amSfHsv2Rgb(mix(amSfRgb2Hsv(a.rgb), amSfRgb2Hsv(b.rgb), t)), mix(a.a, b.a, t));
+    }
+    return mix(a, b, t);
+}
+vec4 amSfGetColor(vec3 id, float layerDepth) {
+    vec4 c1 = vec4(amUnpackColor(uR[3]), 1.0);
+    vec4 c2 = vec4(amUnpackColor(uR[4]), 1.0);
+    vec4 c3 = vec4(amUnpackColor(uR[5]), 1.0);
+    int coloring = int(uR[2] + 0.5);
+    float rr4 = amSfRand4(vec4(id, 0.1974));
+    if (coloring == 1) return c1;
+    if (coloring == 2) return c1 * rr4;
+    if (coloring == 3) return amSfMixColors(c1, c2, rr4);
+    if (coloring == 4) {
+        vec2 rr = amSfRandVec2(id);
+        return amSfMixColors(amSfMixColors(c1, c2, rr.x), c3, rr.y);
+    }
+    if (coloring == 5) return c1 * layerDepth;
+    if (coloring == 6) return amSfMixColors(c1, c2, layerDepth);
+    if (coloring == 7) return layerDepth < 0.5 ? amSfMixColors(c1, c2, layerDepth * 2.0)
+                                               : amSfMixColors(c2, c3, (layerDepth - 0.5) * 2.0);
+    if (coloring == 8) return amSfMixColors(c3, amSfMixColors(c1, c2, rr4), layerDepth);
+    return vec4(0.0);
+}
+vec4 amSfGrid(vec2 st, float layer, float layerDepth) {
+    st *= 10.0;
+    vec2 uv = fract(st);
+    vec3 id = vec3(floor(st), layer);
+    float size = uQ[0];
+    if (uQ[2] >= 0.0001)
+        size = min(size, size * (1.0 + (amSfRand4(vec4(id, 0.351)) - 0.5) * uQ[2]));
+    float angle = uQ[3] < 0.0001 ? 0.0
+        : (amSfRand4(vec4(id, 0.2793)) - 0.5) * uQ[3] * 12.56636;
+    float rr = amSfRand3(id);
+    size *= amSstep(rr, rr + 0.008, uP[3]);
+    if (size < 0.00001) return vec4(0.0);
+    uv -= 0.5;
+    float picW = 1.0 / uTexel.x, picH = 1.0 / uTexel.y;
+    if (picW > picH) uv.y *= picW / picH; else uv.x *= picH / picW;
+    uv /= size;
+    float maxDisplace = 1.0 / size - 1.0;
+    vec2 displace;
+    if (abs(uP[4]) > 0.001) {
+        float fl = floor(uP[4]);
+        displace = mix(amSfRandVec2(id + fl), amSfRandVec2(id + fl + 1.0), fract(uP[4]));
+    } else {
+        displace = amSfRandVec2(id);
+    }
+    uv += clamp((displace - 0.5) * max(1.0, maxDisplace) * uR[0], -maxDisplace, maxDisplace);
+    float ra = angle + uQ[1] * 0.0174532925;
+    float rc = cos(ra), rs = sin(ra);
+    uv = vec2(uv.x * rc + uv.y * rs, -uv.x * rs + uv.y * rc);
+    uv += 0.5;
+    uv.y = 1.0 - uv.y;
+    vec4 texColor = tap(uv);
+    vec4 blendColor = amSfGetColor(id, layerDepth);
+    bool lockLum = mod(uR[6], 2.0) > 0.5;
+    bool lockSat = mod(floor(uR[6] / 2.0), 2.0) > 0.5;
+    if (lockLum || lockSat) {
+        vec3 texHsv = amSfRgb2Hsv(texColor.a <= 0.0 ? vec3(0.0) : texColor.rgb / texColor.a);
+        vec3 blendHsv = amSfRgb2Hsv(blendColor.a <= 0.0 ? vec3(0.0) : blendColor.rgb / blendColor.a);
+        if (lockLum) blendHsv.z = texHsv.z;
+        if (lockSat) blendHsv.y = texHsv.y;
+        return vec4(amSfHsv2Rgb(mix(texHsv, blendHsv, blendColor.a)), 1.0) * texColor.a;
+    }
+    vec3 ts = texColor.a <= 0.0 ? vec3(0.0) : texColor.rgb / texColor.a;
+    vec3 bs = blendColor.a <= 0.0 ? vec3(0.0) : blendColor.rgb / blendColor.a;
+    return vec4(mix(ts, bs, blendColor.a), 1.0) * texColor.a;
 }
 // McGuire value noise (AM's dots2 helper set); fxValueNoise in fx_plan.cpp is the twin.
 float amValueRandom(vec2 st) {
@@ -2377,6 +2928,75 @@ void main() {
             float alpha = c.a * c0.a;
             oColor = c * alpha + (c0 * (1.0 - alpha));
         }
+    } else if (uMode == 21) {
+        // v180: Alight's Shape Field (TrueMotion afterz-147): a stack of
+        // parallax shape-cell layers, back layers first, each cell showing the
+        // layer picture tinted by the colouring mode. uP: pos x / y / z,
+        // density, evolution, seed, scale; uQ: shapeSize, shapeAngle,
+        // sizeVariance, angleVariance, layerCount, fade, alpha; uR: slack,
+        // blendMode, coloring, color1 / 2 / 3 packed, flags (lockLuminance 1 +
+        // lockSaturation 2 + interpHue 4). fxShapefieldAmPixel in fx_plan.cpp
+        // is the twin.
+        vec2 st = vec2(vUv.x, 1.0 - vUv.y) - 0.5;
+        st.x *= uAspect;
+        st /= uP[6] * 6.0;
+        vec2 parallax = vec2(uP[0], uP[1]) / 1000.0 + 25.35;
+        float depth = uP[2] / 100.0;
+        float f = fract(depth);
+        float base = floor(depth);
+        vec4 result = vec4(0.0);
+        for (float i = uQ[4] - 1.0; i >= 0.0; i -= 1.0) {
+            float k = ((1.0 + i) - f) / 9.0;
+            float layerDepth = amSstep(uQ[4], uQ[4] * (0.9999 - uQ[5]), (i + 1.0) - f);
+            vec4 color = amSfGrid(st * k + parallax, base + i + uP[5] / 5.0, layerDepth) * uQ[6] * layerDepth;
+            if (uR[1] > 1.5) {
+                vec3 fg = color.a < 0.0001 ? vec3(1.0) : color.rgb / color.a;
+                vec3 bg = result.a < 0.0001 ? vec3(0.0) : result.rgb / result.a;
+                result = result * (1.0 - color.a) + vec4(1.0 - (1.0 - fg) * (1.0 - bg), 1.0) * color.a;
+            } else if (uR[1] > 0.5) {
+                vec3 fg = color.a < 0.0001 ? vec3(0.0) : color.rgb / color.a;
+                vec3 bg = result.a < 0.0001 ? vec3(1.0) : result.rgb / result.a;
+                result = result * (1.0 - color.a) + vec4(fg * bg, 1.0) * color.a;
+            } else {
+                result = result * (1.0 - color.a) + color;
+            }
+        }
+        oColor = result;
+    } else if (uMode == 22) {
+        // v180: Alight's Halftone Dots (Ultra original; NOT the native
+        // halftone): the sin-product dot screen in pixel space over the
+        // (optionally smoothed) luma. uP: dotsMode, dotsFrequency, dotsAngle,
+        // dotsRelWidth, dotsSharpness, dotsLighten, smoothSource; uQ: color1
+        // packed, color0 packed, shiftX, shiftY, alpha. fxHalftoneDotsAmPixel
+        // in fx_plan.cpp is the twin.
+        float grey;
+        if (uP[6] <= 0.0) {
+            grey = luma(c0.rgb);
+        } else {
+            vec2 o = clamp(uP[6], 0.0, 2.0) * uTexel;
+            float acc = 0.0, w = 0.0;
+            for (int j = -1; j <= 1; j++)
+                for (int i = -1; i <= 1; i++) {
+                    float ww = (i == 0 && j == 0) ? 2.0 : 1.0;
+                    acc += luma(tap(vUv + vec2(float(i), float(j)) * o).rgb) * ww;
+                    w += ww;
+                }
+            grey = acc / max(w, 1.0);
+        }
+        vec2 uvShift = vUv + vec2(uQ[2], -uQ[3]) * uTexel;
+        vec2 pp = (uvShift - 0.5) / uTexel;
+        float ang = radians(uP[2]);
+        float ca = cos(ang), sa = sin(ang);
+        vec2 q = vec2(ca * pp.x + sa * pp.y, -sa * pp.x + ca * pp.y);
+        q.x *= uP[3];
+        q *= uP[1] * 0.06;
+        float pat = sin(q.x) * sin(q.y) * 4.0;
+        float v = grey * 10.0 - 5.0 + pat + uP[5];
+        float sm = max(uP[4], 0.0001);
+        float m = amSstep(-sm, sm, v);
+        if (uP[0] > 0.5) m = 1.0 - m;
+        float a = c0.a * uQ[4];
+        oColor = vec4(mix(amUnpackColor(uQ[1]), amUnpackColor(uQ[0]), m) * a, a);
     } else {
         // Lens flare: a bright core, halo, horizontal streak and ghost discs along the line through the picture's centre.
         vec2 cen = vec2(uP[0] / 100.0, 1.0 - uP[1] / 100.0);

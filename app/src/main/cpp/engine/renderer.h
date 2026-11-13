@@ -191,6 +191,10 @@ private:
     bool fxDropShadowAm(const FxOp& op, int W, int H, int* cur);
     bool fxBbMakerAm(const FxOp& op, int W, int H, int* cur);
     bool fxOpticCompAm(const FxOp& op, int W, int H, int* cur);
+    bool fxUnmultAm(const FxOp& op, int W, int H, int* cur);
+    bool fxMinimaxAm(const FxOp& op, int W, int H, int* cur);
+    bool fxSoftbloomAm(const FxOp& op, int W, int H, int* cur);
+    bool fxLensdAm(const FxOp& op, int W, int H, int* cur);
     bool fxUnsharpMaskAm(const FxOp& op, int W, int H, int* cur);
     bool fxNewSharpenAm(const FxOp& op, int W, int H, int* cur);
     bool fxAmBlendGenAm(const FxOp& op, int W, int H, int* cur);
@@ -240,7 +244,7 @@ private:
     };
     std::unordered_map<int, MaskSlot> masks_;
     // Effect programs (built when first used) and the small pictures of the blur / glow pyramids.
-    uint32_t eff_[52] = {0};
+    uint32_t eff_[56] = {0};
     uint32_t maskTex_[2] = {0, 0}, maskFbo_[2] = {0, 0};  // R8 coverage pictures (ping-pong)
     int maskW_ = 0, maskH_ = 0;
     struct FxLevel {

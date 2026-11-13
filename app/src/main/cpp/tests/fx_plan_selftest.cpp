@@ -1734,6 +1734,289 @@ int main() {
         float flatOrphan[] = {184, 0, 0, 1, 1, 1, 0, 0};
         CHECK(fxParseOps(flatOrphan, 8, tops) == 0, "orphan opticcomp EXT dropped");
     }
+    {   // v180 Queue 15(j) second-wave twins: pins hand-computed from the defs
+        // (Ultra originals in hunt-staging/round5, TrueMotion SkSL in defs-batch8).
+        float o[4];
+        auto konstFn = [](const void* ctx, int, float, float, float out[4]) {
+            const float* c = (const float*)ctx;
+            out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; out[3] = c[3];
+        };
+        auto konstS = [&konstFn](float (&c)[4]) { return FxExtrudeSampler{konstFn, c}; };
+        static float KC_A[4] = {0.2f, 0.4f, 0.6f, 0.8f};
+        static float KC_B[4] = {0.3f, 0.6f, 0.9f, 0.7f};
+        static float KC_G[4] = {0.5f, 0.5f, 0.5f, 1.f};
+        static float KC_W[4] = {1.f, 1.f, 1.f, 1.f};
+        // negative on a constant field: invLum 0.637, unsharp neutral, contrast
+        // about 0.5, the black / white remap: (0.6918 - 0.08) / 0.84 = 0.728333.
+        FxOp ng{}; ng.type = FX_NEGATIVE_AM;
+        ng.p[0] = 1.4f; ng.p[2] = 0.08f; ng.p[3] = 0.92f; ng.p[4] = 0.6f;
+        fxNegativeAmPixel(ng, 0.5f, 0.5f, konstS(KC_A), 0.f, o);
+        CHECK(std::fabs(o[0] - 0.728333f) < 1e-4f && std::fabs(o[3] - 0.8f) < 1e-5f,
+              "negative constant (%g %g)", o[0], o[3]);
+        ng.p[5] = 0.2f;   // grain at (0.5, 0.5), seed 0: hash 0.65661 -> +0.0313
+        fxNegativeAmPixel(ng, 0.5f, 0.5f, konstS(KC_A), 0.f, o);
+        CHECK(std::fabs(o[0] - 0.759655f) < 0.01f, "negative grain (%g)", o[0]);
+        // tritone: lum 0.45375 -> shadows->midtones at 0.9075 (midtones 0x71533B).
+        FxOp tr{}; tr.type = FX_TRITONE_AM;
+        tr.p[0] = 16777215.f; tr.p[1] = 1.f; tr.p[2] = 0x71533B; tr.p[3] = 1.f;
+        tr.p[4] = 0.f; tr.p[5] = 1.f; tr.p[6] = 0.f;
+        { float tex[4] = {0.25f, 0.5f, 0.75f, 1.f};
+          fxTritoneAmPixel(tr, tex, o); }
+        CHECK(std::fabs(o[0] - 0.402147f) < 1e-4f && std::fabs(o[1] - 0.295382f) < 1e-4f &&
+              std::fabs(o[2] - 0.209971f) < 1e-4f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "tritone mid ramp (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // unmult A: max 0.9 -> aBase 1, feather mixes toward the raw average 0.9
+        // (aFeather 0.925), cleanup inert at cp 0 -> aOut 0.4625.
+        FxOp uu{}; uu.type = FX_UNMULT_AM;
+        uu.p[1] = 1.f; uu.p[2] = 10.f; uu.p[4] = 1.f;
+        static float KC_U[4] = {0.6f, 0.3f, 0.9f, 0.5f};
+        fxUnmultAmPixel(uu, 0.5f, 0.5f, 100, 100, konstS(KC_U), o);
+        CHECK(std::fabs(o[0] - 0.6f) < 1e-5f && std::fabs(o[3] - 0.4625f) < 1e-4f,
+              "unmult matte (%g %g)", o[0], o[3]);
+        uu.p[6] = 1.f;   // previewMatte
+        fxUnmultAmPixel(uu, 0.5f, 0.5f, 100, 100, konstS(KC_U), o);
+        CHECK(std::fabs(o[0] - 0.4625f) < 1e-4f && std::fabs(o[3] - 0.4625f) < 1e-4f,
+              "unmult preview (%g %g)", o[0], o[3]);
+        // unmult B: dim constant, preserveLuma divides by the matte 0.163.
+        FxOp ub{}; ub.type = FX_UNMULT_AM;
+        ub.p[1] = 1.f; ub.p[2] = 10.f; ub.p[4] = 1.f; ub.p[5] = 1.f;
+        static float KC_UB[4] = {0.1f, 0.05f, 0.02f, 1.f};
+        fxUnmultAmPixel(ub, 0.5f, 0.5f, 100, 100, konstS(KC_UB), o);
+        CHECK(std::fabs(o[0] - 0.613497f) < 1e-3f && std::fabs(o[1] - 0.306748f) < 1e-3f &&
+              std::fabs(o[3] - 0.163f) < 1e-4f, "unmult preserve luma (%g %g %g)", o[0], o[1], o[3]);
+        // denoise on a constant field: the average is the field; the tail
+        // premultiplies by tex.a (alpha 1 leaves a at tex.a).
+        FxOp dn{}; dn.type = FX_DENOISE_AM; dn.p[0] = 10.f; dn.p[1] = 1.5f; dn.p[2] = 1.f;
+        static float KC_D[4] = {0.3f, 0.6f, 0.9f, 0.5f};
+        fxDenoiseAmPixel(dn, 0.5f, 0.5f, konstS(KC_D), o);
+        CHECK(std::fabs(o[0] - 0.15f) < 1e-4f && std::fabs(o[1] - 0.3f) < 1e-4f &&
+              std::fabs(o[2] - 0.45f) < 1e-4f && std::fabs(o[3] - 0.5f) < 1e-4f,
+              "denoise constant (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // minimax over a u-gradient: radius 1 at picW 100 -> neighbours at +-0.01.
+        FxExtrudeSampler gradS; gradS.sample = [](const void*, int, float u, float, float out[4]) {
+            out[0] = out[1] = out[2] = u; out[3] = 1.f;
+        }; gradS.ctx = nullptr;
+        FxOp mm{}; mm.type = FX_MINIMAX_AM; mm.p[0] = 1.f; mm.p[1] = 1.f; mm.p[2] = 4.f;
+        fxMinimaxAmPixel(mm, 0, 0.5f, 0.5f, 100, 100, gradS, o);
+        CHECK(std::fabs(o[0] - 0.51f) < 1e-4f, "minimax max (%g)", o[0]);
+        mm.p[0] = 0.f;
+        fxMinimaxAmPixel(mm, 0, 0.5f, 0.5f, 100, 100, gradS, o);
+        CHECK(std::fabs(o[0] - 0.49f) < 1e-4f, "minimax min (%g)", o[0]);
+        // keepEdge pass 1: the field is constant along v (blurred 0.5), the
+        // original is 0.2 grey on tex 1; ef = min(1, 1 * 0.01 * 10) = 0.1.
+        FxExtrudeSampler keS; keS.sample = [](const void*, int tex, float u, float, float out[4]) {
+            if (tex == 0) { out[0] = out[1] = out[2] = u; out[3] = 1.f; }
+            else { out[0] = out[1] = out[2] = 0.2f; out[3] = 1.f; }
+        }; keS.ctx = nullptr;
+        mm.p[0] = 1.f; mm.p[4] = 1.f;
+        fxMinimaxAmPixel(mm, 1, 0.5f, 0.5f, 100, 100, keS, o);
+        CHECK(std::fabs(o[0] - 0.23f) < 1e-4f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "minimax keepEdge (%g %g)", o[0], o[3]);
+        // rgbglitch at progressb 0: the def's early-out returns the pixel.
+        FxOp rg{}; rg.type = FX_RGBGLITCH_AM;
+        fxRgbGlitchAmPixel(rg, 0.5f, 0.5f, konstS(KC_A), o);
+        CHECK(o[0] == 0.2f && o[1] == 0.4f && o[2] == 0.6f && o[3] == 0.8f,
+              "rgbglitch early-out (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // fisheye at power 0 (and at the centre for power 0.5): the sample is
+        // the pixel itself; the write is src * (src.a * alpha).
+        FxOp fe{}; fe.type = FX_FISHEYE_AM; fe.p[1] = 0.5f; fe.p[2] = 0.5f; fe.p[3] = 1.f; fe.p[4] = 1.f;
+        fxFisheyeAmPixel(fe, 0.5f, 0.5f, 1.f, konstS(KC_A), o);
+        CHECK(std::fabs(o[0] - 0.16f) < 1e-5f && std::fabs(o[3] - 0.8f) < 1e-5f,
+              "fisheye power 0 (%g %g)", o[0], o[3]);
+        fe.p[0] = 0.5f;
+        fxFisheyeAmPixel(fe, 0.5f, 0.5f, 1.f, konstS(KC_A), o);
+        CHECK(std::fabs(o[0] - 0.16f) < 1e-5f && std::fabs(o[3] - 0.8f) < 1e-5f,
+              "fisheye centre (%g %g)", o[0], o[3]);
+        // vortex on a constant field: mode 2 returns the pixel; mode 1 is the
+        // def's composite: m = the per-channel vec4s / 3 (so m.rgb = oc / 3 and
+        // m.a = mean(oc.rgb)), l = the Rec.709 luma of the centre channel's
+        // blur (0.55788 here), out = l + m * (1 - l) in all four components.
+        FxOp vx{}; vx.type = FX_VORTEX_BLUR_AM;
+        vx.p[1] = 0.3f; vx.p[2] = 0.15f; vx.p[3] = 1.f; vx.p[4] = 2.f; vx.p[5] = 8390656.f;
+        fxVortexBlurAmPixel(vx, 0.5f, 0.5f, 100, 100, konstS(KC_B), o);
+        CHECK(std::fabs(o[0] - 0.3f) < 1e-4f && std::fabs(o[3] - 0.7f) < 1e-4f,
+              "vortex mode 2 (%g %g)", o[0], o[3]);
+        vx.p[4] = 1.f;
+        fxVortexBlurAmPixel(vx, 0.5f, 0.5f, 100, 100, konstS(KC_B), o);
+        CHECK(std::fabs(o[0] - 0.602092f) < 1e-3f && std::fabs(o[1] - 0.646304f) < 1e-3f &&
+              std::fabs(o[2] - 0.690516f) < 1e-3f && std::fabs(o[3] - 0.823152f) < 1e-3f,
+              "vortex mode 1 (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // refraction at frequency 0: the cos field is constant, dx = dy = 0,
+        // alphaa = 1, the mix returns the pixel.
+        FxOp rf{}; rf.type = FX_REFRACTION_AM;
+        rf.p[0] = 1.f; rf.p[3] = 1.f; rf.p[5] = 2.4f;
+        rf.q[0] = 0.5f; rf.q[1] = 8.f; rf.q[2] = 7.f; rf.q[3] = 60.f; rf.q[4] = 700.f;
+        rf.q[5] = 0.012f; rf.q[6] = 200.f; rf.r[0] = 0.2f; rf.r[1] = 0.3f; rf.r[2] = 0.3f; rf.r[3] = 1.f;
+        fxRefractionAmPixel(rf, 0.3f, 0.6f, 100, 100, 0.f, konstS(KC_A), o);
+        CHECK(std::fabs(o[0] - 0.2f) < 1e-4f && std::fabs(o[3] - 0.8f) < 1e-4f,
+              "refraction flat field (%g %g)", o[0], o[3]);
+        // twitch: amplitude 0 (and the samples-1 guard) -> the pixel, alpha 1.
+        FxOp tw{}; tw.type = FX_TWITCH_AM; tw.p[1] = 0.03f; tw.p[2] = 16.f;
+        fxTwitchAmPixel(tw, 0.5f, 0.5f, 0.f, konstS(KC_A), o);
+        CHECK(std::fabs(o[0] - 0.2f) < 1e-5f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "twitch still (%g %g)", o[0], o[3]);
+        tw.p[0] = 0.3f; tw.p[2] = 1.f;
+        fxTwitchAmPixel(tw, 0.5f, 0.5f, 0.f, konstS(KC_A), o);
+        CHECK(std::fabs(o[0] - 0.2f) < 1e-5f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "twitch one tap (%g %g)", o[0], o[3]);
+        // turbulent2 at intensity 0: the coordinate is the pixel's own.
+        FxOp t2{}; t2.type = FX_TURBULENT2_AM;
+        t2.p[2] = 4.f; t2.p[3] = 1.f; t2.p[6] = 1.f; t2.q[1] = 6.f;
+        { float uv[2]; fxTurbulent2AmUv(t2, 0.3f, 0.7f, 1.f, uv);
+          CHECK(std::fabs(uv[0] - 0.3f) < 1e-6f && std::fabs(uv[1] - 0.7f) < 1e-6f,
+                "turbulent2 zero (%g %g)", uv[0], uv[1]); }
+        // shapefield at density 0: every cell's size smoothsteps to 0 -> clear.
+        FxOp sf{}; sf.type = FX_SHAPEFIELD_AM;
+        sf.p[6] = 1.f; sf.q[0] = 0.5f; sf.q[4] = 15.f; sf.q[5] = 1.f; sf.q[6] = 1.f;
+        sf.r[0] = 1.f; sf.r[3] = 16733610.f; sf.r[6] = 1.f;
+        fxShapefieldAmPixel(sf, 0.5f, 0.5f, 100, 100, konstS(KC_A), o);
+        CHECK(o[0] == 0.f && o[1] == 0.f && o[2] == 0.f && o[3] == 0.f,
+              "shapefield empty (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // halftone_dots: grey 0.5 at the pattern centre -> m 0.5; white -> m 1;
+        // white with dotsMode 1 -> m 0.
+        FxOp ht{}; ht.type = FX_HALFTONE_DOTS_AM;
+        ht.p[1] = 45.f; ht.p[2] = 33.f; ht.p[3] = 1.f; ht.p[4] = 4.f;
+        ht.q[0] = 16777215.f; ht.q[4] = 1.f;
+        fxHalftoneDotsAmPixel(ht, 0.5f, 0.5f, 100, 100, konstS(KC_G), o);
+        CHECK(std::fabs(o[0] - 0.5f) < 1e-4f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "halftone mid (%g %g)", o[0], o[3]);
+        fxHalftoneDotsAmPixel(ht, 0.5f, 0.5f, 100, 100, konstS(KC_W), o);
+        CHECK(std::fabs(o[0] - 1.f) < 1e-4f, "halftone white (%g)", o[0]);
+        ht.p[0] = 1.f;
+        fxHalftoneDotsAmPixel(ht, 0.5f, 0.5f, 100, 100, konstS(KC_W), o);
+        CHECK(std::fabs(o[0]) < 1e-4f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "halftone inverted (%g %g)", o[0], o[3]);
+        // cc_glass on a constant field: normal (0, 0, 1); distant light at
+        // direction 0 / height 50 -> diff 0.70711, spec 0.20526 at roughness
+        // 0.05; final = c * (0.4 + 0.35355) + 0.10263.
+        FxOp cg{}; cg.type = FX_CC_GLASS_AM;
+        cg.p[1] = 20.f; cg.p[2] = 25.f; cg.p[5] = 100.f; cg.p[6] = 16777215.f;
+        cg.q[0] = 50.f; cg.q[1] = 0.5f; cg.q[2] = 0.5f; cg.q[4] = 40.f; cg.q[5] = 50.f; cg.q[6] = 50.f;
+        cg.r[0] = 0.05f;
+        fxCcGlassAmPixel(cg, 0.5f, 0.5f, konstS(KC_A), o);
+        CHECK(std::fabs(o[0] - 0.253341f) < 1e-3f && std::fabs(o[1] - 0.404052f) < 1e-3f &&
+              std::fabs(o[2] - 0.554763f) < 1e-3f && std::fabs(o[3] - 0.8f) < 1e-5f,
+              "cc_glass lit (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // bokeh on a constant field: the weighted average is the field, alpha 1.
+        FxOp bk{}; bk.type = FX_BOKEH_AM;
+        bk.p[1] = 1.f; bk.p[2] = 1.f; bk.p[3] = 0.02f; bk.p[4] = 0.5f; bk.p[5] = 4.f; bk.p[6] = 8.f;
+        fxBokehAmPixel(bk, 0.5f, 0.5f, 1.f, konstS(KC_B), o);
+        CHECK(std::fabs(o[0] - 0.3f) < 1e-4f && std::fabs(o[3] - 1.f) < 1e-5f,
+              "bokeh constant (%g %g)", o[0], o[3]);
+        // lensblurobs mode 0 on a constant field: (bokeh * bright) * tex.a.
+        FxOp lb{}; lb.type = FX_LENSBLUR_OBS_AM;
+        lb.p[0] = 10.f; lb.p[2] = 1.f; lb.p[3] = 1.f; lb.p[4] = 1.f;
+        fxLensBlurObsAmPixel(lb, 0.5f, 0.5f, konstS(KC_B), o);
+        CHECK(std::fabs(o[0] - 0.21f) < 1e-4f && std::fabs(o[1] - 0.42f) < 1e-4f &&
+              std::fabs(o[2] - 0.63f) < 1e-4f && std::fabs(o[3] - 0.7f) < 1e-4f,
+              "lensblurobs mode 0 (%g %g %g %g)", o[0], o[1], o[2], o[3]);
+        // solid_wipe: inside the band the fill replaces (premultiplied by
+        // tex.a); before start the pixel is untouched.
+        FxOp sw{}; sw.type = FX_SOLID_WIPE_AM; sw.p[2] = 1.f; sw.p[5] = 1.f; sw.q[0] = 0.f;
+        { float tex[4] = {0.2f, 0.4f, 0.6f, 0.8f};
+          fxSolidWipeAmPixel(sw, 0.5f, 0.5f, tex, o);
+          CHECK(o[0] == 0.f && o[1] == 0.f && std::fabs(o[3] - 0.8f) < 1e-5f,
+                "solid wipe inside (%g %g)", o[0], o[3]);
+          sw.p[4] = 0.3f;
+          fxSolidWipeAmPixel(sw, 0.1f, 0.5f, tex, o);
+          CHECK(o[0] == 0.2f && o[3] == 0.8f, "solid wipe outside (%g %g)", o[0], o[3]); }
+        // softblooom: the kernel law, the extract gate, the composite.
+        CHECK(std::fabs(fxSoftbloomAmKernel(1.f, 1920.f, 1080.f) - 104.638f) < 0.01f,
+              "softbloom kernel (%g)", fxSoftbloomAmKernel(1.f, 1920.f, 1080.f));
+        { float tex[4] = {0.9f, 0.9f, 0.9f, 1.f};
+          fxSoftbloomAmExtract(tex, 0.15f, o);
+          CHECK(std::fabs(o[0] - 0.9f) < 1e-5f && std::fabs(o[3] - 1.f) < 1e-5f,
+                "softbloom extract bright (%g %g)", o[0], o[3]);
+          float dark[4] = {0.1f, 0.1f, 0.1f, 1.f};
+          fxSoftbloomAmExtract(dark, 0.15f, o);
+          CHECK(o[0] == 0.f && std::fabs(o[3] - 1.f) < 1e-5f,
+                "softbloom extract dark (%g %g)", o[0], o[3]); }
+        FxOp sb{}; sb.type = FX_SOFTBLOOM_AM;
+        sb.p[0] = 1.f; sb.p[1] = 1.5f; sb.p[2] = 0.15f; sb.p[5] = 1.f; sb.p[6] = 1.f;
+        { float base[4] = {0.2f, 0.4f, 0.6f, 0.8f}, bloom[4] = {0.1f, 0.1f, 0.1f, 1.f};
+          fxSoftbloomAmComposite(sb, base, bloom, o);
+          CHECK(std::fabs(o[0] - 0.35f) < 1e-5f && std::fabs(o[2] - 0.75f) < 1e-5f &&
+                std::fabs(o[3] - 0.8f) < 1e-5f, "softbloom composite (%g %g %g)", o[0], o[2], o[3]); }
+        // chromabbr at amp 0: f = 1, the write is (src.rgb * tex.a, tex.a).
+        FxOp ca{}; ca.type = FX_LENSD_AM; ca.q[1] = 1.f;
+        fxChromabbrAmPixel(ca, 0.5f, 0.5f, 1.f, konstS(KC_A), o);
+        CHECK(std::fabs(o[0] - 0.16f) < 1e-5f && std::fabs(o[3] - 0.8f) < 1e-5f,
+              "chromabbr amp 0 (%g %g)", o[0], o[3]);
+        // lensd main: numIters 2, aberration 0 -> cs 2, weights 2/3 + 2/3,
+        // frag = (4/3 * 0.9) / 1.5 = 0.8; alpha 1 mixes fully, * tex.a 0.5.
+        FxExtrudeSampler ldS; ldS.sample = [](const void*, int tex, float, float, float out[4]) {
+            if (tex == 0) { out[0] = 0.3f; out[1] = 0.6f; out[2] = 0.9f; out[3] = 0.5f; }
+            else { out[0] = out[1] = out[2] = 0.9f; out[3] = 1.f; }
+        }; ldS.ctx = nullptr;
+        FxOp ld{}; ld.type = FX_LENSD_AM;
+        ld.p[3] = 0.2f; ld.p[5] = 2.f; ld.p[6] = 1.f; ld.q[0] = 1.f;
+        fxLensdAmPixel(ld, 0.5f, 0.5f, 100.f, ldS, o);
+        CHECK(std::fabs(o[0] - 0.4f) < 1e-4f && std::fabs(o[3] - 0.25f) < 1e-4f,
+              "lensd spread (%g %g)", o[0], o[3]);
+        // Parse folds + shader routing + identity for the whole wave.
+        FxOp tops[kFxMaxOps];
+        float flatRf[] = {194, 1, 1, 1, 1, 8390656, 2.4f, 6, 195, 0.5f, 8, 7, 60, 700, 0.012f, 200,
+                          196, 0.2f, 0.3f, 0.3f, 1, 0, 0, 0};
+        CHECK(fxParseOps(flatRf, 24, tops) == 1 && tops[0].type == FX_REFRACTION_AM &&
+              tops[0].r[3] == 1.f && tops[0].q[4] == 700.f, "refraction folds EXT + EXT2");
+        float flatSf[] = {200, 0, 0, 0, 0.3f, 0, 0, 1, 201, 0.5f, 0, 0.5f, 0, 15, 1, 1,
+                          202, 1, 0, 0, 16733610, 5614335, 16755285, 1};
+        CHECK(fxParseOps(flatSf, 24, tops) == 1 && tops[0].type == FX_SHAPEFIELD_AM &&
+              tops[0].q[0] == 0.5f && tops[0].r[6] == 1.f, "shapefield folds EXT + EXT2");
+        float flatCg[] = {205, 0, 20, 25, 0, 0, 100, 16777215, 206, 50, 0.5f, 0.5f, 0, 40, 50, 50,
+                          207, 0.05f, 0, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatCg, 24, tops) == 1 && tops[0].type == FX_CC_GLASS_AM &&
+              tops[0].r[0] == 0.05f, "cc_glass folds EXT + EXT2");
+        float flatUu[] = {187, 0, 1, 10, 0, 1, 0, 0, 188, 1, 0, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatUu, 16, tops) == 1 && tops[0].type == FX_UNMULT_AM &&
+              tops[0].q[0] == 1.f, "unmult folds EXT");
+        float flatLd[] = {213, 0, -0.15f, 100, 0.2f, 1.2f, 50, 1, 214, 1, 1, 1, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatLd, 16, tops) == 1 && tops[0].type == FX_LENSD_AM &&
+              tops[0].q[2] == 1.f, "lensd folds EXT");
+        float flatSw[] = {210, 0, 1, 1, 0, 0, 1, 0, 211, 0, 0, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatSw, 16, tops) == 1 && tops[0].type == FX_SOLID_WIPE_AM,
+              "solid wipe folds EXT");
+        float flatHt[] = {203, 0, 45, 33, 1, 4, 0, 0, 204, 16777215, 0, 0, 0, 1, 0, 0};
+        CHECK(fxParseOps(flatHt, 16, tops) == 1 && tops[0].type == FX_HALFTONE_DOTS_AM &&
+              tops[0].q[0] == 16777215.f, "halftone dots folds EXT");
+        float flatT2[] = {198, 0.25f, 0, 4, 1, 0, 0, 1, 199, 0, 6, 0, 8390656, 8390656, 0, 0};
+        CHECK(fxParseOps(flatT2, 16, tops) == 1 && tops[0].type == FX_TURBULENT2_AM &&
+              tops[0].q[1] == 6.f, "turbulent2 folds EXT");
+        float flatBare[] = {188, 1, 0, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatBare, 8, tops) == 0, "bare unmult EXT dropped");
+        CHECK(fxShaderOf(FX_NEGATIVE_AM).group == FXG_COLOR && fxShaderOf(FX_NEGATIVE_AM).mode == 27 &&
+              fxShaderOf(FX_TRITONE_AM).mode == 28 && fxShaderOf(FX_DENOISE_AM).group == FXG_BLUR2 &&
+              fxShaderOf(FX_DENOISE_AM).mode == 13 && fxShaderOf(FX_BOKEH_AM).mode == 14 &&
+              fxShaderOf(FX_LENSBLUR_OBS_AM).mode == 15 && fxShaderOf(FX_VORTEX_BLUR_AM).mode == 16 &&
+              fxShaderOf(FX_TWITCH_AM).mode == 17 && fxShaderOf(FX_RGBGLITCH_AM).group == FXG_WARP &&
+              fxShaderOf(FX_RGBGLITCH_AM).mode == 28 && fxShaderOf(FX_FISHEYE_AM).mode == 29 &&
+              fxShaderOf(FX_REFRACTION_AM).mode == 30 && fxShaderOf(FX_TURBULENT2_AM).mode == 31 &&
+              fxShaderOf(FX_CC_GLASS_AM).mode == 32 && fxShaderOf(FX_SOLID_WIPE_AM).mode == 33 &&
+              fxShaderOf(FX_SHAPEFIELD_AM).group == FXG_STYLE && fxShaderOf(FX_SHAPEFIELD_AM).mode == 21 &&
+              fxShaderOf(FX_HALFTONE_DOTS_AM).mode == 22, "v180 shaded routing");
+        CHECK(fxShaderOf(FX_UNMULT_AM).group == FXG_NONE && fxShaderOf(FX_MINIMAX_AM).group == FXG_NONE &&
+              fxShaderOf(FX_SOFTBLOOM_AM).group == FXG_NONE && fxShaderOf(FX_LENSD_AM).group == FXG_NONE,
+              "v180 dedicated types");
+        FxOp idn{};
+        idn.type = FX_NEGATIVE_AM;
+        CHECK(!fxIsIdentity(idn), "negative is never identity");
+        idn = FxOp{}; idn.type = FX_MINIMAX_AM;
+        CHECK(fxIsIdentity(idn), "minimax radius 0 is identity");
+        idn.p[1] = 5.f;
+        CHECK(!fxIsIdentity(idn), "minimax radius 5 is not identity");
+        idn = FxOp{}; idn.type = FX_RGBGLITCH_AM;
+        CHECK(fxIsIdentity(idn), "rgbglitch progressb 0 is identity");
+        idn = FxOp{}; idn.type = FX_SOLID_WIPE_AM;
+        CHECK(fxIsIdentity(idn), "solid wipe alpha 0 is identity");
+        idn = FxOp{}; idn.type = FX_SOFTBLOOM_AM;
+        CHECK(fxIsIdentity(idn), "softbloom strength 0 is identity (the def's gate)");
+        idn.p[0] = 1.f;
+        CHECK(!fxIsIdentity(idn), "softbloom strength 1 is not identity");
+        idn = FxOp{}; idn.type = FX_TURBULENT2_AM;
+        CHECK(fxIsIdentity(idn), "turbulent2 intensity 0 is identity");
+        idn = FxOp{}; idn.type = FX_FISHEYE_AM;
+        CHECK(!fxIsIdentity(idn), "fisheye is never identity (the def's alpha tail)");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

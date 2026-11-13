@@ -66,12 +66,22 @@ class ClipFxLibraryTest {
         // Build 136 adds FX_MOTION_BLUR4 (179, the resolved marker like 55) and its
         // three per-frame stages FX_MB4_POS / _SCALE / _ANGLE (180 / 181 / 182).
         // Build 141 (v179) adds FX_OPTIC_COMP_AM (183); 184 is its EXT group.
+        // Build 147 (v180, Queue 15j) adds the second-wave ports: FX_NEGATIVE_AM (185),
+        // FX_TRITONE_AM (186), FX_UNMULT_AM (187), FX_DENOISE_AM (189),
+        // FX_MINIMAX_AM (190), FX_RGBGLITCH_AM (191), FX_FISHEYE_AM (192),
+        // FX_VORTEX_BLUR_AM (193), FX_REFRACTION_AM (194), FX_TWITCH_AM (197),
+        // FX_TURBULENT2_AM (198), FX_SHAPEFIELD_AM (200), FX_HALFTONE_DOTS_AM (203),
+        // FX_CC_GLASS_AM (205), FX_BOKEH_AM (208), FX_LENSBLUR_OBS_AM (209),
+        // FX_SOLID_WIPE_AM (210), FX_SOFTBLOOM_AM (212) and FX_LENSD_AM (213);
+        // 188 / 195 / 199 / 201 / 204 / 206 / 211 / 214 are their EXT groups and
+        // 196 / 202 / 207 their EXT2 groups, folded the same way.
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
                 114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126 + 129 +
                 131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149 +
-                150 + 151 + 154 + 155 + 157 + 158 + 159 + 161 + 164 + 167 + 169 + 172 + 175 + 178 + 179 + 180 + 181 + 182 + 183).toList(),
+                150 + 151 + 154 + 155 + 157 + 158 + 159 + 161 + 164 + 167 + 169 + 172 + 175 + 178 + 179 + 180 + 181 + 182 + 183 +
+                185 + 186 + 187 + 189 + 190 + 191 + 192 + 193 + 194 + 197 + 198 + 200 + 203 + 205 + 208 + 209 + 210 + 212 + 213).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

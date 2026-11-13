@@ -144,6 +144,20 @@ internal object AmFxEval {
         ClipFxLibrary.COLORGRAD3_AM -> listOf(Tracked(10, 1f))                   // angle (EXT slot 3, absolute 10)
         // v178 (build 141): Optic Compensation — AM units (scale 1); tails start at 14 (EXT).
         ClipFxLibrary.OPTIC_COMP_AM -> listOf(Tracked(1, 1f), Tracked(2, 1f))    // distortion, strength
+        // v180 (Queue 15j): the second-wave ports — AM units (scale 1). Plain tails
+        // start at 7, EXT effects' at 14 (LENSD), EXT2 effects' at 21 (REFRACTION,
+        // SHAPEFIELD); see tailStart.
+        ClipFxLibrary.MINIMAX_AM -> listOf(Tracked(1, 1f))                       // radius
+        ClipFxLibrary.RGBGLITCH_AM -> listOf(Tracked(0, 1f))                     // progressa
+        ClipFxLibrary.FISHEYE_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))       // power, centerX
+        ClipFxLibrary.VORTEX_BLUR_AM -> listOf(Tracked(0, 1f))                   // strength
+        ClipFxLibrary.REFRACTION_AM -> listOf(Tracked(5, 1f))                    // intensity
+        ClipFxLibrary.TWITCH_AM -> listOf(Tracked(0, 1f))                        // amplitude
+        ClipFxLibrary.TURBULENT_DISPLACE2_AM -> listOf(Tracked(0, 1f))          // intensity
+        ClipFxLibrary.SHAPEFIELD_AM -> listOf(Tracked(4, 1f), Tracked(7, 1f))    // evolution, shapeSize (EXT slot 0, absolute 7)
+        ClipFxLibrary.BOKEH_AM -> listOf(Tracked(3, 1f), Tracked(1, 1f), Tracked(2, 1f))  // blurRadius, blurWidth, blurHeight
+        ClipFxLibrary.LENSBLUR_OBS_AM -> listOf(Tracked(1, 1f))                  // progressa
+        ClipFxLibrary.LENSD_AM -> listOf(Tracked(1, 1f))                         // amp
         else -> emptyList()
     }
 
@@ -156,13 +170,15 @@ internal object AmFxEval {
         ClipFxLibrary.TURBULENT_DISPLACE3_AM, ClipFxLibrary.STREAKS_AM,
         ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
         ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM,
-        ClipFxLibrary.BBMAKER_AM, ClipFxLibrary.OPTIC_COMP_AM -> EXT_TAIL_START
+        ClipFxLibrary.BBMAKER_AM, ClipFxLibrary.OPTIC_COMP_AM,
+        ClipFxLibrary.LENSD_AM, ClipFxLibrary.TURBULENT_DISPLACE2_AM -> EXT_TAIL_START
         ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
         ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM,
         ClipFxLibrary.DEEP_GLOW2_AM,
         ClipFxLibrary.GRADIENTFLOW_AM, ClipFxLibrary.PARTX_AM,
         ClipFxLibrary.LIGHTSWEEP_AM, ClipFxLibrary.COLORGRAD3_AM,
-        ClipFxLibrary.DEEP_GLOW_AM -> EXT2_TAIL_START
+        ClipFxLibrary.DEEP_GLOW_AM,
+        ClipFxLibrary.REFRACTION_AM, ClipFxLibrary.SHAPEFIELD_AM -> EXT2_TAIL_START
         else -> TAIL_START
     }
 

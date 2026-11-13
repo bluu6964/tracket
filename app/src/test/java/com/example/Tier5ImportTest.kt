@@ -11,8 +11,10 @@ import org.junit.Test
  * Build 134 (v177): Queue 15(f) — the tier-5 batch imports: bbmaker, unsharpmask,
  * newsharpen, gradshadow, gradientflow, partx, edgeline, lightsweep, 3colorgrad,
  * deepglow (v1) and spill-cleanup as native ports (defs-batch8), moblurplus routed
- * to the motion-blur family mapping, and opticcompesation / pulseopacity2 parked
- * with precise reasons (their only staged defs carry no evidenced formula). The
+ * to the motion-blur family mapping; opticcompesation / pulseopacity2 were parked
+ * here with precise reasons and un-parked in build 141 (hunt round 4 found their real
+ * definitions — Round4ImportTest carries the full pins; the two tests below now assert
+ * the shipped behaviour on the same verbatim fragments). The
  * effect elements below are verbatim from the corpus files named in each test.
  * Slot layouts: see the ClipFxLibrary consts / fx_plan.h.
  */
@@ -320,25 +322,30 @@ $layers
     }
 
     @Test
-    fun opticCompesationParkedWithReason() {
-        // omniframe-loser-pf.xml verbatim: no fx is added; the warning names why.
+    fun opticCompesationUnparkedInRound4() {
+        // omniframe-loser-pf.xml verbatim. Was parked in build 134 (the only staged def
+        // delegated to a native pass); hunt round 4 found the original-format def, and the
+        // effect now imports natively — Round4ImportTest pins the values / tails in full.
         val r = parse(
             """<effect id="com.alightcreative.effects.opticcompesation" locallyApplied="true"><property name="iterations" type="float" value="10.000000" /><property name="distortion" type="float"><kf t="0.224638" v="0.000000" e="cubicBezier 0.0 1.0 0.58 1.0" /><kf t="0.000000" v="2.190000" /></property><property name="strength" type="float" value="0.000000" /><property name="separation" type="float" value="0.000000" /><property name="blendMode" type="int" value="0" /><property name="scale" type="float" value="1.000000" /><property name="alpha" type="float" value="1.000000" /><property name="stretch" type="vec2" value="1.000000,1.000000" /><property name="hardness" type="float" value="1.000000" /></effect>"""
         )
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
-        assertTrue(c.effects.isEmpty())
-        assertTrue(r.warnings.any { it.contains("opticcompesation is not supported yet") && it.contains("identity copy") })
+        assertTrue(c.effects.any { it.type == ClipFxLibrary.OPTIC_COMP_AM })
+        assertTrue(r.warnings.none { it.contains("opticcompesation") })
     }
 
     @Test
-    fun pulseOpacity2ParkedWithReason() {
-        // blxze-pack-v4.xml verbatim.
+    fun pulseOpacity2UnparkedInRound4() {
+        // blxze-pack-v4.xml verbatim. Was parked in build 134 (the staged def's script never
+        // uses its time variable); round 4 proved from AM's STOCK def that the constant IS
+        // the effect — the import now bakes it: multiplier (1 - 0.45) + 0.5 x 0.45 = 0.775.
         val r = parse(
             """<effect id="com.alightcreative.effects.pulseopacity2" locallyApplied="true"><property name="freq" type="float" value="16.000000"/><property name="strength" type="float" value="0.450000"/></effect>"""
         )
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
         assertTrue(c.effects.isEmpty())
-        assertTrue(r.warnings.any { it.contains("pulseopacity2 is not supported yet") && it.contains("time law") })
+        assertEquals(77.5f, c.opacity, 0.01f)
+        assertTrue(r.warnings.none { it.contains("pulseopacity2") })
     }
 
     // ---- Panel creates ----

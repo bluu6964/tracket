@@ -470,11 +470,15 @@ object AlightXmlImporter {
      * exactly like Mask layers — to the same target, through the same eligibility rules — with
      * [TimelineClip.isExcludeMask] carrying the kind: Alight SUBTRACTS an exclude mask's shape from
      * the masking stack's combined mask (the renderers apply it as a DST_OUT cut in stack order, see
-     * [LayerMaskLinks]). The one eligibility gap that bites in practice: a group can BE an exclude
-     * mask in Alight (6 corpus instances), but the renderers' mask painters draw shape / text layers
-     * only, so a group exclude mask stays unlinked with a precise warning rather than being linked
-     * and silently not drawn. (In build 135 every exclude mask stayed unlinked this way; the
-     * exclusion-aware combining is what build 138 adds.)
+     * [LayerMaskLinks]).
+     *
+     * GROUP masks link since build 141: a group can BE a mask (11 corpus `blending="mask"` groups)
+     * or an exclude mask (3 unique corpus groups) in Alight, and the mask coverage of a group is its
+     * composed picture — the engines composite the group's scope into the mask scratch (see the
+     * GROUP branches of the preview / exporter drawMaskScratch), so group masks link like leaf masks.
+     * Every corpus mask group's children are shape / text layers (plus one nested mask group); a
+     * group whose coverage cannot be composed (a media child) leaves its target uncut at render
+     * time — it still links here, and the renderers report the gap instead of cutting wrongly.
      */
     private fun resolveMaskLinks(
         directSlots: ArrayList<TimelineClip?>, flat: ArrayList<TimelineClip>, ctx: Ctx, elements: List<Element>
@@ -501,11 +505,11 @@ object AlightXmlImporter {
                         " layer: imported hidden (a mask is applied to shape, text, group and video layers so far)"
                     false
                 }
-                m.type != LayerType.SHAPE && m.type != LayerType.TEXT -> {
+                m.type != LayerType.SHAPE && m.type != LayerType.TEXT && m.type != LayerType.GROUP -> {
                     w += if (exclude) {
-                        kind + " \"" + m.name + "\" is not a shape or text layer: imported hidden, its exclusion cut is not applied"
+                        kind + " \"" + m.name + "\" is not a shape, text or group layer: imported hidden, its exclusion cut is not applied"
                     } else {
-                        kind + " \"" + m.name + "\" is not a shape or text layer: imported hidden, it cuts nothing"
+                        kind + " \"" + m.name + "\" is not a shape, text or group layer: imported hidden, it cuts nothing"
                     }
                     false
                 }
@@ -2245,14 +2249,12 @@ object AlightXmlImporter {
             rotationDeg = tr.rot?.first()?.firstOrNull() ?: 0f,
             opacity = ((tr.opa?.first()?.firstOrNull() ?: 1f) * 100f).coerceIn(0f, 100f),
             blendMode = amBlendMode(el, w),
-            // An Exclude Mask group (`blending="exclude"`) is a mask layer like any other: never
-            // drawn (build 135). resolveMaskLinks treats it like any exclude mask, but a group
-            // cannot serve as a mask in the renderers (their mask painters draw shape / text
-            // layers only), so it stays unlinked with a precise warning (build 138). A plain
-            // Mask group keeps its pre-135 behaviour — group-as-mask linking is a separate,
-            // unverified question.
-            isVisible = !isExcludeMask(el),
-            isMask = isExcludeMask(el),
+            // A Mask group (`blending="mask"`) and an Exclude Mask group (`blending="exclude"`)
+            // are mask layers like any other: never drawn. A mask group kept its pre-135 visible
+            // behaviour until build 141, when group-as-mask coverage (the engines composite the
+            // group's scope into the mask scratch) made both kinds link in resolveMaskLinks.
+            isVisible = !isMaskLayer(el),
+            isMask = isMaskLayer(el),
             isExcludeMask = isExcludeMask(el),
             keyframes = keyframes
         )
@@ -2798,8 +2800,8 @@ object AlightXmlImporter {
                 DEEPGLOW -> applyDeepGlow1Am(fx, clip, ctx)
                 SPILL_CLEANUP -> applySpillCleanupAm(fx, clip, ctx)
                 MOBLURPLUS -> applyMotionBlur(fx, clip, ctx)
-                OPTICCOMPESATION -> applyOpticCompesationParked(fx, clip, ctx)
-                PULSEOPACITY2 -> applyPulseOpacity2Parked(fx, clip, ctx)
+                OPTICCOMPESATION -> applyOpticCompAm(fx, clip, ctx)
+                PULSEOPACITY2 -> applyPulseOpacity2(fx, clip, ctx, durMs)
                 SHAKE -> applyShake(fx, clip, ctx, durMs)
                 FLIP -> applyFlip(fx, clip, ctx, durMs)
                 EXPOSURE -> applyExposureFx(fx, clip, ctx)
@@ -4451,29 +4453,89 @@ object AlightXmlImporter {
     }
 
     /**
-     * `opticcompesation` PARKED (Queue 15(f)): the only staged definition (defs-batch8,
-     * TrueMotion conversion) delegates its work to a native pass naming the effect ITSELF
-     * (its id hex-obfuscated in the conversion) and its shader stage is an identity copy —
-     * there is no evidenced formula to port, and porting would be guessing. The corpus's
-     * 19 instances (distortion keyframed in all) stay a precise warning until a real
-     * definition surfaces.
+     * `opticcompesation` -> Optic Compensation (Alight) (un-parked in hunt round 4): the
+     * round-3 staged def was a legacy conversion of an ENCRYPTED copy (a native pass naming
+     * the effect itself + an identity shader stage); round 4 found the def in ORIGINAL AM
+     * XML format with the full fragment shader inline (AlightMotionUltra's
+     * UltraMotionEffects/Optic Compensation.xml — the deepglow2 / dropshadow precedent),
+     * corroborated tap-for-tap by TrueMotion's afterz-561 SkSL conversion. The def's first
+     * pass only copies the input into a scratch buffer the main pass never samples, so the
+     * port is the main pass alone: a chromatic barrel/pincushion average — for each tap
+     * i in [-iterations, iterations), R samples with amount i*strength + distortion +
+     * separation, G with i*strength + distortion, B with i*strength + distortion -
+     * separation, each tap sampling at 0.5 + uv / sqrt(1 + amount * |uv|^2) where uv runs
+     * through the def's scale / position / stretch prep (scale divides TWICE — the def
+     * divides by `scale` and again by `scale * stretch`; kept verbatim, the gradientflow
+     * precedent). The blend branches are the def's own (NORMAL / MULTIPLY / SCREEN /
+     * LAYER, with LAYER applying hardness twice — the def's text, kept). `distortion` is
+     * keyframed in all 19 corpus instances and `strength` in 3 — both ride AmFxEval tails.
      */
-    private fun applyOpticCompesationParked(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
-        ctx.warnings += "Effect opticcompesation is not supported yet: its only available definition delegates the work to a native pass naming the effect itself and its shader stage is an identity copy, so there is no evidenced formula to port: skipped"
-        return clip0
+    private fun applyOpticCompAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val short = "opticcompesation"
+        val props = fxProps(fx)
+        fun fv(prop: String, fallback: Float): Float =
+            props[prop]?.firstValue(w, short, prop) ?: fallback
+        val distT = props["distortion"]
+        val strT = props["strength"]
+        val (posX, posY) = props["position"]?.firstPoint(w, short, "position", 0f, 0f) ?: (0f to 0f)
+        val (stX, stY) = props["stretch"]?.firstPoint(w, short, "stretch", 1f, 1f) ?: (1f to 1f)
+        val values = listOf(
+            fv("iterations", 10f),
+            distT?.scalarAtEased(0f) ?: 0f,
+            strT?.scalarAtEased(0f) ?: 0.01f,
+            fv("separation", 0.1f), fv("blendMode", 0f), fv("scale", 1f), fv("alpha", 1f),
+            posX, posY, stX, stY, fv("hardness", 1f),
+            0f, 0f
+        ) + tailsOf(trackTail(distT), trackTail(strT))
+        return addFx(clip0, ctx, ClipFxLibrary.OPTIC_COMP_AM, values, short)
     }
 
     /**
-     * `pulseopacity2` PARKED (Queue 15(f)): the only staged definition (defs-batch8,
-     * TrueMotion conversion) is a script whose env.time is assigned but never used — as
-     * written it is a constant opacity multiplier, contradicting the def's own description
-     * ("pulses the layer opacity over time, based on a sine wave or triangular wave"). The
-     * exact time law is unrecoverable from the staged evidence, so the 7 corpus instances
-     * stay a precise warning rather than a guessed pulse.
+     * `pulseopacity2` -> an OPACITY bake (un-parked in hunt round 4): AM's STOCK definition
+     * (the am-xml dump's blueprint/effect-defs/pulse_opacity2.xml — AM's own shipped text,
+     * corroborated character-for-character by the AlightMotionUltra copy) carries the same
+     * script the round-3 conversion had: it reads env.time into `t` and never uses it, so as
+     * shipped by AM the "pulse" is time-invariant — m = sin((freq + phase) * pi) for Sine,
+     * AM.triangle((freq + phase) / 2) for Triangle ([amTriangleWave]), m remapped (m + 1) / 2,
+     * and the layer alpha multiplies by (1 - strength) + m * strength. Round 3 parked it
+     * because the conversion alone could have been a conversion artefact; the stock def
+     * proves the constant IS the effect. The bake still evaluates the params eased per sample
+     * (AM can keyframe them; no corpus instance does, so all 7 imports collapse to one
+     * constant multiplier: loser-pf's strength-1 instances multiply opacity by exactly 0.5,
+     * blxze-pack-v4's freq-16 / strength-0.45 instance by 0.775). Serialised `phase` follows
+     * the STOCK def's 0..2 range (the conversion's "0..200" was a conversion error). A bake
+     * whose multiplier is 1 everywhere returns the clip untouched.
      */
-    private fun applyPulseOpacity2Parked(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
-        ctx.warnings += "Effect pulseopacity2 is not supported yet: its only available definition never uses its time variable (a constant opacity multiplier), contradicting its own sine / triangle pulse description, so the exact time law cannot be recovered: skipped"
-        return clip0
+    private fun applyPulseOpacity2(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
+        if (durMs <= 0L) return clip0
+        val props = fxProps(fx)
+        val freqT = props["freq"]
+        val phaseT = props["phase"]
+        val strengthT = props["strength"]
+        val type = (props["type"]?.firstValue(ctx.warnings, "pulseopacity2", "type") ?: 0f).toInt()
+        val baseKeys = clip0.keyframes[AnimProp.OPACITY]
+        val extras = ((freqT?.keys ?: emptyList()) + (phaseT?.keys ?: emptyList()) +
+            (strengthT?.keys ?: emptyList())).map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } +
+            (baseKeys?.map { it.timeMs } ?: emptyList())
+        val times = sampleTimes(durMs, ctx.fps, 0f, extras)
+        fun mult(t: Long): Float {
+            val norm = t.toFloat() / durMs
+            val f = (freqT?.scalarAtEased(norm) ?: 2f).toDouble()
+            val p = (phaseT?.scalarAtEased(norm) ?: 0f).toDouble()
+            val s = (strengthT?.scalarAtEased(norm) ?: 1f).toDouble().coerceIn(0.0, 1.0)
+            val m = if (type == 1) amTriangleWave((f + p) / 2.0) else sin((f + p) * Math.PI)
+            return ((1.0 - s) + (m + 1.0) / 2.0 * s).toFloat()
+        }
+        if (times.all { abs(mult(it) - 1f) < 1e-4f }) return clip0
+        val raw = times.map { t ->
+            val base = baseKeys?.valueAt(t)?.first ?: clip0.opacity
+            Keyframe(t, (base * mult(t)).coerceIn(0f, 100f), 0f, Easing.LINEAR)
+        }
+        val keys = simplifyKeys(raw, 0.05f, 0.05f)
+        var clip = clip0.copy(keyframes = clip0.keyframes + (AnimProp.OPACITY to keys))
+        keys.firstOrNull()?.let { clip = clip.copy(opacity = it.a) }
+        return clip
     }
 
     /**
@@ -5080,6 +5142,16 @@ object AlightXmlImporter {
             val dy = simplexNoise3(locX, locY + seed * 8723.5647, evo + 7468.329 + seed * 19337.940385) * mag * slack
             ((dx * ca - dy * sa) * ctx.k).toFloat() to ((dx * sa + dy * ca) * ctx.k).toFloat()
         }
+    }
+
+    /**
+     * AM's script-environment `AM.triangle` (recovered in hunt round 4 from openmotion's JS
+     * re-implementation of AM's script environment, chunk.js): a triangle wave of range
+     * -1..1 with triangle(0) = 1 — `4 * |frac(a) - 0.5| - 1`.
+     */
+    private fun amTriangleWave(a: Double): Double {
+        val frac = a - floor(a)
+        return 4.0 * abs(frac - 0.5) - 1.0
     }
 
     /** Ashima simplex noise (the snoise of AM's own shaders), in double precision like AM's JS. */

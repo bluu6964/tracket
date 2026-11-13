@@ -65,12 +65,13 @@ class ClipFxLibraryTest {
         // 163 / 166 / 171 / 174 / 177 their EXT2 groups, folded the same way.
         // Build 136 adds FX_MOTION_BLUR4 (179, the resolved marker like 55) and its
         // three per-frame stages FX_MB4_POS / _SCALE / _ANGLE (180 / 181 / 182).
+        // Build 141 (v179) adds FX_OPTIC_COMP_AM (183); 184 is its EXT group.
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
                 114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126 + 129 +
                 131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149 +
-                150 + 151 + 154 + 155 + 157 + 158 + 159 + 161 + 164 + 167 + 169 + 172 + 175 + 178 + 179 + 180 + 181 + 182).toList(),
+                150 + 151 + 154 + 155 + 157 + 158 + 159 + 161 + 164 + 167 + 169 + 172 + 175 + 178 + 179 + 180 + 181 + 182 + 183).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }

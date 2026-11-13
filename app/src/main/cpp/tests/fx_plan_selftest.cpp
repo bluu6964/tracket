@@ -1723,6 +1723,16 @@ int main() {
         CHECK(fxIsIdentity(id2), "partx with alpha 0 is identity");
         id2.r[0] = 1.f;
         CHECK(!fxIsIdentity(id2), "partx with alpha 1 is not identity");
+        // opticcompesation (v179, build 141): the EXT group folds into q; the op is
+        // never identity (the def's factor alpha is tex.a + 1 / (2 x iterations), so
+        // even zero distortion is not the plain layer); an orphan EXT is dropped.
+        float flatOc[] = {183, 10, 2.19f, 0, 0, 0, 1, 1, 184, 0, 0, 1, 1, 1, 0, 0};
+        CHECK(fxParseOps(flatOc, 16, tops) == 1 && tops[0].type == FX_OPTIC_COMP_AM &&
+              tops[0].q[4] == 1.f && tops[0].p[1] == 2.19f, "opticcomp EXT folds into q");
+        FxOp oc{}; oc.type = FX_OPTIC_COMP_AM; oc.p[0] = 10.f;
+        CHECK(!fxIsIdentity(oc), "opticcomp is never identity (factor alpha)");
+        float flatOrphan[] = {184, 0, 0, 1, 1, 1, 0, 0};
+        CHECK(fxParseOps(flatOrphan, 8, tops) == 0, "orphan opticcomp EXT dropped");
     }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;

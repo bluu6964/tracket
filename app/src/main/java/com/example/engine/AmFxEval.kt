@@ -142,6 +142,8 @@ internal object AmFxEval {
         ClipFxLibrary.PARTX_AM -> listOf(Tracked(7, 1f))                         // EVO (EXT slot 0, absolute 7)
         ClipFxLibrary.LIGHTSWEEP_AM -> listOf(Tracked(3, 1f))                    // progress
         ClipFxLibrary.COLORGRAD3_AM -> listOf(Tracked(10, 1f))                   // angle (EXT slot 3, absolute 10)
+        // v178 (build 141): Optic Compensation — AM units (scale 1); tails start at 14 (EXT).
+        ClipFxLibrary.OPTIC_COMP_AM -> listOf(Tracked(1, 1f), Tracked(2, 1f))    // distortion, strength
         else -> emptyList()
     }
 
@@ -154,7 +156,7 @@ internal object AmFxEval {
         ClipFxLibrary.TURBULENT_DISPLACE3_AM, ClipFxLibrary.STREAKS_AM,
         ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
         ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM,
-        ClipFxLibrary.BBMAKER_AM -> EXT_TAIL_START
+        ClipFxLibrary.BBMAKER_AM, ClipFxLibrary.OPTIC_COMP_AM -> EXT_TAIL_START
         ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
         ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM,
         ClipFxLibrary.DEEP_GLOW2_AM,

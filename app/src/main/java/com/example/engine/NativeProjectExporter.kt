@@ -413,10 +413,79 @@ class NativeProjectExporter(private val context: Context) {
                         return mcs.filter { it.isActiveAt(timeMs) }
                             .map { if (rig.hasLinks) rig.adjusted(it, timeMs) else it.renderAt(timeMs) }
                     }
+                    // Coverage of one mask layer (already evaluated at [timeMs]) drawn into [out]:
+                    // a shape / text mask goes through the same painter as every overlay; a GROUP
+                    // mask (build 141) composites its scope — the group's picture is its content
+                    // in Alight — in stacking order, each child cut by its own masks inside the
+                    // scope first (the preview's maskCoverageInto is the same construction).
+                    // Children that paint nothing in a scene (audio / null / camera / chain lanes)
+                    // are skipped; a media child (video / image / sticker) has no painter coverage,
+                    // so the whole mask fails: false = the target is left uncut by this mask.
+                    val groupMaskTemps = ArrayList<Bitmap?>()
+                    fun groupMaskTemp(slot: Int): Bitmap {
+                        while (groupMaskTemps.size <= slot) groupMaskTemps.add(null)
+                        var bmp = groupMaskTemps[slot]
+                        if (bmp == null || bmp.width != w || bmp.height != h || bmp.isRecycled) {
+                            bmp?.recycle()
+                            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            groupMaskTemps[slot] = bmp
+                        }
+                        return bmp
+                    }
+                    fun maskCoverageInto(out: Bitmap, maskAdj: TimelineClip, timeMs: Long, depth: Int): Boolean {
+                        if (depth > 4) return false
+                        if (maskAdj.type != LayerType.GROUP) {
+                            val p = painter ?: return false
+                            p.nativeTarget = out
+                            p.draw(android.graphics.Canvas(out), maskAdj, applyOpacity = true, timeMs = timeMs)
+                            return true
+                        }
+                        val scopeClips = GroupOps.scopeTracks(tracks, maskAdj.id).asReversed().flatMap { it.clips }
+                        val scopeMasks = LayerMaskLinks.masksByTarget(scopeClips)
+                        val comp = groupMaskTemp(depth * 3 + 1)
+                        comp.eraseColor(0)
+                        var any = false
+                        for (c in scopeClips) {
+                            if (!c.isVisible || c.isMask || !c.isActiveAt(timeMs)) continue
+                            if (c.type == LayerType.AUDIO || c.type == LayerType.NULL ||
+                                c.type == LayerType.CAMERA || c.type == LayerType.CHAIN
+                            ) continue
+                            val adj = if (rig.hasLinks) rig.adjusted(c, timeMs) else c.renderAt(timeMs)
+                            if (adj.type == LayerType.VIDEO || adj.type == LayerType.OVERLAY ||
+                                adj.type == LayerType.STICKER
+                            ) return false
+                            val tmp = groupMaskTemp(depth * 3)
+                            tmp.eraseColor(0)
+                            if (!maskCoverageInto(tmp, adj, timeMs, depth + 1)) return false
+                            for (m in scopeMasks[c.id].orEmpty()) {
+                                if (!m.isActiveAt(timeMs)) continue
+                                val mAdj = if (rig.hasLinks) rig.adjusted(m, timeMs) else m.renderAt(timeMs)
+                                val ms = groupMaskTemp(depth * 3 + 2)
+                                ms.eraseColor(0)
+                                if (!maskCoverageInto(ms, mAdj, timeMs, depth + 1)) return false
+                                android.graphics.Canvas(tmp).drawBitmap(
+                                    ms, 0f, 0f, if (m.isExcludeMask) maskDstOutPaint else maskDstInPaint
+                                )
+                            }
+                            android.graphics.Canvas(comp).drawBitmap(tmp, 0f, 0f, null)
+                            any = true
+                        }
+                        if (!any) return false
+                        val alpha = maskAdj.opacityFraction
+                        if (alpha >= 0.999f) {
+                            android.graphics.Canvas(out).drawBitmap(comp, 0f, 0f, null)
+                        } else {
+                            val paint = android.graphics.Paint().apply {
+                                this.alpha = (alpha * 255f).roundToInt().coerceIn(0, 255)
+                            }
+                            android.graphics.Canvas(out).drawBitmap(comp, 0f, 0f, paint)
+                        }
+                        return true
+                    }
                     // Draws one mask layer (already evaluated at [timeMs]) into the shared scratch
-                    // picture with the same painter as every overlay and returns the scratch.
-                    fun drawMaskIntoScratch(maskAdj: TimelineClip, timeMs: Long): Bitmap {
-                        val p = painter ?: error("No layer painter available to draw mask '${maskAdj.name}'.")
+                    // picture and returns it — or null when its coverage could not be drawn (a
+                    // group mask with a media child, build 141): callers leave the target uncut.
+                    fun drawMaskIntoScratch(maskAdj: TimelineClip, timeMs: Long): Bitmap? {
                         var scratch = maskScratchBmp
                         if (scratch == null || scratch.width != w || scratch.height != h || scratch.isRecycled) {
                             scratch?.recycle()
@@ -424,17 +493,16 @@ class NativeProjectExporter(private val context: Context) {
                             maskScratchBmp = scratch
                         }
                         scratch.eraseColor(0)
-                        p.nativeTarget = scratch
-                        p.draw(android.graphics.Canvas(scratch), maskAdj, applyOpacity = true, timeMs = timeMs)
-                        return scratch
+                        return if (maskCoverageInto(scratch, maskAdj, timeMs, 0)) scratch else null
                     }
                     // Cuts a frame-sized renderer texture (a Group layer's composed picture, or a
                     // picture layer captured into its own picture for a mask) by one mask layer: the
                     // mask is drawn into the scratch picture, uploaded, and the renderer multiplies
                     // the texture by its alpha (DST_IN) — or by one-minus-alpha for an Exclude Mask
-                    // layer (DST_OUT). Returns the cut texture.
+                    // layer (DST_OUT). Returns the cut texture — or [tex] itself, uncut, when the
+                    // mask's coverage could not be drawn.
                     fun cutPictureByMask(tex: Int, maskAdj: TimelineClip, timeMs: Long, ownerName: String): Int {
-                        val scratch = drawMaskIntoScratch(maskAdj, timeMs)
+                        val scratch = drawMaskIntoScratch(maskAdj, timeMs) ?: return tex
                         if (groupMaskTex == 0) groupMaskTex = renderer.createTexture2d()
                         if (groupMaskTex == 0) error("Could not create the mask texture for '$ownerName'.")
                         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groupMaskTex)
@@ -880,7 +948,7 @@ class NativeProjectExporter(private val context: Context) {
                                     // DST_IN), in turn — the picture keeps only where every mask is; an
                                     // Exclude Mask layer erases instead (DST_OUT, see LayerMaskLinks).
                                     for (maskAdj in maskAdjs) {
-                                        val scratch = drawMaskIntoScratch(maskAdj, timeMs)
+                                        val scratch = drawMaskIntoScratch(maskAdj, timeMs) ?: continue
                                         painter.nativeTarget = g.bmp
                                         cv.drawBitmap(scratch, 0f, 0f, if (maskAdj.isExcludeMask) maskDstOutPaint else maskDstInPaint)
                                     }
@@ -899,7 +967,7 @@ class NativeProjectExporter(private val context: Context) {
                                         painter.nativeTarget = sil
                                         painter.draw(android.graphics.Canvas(sil), fillCopies!![0].silhouetteCopy(), applyOpacity = false, timeMs = timeMs)
                                         for (maskAdj in maskAdjs) {
-                                            val scratch = drawMaskIntoScratch(maskAdj, timeMs)
+                                            val scratch = drawMaskIntoScratch(maskAdj, timeMs) ?: continue
                                             android.graphics.Canvas(sil).drawBitmap(scratch, 0f, 0f, if (maskAdj.isExcludeMask) maskDstOutPaint else maskDstInPaint)
                                         }
                                         painter.nativeTarget = g.bmp

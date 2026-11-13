@@ -38,7 +38,8 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_CHANNEL_MAP, EF_MOSAIC_AM, EF_BOX_PAIR, EF_GLOW_OUTER, EF_ELECTRIC_AM,
              EF_SMOOTH_EDGES_AM, EF_DEEP_GLOW_COMP, EF_DROP_SHADOW,
              EF_BBMAKER, EF_UNSHARP_COMP, EF_NEWSHARPEN_COMP, EF_AM_BLENDGEN,
-             EF_DEEP_GLOW1_COMP, EF_SPILL_STREAK, EF_SPILL_OVER, EF_SPILL_FINAL, EF_COUNT };  // eff_[] in renderer.h has room for 52
+             EF_DEEP_GLOW1_COMP, EF_SPILL_STREAK, EF_SPILL_OVER, EF_SPILL_FINAL,
+             EF_OPTIC_COMP, EF_COUNT };  // eff_[] in renderer.h has room for 52
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -1063,6 +1064,58 @@ void main() {
     vec4 tb = tex * band((uP[0] - 20.0) / 100.0, (120.0 - uP[0]) / 100.0, 0.0);
     vec4 layer = wipebb * (1.0 - tb.a) + tb;
     oColor = layer * tex.a * uQ[1];
+}
+)";
+
+// Alight's opticcompesation main pass (hunt round 4: the original-format def from
+// AlightMotionUltra's UltraMotionEffects, corroborated by TrueMotion's afterz-561
+// conversion). The def's first pass only copies the input into a scratch buffer the
+// main pass never samples, so this is the whole effect: a chromatic barrel /
+// pincushion average. uP: iterations, distortion, strength, separation, blendMode,
+// scale, alpha. uQ: position x / y (AM units), stretch x / y, hardness.
+const char* kOpticComp = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uP[7];
+uniform float uQ[7];
+in vec2 vUv;
+out vec4 oColor;
+vec4 aberrate(vec2 uv, float amount) {
+    return texture(uTex, 0.5 + uv / sqrt(1.0 + amount * dot(uv, uv)));
+}
+vec4 newLayer(vec4 a, vec4 b) { return a * (1.0 - b.a) + b; }
+void main() {
+    vec4 tex = texture(uTex, vUv);
+    vec2 uv = vUv - 0.5;
+    uv /= uP[5];
+    uv += vec2(uQ[0], uQ[1]) * vec2(-1.0, 1.0) / 500.0;
+    uv /= uP[5] * vec2(uQ[2], uQ[3]);
+    vec4 acc = vec4(0.0, 0.0, 0.0, 1.0);
+    for (float i = -uP[0]; i < uP[0]; i += 1.0) {
+        float base = i * uP[2] + uP[1];
+        acc.r += aberrate(uv, base + uP[3]).r;
+        acc.g += aberrate(uv, base).g;
+        acc.b += aberrate(uv, base - uP[3]).b;
+    }
+    acc /= uP[0] * 2.0;
+    vec4 factor = vec4(0.0, 0.0, 0.0, tex.a) + acc;
+    vec3 base = tex.a > 0.0 ? tex.rgb / tex.a : vec3(0.0);
+    vec4 result;
+    int mode = int(uP[4] + 0.5);
+    if (mode == 1) {
+        factor *= uQ[4];
+        vec4 c = factor + vec4(1.0) * (1.0 - factor.a);
+        result = vec4(base * c.rgb, 1.0) * tex.a;
+    } else if (mode == 2) {
+        factor *= uQ[4];
+        result = vec4(1.0 - (1.0 - base) * (1.0 - factor.rgb), 1.0) * tex.a;
+    } else if (mode == 3) {
+        factor *= uQ[4];
+        result = newLayer(tex, factor) * uQ[4] * tex.a;
+    } else {
+        result = factor * uQ[4] * tex.a;
+    }
+    oColor = mix(tex, result, uP[6]) * tex.a;
 }
 )";
 
@@ -2443,7 +2496,8 @@ const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSpli
                                   kChannelMapAm, kMosaicAm, kBoxPair, kGlowOuter, kElectricEdgesAm,
                                   kSmoothEdgesAm, kDeepGlowComp, kDropShadow,
                                   kBbMaker, kUnsharpComp, kNewSharpenComp, kAmBlendGen,
-                                  kDeepGlow1Comp, kSpillStreak, kSpillOver, kSpillFinal};
+                                  kDeepGlow1Comp, kSpillStreak, kSpillOver, kSpillFinal,
+                                  kOpticComp};
 static_assert(EF_COUNT <= 52, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
@@ -2648,6 +2702,7 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_COLORGRAD3_AM: ok = fxAmBlendGenAm(op, W, H, cur); break;
             case FX_DEEP_GLOW_AM: ok = fxDeepGlow1Am(op, W, H, cur); break;
             case FX_SPILL_CLEANUP_AM: ok = fxSpillCleanupAm(op, W, H, cur); break;
+            case FX_OPTIC_COMP_AM: ok = fxOpticCompAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -3247,6 +3302,22 @@ bool Renderer::fxDropShadowAm(const FxOp& op, int W, int H, int* cur) {
 bool Renderer::fxBbMakerAm(const FxOp& op, int W, int H, int* cur) {
     if (fxIsIdentity(op)) return true;
     const uint32_t prog = effProg(EF_BBMAKER);
+    if (!prog) return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Optic Compensation (Alight): the round-4 def's main pass as one shader (kOpticComp).
+bool Renderer::fxOpticCompAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_OPTIC_COMP);
     if (!prog) return false;
     const int dst = 1 - *cur;
     begin(prog, fxFbo_[dst], W, H);

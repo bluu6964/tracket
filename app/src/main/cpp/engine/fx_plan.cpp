@@ -72,6 +72,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_LIGHTSWEEP_AM_EXT ? FX_LIGHTSWEEP_AM
                            : t == FX_COLORGRAD3_AM_EXT ? FX_COLORGRAD3_AM
                            : t == FX_DEEP_GLOW_AM_EXT ? FX_DEEP_GLOW_AM
+                           : t == FX_OPTIC_COMP_AM_EXT ? FX_OPTIC_COMP_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -114,6 +115,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_NEWSHARPEN_AM && t != FX_GRADSHADOW_AM && t != FX_GRADIENTFLOW_AM &&
             t != FX_PARTX_AM && t != FX_EDGELINE_AM && t != FX_LIGHTSWEEP_AM &&
             t != FX_COLORGRAD3_AM && t != FX_DEEP_GLOW_AM && t != FX_SPILL_CLEANUP_AM &&
+            t != FX_OPTIC_COMP_AM &&
             t != FX_MB4_POS && t != FX_MB4_SCALE && t != FX_MB4_ANGLE) {
             owner = -1;
             extFoldedOp = -1;
@@ -540,6 +542,8 @@ bool fxIsIdentity(const FxOp& o) {
             // the base is unscaled: oalpha 0, higsha.x 0, no shadow branch.
             return p[3] <= 0.f && o.q[0] == 0.f && !(std::lround(o.r[3]) & 1);
         case FX_SPILL_CLEANUP_AM: return false;   // the spill composite reshapes alpha even at strength 0
+        // v179 tier:
+        case FX_OPTIC_COMP_AM: return false;   // the def's factor alpha is tex.a + 1 / (2 x iterations), never the plain layer
         default: return false;
     }
 }

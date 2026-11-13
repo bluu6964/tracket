@@ -626,6 +626,15 @@ enum FxType : int {
                         // layer pivot (0..100 %), p4 samplesMin, p5 samplesMax
     FX_MB4_ANGLE = 182, // p0 the rotation change per frame (degrees, signed), p1 tune,
                         // p2/p3 the layer pivot (%), p4 samplesMin, p5 samplesMax
+    // v179 (build 141): Alight's opticcompesation, ported from the hunt-round-4 def
+    // (the ORIGINAL-format def in AlightMotionUltra's UltraMotionEffects, corroborated
+    // by TrueMotion's afterz-561 SkSL conversion; round 3 only had an encrypted-copy
+    // conversion delegating to a native pass). p: [0] iterations, [1] distortion,
+    // [2] strength, [3] separation, [4] blendMode (0 NORMAL / 1 MULTIPLY / 2 SCREEN /
+    // 3 LAYER), [5] scale, [6] alpha. q (EXT): [0] position x, [1] position y
+    // (AM units, / 500 in the shader), [2] stretch x, [3] stretch y, [4] hardness.
+    FX_OPTIC_COMP_AM = 183,
+    FX_OPTIC_COMP_AM_EXT = 184,
     FX_MAX = FX_COPY_BG
 };
 

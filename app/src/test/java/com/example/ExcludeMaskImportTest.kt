@@ -18,9 +18,10 @@ import org.junit.Test
  * (intersection of its Mask layers) minus (union of its Exclude Mask layers), and an exclude with no
  * Mask in its stack subtracts from the uncut target. The corpus census behind these pins (105 files):
  * 30 exclude layers — 24 in exclude-only stacks, 6 in mixed Mask+Exclude stacks (wym-prst-268 x5,
- * proyek-baru-1 x1); 24 are shape layers (they link) and 6 are embedScene groups (they cannot serve
- * as masks in the renderers and stay unlinked with a precise warning — PhoneRoundsImportTest pins
- * that case). The combination algebra itself is pinned on the CPU reference in mask_plan_selftest.
+ * proyek-baru-1 x1); 24 are shape layers (they link) and 6 are embedScene groups (they could not
+ * serve as masks in the renderers until build 141 composited group-mask coverage — they link now;
+ * GroupMaskImportTest pins the group cases). The combination algebra itself is pinned on the CPU
+ * reference in mask_plan_selftest.
  */
 class ExcludeMaskImportTest {
 

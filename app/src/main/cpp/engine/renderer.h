@@ -190,6 +190,7 @@ private:
     bool fxDeepGlow2Am(const FxOp& op, int W, int H, int* cur);
     bool fxDropShadowAm(const FxOp& op, int W, int H, int* cur);
     bool fxBbMakerAm(const FxOp& op, int W, int H, int* cur);
+    bool fxOpticCompAm(const FxOp& op, int W, int H, int* cur);
     bool fxUnsharpMaskAm(const FxOp& op, int W, int H, int* cur);
     bool fxNewSharpenAm(const FxOp& op, int W, int H, int* cur);
     bool fxAmBlendGenAm(const FxOp& op, int W, int H, int* cur);

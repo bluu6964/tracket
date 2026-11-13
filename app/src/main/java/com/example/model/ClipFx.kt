@@ -568,6 +568,18 @@ object ClipFxLibrary {
     // over it, then the spill composite (the streak colour's luma replaced by
     // the base's, laid under the base). [0] strength (AM raw).
     const val SPILL_CLEANUP_AM = "spill_cleanup_am"
+    // OPTIC_COMP_AM (native 183 + EXT 184): Alight's opticcompesation — the
+    // chromatic barrel / pincushion average of the hunt-round-4 def (the
+    // original-format UltraMotionEffects def, corroborated by TrueMotion's
+    // afterz-561 SkSL conversion): per tap i in [-iterations, iterations),
+    // R / G / B sample at 0.5 + uv / sqrt(1 + amount * |uv|^2) with the amounts
+    // shifted by +-separation. [0] iterations, [1] distortion, [2] strength,
+    // [3] separation, [4] blendMode (0 NORMAL / 1 MULTIPLY / 2 SCREEN /
+    // 3 LAYER), [5] scale, [6] alpha. EXT [7] position x, [8] position y
+    // (AM units, / 500 in the shader), [9] stretch x, [10] stretch y,
+    // [11] hardness. Keyframed distortion / strength ride AmFxEval tails
+    // from index 14.
+    const val OPTIC_COMP_AM = "optic_comp_am"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
@@ -1611,6 +1623,18 @@ object ClipFxLibrary {
             )
         ),
         FxDef(
+            OPTIC_COMP_AM, 183, "Optic Compensation (Alight)", "Distort", "Chromatic barrel / pincushion warp averaged over quality taps (Alight Motion's Optic Compensation)",
+            listOf(
+                FxParamDef("Quality", 1f, 15f, 10f, "", step = 1f),
+                FxParamDef("Distortion", -10f, 25f, 0f, "", step = 0.01f),
+                FxParamDef("Strength", 0f, 25f, 0.01f, "", step = 0.01f),
+                FxParamDef("Separation", 0f, 25f, 0.1f, "", step = 0.01f),
+                FxParamDef("Blend mode", 0f, 3f, 0f, "", step = 1f),
+                FxParamDef("Scale", 0.1f, 50f, 1f, "", step = 0.01f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f)
+            )
+        ),
+        FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
                 FxParamDef("Amount", 0f, 100f, 30f),
@@ -2143,6 +2167,9 @@ object ClipFxLibrary {
             0f, 0f, 0f, 1f, packPoint(0f, 0f), 1f, 0.75f,
             0f, 1f, 3f, 0f, 1f, 0.15f, 0f
         )
+        // Optic Compensation's EXT defaults are the def's own: position (0, 0),
+        // stretch (1, 1), hardness 1.
+        OPTIC_COMP_AM -> listOf(0f, 0f, 1f, 1f, 1f, 0f, 0f)
         else -> emptyList()
     }
 
@@ -2180,6 +2207,7 @@ object ClipFxLibrary {
         LIGHTSWEEP_AM -> 170
         COLORGRAD3_AM -> 173
         DEEP_GLOW_AM -> 176
+        OPTIC_COMP_AM -> 184
         else -> null
     }
 

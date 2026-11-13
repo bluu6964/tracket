@@ -21,6 +21,7 @@ import com.example.model.LayerType
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.roundToInt
 
 /**
  * Editor preview of the video / photo layers drawn by the C++ GL renderer (the same one the export uses).
@@ -1229,12 +1230,106 @@ class NativePreviewEngine(context: Context) {
             maskScratch = scratch
         }
         scratch.eraseColor(0)
-        val drawn = when (mask.type) {
-            LayerType.SHAPE -> shapePainter.drawShape(scratch, mask, w, h, k, dens, true, cropFractionsOfClip(mask))
-            LayerType.TEXT -> textPainter.draw(scratch, mask, w, h, k, true, cropFractionsOfClip(mask), t)
+        return if (maskCoverageInto(scratch, mask, w, h, k, dens, t, 0)) scratch else null
+    }
+
+    /**
+     * Draws the mask layer [mask] (evaluated at [t]) into [out] as coverage. Shape / text masks use
+     * the painters, exactly as before group masks existed. A GROUP mask (build 141) composites its
+     * scope: the group's picture IS its content in Alight, so the coverage is the scope's layers
+     * composited in stacking order, each drawn by the same painters with its fully-parented pose
+     * (the [parentRig] chain runs through the mask group itself, the way the scene draws them) and
+     * cut by its own masks inside the scope first — the evergreen presets nest a whole mask group
+     * inside another mask group, which the recursion handles the same way. Children that paint
+     * nothing in a scene (audio / null / camera / chain lanes) are skipped; a child whose picture
+     * the painters cannot produce (a media layer) fails the whole mask — the caller leaves the
+     * target uncut and logs it — rather than cutting by a partial coverage. A group child's own
+     * blend mode is composited as plain alpha-over (every corpus mask-group child is Normal).
+     * The group's own opacity scales the finished coverage, like a leaf mask's painter opacity.
+     */
+    private fun maskCoverageInto(
+        out: Bitmap, mask: TimelineClip, w: Int, h: Int, k: Float, dens: Float, t: Long, depth: Int
+    ): Boolean {
+        if (depth > 4) return false
+        return when (mask.type) {
+            LayerType.SHAPE -> shapePainter.drawShape(out, mask, w, h, k, dens, true, cropFractionsOfClip(mask))
+            LayerType.TEXT -> textPainter.draw(out, mask, w, h, k, true, cropFractionsOfClip(mask), t)
+            LayerType.GROUP -> {
+                val rig = parentRig()
+                val scopeClips = GroupOps.scopeTracks(liveTracks, mask.id).asReversed().flatMap { it.clips }
+                val scopeMasks = LayerMaskLinks.masksByTarget(scopeClips)
+                val comp = groupMaskTemp(depth * 3 + 1, w, h)
+                comp.eraseColor(0)
+                var any = false
+                for (c in scopeClips) {
+                    if (!c.isVisible || c.isMask || !c.isActiveAt(t)) continue
+                    if (c.type == LayerType.AUDIO || c.type == LayerType.NULL ||
+                        c.type == LayerType.CAMERA || c.type == LayerType.CHAIN
+                    ) continue
+                    val adj = if (rig.hasLinks) rig.adjusted(c, t) else NativeRenderAt.renderAt(c, t)
+                    val tmp = groupMaskTemp(depth * 3, w, h)
+                    tmp.eraseColor(0)
+                    val drew = when {
+                        adj.type == LayerType.SHAPE &&
+                            shapePainter.drawShape(tmp, adj, w, h, k, dens, true, cropFractionsOfClip(adj)) -> true
+                        adj.type == LayerType.SHAPE -> {
+                            // The C++ shape painter declines freehand path shapes; the Canvas-capable
+                            // painter replays them (the video-fill outline precedent, build 104).
+                            val fp = fillPainterFor(w, h, dens)
+                            fp.nativeTarget = tmp
+                            fp.draw(android.graphics.Canvas(tmp), adj, true, t)
+                            true
+                        }
+                        else -> maskCoverageInto(tmp, adj, w, h, k, dens, t, depth + 1)
+                    }
+                    if (!drew) {
+                        Log.w(TAG, "group mask '${mask.name}': child '${adj.name}' could not be drawn, the mask is not applied")
+                        return false
+                    }
+                    for (m in scopeMasks[c.id].orEmpty()) {
+                        if (!m.isActiveAt(t)) continue
+                        val mAdj = if (rig.hasLinks) rig.adjusted(m, t) else NativeRenderAt.renderAt(m, t)
+                        val ms = groupMaskTemp(depth * 3 + 2, w, h)
+                        ms.eraseColor(0)
+                        if (!maskCoverageInto(ms, mAdj, w, h, k, dens, t, depth + 1)) {
+                            Log.w(TAG, "group mask '${mask.name}': inner mask '${mAdj.name}' could not be drawn, the mask is not applied")
+                            return false
+                        }
+                        android.graphics.Canvas(tmp).drawBitmap(
+                            ms, 0f, 0f, if (m.isExcludeMask) MASK_DST_OUT_PAINT else MASK_DST_IN_PAINT
+                        )
+                    }
+                    android.graphics.Canvas(comp).drawBitmap(tmp, 0f, 0f, null)
+                    any = true
+                }
+                if (!any) return false
+                val alpha = mask.opacityFraction
+                if (alpha >= 0.999f) {
+                    android.graphics.Canvas(out).drawBitmap(comp, 0f, 0f, null)
+                } else {
+                    val paint = android.graphics.Paint().apply {
+                        this.alpha = (alpha * 255f).roundToInt().coerceIn(0, 255)
+                    }
+                    android.graphics.Canvas(out).drawBitmap(comp, 0f, 0f, paint)
+                }
+                true
+            }
             else -> false
         }
-        return if (drawn) scratch else null
+    }
+
+    /** Depth-indexed scratch bitmaps for group-mask coverage compositing (see [maskCoverageInto]). */
+    private val groupMaskPool = ArrayList<Bitmap?>()
+
+    private fun groupMaskTemp(slot: Int, w: Int, h: Int): Bitmap {
+        while (groupMaskPool.size <= slot) groupMaskPool.add(null)
+        var bmp = groupMaskPool[slot]
+        if (bmp == null || bmp.width != w || bmp.height != h || bmp.isRecycled) {
+            bmp?.recycle()
+            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            groupMaskPool[slot] = bmp
+        }
+        return bmp
     }
 
     /**

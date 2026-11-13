@@ -91,9 +91,10 @@ class PhoneRoundsImportTest {
     @Test
     fun excludeMaskGroupIsHidden() {
         // A whole embedScene can be the exclude mask (6 corpus instances): the group clip itself
-        // is the mask layer and must not be drawn either. It stays UNLINKED (build 138): the
-        // renderers' mask painters draw shape / text layers only, so a group cannot serve as a
-        // mask yet — the warning says exactly that instead of promising a cut that cannot happen.
+        // is the mask layer and must not be drawn either. It stayed UNLINKED through build 140
+        // (the renderers' mask painters drew shape / text layers only); since build 141 the
+        // engines composite a group mask's scope into the coverage scratch, so it links to the
+        // layer below like any exclude mask — GroupMaskImportTest pins the full census.
         val xml = """<?xml version='1.0' encoding='UTF-8' ?><scene title="t" width="1920" height="1080" bgcolor="#ff000000" totalTime="2000" fps="30">
 <shape id="1" label="Plate" startTime="0" endTime="2000" fillType="color" s=".rect"><transform><location value="960,540,0" /></transform><fillColor value="#ff333333" /><property name="size" type="vec2" value="400,200" /></shape>
 <embedScene id="9" label="Group 1" startTime="0" endTime="2000" blending="exclude" fillType="intrinsic"><transform><location value="960,540,0" /></transform>
@@ -103,12 +104,14 @@ class PhoneRoundsImportTest {
 </embedScene>
 </scene>"""
         val r = AlightXmlImporter.parse(xml, 1920f)
-        val group = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val clips = r.snapshot.tracks.flatMap { it.clips }
+        val group = clips.first { it.type == LayerType.GROUP }
+        val plate = clips.first { it.name == "Plate" }
         assertTrue(group.isMask)
         assertTrue(group.isExcludeMask)
         assertFalse(group.isVisible)
-        assertEquals(null, group.maskTargetId)
-        assertTrue(r.warnings.any { it.contains("Exclude mask layer") && it.contains("not a shape or text layer") && it.contains("its exclusion cut is not applied") })
+        assertEquals(plate.id, group.maskTargetId)
+        assertTrue(r.warnings.none { it.contains("Exclude mask layer") })
     }
 
     // ---- Round 9, P2/P3: the arrow's pivot + head ----------------------------------------------

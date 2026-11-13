@@ -3762,10 +3762,10 @@ fun VideoEditorScreen(
     if (showTemplates) {
         com.example.ui.components.TemplatesDialog(
             onDismiss = { showTemplates = false },
-            onAddCarousel = {
+            onAddCarousel = { params ->
                 scope.launch {
                     val assets = withContext(Dispatchers.IO) {
-                        com.example.engine.TemplateAssets.carouselUris(context)
+                        com.example.engine.TemplateAssets.carouselUris(context, params.cardCount)
                     }
                     if (assets == null) {
                         android.widget.Toast.makeText(
@@ -3777,9 +3777,11 @@ fun VideoEditorScreen(
                     // playhead, authored against the live preview frame like an XML import
                     // (height from the project's own aspect ratio); nothing is saved away or
                     // switched — the current project stays open and gains one group layer.
+                    // Build 154: with the dialog's chosen settings (cards / seconds / direction).
                     val groupId = viewModel.insertCarouselTemplate(
                         assets.backgroundUri, assets.cardUris,
-                        previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                        previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat,
+                        params
                     )
                     showTemplates = false
                     android.widget.Toast.makeText(

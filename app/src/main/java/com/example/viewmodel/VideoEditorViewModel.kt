@@ -10,6 +10,7 @@ import com.example.model.MIN_SPEED
 import com.example.model.MAX_CLIP_VOLUME
 import com.example.model.MAX_SPEED
 import com.example.model.AspectRatio
+import com.example.model.CarouselParams
 import com.example.model.CarouselTemplate
 import com.example.model.LogoRevealTemplate
 import com.example.model.PopTitleTemplate
@@ -1078,19 +1079,23 @@ class VideoEditorViewModel : ViewModel() {
      * the canvas by the group's own transform (see [CarouselTemplate.buildGroup]). One undo
      * step; the group ends up selected so the user sees what landed. [previewWidthPx] /
      * [previewHeightPx] are the editor preview frame's size (the stored-units basis).
+     * [params] are the dialog's chosen settings (build 154: card count / turn duration /
+     * direction; the defaults are the reference's 8 cards, 5 s, clockwise).
      * Returns the group's id.
      */
     fun insertCarouselTemplate(
         backgroundUri: String,
         cardUris: List<String>,
         previewWidthPx: Float,
-        previewHeightPx: Float
+        previewHeightPx: Float,
+        params: CarouselParams = CarouselParams()
     ): String? {
-        if (backgroundUri.isBlank() || cardUris.size != 8) return null
+        if (backgroundUri.isBlank() || cardUris.size != params.cardCount) return null
         val insert = CarouselTemplate.buildGroup(
             previewWidthPx, previewHeightPx, backgroundUri, cardUris,
             insertAtMs = _currentPlayheadMs.value,
-            idBase = "carousel-" + UUID.randomUUID().toString().take(8)
+            idBase = "carousel-" + UUID.randomUUID().toString().take(8),
+            params = params
         )
         pushHistory()
         _editingGroupId.value = null  // the group lands at the top level: leave any open group so it can be seen

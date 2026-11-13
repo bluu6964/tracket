@@ -3,9 +3,11 @@ package com.example.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,11 +20,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.TemplateAssets
+import com.example.model.CarouselParams
 import com.example.model.CarouselSpec
 import com.example.model.CarouselTemplate
 import com.example.model.LogoRevealSpec
@@ -70,12 +75,14 @@ private val DialogFill = Color(0xFF10161B)
  * slot). Four built-in templates: the Carousel photo ring, the Pop Title and Word Pop
  * text animations and the Logo Reveal logo animation. Below them, "My Templates" (Templates v2) lists the
  * groups the person saved themselves with a group's "Save as Template" tool — each can be
- * added the same way, or deleted (with its saved media copies).
+ * added the same way, or deleted (with its saved media copies). Build 154: tapping the
+ * Carousel preview opens its insert-time settings (card count / turn time / direction)
+ * and the preview plays exactly those settings; the other templates keep their one-tap add.
  */
 @Composable
 fun TemplatesDialog(
     onDismiss: () -> Unit,
-    onAddCarousel: () -> Unit,
+    onAddCarousel: (CarouselParams) -> Unit,
     onAddPopTitle: () -> Unit,
     onAddLogoReveal: () -> Unit,
     onAddWordPop: () -> Unit,
@@ -85,6 +92,20 @@ fun TemplatesDialog(
     onDeleteUserTemplate: (SavedTemplate) -> Unit = {}
 ) {
     var pendingDelete by remember { mutableStateOf<SavedTemplate?>(null) }
+    // The Carousel's insert-time settings (build 154): tapping the Carousel preview opens
+    // the small settings step; the defaults are the reference's own numbers, so a plain
+    // "Add to project" inserts exactly what builds 142-146 inserted.
+    var carouselSettingsOpen by remember { mutableStateOf(false) }
+    var carouselCards by remember { mutableIntStateOf(CarouselSpec.CARD_COUNT) }
+    var carouselSeconds by remember {
+        mutableIntStateOf((CarouselSpec.DURATION_MS / 1000L).toInt())
+    }
+    var carouselClockwise by remember { mutableStateOf(true) }
+    val carouselParams = CarouselParams(
+        cardCount = carouselCards,
+        durationMs = carouselSeconds * 1000L,
+        clockwise = carouselClockwise
+    )
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = DialogFill,
@@ -95,23 +116,75 @@ fun TemplatesDialog(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
             ) {
-                CarouselPreview(modifier = Modifier.fillMaxWidth())
+                CarouselPreview(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { carouselSettingsOpen = !carouselSettingsOpen },
+                    params = carouselParams
+                )
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "Carousel — Photo Ring",
                     color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
                 )
                 Text(
-                    "8 photo slots rotating in a ring · 5s seamless loop · added as one group layer",
+                    "$carouselCards photo slots rotating in a ring · one turn in " +
+                        "${carouselSeconds}s · ${if (carouselClockwise) "clockwise" else "counter-clockwise"} · " +
+                        "added as one group layer",
                     color = TextSecondary, fontSize = 13.sp
                 )
+                if (carouselSettingsOpen) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Cards", color = HeaderText, fontSize = 14.sp)
+                        Spacer(Modifier.weight(1f))
+                        TextButton(
+                            onClick = { if (carouselCards > CarouselSpec.MIN_CARDS) carouselCards-- }
+                        ) { Text("−", fontSize = 18.sp) }
+                        Text("$carouselCards", color = HeaderText, fontSize = 15.sp)
+                        TextButton(
+                            onClick = { if (carouselCards < CarouselSpec.MAX_CARDS) carouselCards++ }
+                        ) { Text("+", fontSize = 18.sp) }
+                    }
+                    Text(
+                        "One turn: ${carouselSeconds}s",
+                        color = HeaderText, fontSize = 14.sp
+                    )
+                    Slider(
+                        value = carouselSeconds.toFloat(),
+                        onValueChange = { carouselSeconds = kotlin.math.round(it).toInt() },
+                        valueRange = (CarouselSpec.MIN_DURATION_MS / 1000f)..(CarouselSpec.MAX_DURATION_MS / 1000f),
+                        steps = 7,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Direction", color = HeaderText, fontSize = 14.sp)
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { carouselClockwise = true }) {
+                            Text(
+                                "Clockwise",
+                                fontWeight = if (carouselClockwise) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                        TextButton(onClick = { carouselClockwise = false }) {
+                            Text(
+                                "Counter-clockwise",
+                                fontWeight = if (!carouselClockwise) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
-                Button(onClick = onAddCarousel, modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { onAddCarousel(carouselParams) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text("Add to project")
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "Lands in this project's timeline at the playhead as a single group. " +
+                        "Tap the preview to change the card count, turn time and direction. " +
                         "To use your own photo: open the group, tap a card, then " +
                         "Color → Fill → Image and pick it.",
                     color = TextSecondary, fontSize = 12.sp
@@ -252,11 +325,13 @@ fun TemplatesDialog(
  * Live preview of the carousel, animated with the template's own measured law
  * ([CarouselTemplate.centerSceneAt]) and its own placeholder pictures — what you see is the
  * motion the inserted group will run. No bundled asset: the preview is drawn, like the template.
+ * Build 154: the preview runs the insert's chosen [params] (card count / turn duration /
+ * direction) — it evaluates the same law the builder bakes, at the chosen ring radius.
  */
 @Composable
-private fun CarouselPreview(modifier: Modifier = Modifier) {
-    val placeholders = remember {
-        (0 until CarouselSpec.CARD_COUNT).map { TemplateAssets.placeholderBitmap(it).asImageBitmap() }
+private fun CarouselPreview(modifier: Modifier = Modifier, params: CarouselParams = CarouselParams()) {
+    val placeholders = remember(params.cardCount) {
+        (0 until params.cardCount).map { TemplateAssets.placeholderBitmap(it).asImageBitmap() }
     }
     var frameMs by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
@@ -286,14 +361,14 @@ private fun CarouselPreview(modifier: Modifier = Modifier) {
             drawLine(gridPaint, Offset(0f, gy * sy), Offset(size.width, gy * sy), strokeWidth = 1.5f * sx)
             gy += CarouselSpec.GRID_STEP
         }
-        val t = ((frameMs % CarouselSpec.DURATION_MS) + CarouselSpec.DURATION_MS) % CarouselSpec.DURATION_MS
+        val t = ((frameMs % params.durationMs) + params.durationMs) % params.durationMs
         val cardW = CarouselSpec.CARD_SIZE * sx
         val cardH = CarouselSpec.CARD_SIZE * sy
         val corner = CarouselSpec.CARD_CORNER * sx
         // Shadows first (below every card), then the cards.
         for (pass in 0..1) {
-            for (i in 0 until CarouselSpec.CARD_COUNT) {
-                val (cx, cy) = CarouselTemplate.centerSceneAt(t, i)
+            for (i in 0 until params.cardCount) {
+                val (cx, cy) = CarouselTemplate.centerSceneAt(t, i, params)
                 val left = cx * sx - cardW / 2f
                 val top = (cy + if (pass == 0) CarouselSpec.SHADOW_DY else 0f) * sy - cardH / 2f
                 if (pass == 0) {

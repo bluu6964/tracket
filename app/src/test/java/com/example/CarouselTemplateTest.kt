@@ -2,6 +2,7 @@ package com.example
 
 import com.example.engine.ParentRig
 import com.example.model.AnimProp
+import com.example.model.CarouselParams
 import com.example.model.CarouselSpec
 import com.example.model.CarouselTemplate
 import com.example.model.ClipFx
@@ -57,6 +58,13 @@ import kotlin.math.sin
  * controller links entirely. The last pins below prove the division of labour: the null
  * alone moves the ring, the controller's presence changes no motion, and a controller
  * edit fans out to exactly the 16 connected layers, each in its own place.
+ *
+ * Build 154 (Templates v2 — the parameterised insert): [CarouselParams] — card count
+ * 4-12, one turn in 2-10 s, clockwise / counter-clockwise. The last pins below prove the
+ * defaults build the build-146 group EXACTLY (deep equality), the ring-radius law
+ * (r(N) = max(133.2, (95 x 1.04 / 2) / sin(pi / N))), the scaled structure / connections,
+ * the duration-scaled null track, the counter-clockwise negation, and the grown ring's
+ * in-frame fit at 16:9 and 9:16.
  */
 class CarouselTemplateTest {
 
@@ -726,5 +734,290 @@ class CarouselTemplateTest {
         assertEquals(100f, nc.transformX, 0.01f)
         assertEquals(100f, nc.transformY, 0.01f)
         assertEquals(95f, nc.rotationDeg, 0.01f)
+    }
+
+    // ---- Build 154: the parameterised insert (Templates v2) ----------------------------
+
+    private fun rigOf(insert: CarouselTemplate.Insert) =
+        ParentRig(insert.lanesTopFirst) { c, t -> c.renderAt(t) }
+
+    /** Scene-px centre of [clip] of an arbitrary [insert], through its real rig chain. */
+    private fun sceneOf(
+        insert: CarouselTemplate.Insert, rigX: ParentRig, clip: TimelineClip, tMs: Long
+    ): Pair<Double, Double> {
+        val a = rigX.adjusted(clip, tMs)
+        val cardCount = insert.children.count { it.id.contains("-card-") }
+        val (_, _, fit) = CarouselTemplate.carouselFit(pw, ph, CarouselTemplate.ringRadius(cardCount))
+        return ((a.transformX - insert.group.transformX) / fit / k + 360.0) to
+            ((a.transformY - insert.group.transformY) / fit / k + 225.0)
+    }
+
+    private fun expectedCenter(loopMs: Long, index: Int, p: CarouselParams): Pair<Double, Double> {
+        val r = CarouselTemplate.ringRadius(p.cardCount)
+        val dir = if (p.clockwise) 1.0 else -1.0
+        val ang = Math.toRadians(
+            index * (360.0 / p.cardCount) + dir * 360.0 * law.apply(loopMs / p.durationMs.toFloat())
+        )
+        return (364.0 + r * cos(ang)) to (224.0 + r * sin(ang))
+    }
+
+    @Test
+    fun defaultParamsBuildTheBuild146GroupExactly() {
+        // The whole point of the defaults: an explicit-default insert and a no-settings
+        // insert are the build-146 group, clip for clip, key for key (deep equality —
+        // TimelineClip / Keyframe / Easing / ParentLink are all data classes and the
+        // builder is a pure function of its inputs).
+        val explicit = CarouselTemplate.buildGroup(
+            pw, ph, bgUri, cardUris, at0, idBase = "test", params = CarouselParams()
+        )
+        val spelled = CarouselTemplate.buildGroup(
+            pw, ph, bgUri, cardUris, at0, idBase = "test",
+            params = CarouselParams(cardCount = 8, durationMs = 5000L, clockwise = true)
+        )
+        assertEquals(ins.lanesTopFirst, explicit.lanesTopFirst)
+        assertEquals(ins.lanesTopFirst, spelled.lanesTopFirst)
+        assertEquals(ins.group, explicit.group)
+        assertEquals(ins.nullLayer, explicit.nullLayer)
+        assertEquals(ins.controller, explicit.controller)
+    }
+
+    @Test
+    fun ringRadiusLawGrowsOnlyWhenCardsWouldCrowd() {
+        // The measured ring stands while the chord keeps 95 x 1.04 = 98.8: N = 4..8.
+        for (n in 4..8) assertEquals("radius at $n", 133.2f, CarouselTemplate.ringRadius(n), 0f)
+        // N = 9 is the first crowded count; the law is (95 x 1.04 / 2) / sin(pi / N).
+        assertEquals(49.4 / sin(Math.PI / 9), CarouselTemplate.ringRadius(9).toDouble(), 0.05)
+        assertEquals(49.4 / sin(Math.PI / 10), CarouselTemplate.ringRadius(10).toDouble(), 0.05)
+        assertEquals(49.4 / sin(Math.PI / 12), CarouselTemplate.ringRadius(12).toDouble(), 0.05)
+        assertEquals(190.86, CarouselTemplate.ringRadius(12).toDouble(), 0.05)
+        // Every offered count: the chord clears the card with its 4% gap, and the radius
+        // never shrinks as the count grows.
+        var prev = 0f
+        for (n in CarouselSpec.MIN_CARDS..CarouselSpec.MAX_CARDS) {
+            val r = CarouselTemplate.ringRadius(n)
+            val chord = 2.0 * r * sin(Math.PI / n)
+            assertTrue("chord at $n must clear 98.8 (is $chord)", chord >= 98.8 - 0.01)
+            assertTrue("radius monotonic at $n", r >= prev)
+            prev = r
+        }
+    }
+    @Test
+    fun fourCardInsertStructurePhasesAndConnections() {
+        val p = CarouselParams(cardCount = 4)
+        val uris4 = (1..4).map { "content://test/c$it.png" }
+        val ins4 = CarouselTemplate.buildGroup(pw, ph, bgUri, uris4, at0, idBase = "four", params = p)
+        // 2 rig layers + 4 cards + 4 shadows + background = 11 children, lane order kept.
+        assertEquals(11, ins4.children.size)
+        val expected = ArrayList<String>()
+        expected += "four-null"
+        expected += "four-controller"
+        for (i in 1..4) {
+            expected += "four-card-$i"
+            expected += "four-shadow-$i"
+        }
+        expected += "four-bg"
+        assertEquals(expected, ins4.children.map { it.id })
+        assertEquals(5000L, ins4.group.durationMs)
+        // The controller's connection set scales: exactly the 2 x 4 cards/shadows.
+        val connected = ControllerFanOut.connected(ins4.lanesTopFirst, ins4.controller.id)
+        assertEquals(8, connected.size)
+        // Phases spread over the full turn: 0 / 90 / 180 / 270 degrees at the measured
+        // radius, centres exact on the circle at t=0 through the real rig.
+        val rig4 = rigOf(ins4)
+        val cards4 = ins4.children.filter { it.id.startsWith("four-card-") }
+        for (i in 0..3) {
+            val (sx, sy) = sceneOf(ins4, rig4, cards4[i], at0)
+            val (ex, ey) = expectedCenter(0L, i, p)
+            assertEquals("card $i x", ex, sx, 0.35)
+            assertEquals("card $i y", ey, sy, 0.35)
+        }
+        // And they ride the same law (quarter phases stay quarter phases).
+        for (loopMs in listOf(1250L, 2500L, 4999L)) {
+            for (i in 0..3) {
+                val (sx, sy) = sceneOf(ins4, rig4, cards4[i], at0 + loopMs)
+                val (ex, ey) = expectedCenter(loopMs, i, p)
+                assertEquals("card $i x at $loopMs", ex, sx, 1.2)
+                assertEquals("card $i y at $loopMs", ey, sy, 1.2)
+            }
+        }
+    }
+
+    @Test
+    fun twelveCardInsertGrowsTheRingAndNeverOverlaps() {
+        val p = CarouselParams(cardCount = 12)
+        val uris12 = (1..12).map { "content://test/c$it.png" }
+        val ins12 = CarouselTemplate.buildGroup(pw, ph, bgUri, uris12, at0, idBase = "tw", params = p)
+        assertEquals(27, ins12.children.size)
+        val connected = ControllerFanOut.connected(ins12.lanesTopFirst, ins12.controller.id)
+        assertEquals(24, connected.size)
+        val rig12 = rigOf(ins12)
+        val cards12 = ins12.children.filter { it.id.startsWith("tw-card-") }
+        assertEquals(12, cards12.size)
+        val centres = cards12.map { sceneOf(ins12, rig12, it, at0) }
+        // Every centre sits on the grown ring…
+        for ((sx, sy) in centres) {
+            assertEquals(190.86, hypot(sx - 364.0, sy - 224.0), 0.4)
+        }
+        // …and every adjacent pair (incl. the wrap) keeps the law's chord — the cards
+        // (95 px) can never overlap.
+        for (i in 0..11) {
+            val (ax, ay) = centres[i]
+            val (bx, by) = centres[(i + 1) % 12]
+            val d = hypot(bx - ax, by - ay)
+            assertEquals("adjacent chord $i", 98.8, d, 0.4)
+            assertTrue("no overlap $i", d > CarouselSpec.CARD_SIZE.toDouble())
+        }
+        // The cards themselves are unchanged — same 95 px box, same corner.
+        for (c in cards12) {
+            assertEquals(95f / 260f, c.shapeScaleX, 1e-5f)
+            assertEquals(65f * 14f / 47.5f, c.shapeCornerRadius, 0.01f)
+        }
+    }
+    @Test
+    fun twelveCardsStayInFrameAfterFitOn169And916() {
+        val p = CarouselParams(cardCount = 12)
+        val uris12 = (1..12).map { "content://test/c$it.png" }
+        // 16:9: the grown ring is the fit's content on the height axis (476.7 > 450).
+        val insA = CarouselTemplate.buildGroup(1920f, 1080f, bgUri, uris12, 0L, idBase = "twa", params = p)
+        val fitPxA = 0.96f * 1080f / (2f * (CarouselTemplate.ringRadius(12) + 47.5f))
+        assertEquals(fitPxA * (720f / 1920f) * 100f, insA.group.scalePercent, 0.05f)
+        val rigA = ParentRig(insA.lanesTopFirst) { c, t -> c.renderAt(t) }
+        val halfA = 95f / 2f * fitPxA
+        for (c in insA.children.filter { it.id.startsWith("twa-card-") }) {
+            for (t in listOf(0L, 1300L, 4999L)) {
+                val a = rigA.adjusted(c, t)
+                assertTrue("16:9 left in frame", 1920f / 2f + a.transformX - halfA >= -0.5f)
+                assertTrue("16:9 right in frame", 1920f / 2f + a.transformX + halfA <= 1920f + 0.5f)
+                assertTrue("16:9 top in frame", 1080f / 2f + a.transformY - halfA >= -0.5f)
+                assertTrue("16:9 bottom in frame", 1080f / 2f + a.transformY + halfA <= 1080f + 0.5f)
+            }
+        }
+        // 9:16: the width axis rules instead — the frame (720) still dominates it, so the
+        // fit is the plain frame fit; the ring fits inside it on both axes.
+        val insB = CarouselTemplate.buildGroup(1080f, 1920f, bgUri, uris12, 0L, idBase = "twb", params = p)
+        val fitPxB = 0.96f * 1080f / 720f
+        assertEquals(fitPxB * (720f / 1080f) * 100f, insB.group.scalePercent, 0.05f)
+        val rigB = ParentRig(insB.lanesTopFirst) { c, t -> c.renderAt(t) }
+        val halfB = 95f / 2f * fitPxB
+        for (c in insB.children.filter { it.id.startsWith("twb-card-") }) {
+            for (t in listOf(0L, 2600L, 4999L)) {
+                val a = rigB.adjusted(c, t)
+                assertTrue("9:16 left in frame", 1080f / 2f + a.transformX - halfB >= -0.5f)
+                assertTrue("9:16 right in frame", 1080f / 2f + a.transformX + halfB <= 1080f + 0.5f)
+                assertTrue("9:16 top in frame", 1920f / 2f + a.transformY - halfB >= -0.5f)
+                assertTrue("9:16 bottom in frame", 1920f / 2f + a.transformY + halfB <= 1920f + 0.5f)
+            }
+        }
+    }
+
+    @Test
+    fun twoSecondTurnSpansAndFollowsTheScaledLaw() {
+        val p = CarouselParams(durationMs = 2000L)
+        val fast = CarouselTemplate.buildGroup(pw, ph, bgUri, cardUris, at0, idBase = "fast", params = p)
+        // The whole composition spans the chosen 2 s.
+        assertEquals(2000L, fast.group.durationMs)
+        for (c in fast.children) assertEquals(2000L, c.durationMs)
+        // The null's track: 41 keys, 0 -> exactly 360 over 2000 ms, law values throughout.
+        val keys = fast.nullLayer.keyframes.getValue(AnimProp.ROTATION)
+        assertEquals(41, keys.size)
+        assertEquals(0L, keys.first().timeMs)
+        assertEquals(2000L, keys.last().timeMs)
+        assertEquals(360f, keys.last().a, 0f)
+        for (key in keys) {
+            val want = 360.0 * law.apply(key.timeMs / 2000f).toDouble()
+            assertEquals("null rotation at ${key.timeMs}", want, key.a.toDouble(), 1.0)
+        }
+        // Composed centres follow the same law, time-scaled.
+        val rigF = rigOf(fast)
+        val cardsF = fast.children.filter { it.id.startsWith("fast-card-") }
+        for (loopMs in listOf(0L, 500L, 1000L, 1500L, 1999L)) {
+            for (i in 0..7) {
+                val (sx, sy) = sceneOf(fast, rigF, cardsF[i], at0 + loopMs)
+                val (ex, ey) = expectedCenter(loopMs, i, p)
+                assertEquals("card $i x at $loopMs", ex, sx, 1.2)
+                assertEquals("card $i y at $loopMs", ey, sy, 1.2)
+            }
+        }
+        // Loop closure at the chosen period.
+        for (i in 0..7) {
+            val (ax, ay) = sceneOf(fast, rigF, cardsF[i], at0)
+            val (bx, by) = sceneOf(fast, rigF, cardsF[i], at0 + 2000L)
+            assertEquals(ax, bx, 1e-3)
+            assertEquals(ay, by, 1e-3)
+        }
+    }
+    @Test
+    fun tenSecondTurnSpansAndFollowsTheScaledLaw() {
+        val p = CarouselParams(durationMs = 10000L)
+        val slow = CarouselTemplate.buildGroup(pw, ph, bgUri, cardUris, at0, idBase = "slow", params = p)
+        assertEquals(10000L, slow.group.durationMs)
+        for (c in slow.children) assertEquals(10000L, c.durationMs)
+        val keys = slow.nullLayer.keyframes.getValue(AnimProp.ROTATION)
+        assertEquals(201, keys.size)
+        assertEquals(10000L, keys.last().timeMs)
+        assertEquals(360f, keys.last().a, 0f)
+        for (key in keys) {
+            val want = 360.0 * law.apply(key.timeMs / 10000f).toDouble()
+            assertEquals("null rotation at ${key.timeMs}", want, key.a.toDouble(), 1.0)
+        }
+        val rigS = rigOf(slow)
+        val cardsS = slow.children.filter { it.id.startsWith("slow-card-") }
+        for (loopMs in listOf(0L, 2500L, 5000L, 7500L, 9999L)) {
+            for (i in 0..7) {
+                val (sx, sy) = sceneOf(slow, rigS, cardsS[i], at0 + loopMs)
+                val (ex, ey) = expectedCenter(loopMs, i, p)
+                assertEquals("card $i x at $loopMs", ex, sx, 1.2)
+                assertEquals("card $i y at $loopMs", ey, sy, 1.2)
+            }
+        }
+    }
+
+    @Test
+    fun counterClockwiseTurnNegatesTheLaw() {
+        val p = CarouselParams(clockwise = false)
+        val ccw = CarouselTemplate.buildGroup(pw, ph, bgUri, cardUris, at0, idBase = "ccw", params = p)
+        // The null's track is the measured law negated: 0 -> exactly -360, decreasing.
+        val keys = ccw.nullLayer.keyframes.getValue(AnimProp.ROTATION)
+        assertEquals(101, keys.size)
+        assertEquals(0f, keys.first().a, 0f)
+        assertEquals(-360f, keys.last().a, 0f)
+        var prev = 1f
+        for (key in keys) {
+            val want = -360.0 * law.apply(key.timeMs / 5000f).toDouble()
+            assertEquals("null rotation at ${key.timeMs}", want, key.a.toDouble(), 1.0)
+            assertTrue("monotonic down at ${key.timeMs}", key.a < prev)
+            prev = key.a
+        }
+        // Card 0 travels the other way: at quarter progress it is at the TOP of the ring
+        // (angle -90), where clockwise puts it at the bottom.
+        val rigC = rigOf(ccw)
+        val cardsC = ccw.children.filter { it.id.startsWith("ccw-card-") }
+        val quarter = (0..200).map { it * 25L }.firstOrNull { t ->
+            abs(CarouselTemplate.progress(t / 5000.0) - 0.25) < 0.002
+        } ?: error("no quarter time")
+        val (qx, qy) = sceneOf(ccw, rigC, cardsC[0], at0 + quarter)
+        val ang = Math.toDegrees(atan2(qy - 224.0, qx - 364.0))
+        assertEquals(-90.0, ang, 2.0)
+        // Every composed centre mirrors the clockwise insert about the centre line:
+        // CCW card i sits where CW card (8 - i) mod 8 sits with y reflected (its angle
+        // is the negation) — and the scaled-law helper agrees outright.
+        for (loopMs in listOf(0L, 1250L, 2500L, 3750L, 4999L)) {
+            for (i in 0..7) {
+                val (sx, sy) = sceneOf(ccw, rigC, cardsC[i], at0 + loopMs)
+                val (ex, ey) = expectedCenter(loopMs, i, p)
+                assertEquals("card $i x at $loopMs", ex, sx, 1.2)
+                assertEquals("card $i y at $loopMs", ey, sy, 1.2)
+                val (cx2, cy2) = templateSceneOf(cards[(8 - i) % 8], at0 + loopMs)
+                assertEquals("mirror x $i at $loopMs", cx2, sx, 1.2)
+                assertEquals("mirror y $i at $loopMs", 224.0 - (cy2 - 224.0), sy, 1.2)
+            }
+        }
+        // Loop closure.
+        for (i in 0..7) {
+            val (ax, ay) = sceneOf(ccw, rigC, cardsC[i], at0)
+            val (bx, by) = sceneOf(ccw, rigC, cardsC[i], at0 + 5000L)
+            assertEquals(ax, bx, 1e-3)
+            assertEquals(ay, by, 1e-3)
+        }
     }
 }

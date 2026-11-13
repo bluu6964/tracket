@@ -209,10 +209,12 @@ object TemplateAssets {
     /**
      * Generates the carousel's pictures into the app's own import storage (the same place the
      * XML import flow copies media to) and returns their uris, or null when a write fails.
+     * [cardCount] is the insert's chosen card count (build 154; the default stays the
+     * reference's 8).
      */
-    fun carouselUris(context: Context): CarouselAssets? = runCatching {
+    fun carouselUris(context: Context, cardCount: Int = CarouselSpec.CARD_COUNT): CarouselAssets? = runCatching {
         val bg = saveToImports(context, backgroundBitmap(), "carousel_bg.png") ?: return null
-        val cards = (0 until CarouselSpec.CARD_COUNT).map { i ->
+        val cards = (0 until cardCount).map { i ->
             saveToImports(context, placeholderBitmap(i), "carousel_card_${i + 1}.png") ?: return null
         }
         CarouselAssets(bg, cards)

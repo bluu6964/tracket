@@ -63,9 +63,7 @@ fun ProjectsDialog(
     /** Files of the OPEN project that only the exporting phone had (build 111); 0 hides the button. */
     missingMediaCount: Int = 0,
     /** Open the replace-missing-media step for the open project. */
-    onFixMissingMedia: () -> Unit = {},
-    /** Open the Templates section (ready-made projects, build 142). */
-    onTemplates: () -> Unit = {}
+    onFixMissingMedia: () -> Unit = {}
 ) {
     var renaming by remember { mutableStateOf<ProjectMeta?>(null) }
     var deleting by remember { mutableStateOf<ProjectMeta?>(null) }
@@ -127,7 +125,6 @@ fun ProjectsDialog(
                         Text("Missing media ($missingMediaCount)", color = Color(0xFFFFB74D))
                     }
                 }
-                TextButton(onClick = onTemplates) { Text("Templates", color = HeaderCyan) }
                 TextButton(onClick = onImport) { Text("Import", color = HeaderCyan) }
                 TextButton(onClick = onNew) { Text("New project", color = HeaderCyan) }
             }

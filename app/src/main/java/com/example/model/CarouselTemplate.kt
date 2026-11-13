@@ -4,9 +4,10 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * The Carousel template (Templates v1, build 142): 8 photo cards on a rotating ring, matching
- * Sarowar's reference video (720x450, 30 fps, 5.03 s) as measured frame by frame on
- * 2026-11-13 (frames + fit scripts in ~/workspace/after-motion-dev/carousel-ref/):
+ * The Carousel template (Templates v1, build 142; in-project group model, build 143): 8 photo
+ * cards on a rotating ring, matching Sarowar's reference video (720x450, 30 fps, 5.03 s) as
+ * measured frame by frame on 2026-11-13 (frames + fit scripts in
+ * ~/workspace/after-motion-dev/carousel-ref/):
  *
  *  - exactly ONE revolution per 5.0 s, seamless loop (reference frame 150 == frame 0);
  *  - direction clockwise on screen (a card travels left -> top -> right -> bottom);
@@ -20,17 +21,27 @@ import kotlin.math.sin
  *  - background: vertical gradient (210,210,210) -> (147,146,151) with a 34 px grid lifted
  *    +8 luminance (vertical lines at x = 19 mod 34, horizontal at y = 18 mod 34).
  *
- * The project is authored exactly the way [com.example.engine.AlightXmlImporter] authors an
- * imported 720x450 Alight scene (same stored units: positions (px - centre) x previewW/720,
- * shape box 260 scene px, scalePercent = shapeScale x 100, corner = 65 x radius/half-extent),
- * so the Compose preview and the native export — both evaluate [TimelineClip.at] — draw the
- * identical motion. The position keys are baked every [STEP_MS] with each segment carrying the
- * renormalised slice of the measured bezier for that segment, so the eased law holds at every
- * instant, not only at key times; the residual radial error is the chord sagitta (<= 0.24 px).
- * Cards carry no ROTATION / SCALE keys: upright and constant size by construction.
+ * Build 143 (Sarowar's correction of the build-142 model): a template is NOT a separate
+ * project. It lives inside the project like any layer — inserting it drops ONE Group layer
+ * into the current timeline (see [buildGroup]) holding the whole composition as 17 ordinary
+ * children (background + 8 shadow twins + 8 cards), authored in the template's own units
+ * exactly the way [com.example.engine.AlightXmlImporter] authors an imported 720x450 Alight
+ * scene (positions (px - centre) x previewW/720, shape box 260 scene px, scalePercent =
+ * shapeScale x 100, corner = 65 x radius/half-extent). The children link to the group with
+ * the REST reference pose, so the group's own transform IS the fit: [carouselFit] centres
+ * the ring on the project canvas and scales it to fit, and ParentRig composes that onto
+ * every child — the measured law runs in template units whatever the canvas, and moving /
+ * scaling / rotating the one group layer moves the whole carousel. Because the Compose
+ * preview and the native export both evaluate [TimelineClip.at] and compose parents through
+ * the same ParentRig maths, they draw the identical motion.
  *
- * Each card is a SHAPE layer (ROUNDED_RECT) with an image fill — the app's existing replace
- * path (select card -> Color -> Fill -> Image) swaps the picture, exactly like any shape fill.
+ * The position keys are baked every [CarouselSpec.STEP_MS] with each segment carrying the
+ * renormalised slice of the measured bezier for that segment, so the eased law holds at
+ * every instant, not only at key times; the residual radial error is the chord sagitta
+ * (<= 0.24 px). Cards carry no ROTATION / SCALE keys: upright and constant size by
+ * construction. Each card is a SHAPE layer (ROUNDED_RECT) with an image fill — the app's
+ * existing replace path (select card -> Color -> Fill -> Image) swaps the picture, exactly
+ * like any shape fill.
  */
 object CarouselSpec {
     const val SCENE_W = 720f
@@ -166,17 +177,57 @@ object CarouselTemplate {
     }
 
     /**
-     * The template as a fresh project. [previewWidthPx] is the editor preview frame's width in
-     * px (the stored-units basis, like the importer); [backgroundUri] / [cardUris] point at the
-     * generated background / placeholder pictures (engine TemplateAssets). The snapshot is a
-     * standalone copy — "Use template" stores it as a NEW project; nothing shared is mutated.
+     * The fit of the template onto a project canvas of [previewWidthPx] x [previewHeightPx]
+     * stored units: the Group layer's (transformX, transformY, scalePercent / 100).
+     *
+     * The children are authored against the template frame (720x450 at [CarouselSpec]'s own
+     * basis). ParentRig composes a child pose as groupPos + (childPos - refPos) x fit with
+     * the link's ref at the REST pose (0, 0), so the ring centre — which sits at stored
+     * ((364 - 360) k, (224 - 225) k) with k = previewWidthPx / 720 — lands on the canvas
+     * centre when groupPos = -(ring centre) x fit, and the whole composition scales by the
+     * fit. The fit fills 96% of the tighter canvas dimension with the template frame:
+     * fit = 0.96 x min(canvasW / 720, canvasH / 450) / k, which in canvas fractions is just
+     * 0.96 x min(1, canvasAspect / (720/450)) for width and the mirror for height — the ring
+     * (radius 133.2 + half a card = 180.7 of the 450 height) therefore stays fully in frame
+     * on any canvas, with a 2% margin on the tight axis.
      */
-    fun build(
+    fun carouselFit(previewWidthPx: Float, previewHeightPx: Float): Triple<Float, Float, Float> {
+        val pw = if (previewWidthPx > 1f) previewWidthPx else CarouselSpec.SCENE_W
+        val ph = if (previewHeightPx > 1f) previewHeightPx else pw * CarouselSpec.SCENE_H / CarouselSpec.SCENE_W
+        val k = pw / CarouselSpec.SCENE_W
+        val fit = 0.96f * minOf(pw / CarouselSpec.SCENE_W, ph / CarouselSpec.SCENE_H) / k
+        val cx = (CarouselSpec.CENTER_X - CarouselSpec.SCENE_W / 2f) * k
+        val cy = (CarouselSpec.CENTER_Y - CarouselSpec.SCENE_H / 2f) * k
+        return Triple(-cx * fit, -cy * fit, fit)
+    }
+
+    /** What [buildGroup] hands back: the Group layer, its 17 children, and the lanes to add. */
+    data class Insert(
+        val group: TimelineClip,
+        /** The children in lane order (top lane first, exactly build 142's track order):
+         *  Photo 1, Card 1 shadow, …, Photo 8, Card 8 shadow, Background last. */
+        val children: List<TimelineClip>,
+        /** Lanes to place on top of the project, top lane first: the group, then [children]. */
+        val lanesTopFirst: List<TimelineClip>
+    )
+
+    /**
+     * The template as ONE Group layer + its children, ready to insert into the project that is
+     * open (build 143 — the build-142 standalone-project builder is gone). [previewWidthPx] /
+     * [previewHeightPx] are the editor preview frame's size (the stored-units basis, like the
+     * importer); [backgroundUri] / [cardUris] point at the generated background / placeholder
+     * pictures (engine TemplateAssets); the group starts at [insertAtMs] (the playhead) and
+     * spans the template's 5 s. Every call builds fresh clips under [idBase] — inserting
+     * twice gives two independent carousels, and nothing shared is ever mutated.
+     */
+    fun buildGroup(
         previewWidthPx: Float,
+        previewHeightPx: Float,
         backgroundUri: String,
         cardUris: List<String>,
+        insertAtMs: Long,
         idBase: String = "carousel"
-    ): ProjectSnapshot {
+    ): Insert {
         require(cardUris.size == CarouselSpec.CARD_COUNT) { "carousel needs 8 card pictures" }
         val pw = if (previewWidthPx > 1f) previewWidthPx else CarouselSpec.SCENE_W
         val k = pw / CarouselSpec.SCENE_W
@@ -185,16 +236,77 @@ object CarouselTemplate {
         val cardScale = CarouselSpec.CARD_SIZE / boxPx
         val cornerStored = 65f * CarouselSpec.CARD_CORNER / (CarouselSpec.CARD_SIZE / 2f)
 
-        val tracks = mutableListOf<TimelineTrack>()
+        val groupId = "$idBase-group"
+        val link = GroupOps.linkTo(groupId, GroupOps.Pose.REST)
+        val (gx, gy, fit) = carouselFit(previewWidthPx, previewHeightPx)
+        val group = TimelineClip(
+            id = groupId,
+            name = "Carousel",
+            type = LayerType.GROUP,
+            startMs = insertAtMs,
+            durationMs = CarouselSpec.DURATION_MS,
+            color = 0xFF5BB85DL,
+            transformX = gx,
+            transformY = gy,
+            scalePercent = fit * 100f
+        )
+
+        // Children in build 142's lane order (top lane first): per card the photo lane above
+        // its shadow lane, the Background lane last (last track = painted first — the
+        // renderers walk the lanes reversed, and GroupOps keeps a group's children in lane
+        // order, so the inserted group paints exactly like the build-142 project did).
+        val children = ArrayList<TimelineClip>(17)
+        // Background: a generated gradient+grid picture on a frame-covering rect (10 scene px
+        // of bleed per side), in the template frame's own coordinates.
+        val bgScaleX = (CarouselSpec.SCENE_W + 20f) / boxPx
+        val bgScaleY = (CarouselSpec.SCENE_H + 20f) / boxPx
+        val background = TimelineClip(
+            id = "$idBase-bg",
+            name = "Background",
+            type = LayerType.SHAPE,
+            startMs = insertAtMs,
+            durationMs = CarouselSpec.DURATION_MS,
+            color = 0xFFB2B2B4L,
+            fillMode = FILL_IMAGE,
+            fillImageUri = backgroundUri,
+            fillImageMode = IMG_FILL,
+            shapePattern = "RECT",
+            shapeScaleX = bgScaleX,
+            shapeScaleY = bgScaleY,
+            scalePercent = bgScaleX * 100f,
+            groupId = groupId,
+            parent = link
+        )
         for (i in 0 until CarouselSpec.CARD_COUNT) {
             val phase = i * 45.0
-            val cardKeys = positionKeys(phase, k, 0f)
             val shadowKeys = positionKeys(phase, k, CarouselSpec.SHADOW_DY)
+            val shadow = TimelineClip(
+                id = "$idBase-shadow-${i + 1}",
+                name = "Card ${i + 1} shadow",
+                type = LayerType.SHAPE,
+                startMs = insertAtMs,
+                durationMs = CarouselSpec.DURATION_MS,
+                color = 0xFF9E9E9EL,
+                fillMode = FILL_SOLID,
+                textColor = 0xFF000000L,
+                opacity = CarouselSpec.SHADOW_OPACITY,
+                shapePattern = "ROUNDED_RECT",
+                shapeScaleX = cardScale,
+                shapeScaleY = cardScale,
+                scalePercent = cardScale * 100f,
+                shapeCornerRadius = cornerStored,
+                transformX = shadowKeys.first().a,
+                transformY = shadowKeys.first().b,
+                keyframes = mapOf(AnimProp.POSITION to shadowKeys),
+                groupId = groupId,
+                parent = link
+            )
+            val cardKeys = positionKeys(phase, k, 0f)
             val card = TimelineClip(
                 id = "$idBase-card-${i + 1}",
                 name = "Photo ${i + 1}",
                 type = LayerType.SHAPE,
-                startMs = 0L,
+                startMs = insertAtMs,
                 durationMs = CarouselSpec.DURATION_MS,
                 color = 0xFF90A4AEL,
                 fillMode = FILL_IMAGE,
@@ -208,57 +320,17 @@ object CarouselTemplate {
                 shapeCornerRadius = cornerStored,
                 transformX = cardKeys.first().a,
                 transformY = cardKeys.first().b,
-                keyframes = mapOf(AnimProp.POSITION to cardKeys)
+                keyframes = mapOf(AnimProp.POSITION to cardKeys),
+                groupId = groupId,
+                parent = link
             )
-            val shadow = TimelineClip(
-                id = "$idBase-shadow-${i + 1}",
-                name = "Card ${i + 1} shadow",
-                type = LayerType.SHAPE,
-                startMs = 0L,
-                durationMs = CarouselSpec.DURATION_MS,
-                color = 0xFF9E9E9EL,
-                fillMode = FILL_SOLID,
-                textColor = 0xFF000000L,
-                opacity = CarouselSpec.SHADOW_OPACITY,
-                shapePattern = "ROUNDED_RECT",
-                shapeScaleX = cardScale,
-                shapeScaleY = cardScale,
-                scalePercent = cardScale * 100f,
-                shapeCornerRadius = cornerStored,
-                transformX = shadowKeys.first().a,
-                transformY = shadowKeys.first().b,
-                keyframes = mapOf(AnimProp.POSITION to shadowKeys)
-            )
-            tracks += TimelineTrack("$idBase-track-photo-${i + 1}", "Photo ${i + 1}", clips = listOf(card))
-            tracks += TimelineTrack("$idBase-track-shadow-${i + 1}", "Card ${i + 1} shadow", clips = listOf(shadow))
+            children += card
+            children += shadow
         }
+        children += background
 
-        // Background: a generated gradient+grid picture on a frame-covering rect (10 scene px
-        // of bleed per side). Last track in the list = painted first (renderers walk reversed).
-        val bgScaleX = (CarouselSpec.SCENE_W + 20f) / boxPx
-        val bgScaleY = (CarouselSpec.SCENE_H + 20f) / boxPx
-        val bg = TimelineClip(
-            id = "$idBase-bg",
-            name = "Background",
-            type = LayerType.SHAPE,
-            startMs = 0L,
-            durationMs = CarouselSpec.DURATION_MS,
-            color = 0xFFB2B2B4L,
-            fillMode = FILL_IMAGE,
-            fillImageUri = backgroundUri,
-            fillImageMode = IMG_FILL,
-            shapePattern = "RECT",
-            shapeScaleX = bgScaleX,
-            shapeScaleY = bgScaleY,
-            scalePercent = bgScaleX * 100f
-        )
-        tracks += TimelineTrack("$idBase-track-bg", "Background", clips = listOf(bg))
-
-        return ProjectSnapshot(
-            tracks = tracks,
-            aspectRatio = AspectRatio("16:10", CarouselSpec.SCENE_W / CarouselSpec.SCENE_H, "Carousel template"),
-            canvasColor = CarouselSpec.CANVAS_COLOR,
-            exportSettings = ExportSettings(frameRate = 30)
-        )
+        // The group's lane sits above its children (the GroupOps.group arrangement).
+        val lanesTopFirst = listOf(group) + children
+        return Insert(group, children, lanesTopFirst)
     }
 }

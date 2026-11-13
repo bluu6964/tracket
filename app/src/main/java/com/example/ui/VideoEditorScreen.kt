@@ -3688,7 +3688,6 @@ fun VideoEditorScreen(
                 exportProjectLauncher.launch(safe + "." + com.example.engine.ProjectArchive.EXTENSION)
             },
             onImport = { importProjectLauncher.launch(arrayOf("*/*")) },
-            onTemplates = { showProjects = false; showTemplates = true },
             missingMediaCount = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority).size,
             onFixMissingMedia = {
                 missingMediaItems = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority)
@@ -3715,9 +3714,8 @@ fun VideoEditorScreen(
     if (showTemplates) {
         com.example.ui.components.TemplatesDialog(
             onDismiss = { showTemplates = false },
-            onUseCarousel = {
+            onAddCarousel = {
                 scope.launch {
-                    saveProjectNow()
                     val assets = withContext(Dispatchers.IO) {
                         com.example.engine.TemplateAssets.carouselUris(context)
                     }
@@ -3727,18 +3725,20 @@ fun VideoEditorScreen(
                         ).show()
                         return@launch
                     }
-                    // Authored against the live preview frame, like an XML import; the template
-                    // itself is never mutated — this snapshot becomes a brand-new project.
-                    val snap = com.example.model.CarouselTemplate.build(
-                        previewFrameWidthPx, assets.backgroundUri, assets.cardUris
+                    // Build 143: the template lands in THIS project as one Group layer at the
+                    // playhead, authored against the live preview frame like an XML import
+                    // (height from the project's own aspect ratio); nothing is saved away or
+                    // switched — the current project stays open and gains one group layer.
+                    val groupId = viewModel.insertCarouselTemplate(
+                        assets.backgroundUri, assets.cardUris,
+                        previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
                     )
-                    val meta = withContext(Dispatchers.IO) { projectStore.create("Carousel", snap) }
-                    viewModel.loadProject(snap, meta.id)
-                    withContext(Dispatchers.IO) { projectStore.lastId = meta.id }
                     showTemplates = false
                     android.widget.Toast.makeText(
                         context,
-                        "Carousel template: tap a card, then Color → Fill → Image to use your own photo",
+                        if (groupId != null)
+                            "Carousel added as one group layer. Open the group, tap a card, then Color → Fill → Image to use your own photo"
+                        else "Could not add the template",
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -3887,6 +3887,7 @@ fun VideoEditorScreen(
             onShape = { showAddShapeSheet = true },
             onAudio = { audioPicker.launch(arrayOf("audio/*")) },
             onSticker = { showStickerSheet = true },
+            onTemplates = { showTemplates = true },
             onDismiss = { showAddLayerSheet = false }
         )
     }

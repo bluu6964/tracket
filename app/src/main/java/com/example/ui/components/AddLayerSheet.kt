@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.SentimentSatisfiedAlt
 import androidx.compose.material.icons.filled.TextFields
@@ -47,6 +48,8 @@ fun AddLayerSheet(
     onShape: () -> Unit,
     onAudio: () -> Unit,
     onSticker: () -> Unit,
+    /** Ready-made compositions (build 143): opens the Templates picker. */
+    onTemplates: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = EditorSurface) {
@@ -67,7 +70,7 @@ fun AddLayerSheet(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Item("Audio", Icons.Default.MusicNote, "add_sheet_audio") { onDismiss(); onAudio() }
                 Item("Stickers", Icons.Default.SentimentSatisfiedAlt, "add_sheet_sticker") { onDismiss(); onSticker() }
-                Box(Modifier.weight(1f))
+                Item("Templates", Icons.Default.Layers, "add_sheet_templates") { onDismiss(); onTemplates() }
             }
         }
     }

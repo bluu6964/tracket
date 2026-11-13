@@ -43,14 +43,16 @@ import com.example.ui.theme.TextSecondary
 private val DialogFill = Color(0xFF10161B)
 
 /**
- * The Templates section (v1, build 142): ready-made motion-graphics projects the user opens
- * as a NEW project and then customises — every picture in a template is a replaceable slot.
- * One template for now: the Carousel photo ring.
+ * The Templates picker (build 142; in-project since build 143): ready-made compositions the
+ * user adds to the project that is OPEN. Templates live where layers are added — the
+ * editor's + sheet — and choosing one inserts it into the current timeline as ONE Group
+ * layer the user then customises in place (every picture in a template is a replaceable
+ * slot). One template for now: the Carousel photo ring.
  */
 @Composable
 fun TemplatesDialog(
     onDismiss: () -> Unit,
-    onUseCarousel: () -> Unit
+    onAddCarousel: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -65,16 +67,17 @@ fun TemplatesDialog(
                     color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
                 )
                 Text(
-                    "8 photo slots rotating in a ring · 5s seamless loop · 16:10",
+                    "8 photo slots rotating in a ring · 5s seamless loop · added as one group layer",
                     color = TextSecondary, fontSize = 13.sp
                 )
                 Spacer(Modifier.height(10.dp))
-                Button(onClick = onUseCarousel, modifier = Modifier.fillMaxWidth()) {
-                    Text("Use template")
+                Button(onClick = onAddCarousel, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Opens as a new project. To use your own photo: tap a card, then " +
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "To use your own photo: open the group, tap a card, then " +
                         "Color → Fill → Image and pick it.",
                     color = TextSecondary, fontSize = 12.sp
                 )
@@ -90,7 +93,7 @@ fun TemplatesDialog(
 /**
  * Live preview of the carousel, animated with the template's own measured law
  * ([CarouselTemplate.centerSceneAt]) and its own placeholder pictures — what you see is the
- * motion the project will run. No bundled asset: the preview is drawn, like the template.
+ * motion the inserted group will run. No bundled asset: the preview is drawn, like the template.
  */
 @Composable
 private fun CarouselPreview(modifier: Modifier = Modifier) {

@@ -2150,6 +2150,164 @@ int main() {
                 std::fabs(o[2] - clean[2]) <= 0.0041f && o[3] == clean[3],
                 "bccfilmglow dither bounded (%g vs %g)", o[0], clean[0]); }
     }
+    // ---- v182 (build 167): the round-4 banked ports — pagecurl / tileshift2 /
+    // fractalwarp3 / repeat.line. Reference values are from /tmp/pins167.py, an
+    // independent mirror of the defs (double precision for pagecurl, float32 for
+    // the tileshift2 hash — the hash is a float32 knife-edge: the double mirror's
+    // screen pin (0.798828) does NOT agree with the float32 twin (0.335938), so
+    // the hash-involved pins use the float32 references with a loose tolerance).
+    {
+        // Tile Shift 2's hash: rand(0, 0) is exactly 0; the rest sit in [0, 1).
+        CHECK(fxTileshift2AmRand(0.f, 0.f) == 0.f, "tileshift2 rand(0,0) == 0");
+        CHECK(std::fabs(fxTileshift2AmRand(1.f, 0.f) - 0.998047f) < 5e-4f &&
+              std::fabs(fxTileshift2AmRand(0.f, 1.f) - 0.593750f) < 5e-4f &&
+              std::fabs(fxTileshift2AmRand(3.f, 7.f) - 0.800781f) < 5e-4f,
+              "tileshift2 rand pins (%g %g %g)", fxTileshift2AmRand(1.f, 0.f),
+              fxTileshift2AmRand(0.f, 1.f), fxTileshift2AmRand(3.f, 7.f));
+        CHECK(fxTileshift2AmRand(10.f, -5.f) >= 0.f && fxTileshift2AmRand(10.f, -5.f) < 1.f &&
+              fxTileshift2AmRand(-5.f, 7.f) >= 0.f && fxTileshift2AmRand(-5.f, 7.f) < 1.f,
+              "tileshift2 rand stays in [0, 1)");
+        // (10, -5) pinned as a value too — the float32 reference is 0.552124 (the
+        // double mirror gives 0.552002; the hash is a float32 knife-edge).
+        CHECK(std::fabs(fxTileshift2AmRand(10.f, -5.f) - 0.552124f) < 1e-2f, "tileshift2 rand pin 4");
+        // The sample positions: A is the corpus instance (strength keyframed
+        // 0.131, angle 45, position (8, 0)); B the screen branch; C the mirror
+        // wrap at strength 1; D strength 0 is the identity (hash-free geometry).
+        float sx, sy;
+        fxTileshift2AmUv(0.4f, 0.6f, 1080, 1920, 0.131f, 10, 45, 0, false, 8, 0, 1, 1, &sx, &sy);
+        CHECK(std::fabs(sx - 0.304309f) < 3e-3f && std::fabs(sy - 0.505332f) < 3e-3f,
+              "tileshift2 corpus pin (%g %g)", sx, sy);
+        fxTileshift2AmUv(0.25f, 0.75f, 1080, 1920, 0.5f, 10, 0, 2, true, -7, 0, 2, 0.5f, &sx, &sy);
+        CHECK(std::fabs(sx - 0.310547f) < 1e-2f && std::fabs(sy - 0.335938f) < 1e-2f,
+              "tileshift2 screen pin (%g %g)", sx, sy);
+        fxTileshift2AmUv(0.05f, 0.95f, 1080, 1920, 1.f, 10, 30, 1, false, 0, 0, 1, 1, &sx, &sy);
+        CHECK(std::fabs(sx - 0.893750f) < 3e-3f && std::fabs(sy - 0.206250f) < 3e-3f,
+              "tileshift2 wrap pin (%g %g)", sx, sy);
+        fxTileshift2AmUv(0.5f, 0.5f, 1080, 1920, 0.f, 10, 45, 0, false, 8, 0, 1, 1, &sx, &sy);
+        CHECK(sx == 0.5f && sy == 0.5f, "tileshift2 strength 0 is the identity");
+        // The compose: the displaced sample times the fragment's own alpha.
+        float pr, pg, pb, pa;
+        fxTileshift2AmPixel(0.4f, 0.3f, 0.2f, 0.8f, 0.5f, &pr, &pg, &pb, &pa);
+        CHECK(pr == 0.2f && pg == 0.15f && pb == 0.1f && pa == 0.4f, "tileshift2 compose halves");
+        fxTileshift2AmPixel(0.4f, 0.3f, 0.2f, 0.8f, 1.f, &pr, &pg, &pb, &pa);
+        CHECK(pr == 0.4f && pg == 0.3f && pb == 0.2f && pa == 0.8f, "tileshift2 opaque is the sample");
+        // Page Curl geometry: A is the first corpus instance (progress 0.23, still
+        // before the curl — the sample is the pixel); E is progress 0; C is the
+        // front curve at angle 90; F is past the curl at a negative angle (the
+        // quadrant flip carries the sample out of range); the two back-face cases
+        // are the curl's back side (cf.y < 0, cf.x > 0).
+        float tuvX, tuvY, tuvfX, tuvfY, cfX, cfY, cffX, cffY;
+        fxPagecurlAmUv(0.3f, 0.7f, 0.23f, 0.1f, 38, &tuvX, &tuvY, &tuvfX, &tuvfY, &cfX, &cfY, &cffX, &cffY);
+        CHECK(std::fabs(tuvX - 0.3f) < 2e-3f && std::fabs(tuvY - 0.7f) < 2e-3f &&
+              std::fabs(cfX - 0.667366f) < 2e-3f && cfY == 1.f &&
+              std::fabs(cffX - 0.667366f) < 2e-3f && cffY == 1.f,
+              "pagecurl corpus pin (%g %g %g)", tuvX, tuvY, cfX);
+        fxPagecurlAmUv(0.6f, 0.4f, 0.f, 0.1f, 38, &tuvX, &tuvY, &tuvfX, &tuvfY, &cfX, &cfY, &cffX, &cffY);
+        CHECK(std::fabs(tuvX - 0.6f) < 2e-3f && std::fabs(tuvY - 0.4f) < 2e-3f &&
+              std::fabs(cfX - 0.719071f) < 2e-3f && cfY == 1.f, "pagecurl progress 0 pin");
+        fxPagecurlAmUv(0.5f, 0.5f, 0.5f, 0.5f, 90, &tuvX, &tuvY, &tuvfX, &tuvfY, &cfX, &cfY, &cffX, &cffY);
+        CHECK(std::fabs(tuvX - 0.5f) < 2e-3f && std::fabs(tuvY - 0.511799f) < 2e-3f &&
+              std::fabs(cfX - 0.511800f) < 2e-3f && std::fabs(cfY - 0.866025f) < 2e-3f,
+              "pagecurl angle-90 pin (%g %g %g %g)", tuvX, tuvY, cfX, cfY);
+        fxPagecurlAmUv(0.7f, 0.3f, 0.4f, 0.1f, -38, &tuvX, &tuvY, &tuvfX, &tuvfY, &cfX, &cfY, &cffX, &cffY);
+        CHECK(std::fabs(tuvX + 0.862287f) < 2e-3f && std::fabs(tuvY - 1.520593f) < 2e-3f &&
+              cfX == -1.f && cfY == -1.f, "pagecurl past-curl pin (%g %g)", tuvX, tuvY);
+        fxPagecurlAmUv(0.45f, 0.60f, 0.6f, 0.5f, 38, &tuvX, &tuvY, &tuvfX, &tuvfY, &cfX, &cfY, &cffX, &cffY);
+        CHECK(std::fabs(tuvX - 0.956663f) < 2e-3f && std::fabs(tuvY - 0.995849f) < 2e-3f &&
+              std::fabs(tuvfX - 0.514148f) < 2e-3f && std::fabs(tuvfY - 0.650118f) < 2e-3f &&
+              std::fabs(cfX - 1.366967f) < 2e-3f && std::fabs(cfY + 0.532506f) < 2e-3f &&
+              std::fabs(cffX - 0.805407f) < 2e-3f && std::fabs(cffY - 0.532507f) < 2e-3f,
+              "pagecurl back-face pin (%g %g %g %g)", tuvX, tuvY, cfX, cfY);
+        fxPagecurlAmUv(0.f, 0.f, 0.8f, 0.3f, 38, &tuvX, &tuvY, &tuvfX, &tuvfY, &cfX, &cfY, &cffX, &cffY);
+        CHECK(std::fabs(tuvX - 0.816922f) < 2e-3f && std::fabs(tuvY - 0.638250f) < 2e-3f &&
+              tuvfX == 0.f && tuvfY == 0.f &&
+              std::fabs(cfX - 1.036689f) < 2e-3f && std::fabs(cfY + 0.987647f) < 2e-3f &&
+              cffX == 0.f && cffY == 1.f, "pagecurl corner back-face pin (%g %g)", tuvX, tuvY);
+        // Page Curl main pass: the corpus op (progress 0.23, def defaults) with a
+        // coloured front sample pins the front-shadow blend and the soft shadow's
+        // negative corner term; the two back-face ops pin the back face + shine;
+        // the hard-shadow op pins the red drop colour in the band past the curl.
+        FxOp pc{}; pc.type = FX_PAGECURL_AM;
+        pc.p[0] = 0.6f; pc.p[1] = 0.5f; pc.p[2] = 38.f; pc.p[3] = 1.f; pc.p[4] = 0.1f;
+        pc.p[5] = 0x888888; pc.p[6] = 1.f;
+        pc.q[0] = 1.f; pc.q[1] = 0xFFFFFF; pc.q[2] = 1.f; pc.q[3] = 30.f; pc.q[4] = 2.f;
+        pc.q[5] = 0.f; pc.q[6] = 0.8f;
+        pc.r[0] = 1.f; pc.r[1] = 0xFFFFFF; pc.r[2] = 1.f; pc.r[3] = 2.f;
+        const float texA[4] = {0.2f, 0.4f, 0.6f, 0.8f}, blurA[4] = {0.3f, 0.3f, 0.3f, 0.9f};
+        const float frontA[4] = {0.9f, 0.1f, 0.2f, 0.6f}, sampA[4] = {0.7f, 0.1f, 0.2f, 0.9f};
+        float out[4];
+        fxPagecurlAmPixel(0.1f, 0.1f, pc, texA, blurA, frontA, sampA, out);
+        CHECK(std::fabs(out[0] - 0.9f) < 2e-3f && std::fabs(out[1] - 0.1f) < 2e-3f &&
+              std::fabs(out[2] - 0.2f) < 2e-3f && std::fabs(out[3] - 0.535775f) < 2e-3f,
+              "pagecurl front pixel (%g %g %g %g)", out[0], out[1], out[2], out[3]);
+        const float frontB[4] = {0.5f, 0.5f, 0.5f, 1.f};
+        fxPagecurlAmPixel(0.45f, 0.60f, pc, texA, blurA, frontB, sampA, out);
+        CHECK(std::fabs(out[0] - 0.448557f) < 2e-3f && std::fabs(out[1] - 0.100557f) < 2e-3f &&
+              std::fabs(out[2] - 0.158557f) < 2e-3f && out[3] == 1.f,
+              "pagecurl back-face pixel (%g %g %g %g)", out[0], out[1], out[2], out[3]);
+        pc.p[0] = 0.8f; pc.p[1] = 0.3f;
+        fxPagecurlAmPixel(0.f, 0.f, pc, texA, blurA, frontB, sampA, out);
+        CHECK(std::fabs(out[0] - 0.785223f) < 2e-3f && std::fabs(out[1] - 0.652936f) < 2e-3f &&
+              std::fabs(out[2] - 0.674984f) < 2e-3f && out[3] == 1.f,
+              "pagecurl corner back-face pixel (%g %g %g %g)", out[0], out[1], out[2], out[3]);
+        pc.p[0] = 0.4f; pc.p[1] = 0.1f; pc.p[2] = -38.f; pc.r[0] = 0.f; pc.q[5] = 0xFF0000;
+        fxPagecurlAmPixel(0.634f, 0.3f, pc, texA, blurA, frontB, sampA, out);
+        CHECK(std::fabs(out[0] - 0.202208f) < 2e-3f && out[1] == 0.f && out[2] == 0.f &&
+              std::fabs(out[3] - 0.202208f) < 2e-3f,
+              "pagecurl hard red-drop pixel (%g %g %g %g)", out[0], out[1], out[2], out[3]);
+        // Parsing: the three chains fold into one op each (pagecurl takes all
+        // three banks); repeat.line never reaches the shaders.
+        FxOp ops167[kFxMaxOps];
+        float flatPc[] = {220, 0.4f, 0.1f, 38, 1, 0.1f, 0x888888, 1,
+                          221, 1, 0xFFFFFF, 1, 30, 2, 0, 0.8f,
+                          222, 1, 0xFFFFFF, 1, 2, 0, 0, 0};
+        CHECK(fxParseOps(flatPc, 24, ops167) == 1 && ops167[0].type == FX_PAGECURL_AM &&
+              ops167[0].p[0] == 0.4f && ops167[0].q[3] == 30.f && ops167[0].r[0] == 1.f &&
+              ops167[0].r[3] == 2.f, "pagecurl three-bank chain folds");
+        float flatTs[] = {223, 0.1f, 10, 45, 0, 0, 8, 0,
+                          224, 1, 1, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatTs, 16, ops167) == 1 && ops167[0].type == FX_TILESHIFT2_AM &&
+              ops167[0].p[0] == 0.1f && ops167[0].q[0] == 1.f && ops167[0].q[1] == 1.f,
+              "tileshift2 two-bank chain folds");
+        float flatFw[] = {225, 0.2f, 1, 0.5f, 6, 0, 0, 0,
+                          226, 0, 0, 0, 0, 0, 0, 0};
+        CHECK(fxParseOps(flatFw, 16, ops167) == 1 && ops167[0].type == FX_FRACTAL_WARP3_AM &&
+              ops167[0].p[0] == 0.2f && ops167[0].q[0] == 0.f,
+              "fractalwarp3 two-bank chain folds");
+        float flatRl[] = {227, 5, 500, 0, 0, 0, 90, 100};
+        CHECK(fxParseOps(flatRl, 8, ops167) == 0, "repeat.line skipped by the parser");
+        float flatBare2[] = {222, 1, 1, 1, 1, 1, 1, 1};
+        CHECK(fxParseOps(flatBare2, 8, ops167) == 0, "bare pagecurl EXT2 is dropped");
+        float flatForeign2[] = {220, 1, 1, 1, 1, 1, 1, 1, 224, 2, 2, 2, 2, 2, 2, 2};
+        CHECK(fxParseOps(flatForeign2, 16, ops167) == 1 && ops167[0].type == FX_PAGECURL_AM &&
+              ops167[0].q[0] == 0.f, "tileshift2 EXT after a pagecurl is dropped");
+        // Routing + identity: fractalwarp3 shares mode 22 with fractalwarp4 (the
+        // twin is shared too — the same slots displace identically); tileshift2
+        // is the new mode 34; pagecurl is a dedicated pass; neither pagecurl nor
+        // tileshift2 has an identity shortcut.
+        // Fractal Warp 3's corpus slots (shake-lucifer-rc) through the shared function,
+        // as a regression pin — the function itself is pinned by the fractalwarp4 pin.
+        float wx, wy;
+        fxFractalWarpAmUv(0.4f, 0.6f, 0.05f, 2.97f, 0.53f, 6, 25, -33.78f, 172, 40, 1080.f / 1920.f, &wx, &wy);
+        CHECK(std::fabs(wx - 0.406373f) < 3e-3f && std::fabs(wy - 0.606653f) < 3e-3f, "fractalwarp3 corpus pin (%g %g)", wx, wy);
+        CHECK(fxShaderOf(FX_FRACTAL_WARP3_AM).group == FXG_WARP &&
+              fxShaderOf(FX_FRACTAL_WARP3_AM).mode == 22 &&
+              fxShaderOf(FX_FRACTAL_WARP3_AM).mode == fxShaderOf(FX_FRACTAL_WARP_AM).mode,
+              "fractalwarp3 shares warp mode 22");
+        CHECK(fxShaderOf(FX_TILESHIFT2_AM).group == FXG_WARP &&
+              fxShaderOf(FX_TILESHIFT2_AM).mode == 34, "tileshift2 is warp mode 34");
+        CHECK(fxShaderOf(FX_PAGECURL_AM).group == FXG_NONE, "pagecurl is a dedicated pass");
+        CHECK(fxShaderOf(FX_REPEAT_LINE).group == FXG_NONE, "repeat.line has no shader");
+        FxOp id167{};
+        id167.type = FX_FRACTAL_WARP3_AM;
+        CHECK(fxIsIdentity(id167), "fractalwarp3 magnitude 0 is identity");
+        id167.p[0] = 0.2f;
+        CHECK(!fxIsIdentity(id167), "fractalwarp3 magnitude 0.2 is not identity");
+        id167 = FxOp{}; id167.type = FX_TILESHIFT2_AM;
+        CHECK(!fxIsIdentity(id167), "tileshift2 is never identity (the alpha tail)");
+        id167 = FxOp{}; id167.type = FX_PAGECURL_AM;
+        CHECK(!fxIsIdentity(id167), "pagecurl is never identity (the drop shadow)");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -40,8 +40,8 @@ enum EffId { EF_DOWN = 0, EF_BLUR, EF_COPY, EF_GLOW_UP, EF_GLOW_COMP, EF_SPLIT, 
              EF_BBMAKER, EF_UNSHARP_COMP, EF_NEWSHARPEN_COMP, EF_AM_BLENDGEN,
              EF_DEEP_GLOW1_COMP, EF_SPILL_STREAK, EF_SPILL_OVER, EF_SPILL_FINAL,
              EF_OPTIC_COMP, EF_UNMULT_AM, EF_MINIMAX_AM, EF_SOFTBLOOM_AM, EF_CHROMABBR_AM, EF_LENSD_AM,
-             EF_BCC_FILM_GLOW_AM,
-             EF_COUNT };  // eff_[] in renderer.h has room for 56
+             EF_BCC_FILM_GLOW_AM, EF_PAGECURL,
+             EF_COUNT };  // eff_[] in renderer.h has room for 57
 
 const char* kVert = R"(#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -2961,6 +2961,139 @@ void main() {
 }
 )";
 
+// Page Curl (Alight Motion's pagecurl, the Ultra original — the Shadertoy
+// casty/2015 curl, CC-BY 4.0): the layer curls off around a cylinder, the back
+// face blurred, a shine along the curl, a drop shadow under it. Two passes:
+// the driver blurs a copy with the host gaussianblur at `strength` first
+// (uBlur), then this main pass reads the layer AND its blurred copy. uP:
+// progress, radius, angle (deg), alpha, strength (the blur), backColor packed,
+// backAlpha; uQ: backBlendMode, shineColor packed, shineAlpha, shineSpec,
+// shineBlendMode, dropShadowColor packed, dropShadowAlpha; uR: softDropShadow,
+// frontShadowColor packed, frontShadowAlpha, frontShadowBlendMode. uv is
+// acLayerNorm (the layer norm the pass reads as vUv); the radius is floored at
+// 1e-4 and the end distance divides by max(cyl, 1e-6), the def's two undefined
+// spots at radius 0 and angle 90 / 270 on the edge column. The def's first
+// shadow assignment is dead (reassigned before any use) and is not reproduced.
+// fxPagecurlAmUv / fxPagecurlAmPixel in fx_plan.cpp are the CPU twins — keep
+// the three in step.
+const char* kPagecurl = R"(#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform float uP[7];
+uniform float uQ[7];
+uniform float uR[7];
+in vec2 vUv;
+out vec4 oColor;
+const float PI = 3.14159265;
+vec3 unpackRgb(float pk) {
+    // Integer arithmetic, the engine's fxUnpackRgb convention: the float
+    // mod/floor unpack wraps pure white (0xFFFFFF) to black at the 2^24 edge,
+    // and the curl's shine + front-shadow defaults ARE white.
+    int k = int(round(clamp(pk, 0.0, 16777215.0)));
+    return vec3(float((k >> 16) & 0xFF), float((k >> 8) & 0xFF), float(k & 0xFF)) / 255.0;
+}
+mat2 rot2(float a) {
+    float c = cos(a);
+    float s = sin(a);
+    return mat2(c, s, -s, c);
+}
+vec4 composite(vec4 a, vec4 b) {
+    return a * (1.0 - b.a) + b;
+}
+vec2 curlFun(float t, float maxt, vec3 cyl, float radius) {
+    vec2 ret = vec2(t, 1.0);
+    if (t < cyl.z - radius) return ret;
+    if (t > cyl.z + radius) return vec2(-1.0);
+    float a = asin(clamp((t - cyl.z) / radius, -1.0, 1.0));
+    float ca = -a + PI;
+    ret.x = cyl.z + ca * radius;
+    ret.y = cos(ca);
+    if (ret.x < maxt) return ret;
+    if (t < cyl.z) return vec2(t, 1.0);
+    ret.y = cos(a);
+    ret.x = cyl.z + a * radius;
+    return ret.x < maxt ? ret : vec2(-1.0);
+}
+vec2 curlFunFront(float t, float maxt, vec3 cyl, float radius) {
+    vec2 ret = vec2(t, 1.0);
+    if (t < cyl.z - radius) return ret;
+    if (t > cyl.z + radius) return vec2(-1.0);
+    float a = asin(clamp((t - cyl.z) / radius, -1.0, 1.0));
+    float ca = -a + PI;
+    ret.x = cyl.z + ca * radius;
+    ret.y = cos(ca);
+    if (t < cyl.z) return vec2(t, 1.0);
+    ret.y = cos(a);
+    ret.x = cyl.z + a * radius;
+    return ret.x < maxt ? ret : vec2(-1.0);
+}
+vec4 blendColor(vec4 base, vec4 color, int mode, float p) {
+    if (mode == 1) {
+        vec3 aa = base.rgb / max(base.a, 0.00001);
+        vec3 bb = color.rgb / max(color.a, 0.00001);
+        vec3 cc = aa * bb;
+        vec4 adjColor = vec4(cc, 1.0) * color.a * p;
+        return base * (1.0 - adjColor.a) + adjColor;
+    } else if (mode == 2) {
+        vec3 aa = base.rgb / max(base.a, 0.00001);
+        vec3 bb = color.rgb / max(color.a, 0.00001);
+        vec3 cc = 1.0 - ((1.0 - aa) * (1.0 - bb));
+        vec4 adjColor = vec4(cc, 1.0) * color.a * p;
+        return base * (1.0 - adjColor.a) + adjColor;
+    } else {
+        vec4 adjColor = color * p;
+        return base * (1.0 - adjColor.a) + adjColor;
+    }
+}
+void main() {
+    float radius = max(uP[1], 0.0001);
+    vec2 uv = vUv;
+    float h = sqrt(tan(PI / 4.0 - abs(mod(uP[2] * 0.0174533, PI / 2.0) - PI / 4.0)) + 1.0);
+    float d = (1.0 - uP[0]) * h;
+    d = 1.0 - ((1.0 - d) * (1.0 + radius));
+    vec2 cd = vec2(1.0, 0.0) * rot2(uP[2] * 0.0174533);
+    vec2 iv = step(cd, vec2(0.0));
+    uv = iv + uv * (1.0 - iv * 2.0);
+    vec3 cyl = vec3(abs(cd), d);
+    d = dot(uv, cyl.xy);
+    vec2 end = abs((vec2(1.0) - uv) / max(cyl.xy, vec2(0.000001)));
+    float maxt = d + min(end.x, end.y);
+    vec2 cff = curlFunFront(d, maxt, cyl, radius);
+    vec2 cf = curlFun(d, maxt, cyl, radius);
+    vec2 tuv = uv + cyl.xy * (cf.x - d);
+    vec2 tuvf = uv + cyl.xy * (cff.x - d);
+    tuv = iv + tuv * (1.0 - iv * 2.0);
+    tuvf = iv + tuvf * (1.0 - iv * 2.0);
+    vec4 texColor = texture(uTex, vUv);
+    vec4 blurColor = texture(uBlur, vUv);
+    vec4 frontColor = texture(uTex, tuvf);
+    vec4 result = texture(uTex, tuv);
+    float edge = step(uv.x, 1.0) * step(uv.y, 1.0);
+    vec4 front = blendColor(frontColor, vec4(unpackRgb(uR[1]), 1.0) * uR[2] * frontColor.a, int(uR[3] + 0.5), clamp(1.0 - cff.y, 0.0, 1.0));
+    if (cf.y > 0.0) {
+        result = front;
+    } else {
+        vec4 mixed = mix(texColor * (1.0 - blurColor.a) + blurColor, result, uP[3]);
+        result = blendColor(
+            blendColor(
+                composite(front, mixed),
+                vec4(unpackRgb(uP[5]), 1.0) * uP[6] * result.a, int(uQ[0] + 0.5), 1.0 * edge
+            ),
+            vec4(unpackRgb(uQ[1]), 1.0) * uQ[2] * result.a, int(uQ[4] + 0.5), pow(-cf.y, uQ[3]) * edge
+        );
+    }
+    float shadow = smoothstep(0.0, radius * 2.0, d - cyl.z);
+    if (uR[0] > 0.5) {
+        shadow = clamp((1.0 - shadow) * 2.0, 0.0, 1.0) * (1.0 - pow(length(vUv - 0.5) * 2.0, 2.0));
+        vec4 adjShadowColor = vec4(unpackRgb(uQ[5]), 1.0) * uQ[6] * shadow * smoothstep(0.5, 1.0, blurColor.a) * texColor.a;
+        oColor = (cf.x > 0.0 ? composite(adjShadowColor, result) : adjShadowColor) * edge;
+    } else {
+        oColor = (cf.x > 0.0 ? result : vec4(unpackRgb(uQ[5]), 1.0) * uQ[6] * clamp((1.0 - shadow) * 2.0, 0.0, 1.0) * texColor.a) * edge;
+    }
+}
+)";
+
 const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSplit, kGrain, kVig, kMask, kMaskApply, kChroma,
                                   fxsrc::kBlur2, fxsrc::kColor, fxsrc::kWarp, fxsrc::kStyle, kCopyBg, kGlowScan,
                                   kLumaKey, kFourGradient, kTurbulentAm, kPixelateAm, kChromaKeyAm, kSoftGlow, kFillBehind,
@@ -2970,8 +3103,8 @@ const char* kSources[EF_COUNT] = {kDown, kBlur, kCopy, kGlowUp, kGlowComp, kSpli
                                   kSmoothEdgesAm, kDeepGlowComp, kDropShadow,
                                   kBbMaker, kUnsharpComp, kNewSharpenComp, kAmBlendGen,
                                   kDeepGlow1Comp, kSpillStreak, kSpillOver, kSpillFinal,
-                                  kOpticComp, kUnmult, kMinimax, kSoftbloom, kChromabbr, kLensd, kBccFilmGlow};
-static_assert(EF_COUNT <= 56, "eff_[] in renderer.h is too small");
+                                  kOpticComp, kUnmult, kMinimax, kSoftbloom, kChromabbr, kLensd, kBccFilmGlow, kPagecurl};
+static_assert(EF_COUNT <= 57, "eff_[] in renderer.h is too small");
 
 uint32_t compile(GLenum type, const char* src) {
     const GLuint s = glCreateShader(type);
@@ -3181,6 +3314,7 @@ void Renderer::runEffects(const LayerFx& fx, int W, int H, int* cur) {
             case FX_SOFTBLOOM_AM: ok = fxSoftbloomAm(op, W, H, cur); break;
             case FX_LENSD_AM: ok = fxLensdAm(op, W, H, cur); break;
             case FX_BCC_FILM_GLOW_AM: ok = fxBccFilmGlowAm(op, W, H, cur, fx.grainFrame); break;
+            case FX_PAGECURL_AM: ok = fxPagecurlAm(op, W, H, cur); break;
             default:
                 // The shaded effects are the ones fxShaderOf maps to a shared program (7..53 and, since
                 // v160, the imported Alight effects at 59..62); anything else here is not for the engine.
@@ -3968,6 +4102,37 @@ bool Renderer::fxBccFilmGlowAm(const FxOp& op, int W, int H, int* cur, int grain
     glUniform1i(loc(prog, "uOuter"), 2);
     glUniform1i(loc(prog, "uPass"), 4);
     setCommon();
+    draw();
+    *cur = dst;
+    return true;
+}
+
+// Page Curl (Alight, v182): keep the layer, blur a copy with the host
+// gaussianblur at `strength` (the def's first pass: the pagecurl `strength`
+// param IS the blur strength, the deepglow2 / unsharp-mask pattern — the
+// def's gaussianblur pass carries no params of its own), then the main pass
+// (EF_PAGECURL) reading the layer AND its blurred copy.
+bool Renderer::fxPagecurlAm(const FxOp& op, int W, int H, int* cur) {
+    if (fxIsIdentity(op)) return true;
+    const uint32_t prog = effProg(EF_PAGECURL), copy = effProg(EF_COPY);
+    if (!prog || !copy) return false;
+    if (!ensureLevel(kFxGlowLevels - 1, W, H)) return false;
+    const FxLevel& keep = lv_[kFxGlowLevels - 1];
+    begin(copy, keep.fbo[0], W, H);
+    bindTex(0, fxTex_[*cur]);
+    glUniform1i(loc(copy, "uTex"), 0);
+    draw();
+    if (!fxBlurPx(fxAmGaussianSigma(op.p[4], std::hypot((float)width(), (float)height())), W, H, cur))
+        return false;
+    const int dst = 1 - *cur;
+    begin(prog, fxFbo_[dst], W, H);
+    bindTex(0, keep.tex[0]);
+    bindTex(1, fxTex_[*cur]);
+    glUniform1i(loc(prog, "uTex"), 0);
+    glUniform1i(loc(prog, "uBlur"), 1);
+    glUniform1fv(loc(prog, "uP"), 7, op.p);
+    glUniform1fv(loc(prog, "uQ"), 7, op.q);
+    glUniform1fv(loc(prog, "uR"), 7, op.r);
     draw();
     *cur = dst;
     return true;

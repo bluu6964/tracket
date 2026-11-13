@@ -144,6 +144,15 @@ internal object AmFxEval {
         ClipFxLibrary.COLORGRAD3_AM -> listOf(Tracked(10, 1f))                   // angle (EXT slot 3, absolute 10)
         // v178 (build 141): Optic Compensation — AM units (scale 1); tails start at 14 (EXT).
         ClipFxLibrary.OPTIC_COMP_AM -> listOf(Tracked(1, 1f), Tracked(2, 1f))    // distortion, strength
+        // Build 167 (round 4 banked ports): AM units (scale 1). Page Curl's
+        // progress tail starts at 21 (past the EXT2 group); Tile Shift 2's
+        // strength / position tails and Fractal Warp 3's six start at 14 (EXT).
+        // Repeat Line takes NO tail: its keyframed angle / scale / phase take
+        // their first value at import (the draw loops run RepeatEval on the
+        // stored effect, never through this resolver).
+        ClipFxLibrary.PAGECURL_AM -> listOf(Tracked(0, 1f))                     // progress
+        ClipFxLibrary.TILESHIFT2_AM -> listOf(Tracked(0, 1f), Tracked(5, 1f), Tracked(6, 1f))  // strength, position x, position y
+        ClipFxLibrary.FRACTAL_WARP3_AM -> listOf(Tracked(0, 1f), Tracked(4, 1f), Tracked(5, 1f), Tracked(6, 1f), Tracked(7, 1f), Tracked(1, 1f))  // magnitude, offs x, offs y, parallax x, parallax y, scale
         // v180 (Queue 15j): the second-wave ports — AM units (scale 1). Plain tails
         // start at 7, EXT effects' at 14 (LENSD), EXT2 effects' at 21 (REFRACTION,
         // SHAPEFIELD); see tailStart.
@@ -171,10 +180,11 @@ internal object AmFxEval {
         ClipFxLibrary.SIMPLE_STARS_AM, ClipFxLibrary.DOTS_AM, ClipFxLibrary.RIDGES_AM,
         ClipFxLibrary.DISPLACE_MAP_RAD_AM, ClipFxLibrary.SMOOTH_BEVEL_AM,
         ClipFxLibrary.BBMAKER_AM, ClipFxLibrary.OPTIC_COMP_AM,
-        ClipFxLibrary.LENSD_AM, ClipFxLibrary.TURBULENT_DISPLACE2_AM -> EXT_TAIL_START
+        ClipFxLibrary.LENSD_AM, ClipFxLibrary.TURBULENT_DISPLACE2_AM,
+        ClipFxLibrary.TILESHIFT2_AM, ClipFxLibrary.FRACTAL_WARP3_AM -> EXT_TAIL_START
         ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
         ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM,
-        ClipFxLibrary.DEEP_GLOW2_AM,
+        ClipFxLibrary.DEEP_GLOW2_AM, ClipFxLibrary.PAGECURL_AM,
         ClipFxLibrary.GRADIENTFLOW_AM, ClipFxLibrary.PARTX_AM,
         ClipFxLibrary.LIGHTSWEEP_AM, ClipFxLibrary.COLORGRAD3_AM,
         ClipFxLibrary.DEEP_GLOW_AM,

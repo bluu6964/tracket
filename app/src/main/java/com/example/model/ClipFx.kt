@@ -727,6 +727,48 @@ object ClipFxLibrary {
     // (1 Add, 2 Screen, 3 Soft Light, 4 Lighten), [29] quality (1..3),
     // [30] glowOnly, [31] ditherAmt, [32] globalMix.
     const val BCC_FILM_GLOW_AM = "bcc_film_glow_am"
+    // PAGECURL_AM (native 220 + EXT 221 + EXT2 222): Alight's pagecurl (the Ultra
+    // def, casty/2015 curl) — a page corner curls over with a blurred back face,
+    // a shine along the curl and a drop shadow. Values [0] progress, [1] radius,
+    // [2] angle deg, [3] alpha, [4] strength (the blur), [5] backColour packed
+    // 0xRRGGBB, [6] backAlpha; EXT [7] backBlendMode (0 Normal, 1 Multiply,
+    // 2 Screen), [8] shineColour packed, [9] shineAlpha, [10] shineSpec,
+    // [11] shineBlendMode, [12] dropShadowColour packed, [13] dropShadowAlpha;
+    // EXT2 [14] softDropShadow, [15] frontShadowColour packed,
+    // [16] frontShadowAlpha, [17] frontShadowBlendMode, [18..20] unused.
+    // A keyframed progress rides the tail from index 21.
+    const val PAGECURL_AM = "pagecurl_am"
+    // TILESHIFT2_AM (native 223 + EXT 224): Alight's tileshift2 — the layer is
+    // tiled and each tile is jittered by a hash of its cell (amount cells across,
+    // stretch per axis, seed). Values [0] strength, [1] amount, [2] angle deg,
+    // [3] seed, [4] screenSpace, [5..6] the position point; EXT [7..8] the
+    // stretch point. Keyframed strength / position ride tails from index 14.
+    // screenSpace stays layer-anchored here (the importer warns when asked).
+    const val TILESHIFT2_AM = "tileshift2_am"
+    // FRACTAL_WARP3_AM (native 225 + EXT 226): Alight's fractalwarp3 — the same
+    // value-noise fbm displacement as fractalwarp4 (identical fbm, same 3.0 /
+    // 25.3 / 12.9 constants), so it shares FRACTAL_WARP_AM's slot layout exactly:
+    // values [0] magnitude, [1] scale, [2] intensity, [3] octaves, [4..5] the
+    // offset point, [6] parallax x; EXT [7] parallax y. Keyframed magnitude /
+    // offset / parallax / scale ride tails from index 14, in fractalwarp4's
+    // exact order. screenSpace stays layer-anchored (warned when asked).
+    const val FRACTAL_WARP3_AM = "fractal_warp3_am"
+    // REPEAT_LINE (native 227): Alight's repeat.line — the fourth arrangement of
+    // the repeat family (copies along a line through the layer's position, each
+    // stepped by the offset, scaled and faded per copy). Resolved in the draw
+    // loops by RepeatEval like the rest of the family, so its native type never
+    // reaches the shaders (toNative skips it like Repeat). Values [0] count,
+    // [1..2] the position point (preview px), [3..4] the offset (preview px),
+    // [5] angle deg, [6] scale %, [7] alpha %, [8] phase; [9..11] the
+    // alternating copies' colour (packed + flag, the repeatAltColorPacked
+    // pattern), [12..13] unused. The window / ordering props (start / end /
+    // phase / ease / overlap / shape / invert / randomOrder / seed / blend) have
+    // no counterpart: the importer warns (warnRepeatExtras), and keyframed
+    // angle / scale / phase take their first value there — the draw loops run
+    // RepeatEval on the stored effect, never through AmFxEval, so no tail can
+    // carry them (the scatter evolution-track precedent does not apply: the
+    // line's angle / scale / phase are plain scalars, not a stored track).
+    const val REPEAT_LINE = "repeat_line"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
@@ -2007,6 +2049,70 @@ object ClipFxLibrary {
                 FxParamDef("Threshold gamma", 0.2f, 3f, 1f, "", step = 0.05f)
             )
         ),
+        // Page Curl: values [0..6] are the panel params (progress, radius, angle,
+        // alpha, strength, back colour, back alpha); the EXT / EXT2 groups
+        // (blend modes, shine, shadows) are the importer's / extraValues' — the
+        // def's own defaults there, like Four Color Gradient's anchor points.
+        FxDef(
+            PAGECURL_AM, 220, "Page Curl (Alight)", "Distort", "A page corner curls over, back face and shine showing (Alight Motion's Page Curl)",
+            listOf(
+                FxParamDef("Progress", 0f, 2f, 0.4f, "", step = 0.01f),
+                FxParamDef("Radius", 0f, 10f, 0.1f, "", step = 0.001f),
+                FxParamDef("Angle", -3600f, 3600f, 38f, "°", step = 0.5f),
+                FxParamDef("Alpha", 0f, 1f, 1f, "", step = 0.01f),
+                FxParamDef("Strength", 0f, 2f, 0.1f, "", step = 0.01f),
+                FxParamDef("Back colour", 0f, 16777215f, 0x888888.toFloat(), "", step = 1f),
+                FxParamDef("Back alpha", 0f, 1f, 1f, "", step = 0.01f)
+            )
+        ),
+        // Tile Shift 2: values [0..6] are the panel params; the stretch point
+        // rides the EXT group (extraValues: 1, 1, the def default).
+        FxDef(
+            TILESHIFT2_AM, 223, "Tile Shift 2 (Alight)", "Distort", "The layer tiled and jittered cell by cell (Alight Motion's Tile Shift 2)",
+            listOf(
+                FxParamDef("Strength", 0f, 1f, 0.1f, "", step = 0.001f),
+                FxParamDef("Amount", 0.5f, 200f, 10f, "", step = 0.1f),
+                FxParamDef("Angle", 0f, 3600f, 0f, "°", step = 0.5f),
+                FxParamDef("Seed", 0f, 5f, 0f, "", step = 0.01f),
+                FxParamDef("Screen space", 0f, 1f, 0f, "", step = 1f),
+                FxParamDef("Position X", -2000f, 2000f, 0f, "", step = 5f),
+                FxParamDef("Position Y", -2000f, 2000f, 0f, "", step = 5f)
+            )
+        ),
+        // Fractal Warp 3: the fractalwarp4 panel params verbatim (same def values:
+        // magnitude 0.2, scale 1, intensity 0.5, octaves 6, offset / parallax 0);
+        // parallax y rides the EXT group.
+        FxDef(
+            FRACTAL_WARP3_AM, 225, "Fractal Warp 3 (Alight)", "Distort", "Value-noise fbm displaces the layer (Alight Motion's Fractal Warp 3)",
+            listOf(
+                FxParamDef("Magnitude", -5f, 5f, 0.2f, "", step = 0.05f),
+                FxParamDef("Scale", 0.1f, 4f, 1f, "", step = 0.05f),
+                FxParamDef("Intensity", 0.25f, 0.75f, 0.5f, "", step = 0.01f),
+                FxParamDef("Octaves", 1f, 9f, 6f, "", step = 1f),
+                FxParamDef("Offset X", -2000f, 2000f, 0f, "", step = 5f),
+                FxParamDef("Offset Y", -2000f, 2000f, 0f, "", step = 5f),
+                FxParamDef("Parallax X", -2000f, 2000f, 0f, "", step = 5f)
+            )
+        ),
+        // Repeat Line: the repeat family's fourth arrangement — nine panel params
+        // (the only def with more than seven: count, position, offset, angle,
+        // scale, alpha, phase are all first-class sliders here, where the radial /
+        // scatter keep their per-copy steps importer-only). Values [9..11] (the
+        // alternating copies' colour) are the importer's, [12..13] padding.
+        FxDef(
+            REPEAT_LINE, 227, "Repeat Line", "Distort", "Copies the layer along a line, each stepped, scaled and faded",
+            listOf(
+                FxParamDef("Count", 0f, 150f, 5f),
+                FxParamDef("Position X", -1000f, 1000f, 500f, "px", step = 5f),
+                FxParamDef("Position Y", -1000f, 1000f, 0f, "px", step = 5f),
+                FxParamDef("Offset X", -500f, 500f, 0f, "px", step = 5f),
+                FxParamDef("Offset Y", -500f, 500f, 0f, "px", step = 5f),
+                FxParamDef("Angle", -1800f, 1800f, 0f, "°", step = 1f),
+                FxParamDef("Scale", 0f, 1000f, 100f, "%", step = 5f),
+                FxParamDef("Alpha", 0f, 100f, 100f, "%", step = 5f),
+                FxParamDef("Phase", -1f, 2f, 0f, "", step = 0.001f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -2573,6 +2679,21 @@ object ClipFxLibrary {
             0.3f, 0f, 0f, 1f, 0f, 0f, 5f,
             1f, 2f, 0f, 0.008f, 1f, 0f, 0f
         )
+        // Page Curl's EXT + EXT2 defaults are the def's own: back blend Multiply,
+        // shine white at full alpha, spec 30, shine blend Screen, drop shadow
+        // black at 0.8; soft drop shadow on, front shadow white at full alpha,
+        // front blend Screen.
+        PAGECURL_AM -> listOf(
+            1f, 0xFFFFFF.toFloat(), 1f, 30f, 2f, 0f, 0.8f,
+            1f, 0xFFFFFF.toFloat(), 1f, 2f, 0f, 0f, 0f
+        )
+        // Tile Shift 2's EXT defaults are the def's own: stretch (1, 1).
+        TILESHIFT2_AM -> listOf(1f, 1f, 0f, 0f, 0f, 0f, 0f)
+        // Fractal Warp 3's EXT default is the def's own: parallax y 0.
+        FRACTAL_WARP3_AM -> listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f)
+        // Repeat Line's values past its nine panel params: the alternating
+        // copies' colour (off) and two padding zeroes.
+        REPEAT_LINE -> listOf(0f, 0f, 0f, 0f, 0f)
         else -> emptyList()
     }
 
@@ -2620,6 +2741,9 @@ object ClipFxLibrary {
         SOLID_WIPE_AM -> 211
         LENSD_AM -> 214
         BCC_FILM_GLOW_AM -> 216
+        PAGECURL_AM -> 221
+        TILESHIFT2_AM -> 224
+        FRACTAL_WARP3_AM -> 226
         else -> null
     }
 
@@ -2639,6 +2763,7 @@ object ClipFxLibrary {
         SHAPEFIELD_AM -> 202
         CC_GLASS_AM -> 207
         BCC_FILM_GLOW_AM -> 217
+        PAGECURL_AM -> 222
         else -> null
     }
 
@@ -2678,7 +2803,7 @@ object ClipFxLibrary {
     fun toNative(effects: List<ClipFx>): FloatArray? {
         val on = effects.filter {
             it.enabled && def(it.type) != null && it.type != MOTION_BLUR && it.type != MOTION_BLUR4 && it.type != REPEAT &&
-                it.type != REPEAT_RADIAL && it.type != REPEAT_SCATTER
+                it.type != REPEAT_RADIAL && it.type != REPEAT_SCATTER && it.type != REPEAT_LINE
         }.take(MAX_EFFECTS)
         if (on.isEmpty()) return null
         val out = ArrayList<Float>(on.size * 8)

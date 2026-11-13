@@ -229,6 +229,7 @@ object AlightXmlImporter {
     const val REPEAT = "com.alightcreative.effects.repeat"
     const val REPEAT_RADIAL = "com.alightcreative.effects.repeat.radial"
     const val REPEAT_SCATTER = "com.alightcreative.effects.repeat.scatter"
+    const val REPEATLINE = "com.alightcreative.effects.repeat.line"
     const val MOVEALONGPATH = "com.alightcreative.effect.movealongpath3"
     const val LONGSHADOW = "com.alightcreative.effects.longshadow"
     const val LONGSHADOW2 = "com.alightcreative.effects.longshadow2"
@@ -273,6 +274,9 @@ object AlightXmlImporter {
     const val STRETCHV1 = "com.alightcreative.effects.stretch"
     const val SQUEEZE = "com.alightcreative.effects.squeeze"
     const val FRACTALWARP4 = "com.alightcreative.effects.fractalwarp4"
+    const val FRACTALWARP3 = "com.alightcreative.effects.fractalwarp3"
+    const val PAGECURL = "com.alightcreative.effects.pagecurl"
+    const val TILESHIFT2 = "com.alightcreative.effects.tileshift2"
     const val STRIPES = "com.alightcreative.effects.stripes"
     const val TURBULENTDISPLACE3 = "com.alightcreative.effects.turbulentdisplace3"
     const val ROUGHENEDGES = "com.alightcreative.effects.roughenedges"
@@ -2869,6 +2873,7 @@ object AlightXmlImporter {
                 REPEAT -> applyRepeat(fx, clip, ctx)
                 REPEAT_RADIAL -> applyRepeatRadial(fx, clip, ctx)
                 REPEAT_SCATTER -> applyRepeatScatter(fx, clip, ctx)
+                REPEATLINE -> applyRepeatLine(fx, clip, ctx)
                 MOVEALONGPATH -> applyMoveAlongPath(fx, el, clip, ctx)
                 LONGSHADOW, LONGSHADOW2 -> applyLongShadow(fx, clip, ctx, id)
                 RAYS -> applyRays(fx, clip, ctx)
@@ -2903,6 +2908,9 @@ object AlightXmlImporter {
                 STRETCH2, STRETCHV1 -> applyStretchAm(fx, clip, ctx, id)
                 SQUEEZE -> applySqueezeAm(fx, clip, ctx)
                 FRACTALWARP4 -> applyFractalWarpAm(fx, clip, ctx)
+                FRACTALWARP3 -> applyFractalWarp3Am(fx, clip, ctx)
+                PAGECURL -> applyPagecurlAm(fx, clip, ctx)
+                TILESHIFT2 -> applyTileshift2Am(fx, clip, ctx)
                 STRIPES -> applyStripesAm(fx, clip, ctx)
                 TURBULENTDISPLACE3 -> applyTurbulentDisplace3Am(fx, clip, ctx)
                 ROUGHENEDGES -> applyRoughenEdgesAm(fx, clip, ctx)
@@ -6106,6 +6114,107 @@ object AlightXmlImporter {
     }
 
     /**
+     * `fractalwarp3` -> the app's Fractal Warp 3 (Alight): the def's SKSL is
+     * formula-identical to fractalwarp4's (same fbm, same 3.0 / 25.3 / 12.9
+     * constants), so it shares that effect's slot layout and tail order exactly
+     * (magnitude, offs x, offs y, parallax x, parallax y, scale — see AmFxEval).
+     * screenSpace stays layer-anchored (reported when asked; no corpus instance asks).
+     */
+    private fun applyFractalWarp3Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val magT = props["mag"]
+        val scaleT = props["scale"]
+        val offsT = props["offs"]
+        val parrT = props["parr"]
+        val offs = offsT?.valueAtEased(0f)
+        val parr = parrT?.valueAtEased(0f)
+        if (boolOf(props["screenSpace"], false) > 0.5f) {
+            w += "Effect fractalwarp3: screen space is not reproduced: the pattern stays layer-anchored"
+        }
+        val values = listOf(
+            (magT?.scalarAtEased(0f) ?: 0.2f).coerceIn(-5f, 5f),
+            (scaleT?.scalarAtEased(0f) ?: 1f).coerceIn(0.1f, 4f),
+            (props["intensity"]?.firstValue(w, "fractalwarp3", "intensity") ?: 0.5f).coerceIn(0.25f, 0.75f),
+            (props["octaves"]?.firstValue(w, "fractalwarp3", "octaves") ?: 6f).coerceIn(1f, 9f),
+            offs?.getOrNull(0) ?: 0f, offs?.getOrNull(1) ?: 0f,
+            parr?.getOrNull(0) ?: 0f, parr?.getOrNull(1) ?: 0f,
+            0f, 0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(
+            trackTail(magT), pointTail(offsT, 0) { it }, pointTail(offsT, 1) { it },
+            pointTail(parrT, 0) { it }, pointTail(parrT, 1) { it }, trackTail(scaleT)
+        )
+        return addFx(clip0, ctx, ClipFxLibrary.FRACTAL_WARP3_AM, values, "fractalwarp3")
+    }
+
+    /**
+     * `pagecurl` -> the app's Page Curl (Alight): the corner curls over (casty/2015),
+     * the back face blurred, a shine along the curl, a drop shadow under it. The
+     * progress is keyframed in both corpus instances (0.18–0.31), so it rides the
+     * tail from index 21 (past the EXT2 group); the colours are constant there
+     * (packedColour warns if one is ever keyframed, like every colour).
+     */
+    private fun applyPagecurlAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val progressT = props["progress"]
+        val values = listOf(
+            (progressT?.scalarAtEased(0f) ?: 0.4f).coerceIn(0f, 2f),
+            (props["radius"]?.firstValue(w, "pagecurl", "radius") ?: 0.1f).coerceIn(0f, 10f),
+            (props["angle"]?.firstValue(w, "pagecurl", "angle") ?: 38f).coerceIn(-3600f, 3600f),
+            (props["alpha"]?.firstValue(w, "pagecurl", "alpha") ?: 1f).coerceIn(0f, 1f),
+            (props["strength"]?.firstValue(w, "pagecurl", "strength") ?: 0.1f).coerceIn(0f, 2f),
+            props["backColor"]?.packedColor(w, "pagecurl", "backColor") ?: 0x888888.toFloat(),
+            (props["backAlpha"]?.firstValue(w, "pagecurl", "backAlpha") ?: 1f).coerceIn(0f, 1f),
+            (props["backBlendMode"]?.firstValue(w, "pagecurl", "backBlendMode") ?: 1f).coerceIn(0f, 2f),
+            props["shineColor"]?.packedColor(w, "pagecurl", "shineColor") ?: 0xFFFFFF.toFloat(),
+            (props["shineAlpha"]?.firstValue(w, "pagecurl", "shineAlpha") ?: 1f).coerceIn(0f, 1f),
+            (props["shineSpec"]?.firstValue(w, "pagecurl", "shineSpec") ?: 30f).coerceIn(1f, 150f),
+            (props["shineBlendMode"]?.firstValue(w, "pagecurl", "shineBlendMode") ?: 2f).coerceIn(0f, 2f),
+            props["dropShadowColor"]?.packedColor(w, "pagecurl", "dropShadowColor") ?: 0f,
+            (props["dropShadowAlpha"]?.firstValue(w, "pagecurl", "dropShadowAlpha") ?: 0.8f).coerceIn(0f, 1f),
+            boolOf(props["softDropShadow"], true),
+            props["frontShadowColor"]?.packedColor(w, "pagecurl", "frontShadowColor") ?: 0xFFFFFF.toFloat(),
+            (props["frontShadowAlpha"]?.firstValue(w, "pagecurl", "frontShadowAlpha") ?: 1f).coerceIn(0f, 1f),
+            (props["frontShadowBlendMode"]?.firstValue(w, "pagecurl", "frontShadowBlendMode") ?: 2f).coerceIn(0f, 2f),
+            0f, 0f, 0f
+        ) + tailsOf(trackTail(progressT))
+        return addFx(clip0, ctx, ClipFxLibrary.PAGECURL_AM, values, "pagecurl")
+    }
+
+    /**
+     * `tileshift2` -> the app's Tile Shift 2 (Alight): the layer tiled, each cell
+     * jittered by a hash of its cell. The strength and the position are keyframed
+     * in the corpus instance (strength 0.131 -> 0, position wandering 8 -> 31 ->
+     * -7), so they ride tails from index 14 in AmFxEval's order (strength,
+     * position x, position y). screenSpace stays layer-anchored: the importer
+     * warns when true (no corpus instance asks).
+     */
+    private fun applyTileshift2Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val strengthT = props["strength"]
+        val positionT = props["position"]
+        val position = positionT?.valueAtEased(0f)
+        val stretch = props["stretch"]?.firstPoint(w, "tileshift2", "stretch", 1f, 1f) ?: (1f to 1f)
+        if (boolOf(props["screenSpace"], false) > 0.5f) {
+            w += "Effect tileshift2: screen space is not reproduced: the pattern stays layer-anchored"
+        }
+        val values = listOf(
+            (strengthT?.scalarAtEased(0f) ?: 0.1f).coerceIn(0f, 1f),
+            (props["amount"]?.firstValue(w, "tileshift2", "amount") ?: 10f).coerceIn(0.5f, 200f),
+            (props["angle"]?.firstValue(w, "tileshift2", "angle") ?: 0f).coerceIn(0f, 3600f),
+            (props["seed"]?.firstValue(w, "tileshift2", "seed") ?: 0f).coerceIn(0f, 5f),
+            boolOf(props["screenSpace"], false),
+            position?.getOrNull(0) ?: 0f, position?.getOrNull(1) ?: 0f,
+            stretch.first.coerceIn(0.01f, 10f),
+            stretch.second.coerceIn(0.01f, 10f),
+            0f, 0f, 0f, 0f, 0f
+        ) + tailsOf(trackTail(strengthT), pointTail(positionT, 0) { it }, pointTail(positionT, 1) { it })
+        return addFx(clip0, ctx, ClipFxLibrary.TILESHIFT2_AM, values, "tileshift2")
+    }
+
+    /**
      * `stripes` -> the app's Stripes (Alight): rotated colour bands over the layer (or
      * punched out of it). Keyframed phase / width ride tails. AM's screenSpace branch
      * anchors the bands to the screen; the layer branch is what runs here (reported when
@@ -7311,6 +7420,62 @@ object AlightXmlImporter {
                 angle
             ) + evol + repeatAltColorPacked(props),
             "repeat.scatter"
+        )
+    }
+
+    /**
+     * `repeat.line` -> the app's Repeat Line effect (see [RepeatEval]): [count] copies
+     * along a line through the layer's position — copy i at layerPos +
+     * R(angle) * (position + i * offset), each scaled by scale^i and faded by
+     * alpha^i, no extra per-copy rotation. The window / ordering props have no
+     * counterpart ([warnRepeatExtras] names them; the corpus instances' keyframed
+     * phase trips it), and `blend` is reported when non-zero, like the scatter's.
+     * Keyframed angle / scale / phase take their first value (the pass-2 rule):
+     * the draw loops run RepeatEval on the STORED effect, never through AmFxEval,
+     * so no tail can carry the sweep — the warning names the lost animation. The
+     * corpus instances keyframe all three (angle -31 -> 154 over 6 keys, scale
+     * 0.16 -> 1.02 -> 0.16, phase dipping to -1), so all three warnings fire there.
+     * Like the plain repeat, it draws on every layer kind (RepeatDraw for
+     * picture / group layers).
+     */
+    private fun applyRepeatLine(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val rawCount = (props["count"]?.firstValue(w, "repeat.line", "count") ?: 5f).roundToInt()
+        val count = rawCount.coerceIn(1, RepeatEval.MAX_COUNT)
+        if (count != rawCount) {
+            w += "Effect repeat.line: count " + rawCount + " is clamped to " + count + ", the most the app draws"
+        }
+        val position = props["position"]?.let {
+            if (it.keys.size >= 2) w += "Effect repeat.line: keyframed position is not supported yet: the first value is used"
+            it.first()
+        } ?: listOf(500f, 0f)
+        val offset = props["offset"]?.let {
+            if (it.keys.size >= 2) w += "Effect repeat.line: keyframed offset is not supported yet: the first value is used"
+            it.first()
+        } ?: listOf(0f, 0f)
+        val angle = props["angle"]?.firstValue(w, "repeat.line", "angle") ?: 0f
+        val scale = props["scale"]?.firstValue(w, "repeat.line", "scale") ?: 1f
+        val alpha = props["alpha"]?.firstValue(w, "repeat.line", "alpha") ?: 1f
+        val phase = props["phase"]?.firstValue(w, "repeat.line", "phase") ?: 0f
+        if ((props["blend"]?.scalarAt(0f) ?: 0f) != 0f) {
+            w += "Effect repeat.line is mapped approximately: its blend is not reproduced"
+        }
+        warnRepeatExtras(props, w, "repeat.line")
+        return addFx(
+            clip0, ctx, ClipFxLibrary.REPEAT_LINE,
+            listOf(
+                count.toFloat(),
+                (position.getOrNull(0) ?: 500f) * ctx.k,
+                (position.getOrNull(1) ?: 0f) * ctx.k,
+                (offset.getOrNull(0) ?: 0f) * ctx.k,
+                (offset.getOrNull(1) ?: 0f) * ctx.k,
+                angle.coerceIn(-1800f, 1800f),
+                (scale * 100f).coerceIn(0f, 1000f),
+                (alpha * 100f).coerceIn(0f, 100f),
+                phase.coerceIn(-1f, 2f)
+            ) + repeatAltColorPacked(props) + listOf(0f, 0f),
+            "repeat.line"
         )
     }
 

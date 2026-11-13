@@ -12,10 +12,11 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Alight Motion's repeat family — plain `repeat`, `repeat.radial`, `repeat.scatter`: the layer drawn
- * once per copy, the copies arranged in a row / on a ring / scattered over a disc. Pure Kotlin (no
- * Android classes) so it can be unit tested; the C++ side needs no change (the unresolved types
- * 56..58 are skipped by fxParseOps: they sit above FX_MAX, like Motion Blur).
+ * Alight Motion's repeat family — plain `repeat`, `repeat.radial`, `repeat.scatter`,
+ * `repeat.line`: the layer drawn once per copy, the copies arranged in a row / on a ring /
+ * scattered over a disc / along a line. Pure Kotlin (no Android classes) so it can be unit
+ * tested; the C++ side needs no change (the unresolved types 56..58 and 227 are skipped by
+ * fxParseOps: they sit above FX_MAX, like Motion Blur).
  *
  * What Alight stores for the plain repeat (all 3 plain-repeat instances in the corpus — on the
  * "Horizontal Lines" / "Vertical Lines" shapes — have angle 0, scale 1, alpha 1, time 0, so only
@@ -75,6 +76,21 @@ import kotlin.math.sqrt
  * white / lavender exactly so). Values: [count, radiusPx, offsetX, offsetY, seed, scaleFloor %,
  * alpha %, fieldAngle, evolution (t0, v0, t1, v1), altColour...].
  *
+ * `repeat.line` (build 167, the round-4 banked port) puts [count] copies along a line through
+ * the layer's position: copy i sits at layerPos + R(angle) * (position + i * offset), each copy
+ * scaled by scale^i and faded by alpha^i, with NO extra per-copy rotation — the angle turns
+ * the whole line, not the copies. Unlike the plain repeat, copy 0 is the layer itself ONLY when
+ * `position` is (0, 0): the def default is (500, 0), so a panel-made line starts 500 px out.
+ * Values: [count, positionX, positionY, offsetX, offsetY, angle, scale %, alpha %, phase,
+ * altColour...] (see [ClipFxLibrary]). The family caveat applies in full: the window /
+ * ordering props (start / end / phase / easeIn / easeOut / overlap / shape / invert /
+ * randomOrder / seed / blend) have no counterpart in the copy expansion — the importer warns
+ * ([AlightXmlImporter.warnRepeatExtras]) — and the stored `phase` is never read here, because
+ * the window it belongs to is not reproduced. Keyframed angle / scale / phase take their first
+ * value at import (the pass-2 rule): the draw loops run this object on the STORED effect, never
+ * through AmFxEval, so no tail can carry the sweep — see the importer's note. With
+ * `colorAltCopies` the odd copies take the effect's fill colour, the radial / scatter rule.
+ *
  * [undoRotationDeg] is for a layer drawn into its own upright picture (a pose / camera layer): the
  * renderer turns that picture by the layer's own rotation when it places it, so the copies are
  * placed by the offset undone by that turn — pass the rendered layer's rotationDeg there, 0
@@ -110,12 +126,13 @@ internal object RepeatEval {
     fun repeatOf(clip: TimelineClip): ClipFx? =
         clip.effects.firstOrNull { it.enabled && it.type == ClipFxLibrary.REPEAT }
 
-    /** The layer's enabled repeat-family effect (plain / radial / scatter), or null. */
+    /** The layer's enabled repeat-family effect (plain / radial / scatter / line), or null. */
     fun anyRepeatOf(clip: TimelineClip): ClipFx? =
         clip.effects.firstOrNull {
             it.enabled && (it.type == ClipFxLibrary.REPEAT ||
                 it.type == ClipFxLibrary.REPEAT_RADIAL ||
-                it.type == ClipFxLibrary.REPEAT_SCATTER)
+                it.type == ClipFxLibrary.REPEAT_SCATTER ||
+                it.type == ClipFxLibrary.REPEAT_LINE)
         }
 
     /**
@@ -133,7 +150,8 @@ internal object RepeatEval {
     fun countOf(fx: ClipFx): Int = (fx.values.getOrNull(0) ?: 1f).roundToInt().coerceIn(1, MAX_COUNT)
 
     /**
-     * The layer drawn once per copy (for the plain repeat the first entry is always [clip] itself).
+     * The layer drawn once per copy (for the plain repeat the first entry is always [clip] itself;
+     * for the line it is the layer moved by R(angle) * position — the same only when position is (0, 0)).
      * No repeat-family effect, or a disabled one, returns just the layer. [timeMs] is the frame
      * time: only the scatter field reads it (its evolution); the other arrangements are static.
      *
@@ -155,6 +173,7 @@ internal object RepeatEval {
         val copies = when (fx.type) {
             ClipFxLibrary.REPEAT_RADIAL -> radialCopiesOf(clip, fx, undoRotationDeg)
             ClipFxLibrary.REPEAT_SCATTER -> scatterCopiesOf(clip, fx, undoRotationDeg, timeMs)
+            ClipFxLibrary.REPEAT_LINE -> lineCopiesOf(clip, fx, undoRotationDeg)
             else -> plainCopiesOf(clip, fx, undoRotationDeg)
         }
         if ((outerScale == 1f && outerRotDeg == 0f) || copies.size <= 1) return copies
@@ -177,7 +196,8 @@ internal object RepeatEval {
      * picture (a video / photo texture, a Group layer's composed picture): the copy sits
      * ([dx], [dy]) preview px away from the layer, turned [rotDeg] more, scaled by [scaleMul]
      * about its own anchor and faded by [opacityMul]. For the plain repeat the first delta is
-     * the identity (the layer itself); radial / scatter have no centre copy.
+     * the identity (the layer itself); radial / scatter have no centre copy; for the line the
+     * first delta is R(angle) * position — the identity only when position is (0, 0).
      */
     data class CopyDelta(val dx: Float, val dy: Float, val rotDeg: Float, val scaleMul: Float, val opacityMul: Float)
 
@@ -335,6 +355,50 @@ internal object RepeatEval {
                 transformY = clip.transformY + uy,
                 scalePercent = (clip.scalePercent * (scaleFloor + (1f - scaleFloor) * u3)).coerceAtLeast(0.01f),
                 opacity = (clip.opacity * alpha).coerceIn(0f, 100f)
+            )
+            if (alt != null && i % 2 == 1) c = c.copy(textColor = alt)
+            c
+        }
+    }
+
+    /**
+     * `repeat.line`: [count] copies along a line through the layer's position (see the class
+     * doc for the law: copy i at layerPos + R(angle) * (position + i * offset), scaled by
+     * scale^i and faded by alpha^i, no per-copy rotation). Unlike the plain repeat there is no
+     * count-1 shortcut: copy 0 is the layer itself only when `position` is (0, 0), so the law
+     * runs for every copy including the first. The angle turns the whole line (the clockwise
+     * matrix, the radial copies' convention: positive angle turns clockwise on screen), and
+     * the undo rotation folds the line back into the upright picture exactly like the plain
+     * repeat's offset undo.
+     */
+    private fun lineCopiesOf(clip: TimelineClip, fx: ClipFx, undoRotationDeg: Float): List<TimelineClip> {
+        val n = countOf(fx)
+        val px = fx.values.getOrNull(1) ?: 0f
+        val py = fx.values.getOrNull(2) ?: 0f
+        val ox = fx.values.getOrNull(3) ?: 0f
+        val oy = fx.values.getOrNull(4) ?: 0f
+        val angle = fx.values.getOrNull(5) ?: 0f
+        val scale = (fx.values.getOrNull(6) ?: 100f) / 100f
+        val alpha = (fx.values.getOrNull(7) ?: 100f) / 100f
+        val alt = altColorOf(fx, 9)
+        val a = angle * PI.toFloat() / 180f
+        val ca = cos(a)
+        val sa = sin(a)
+        val rad = undoRotationDeg * PI.toFloat() / 180f
+        val cosU = cos(rad)
+        val sinU = sin(rad)
+        return List(n) { i ->
+            val lx = px + i * ox
+            val ly = py + i * oy
+            val rx = lx * ca - ly * sa
+            val ry = lx * sa + ly * ca
+            val ux = rx * cosU + ry * sinU
+            val uy = -rx * sinU + ry * cosU
+            var c = clip.copy(
+                transformX = clip.transformX + ux,
+                transformY = clip.transformY + uy,
+                scalePercent = (clip.scalePercent * scale.pow(i)).coerceAtLeast(0.01f),
+                opacity = (clip.opacity * alpha.pow(i)).coerceIn(0f, 100f)
             )
             if (alt != null && i % 2 == 1) c = c.copy(textColor = alt)
             c

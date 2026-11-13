@@ -13,7 +13,8 @@
 //               16 radial wipe (Alight), 17 hex shift (Alight), 18 wave warp 2 (Alight), 19 circular ripple (Alight), 20 stretch (Alight), 21 squeeze (Alight),
 //               22 fractal warp (Alight), 23 stripes (Alight), 24 turbulent displace 3 (Alight), 25 roughen edges (Alight), 26 bend warp (Alight),
 //               27 halftone lines (Alight), 28 rgb glitch (Alight), 29 fisheye / anti-fisheye (Alight), 30 refraction warp (Alight),
-//               31 turbulent displace 2 (Alight), 32 cc glass (Alight), 33 solid colour wipe (Alight)
+//               31 turbulent displace 2 (Alight), 32 cc glass (Alight), 33 solid colour wipe (Alight),
+//               34 tile shift 2 (Alight)
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare,
 //               14 find edges (Alight), 15 dissolve (Alight), 16 simple stars (Alight), 17 dots (Alight), 18 ridges (Alight),
 //               19 clouds / turbulence 2 (Alight), 20 checkerboard 2 (Alight), 21 shape field (Alight), 22 halftone dots (Alight)
@@ -2004,6 +2005,39 @@ void main() {
         vec3 res = uP[3] > 1.5 ? 1.0 - (1.0 - straight) * (1.0 - fill)
                    : uP[3] > 0.5 ? straight * fill : fill;
         oColor = mix(tex, vec4(res, 1.0) * tex.a, uP[2] * mask);
+        return;
+    }
+    if (uMode == 34) {
+        // v182: Alight's Tile Shift 2 (Ultra original): the layer tiled, each
+        // cell jittered by the 719.310 / 178.233 / 33758.5453 hash of its cell
+        // (amHexRand, shared with hexshift). uP: strength, amount, angle (deg),
+        // seed, screenSpace, position x / y; uQ: stretch x / y. The screen branch
+        // reads the same vUv with the screen aspect (the pass's picture IS the
+        // layer); the sample coordinate is mirror-wrapped, so a displaced sample
+        // never leaves the picture. fxTileshift2AmUv / fxTileshift2AmPixel in
+        // fx_plan.cpp are the CPU twins — keep the three in step.
+        vec2 picSize = 1.0 / uTexel;
+        vec2 st;
+        if (uP[4] > 0.5) {
+            st = vec2(vUv.x - 0.5, 0.5 - vUv.y);
+            st.x *= uAspect;
+            st -= vec2(uP[5], uP[6]) / 1200.0;
+        } else {
+            st = (vec2(vUv.x, 1.0 - vUv.y) * picSize - picSize * 0.5) / length(picSize);
+            st -= vec2(uP[5], uP[6]) / 1200.0;
+        }
+        float a = uP[2] * 0.0174533;
+        st *= mat2(sin(a), -cos(a), cos(a), sin(a));
+        float px = floor(st.x * uP[1] / uQ[1]);
+        float py = floor(st.y * uP[1] / uQ[0]);
+        float dx = amHexRand(vec2(px, py + 3937.7249 * uP[3]));
+        float dy = amHexRand(vec2(px + 328.7319 + 432.7249 * uP[3], py - 971.382));
+        vec2 dv = (vec2(dx, dy) - 0.5) * 2.0;
+        vec2 sampCoord = vUv + dv * uP[0];
+        sampCoord = abs(mod(sampCoord - 1.0, 2.0) - 1.0);
+        vec4 sampColor = textureLod(uTex, sampCoord, 0.0);
+        vec4 texColor = textureLod(uTex, vUv, 0.0);
+        oColor = sampColor * texColor.a;
         return;
     }
     vec2 p = toP(vUv);

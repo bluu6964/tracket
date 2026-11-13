@@ -78,13 +78,19 @@ class ClipFxLibraryTest {
         // Build 150 (v181) adds FX_BCC_FILM_GLOW_AM (215), a dedicated five-pass
         // chain; 216 / 217 / 218 / 219 are its EXT / EXT2 / EXT3 / EXT4 groups,
         // folded the same way (the EXT3 / EXT4 banks exist for this one effect).
+        // Build 167 (round 4 banked ports) adds FX_PAGECURL_AM (220),
+        // FX_TILESHIFT2_AM (223), FX_FRACTAL_WARP3_AM (225) and FX_REPEAT_LINE
+        // (227, Kotlin-resolved like 56..58, never reaching the shaders); 221 /
+        // 222 are Page Curl's EXT / EXT2 groups and 224 / 226 the Tile Shift 2 /
+        // Fractal Warp 3 EXT groups, folded the same way.
         assertEquals(
             ((1..65) + 67 + (69..72) + 74 + 75 + 76 + (78..84) + 86 + 88 +
                 90 + 92 + 93 + 94 + 95 + 97 + 98 + 100 + 101 + (103..108) + 110 + 112 +
                 114 + 115 + 116 + 118 + 120 + 121 + 122 + 123 + 126 + 129 +
                 131 + 132 + 134 + 135 + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146 + 149 +
                 150 + 151 + 154 + 155 + 157 + 158 + 159 + 161 + 164 + 167 + 169 + 172 + 175 + 178 + 179 + 180 + 181 + 182 + 183 +
-                185 + 186 + 187 + 189 + 190 + 191 + 192 + 193 + 194 + 197 + 198 + 200 + 203 + 205 + 208 + 209 + 210 + 212 + 213 + 215).toList(),
+                185 + 186 + 187 + 189 + 190 + 191 + 192 + 193 + 194 + 197 + 198 + 200 + 203 + 205 + 208 + 209 + 210 + 212 + 213 + 215 +
+                220 + 223 + 225 + 227).toList(),
             ClipFxLibrary.all.map { it.nativeType }.sorted()
         )
     }
@@ -167,7 +173,11 @@ class ClipFxLibraryTest {
 
     @Test fun everyEffectHasValidParams() {
         for (d in ClipFxLibrary.all) {
-            assertTrue("${d.id} has 1..7 params", d.params.size in 1..7)
+            // 1..9 params: Repeat Line is the only def with more than seven (count,
+            // position, offset, angle, scale, alpha, phase are all first-class sliders
+            // there); the panel renders every param, the bound is only the catalogue
+            // invariant that no def grows unbounded.
+            assertTrue("${d.id} has 1..9 params", d.params.size in 1..9)
             assertTrue("${d.id} category exists", d.category in ClipFxLibrary.categories)
             for (p in d.params) {
                 assertTrue("${d.id}/${p.name} min < max", p.min < p.max)

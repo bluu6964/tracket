@@ -72,6 +72,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                           : t == FX_SHAPEFIELD_AM_EXT2 ? FX_SHAPEFIELD_AM_EXT
                           : t == FX_CC_GLASS_AM_EXT2 ? FX_CC_GLASS_AM_EXT
                           : t == FX_BCC_FILM_GLOW_AM_EXT2 ? FX_BCC_FILM_GLOW_AM_EXT
+                          : t == FX_PAGECURL_AM_EXT2 ? FX_PAGECURL_AM_EXT
                                                          : FX_NONE;
         if (ext2Ext != FX_NONE) {
             if (extFoldedOp >= 0 && extFoldedType == ext2Ext) {
@@ -134,6 +135,9 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_SOLID_WIPE_AM_EXT ? FX_SOLID_WIPE_AM
                            : t == FX_LENSD_AM_EXT ? FX_LENSD_AM
                            : t == FX_BCC_FILM_GLOW_AM_EXT ? FX_BCC_FILM_GLOW_AM
+                           : t == FX_PAGECURL_AM_EXT ? FX_PAGECURL_AM
+                           : t == FX_TILESHIFT2_AM_EXT ? FX_TILESHIFT2_AM
+                           : t == FX_FRACTAL_WARP3_AM_EXT ? FX_FRACTAL_WARP3_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -188,6 +192,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_HALFTONE_DOTS_AM && t != FX_CC_GLASS_AM && t != FX_BOKEH_AM &&
             t != FX_LENSBLUR_OBS_AM && t != FX_SOLID_WIPE_AM && t != FX_SOFTBLOOM_AM &&
             t != FX_LENSD_AM && t != FX_BCC_FILM_GLOW_AM &&
+            t != FX_PAGECURL_AM && t != FX_TILESHIFT2_AM && t != FX_FRACTAL_WARP3_AM &&
             t != FX_MB4_POS && t != FX_MB4_SCALE && t != FX_MB4_ANGLE) {
             owner = -1;
             extFoldedOp = -1;
@@ -473,6 +478,11 @@ FxShaderRef fxShaderOf(int type) {
         case FX_TURBULENT2_AM: r = {FXG_WARP, 31}; break;
         case FX_CC_GLASS_AM: r = {FXG_WARP, 32}; break;
         case FX_SOLID_WIPE_AM: r = {FXG_WARP, 33}; break;
+        // v182 (build 167): the round-4 banked ports — fractalwarp3 shares mode 22
+        // with fractalwarp4 (formula-identical defs); tileshift2 is the new mode 34;
+        // pagecurl is a dedicated pass (FXG_NONE, like the other multi-pass effects).
+        case FX_FRACTAL_WARP3_AM: r = {FXG_WARP, 22}; break;
+        case FX_TILESHIFT2_AM: r = {FXG_WARP, 34}; break;
         case FX_SHAPEFIELD_AM: r = {FXG_STYLE, 21}; break;
         case FX_HALFTONE_DOTS_AM: r = {FXG_STYLE, 22}; break;
         default: break;
@@ -663,6 +673,14 @@ bool fxIsIdentity(const FxOp& o) {
         case FX_SOFTBLOOM_AM: return p[0] <= 0.0001f;   // the def's own gate (strength > 0.0001)
         case FX_LENSD_AM: return false;   // the chromabbr stage warps even before the spread average
         case FX_BCC_FILM_GLOW_AM: return o.t[2] < 0.5f && o.t[4] <= 0.f;   // glowOnly off and globalMix 0: the composite's final mix returns the base pixel untouched (alpha = src.a)
+        // v182 (build 167): the round-4 banked ports — fractalwarp3 shares
+        // fractalwarp4's law (magnitude 0: the sample is the pixel); pagecurl and
+        // tileshift2 have NO identity shortcut (the header comments in fx_plan.h:
+        // pagecurl's drop shadow still composites at progress 0, tileshift2's
+        // output is the displaced sample times the fragment's own alpha).
+        case FX_FRACTAL_WARP3_AM: return std::fabs(p[0]) < 0.0005f;   // magnitude 0: the sample is the pixel
+        case FX_PAGECURL_AM: return false;
+        case FX_TILESHIFT2_AM: return false;
         default: return false;
     }
 }
@@ -2544,6 +2562,282 @@ void fxFractalWarpAmUv(float uvX, float uvY, float mag, float scale, float inten
                                 px, py, octaves, intensity);
     *outX = uvX + (dx - 0.5f) * mag;
     *outY = uvY + (dy - 0.5f) * mag;
+}
+
+// ---- v182 (build 167): Alight's round-4 banked ports (pagecurl / tileshift2) ----
+
+namespace {
+// GLSL mod() (the sign follows the divisor); std::fmod follows the dividend, so it is
+// wrong for the negative arguments the tile hash and the pagecurl angle both produce.
+float fxGlslMod(float x, float y) { return x - y * std::floor(x / y); }
+// GLSL step(edge, x): 0 when x < edge, else 1.
+float fxGlslStep(float edge, float x) { return x < edge ? 0.f : 1.f; }
+}  // namespace
+
+float fxTileshift2AmRand(float x, float y) {
+    // AM's tileshift2 rand(): the 719.310 / 178.233 / 33758.5453 hash — the same hash
+    // amHexRand already is in kFxWarp. Float32 throughout: sin() of a ~10^3-magnitude
+    // argument times 33758, so a double-precision recomputation does NOT agree (the
+    // selftest pins against float32 references, the fractal-warp pin convention).
+    const float dt = x * 719.310f + y * 178.233f;
+    const float sn = fxGlslMod(dt, 3.14f);
+    const float s = std::sin(sn) * 33758.5453f;
+    return s - std::floor(s);
+}
+
+void fxTileshift2AmUv(float uvX, float uvY, float picW, float picH, float strength, float amount,
+                      float angleDeg, float seed, bool screenSpace, float posX, float posY,
+                      float stretchX, float stretchY, float* outX, float* outY) {
+    // AM's tileshift2 shader, line by line. st is the def's layer space in both
+    // branches: the layer branch is the top-down pixel position relative to the
+    // layer centre over the picture diagonal (the stripes geometry), the screen
+    // branch the same vUv with the screen aspect (the pass's picture IS the layer,
+    // so the screen branch reads vUv too). The tile index divides x by stretch.y
+    // and y by stretch.x, as the def writes it; the sample coordinate is mirror-
+    // wrapped (abs(mod(coord - 1, 2) - 1)), so a displaced sample never leaves the
+    // picture. uv is vUv (v = 1 at the top), the picture's own norm.
+    float stx, sty;
+    if (screenSpace) {
+        stx = (uvX - 0.5f) * (picW / std::max(picH, 1e-6f)) - posX / 1200.f;
+        sty = (0.5f - uvY) - posY / 1200.f;
+    } else {
+        const float len = std::sqrt(picW * picW + picH * picH);
+        const float l = len > 0.f ? len : 1.f;
+        stx = (uvX * picW - picW / 2.f) / l - posX / 1200.f;
+        sty = ((1.f - uvY) * picH - picH / 2.f) / l - posY / 1200.f;
+    }
+    const float a = angleDeg * 0.0174533f;
+    const float sn = std::sin(a), cs = std::cos(a);
+    // st *= mat2(sin, -cos, cos, sin): v * M = (v.x*sin + v.y*cos, -v.x*cos + v.y*sin).
+    const float rx = stx * sn + sty * cs;
+    const float ry = -stx * cs + sty * sn;
+    const float px = std::floor(rx * amount / stretchY);
+    const float py = std::floor(ry * amount / stretchX);
+    const float dx = fxTileshift2AmRand(px, py + 3937.7249f * seed);
+    const float dy = fxTileshift2AmRand(px + 328.7319f + 432.7249f * seed, py - 971.382f);
+    const float dvx = (dx - 0.5f) * 2.f;
+    const float dvy = (dy - 0.5f) * 2.f;
+    const float sx = uvX + dvx * strength;
+    const float sy = uvY + dvy * strength;
+    *outX = std::fabs(fxGlslMod(sx - 1.f, 2.f) - 1.f);
+    *outY = std::fabs(fxGlslMod(sy - 1.f, 2.f) - 1.f);
+}
+
+void fxTileshift2AmPixel(float sampR, float sampG, float sampB, float sampA, float texA,
+                         float* outR, float* outG, float* outB, float* outA) {
+    // The def's output is the displaced sample times the fragment's own alpha
+    // (premultiplied in, premultiplied out) — so strength 0 is NOT the identity.
+    *outR = sampR * texA;
+    *outG = sampG * texA;
+    *outB = sampB * texA;
+    *outA = sampA * texA;
+}
+
+namespace {
+// The pagecurl cylinder, shared by the geometry and the pixel twins (and the GLSL's
+// helpers): cd is the curl direction, iv the quadrant flip, cylDist the cylinder
+// distance CYL_DIST (from progress), dAlong the fragment's along-curl distance,
+// uv the quadrant-flipped layer norm. The radius is floored at 1e-4 (the def
+// allows 0, where asin((t-d)/radius) is undefined) and the end distance divides
+// by max(cyl, 1e-6) (the def's 0/0 at angle 90 / 270 on the edge column is
+// undefined there too); both guards are in the shader as well.
+struct PagecurlCyl {
+    float cdx, cdy, ivx, ivy, cylDist, dAlong, uvx, uvy, radius;
+};
+PagecurlCyl fxPagecurlAmCyl(float uvX, float uvY, float progress, float radius, float angleDeg) {
+    PagecurlCyl c;
+    c.radius = std::max(radius, 1e-4f);
+    const float a = angleDeg * 0.0174533f;
+    // h = sqrt(tan(pi/4 - |mod(angle, pi/2) - pi/4|) + 1): the curl's reach.
+    const float h = std::sqrt(std::tan(3.141592f / 4.f -
+        std::fabs(fxGlslMod(a, 3.141592f / 2.f) - 3.141592f / 4.f)) + 1.f);
+    float d = (1.f - progress) * h;
+    d = 1.f - ((1.f - d) * (1.f + c.radius));
+    // cd = vec2(1, 0) * rot2(a) = (cos a, sin a): rot2's mat2(c, s, -s, c) has
+    // columns (c, s) and (-s, c), so the row vector (1, 0) picks the first row
+    // (c, s) — the -sin reading (row-major constructor) is wrong and would curl
+    // from the mirrored corner.
+    c.cdx = std::cos(a);
+    c.cdy = std::sin(a);
+    c.ivx = fxGlslStep(c.cdx, 0.f);
+    c.ivy = fxGlslStep(c.cdy, 0.f);
+    c.uvx = c.ivx + uvX * (1.f - c.ivx * 2.f);
+    c.uvy = c.ivy + uvY * (1.f - c.ivy * 2.f);
+    c.cylDist = d;
+    const float ax = std::fabs(c.cdx), ay = std::fabs(c.cdy);
+    c.dAlong = c.uvx * ax + c.uvy * ay;
+    return c;
+}
+// One curl function (curlFun / curlFunFront differ only in the back-face early
+// return): .x the along-curl position (-1 past the curl), .y the face cosine
+// (1 before the curl). `front` selects curlFunFront's law.
+void fxPagecurlAmFun(float t, float maxt, const PagecurlCyl& c, bool front,
+                     float* outX, float* outY) {
+    const float r = c.radius, cd = c.cylDist;
+    if (t < cd - r) { *outX = t; *outY = 1.f; return; }   // before the curl
+    if (t > cd + r) { *outX = -1.f; *outY = -1.f; return; }  // after the curl
+    const float a = std::asin(std::min(1.f, std::max(-1.f, (t - cd) / r)));
+    const float ca = -a + 3.141592f;
+    float rx = cd + ca * r;
+    float ry = std::cos(ca);
+    if (!front && rx < maxt) { *outX = rx; *outY = ry; return; }  // we see the back face
+    if (t < cd) { *outX = t; *outY = 1.f; return; }   // front face before the curve starts
+    ry = std::cos(a);
+    rx = cd + a * r;
+    if (rx < maxt) { *outX = rx; *outY = ry; return; }  // front face curve
+    *outX = -1.f; *outY = -1.f;
+}
+}  // namespace
+
+void fxPagecurlAmUv(float uvX, float uvY, float progress, float radius, float angleDeg,
+                    float* tuvX, float* tuvY, float* tuvfX, float* tuvfY,
+                    float* cfX, float* cfY, float* cffX, float* cffY) {
+    // AM's pagecurl shader (casty/2015), the geometry half of main(): the curl
+    // cylinder, the end distance maxt, curlFun / curlFunFront and the displaced
+    // sample positions (tuv = curlFun's, tuvf = curlFunFront's), quadrant-flipped
+    // back. uv is acLayerNorm, the layer norm the pass reads as vUv.
+    const PagecurlCyl c = fxPagecurlAmCyl(uvX, uvY, progress, radius, angleDeg);
+    const float ax = std::fabs(c.cdx), ay = std::fabs(c.cdy);
+    const float ex = std::fabs((1.f - c.uvx) / std::max(ax, 1e-6f));
+    const float ey = std::fabs((1.f - c.uvy) / std::max(ay, 1e-6f));
+    const float maxt = c.dAlong + std::min(ex, ey);
+    float cfx, cfy, cffx, cffy;
+    fxPagecurlAmFun(c.dAlong, maxt, c, false, &cfx, &cfy);
+    fxPagecurlAmFun(c.dAlong, maxt, c, true, &cffx, &cffy);
+    const float tx = c.uvx + ax * (cfx - c.dAlong);
+    const float ty = c.uvy + ay * (cfx - c.dAlong);
+    const float tfx = c.uvx + ax * (cffx - c.dAlong);
+    const float tfy = c.uvy + ay * (cffx - c.dAlong);
+    // tuv /= ur (ur = 1) then the quadrant flip back.
+    *tuvX = c.ivx + tx * (1.f - c.ivx * 2.f);
+    *tuvY = c.ivy + ty * (1.f - c.ivy * 2.f);
+    *tuvfX = c.ivx + tfx * (1.f - c.ivx * 2.f);
+    *tuvfY = c.ivy + tfy * (1.f - c.ivy * 2.f);
+    *cfX = cfx; *cfY = cfy; *cffX = cffx; *cffY = cffy;
+}
+
+namespace {
+// AM's pagecurl blendColor / composite, exactly as the def writes them
+// (premultiplied in, premultiplied out; mode 0 Normal, 1 Multiply, 2 Screen).
+void fxPagecurlAmBlend(const float base[4], const float color[4], int mode, float p, float* out) {
+    const float ca = std::max(base[3], 0.00001f);
+    const float cb = std::max(color[3], 0.00001f);
+    float adjR, adjG, adjB, adjA;
+    if (mode == 1) {   // Multiply
+        const float cr = (base[0] / ca) * (color[0] / cb);
+        const float cg = (base[1] / ca) * (color[1] / cb);
+        const float cb2 = (base[2] / ca) * (color[2] / cb);
+        adjA = color[3] * p;
+        adjR = cr * adjA; adjG = cg * adjA; adjB = cb2 * adjA;
+    } else if (mode == 2) {   // Screen
+        const float cr = 1.f - (1.f - base[0] / ca) * (1.f - color[0] / cb);
+        const float cg = 1.f - (1.f - base[1] / ca) * (1.f - color[1] / cb);
+        const float cb2 = 1.f - (1.f - base[2] / ca) * (1.f - color[2] / cb);
+        adjA = color[3] * p;
+        adjR = cr * adjA; adjG = cg * adjA; adjB = cb2 * adjA;
+    } else {   // Normal
+        adjA = color[3] * p;
+        adjR = color[0] * p; adjG = color[1] * p; adjB = color[2] * p;
+    }
+    out[0] = base[0] * (1.f - adjA) + adjR;
+    out[1] = base[1] * (1.f - adjA) + adjG;
+    out[2] = base[2] * (1.f - adjA) + adjB;
+    out[3] = base[3] * (1.f - adjA) + adjA;
+}
+void fxPagecurlAmComposite(const float a[4], const float b[4], float* out) {
+    out[0] = a[0] * (1.f - b[3]) + b[0];
+    out[1] = a[1] * (1.f - b[3]) + b[1];
+    out[2] = a[2] * (1.f - b[3]) + b[2];
+    out[3] = a[3] * (1.f - b[3]) + b[3];
+}
+// A packed 0xRRGGBB slot to straight r / g / b — the engine's fxUnpackRgb
+// formula (integer arithmetic): the float mod/floor unpack wraps pure white
+// (0xFFFFFF) to black at the 2^24 edge (floor(16777215 + 0.5) rounds to
+// 16777216, / 65536 = 256, mod 256 = 0), and the curl's shine + front-shadow
+// defaults ARE white, so the float form would blacken the real corpus files.
+void fxPagecurlAmUnpack(float packed, float* r, float* g, float* b) {
+    const int pk = (int)std::lround(std::min(16777215.f, std::max(0.f, packed)));
+    *r = ((pk >> 16) & 0xFF) / 255.f;
+    *g = ((pk >> 8) & 0xFF) / 255.f;
+    *b = (pk & 0xFF) / 255.f;
+}
+}  // namespace
+
+void fxPagecurlAmPixel(float uvX, float uvY, const FxOp& op, const float tex[4], const float blur[4],
+                       const float front[4], const float samp[4], float* out) {
+    // AM's pagecurl shader (casty/2015), the main pass: tex is the fragment's own
+    // pixel, blur its gaussianblur copy, front the sample at tuvf, samp the sample
+    // at tuv (all premultiplied); the op carries the 18 slots (p/q/r). The def's
+    // first shadow assignment is dead (reassigned before any use) and is not
+    // reproduced. Returns the def's gl_FragColor, soft / hard drop-shadow branches
+    // included. uv is acLayerNorm, the layer norm the pass reads as vUv.
+    const float* p = op.p;
+    const float* q = op.q;
+    const float* r = op.r;
+    float tuvX, tuvY, tuvfX, tuvfY, cfX, cfY, cffX, cffY;
+    fxPagecurlAmUv(uvX, uvY, p[0], p[1], p[2], &tuvX, &tuvY, &tuvfX, &tuvfY, &cfX, &cfY, &cffX, &cffY);
+    (void)tuvX; (void)tuvY; (void)tuvfX; (void)tuvfY;
+    const PagecurlCyl c = fxPagecurlAmCyl(uvX, uvY, p[0], p[1], p[2]);
+    float backR, backG, backB, shineR, shineG, shineB, dropR, dropG, dropB, fshR, fshG, fshB;
+    fxPagecurlAmUnpack(p[5], &backR, &backG, &backB);
+    fxPagecurlAmUnpack(q[1], &shineR, &shineG, &shineB);
+    fxPagecurlAmUnpack(q[5], &dropR, &dropG, &dropB);
+    fxPagecurlAmUnpack(r[1], &fshR, &fshG, &fshB);
+    // front = blendColor(frontColor, frontShadowColor * frontShadowAlpha * frontColor.a,
+    //                    frontShadowBlendMode, saturate(1 - cff.y)).
+    const float fsA = r[2] * front[3];
+    const float fsCol[4] = {fshR * fsA, fshG * fsA, fshB * fsA, fsA};
+    float frontOut[4];
+    fxPagecurlAmBlend(front, fsCol, (int)std::lround(r[3]),
+                      std::min(1.f, std::max(0.f, 1.f - cffY)), frontOut);
+    float result[4];
+    // step(uv.x, 1) * step(uv.y, 1) on the quadrant-flipped uv (1 on [0, 1]^2;
+    // the shadow's length(acLayerNorm - 0.5) below uses the RAW uv instead).
+    const float edge = fxGlslStep(c.uvx, 1.f) * fxGlslStep(c.uvy, 1.f);
+    if (cfY > 0.f) {
+        for (int i = 0; i < 4; ++i) result[i] = frontOut[i];
+    } else {
+        // mix(tex * (1 - blur.a) + blur, samp, alpha), then the back face and shine.
+        float mixed[4];
+        for (int i = 0; i < 4; ++i)
+            mixed[i] = (tex[i] * (1.f - blur[3]) + blur[i]) * (1.f - p[3]) + samp[i] * p[3];
+        float comp[4];
+        fxPagecurlAmComposite(frontOut, mixed, comp);
+        const float bkA = p[6] * samp[3];
+        const float bkCol[4] = {backR * bkA, backG * bkA, backB * bkA, bkA};
+        float backOut[4];
+        fxPagecurlAmBlend(comp, bkCol, (int)std::lround(q[0]), 1.f * edge, backOut);
+        const float shA = q[2] * samp[3];
+        const float shCol[4] = {shineR * shA, shineG * shA, shineB * shA, shA};
+        fxPagecurlAmBlend(backOut, shCol, (int)std::lround(q[4]),
+                          std::pow(-cfY, q[3]) * edge, result);
+    }
+    // shadow = smoothstep(0, radius * 2, d - CYL_DIST) — the floored radius, as the shader's single floor.
+    const float shadow = fxSstep(0.f, c.radius * 2.f, c.dAlong - c.cylDist);
+    const float ln = std::sqrt((uvX - 0.5f) * (uvX - 0.5f) + (uvY - 0.5f) * (uvY - 0.5f)) * 2.f;
+    if (r[0] > 0.5f) {   // soft drop shadow
+        const float sh = std::min(1.f, std::max(0.f, (1.f - shadow) * 2.f)) * (1.f - ln * ln);
+        const float adjA = q[6] * sh * fxSstep(0.5f, 1.f, blur[3]) * tex[3];
+        const float adjCol[4] = {dropR * adjA, dropG * adjA, dropB * adjA, adjA};
+        if (cfX > 0.f) {
+            float comp[4];
+            fxPagecurlAmComposite(adjCol, result, comp);
+            for (int i = 0; i < 4; ++i) out[i] = comp[i] * edge;
+        } else {
+            for (int i = 0; i < 4; ++i) out[i] = adjCol[i] * edge;
+        }
+    } else {   // hard drop shadow
+        const float k = std::min(1.f, std::max(0.f, (1.f - shadow) * 2.f));
+        if (cfX > 0.f) {
+            for (int i = 0; i < 4; ++i) out[i] = result[i] * edge;
+        } else {
+            const float a = q[6] * k * tex[3];
+            out[0] = dropR * a * edge;
+            out[1] = dropG * a * edge;
+            out[2] = dropB * a * edge;
+            out[3] = a * edge;
+        }
+    }
 }
 
 float fxStripesAmBand(float uvX, float uvY, float picW, float picH, float amount, float width,

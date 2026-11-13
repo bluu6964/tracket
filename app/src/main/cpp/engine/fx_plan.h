@@ -815,6 +815,67 @@ enum FxType : int {
     FX_BCC_FILM_GLOW_AM_EXT2 = 217,
     FX_BCC_FILM_GLOW_AM_EXT3 = 218,
     FX_BCC_FILM_GLOW_AM_EXT4 = 219,
+    // v182 (build 167): Alight's effects tier 6, hunt round 4 (hunt-staging/round4-corpus —
+    // the Ultra originals for pagecurl / tileshift2 and the TrueMotion afterz-172 SKSL for
+    // fractalwarp3; every def passed the schema acceptance test against the corpus's
+    // serialized instances). All values are AM's own units. Keyframed primaries ride
+    // AmFxEval tails like the earlier tiers (pagecurl progress from 21, tileshift2
+    // strength / position from 14, fractalwarp3 from 14 like fractalwarp4).
+    FX_PAGECURL_AM = 220,  // Alight's pagecurl (the Shadertoy casty/2015 curl, CC-BY 4.0):
+                           // the layer curls off around a cylinder. Dedicated pass
+                           // (Renderer::fxPagecurlAm): the def's first pass is the host
+                           // gaussianblur of the layer at `strength` (the same-name
+                           // feed, like Unsharp Mask's), then the main pass
+                           // (curlFun / curlFunFront, back-face composite + back /
+                           // shine blends, front-shadow blend, soft / hard drop
+                           // shadow) reading the layer AND its blurred copy.
+                           //   p: [0] progress 0..2 (def .4), [1] radius 0..10
+                           //      (def .1), [2] angle deg (def 38), [3] alpha 0..1,
+                           //      [4] strength 0..2 (the blur), [5] backColor packed
+                           //      0xRRGGBB (def #FF888888), [6] backAlpha 0..1
+                           //   q: [0] backBlendMode (0 Normal, 1 Multiply, 2 Screen;
+                           //      def 1), [1] shineColor packed (def #FFFFFFFF),
+                           //      [2] shineAlpha 0..1, [3] shineSpec 1..150 (def 30),
+                           //      [4] shineBlendMode (def 2), [5] dropShadowColor
+                           //      packed (def #FF000000), [6] dropShadowAlpha 0..1
+                           //      (def .8)
+                           //   r: [0] softDropShadow 0/1 (def true), [1] frontShadowColor
+                           //      packed (def #FFFFFFFF), [2] frontShadowAlpha 0..1,
+                           //      [3] frontShadowBlendMode (def 2)
+                           // No identity shortcut: even at progress 0 the drop shadow
+                           // still composites under semi-transparent pixels, and the
+                           // curl remaps the sample everywhere else.
+    FX_PAGECURL_AM_EXT = 221,
+    FX_PAGECURL_AM_EXT2 = 222,
+    FX_TILESHIFT2_AM = 223,  // Alight's tileshift2: each tile of the layer is shifted by
+                             // a rand() hash of its tile index (the def's 719.310 /
+                             // 178.233 / 33758.5453 hash — the same hash amHexRand
+                             // already is in kFxWarp). kFxWarp mode 34.
+                             //   p: [0] strength 0..1 (def .1), [1] amount 0.5..200
+                             //      (def 10), [2] angle deg (def 0), [3] seed 0..5,
+                             //      [4] screenSpace 0/1 (def false; layer-anchored
+                             //      here, like the other screen-space ports),
+                             //      [5]/[6] position point (AM units, /1200)
+                             //   q: [0]/[1] stretch x/y (def 1, 1); the tile index
+                             //      divides x by stretch.y and y by stretch.x, as
+                             //      the def writes it.
+                             // No identity shortcut: the output is the displaced
+                             // sample times the fragment's own alpha, so even at
+                             // strength 0 a semi-transparent pixel is darkened.
+    FX_TILESHIFT2_AM_EXT = 224,
+    FX_FRACTAL_WARP3_AM = 225,  // Alight's fractalwarp3 (deprecated in AM, kept for old
+                                // projects): the afterz-172 SKSL is formula-identical
+                                // to fractalwarp4's def (same fbm, same 3.0 / 25.3 /
+                                // 12.9 constants, offs/1000, parr/200, mag
+                                // displacement), so it SHARES kFxWarp mode 22 with
+                                // fractalwarp4 — no new shader mode. Slot layout
+                                // identical to FX_FRACTAL_WARP_AM (95): p0 magnitude,
+                                // p1 scale, p2 intensity, p3 octaves, p4/p5 offs,
+                                // p6 parallax x; q0 parallax y.
+    FX_FRACTAL_WARP3_AM_EXT = 226,
+    // Repeat Line is Kotlin-resolved like FX_REPEAT (56): RepeatEval draws the layer once
+    // per copy, so it must never reach the shaders: fxParseOps skips it.
+    FX_REPEAT_LINE = 227,  // p0 count, p1/p2 offset x/y (preview px), p3 angle deg, p4 scale %, p5 alpha % — per copy
     FX_MAX = FX_COPY_BG
 };
 
@@ -1182,6 +1243,47 @@ float fxValueFbm(float stX, float stY, float parX, float parY, int octaves, floa
 void fxFractalWarpAmUv(float uvX, float uvY, float mag, float scale, float intensity, int octaves,
                        float offX, float offY, float parX, float parY, float aspect,
                        float* outX, float* outY);
+// Fractal Warp 3 (AM's fractalwarp3) shares fxFractalWarpAmUv above — its afterz-172 SKSL
+// is formula-identical to fractalwarp4's def, so there is no separate twin; the selftest
+// pins that a 225/226 op and a 95/96 op with the same slots displace identically.
+// ---- v182 (build 167): Alight's round-4 ports (pagecurl / tileshift2 / fractalwarp3) ----
+// CPU reference of Tile Shift 2 (AM's tileshift2): the def's rand() hash — the 719.310 /
+// 178.233 / 33758.5453 hash, GLSL mod() semantics (the sign follows the divisor). Float32
+// knife-edge: sin() of a ~10^3-magnitude argument times 33758 — the twin and the shader
+// agree (both float32), but a double-precision recomputation does not, so the selftest
+// pins rand(0,0) == 0 exactly, the [0,1) range and the hash-free geometry, and the full
+// sample positions against float32 references (the fractal-warp pin convention).
+float fxTileshift2AmRand(float x, float y);
+// CPU reference of Tile Shift 2: the mirror-wrapped sample position for a fragment at
+// (uvX, uvY) (layer norm); picW/picH are the picture size in px, strength / amount /
+// angleDeg / seed / position / stretch are AM units (position /1200, the tile index
+// divides x by stretch.y and y by stretch.x, as the def writes it). screenSpace is
+// layer-anchored here: the pass's picture IS the layer, so the screen branch reads the
+// same vUv with the screen aspect (uAspect), like the other screen-space ports.
+void fxTileshift2AmUv(float uvX, float uvY, float picW, float picH, float strength, float amount,
+                      float angleDeg, float seed, bool screenSpace, float posX, float posY,
+                      float stretchX, float stretchY, float* outX, float* outY);
+// Tile Shift 2's compose: the def's output is the displaced sample times the fragment's
+// own alpha (premultiplied in, premultiplied out) — so strength 0 is NOT the identity.
+void fxTileshift2AmPixel(float sampR, float sampG, float sampB, float sampA, float texA,
+                         float* outR, float* outG, float* outB, float* outA);
+// CPU reference of Page Curl (AM's pagecurl): the curl geometry for a fragment at (uvX, uvY)
+// (layer norm) — the displaced sample positions (tuv = curlFun's, tuvf = curlFunFront's)
+// and the curl-function values (cf / cff: .x the along-curl position, -1 past the curl;
+// .y the face cosine, 1 before the curl). progress / radius / angleDeg are AM units.
+// The radius is floored at 1e-4 (the def allows 0, where asin((t-d)/radius) is
+// undefined) and the end distance divides by max(cyl, 1e-6) (the def's 0/0 at angle
+// 90 / 270 on the edge column is undefined there too); both guards are in the shader
+// as well, so twin and shader agree.
+void fxPagecurlAmUv(float uvX, float uvY, float progress, float radius, float angleDeg,
+                    float* tuvX, float* tuvY, float* tuvfX, float* tuvfY,
+                    float* cfX, float* cfY, float* cffX, float* cffY);
+// CPU reference of Page Curl's main pass: tex is the fragment's own pixel, blur its
+// gaussianblur copy, front the sample at tuvf, samp the sample at tuv (all
+// premultiplied); the op carries the 18 slots (p/q/r). Returns the def's gl_FragColor,
+// including the soft / hard drop-shadow branches.
+void fxPagecurlAmPixel(float uvX, float uvY, const FxOp& op, const float tex[4], const float blur[4],
+                       const float front[4], const float samp[4], float* out);
 // CPU reference of Stripes (AM's stripes): the band value (0..1) at a fragment; st is the
 // def's layer space, ((uv flipped to top-down) * picture px - centre px) / |picture px| —
 // computed here from (uvX, uvY) and the picture size. amount / phase / width / smoothing /

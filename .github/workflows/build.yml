@@ -61,6 +61,10 @@ jobs:
           TAG="build-${{ github.run_number }}"
           cp app/build/outputs/apk/debug/*.apk "tracket-debug-${TAG}.apk"
           cp app/build/outputs/apk/release/*.apk "tracket-release-${TAG}.apk"
+          # Idempotent publish: a re-run of this run (same run_number, same tag) must replace the
+          # release an earlier attempt already created instead of failing on the duplicate tag
+          # (build 138 attempt 2 went red on exactly this, after a fully green Gradle build).
+          gh release delete "$TAG" --cleanup-tag --yes || true
           gh release create "$TAG" tracket-debug-*.apk tracket-release-*.apk \
             --title "Build ${{ github.run_number }}" --notes "Commit ${{ github.sha }}" --prerelease
           gh release list --limit 100 --json tagName --jq '.[5:][].tagName' \

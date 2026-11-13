@@ -56,7 +56,7 @@ object BuddyBrain {
         "Tip: long-press me for sound options",
         "Tip: a Null layer can move many layers at once",
         "Tip: use a 3D Camera for fly-through shots",
-        "Tip: Transition makes two clips flow together"
+        "Tip: draw a vector shape with Add, Draw"
     )
 
     fun init(context: Context) {

@@ -833,7 +833,7 @@ class NativePreviewEngine(context: Context) {
                 // outline the video is composited under). Pose / camera layers keep the poster path.
                 layout.add(Slot(mutableListOf(c), spec.shaderId, false, hasFx, masked = maskByTarget.containsKey(c.id), mediaFill = true, ownMask = hasOwnMasks))
             } else if (overlayNeedsPose(c) || cam.affects(c)) {
-                layout.add(Slot(mutableListOf(c), spec.shaderId, true, hasFx))  // 3D / own pivot: always its own picture
+                layout.add(Slot(mutableListOf(c), spec.shaderId, true, hasFx, ownMask = hasOwnMasks))  // 3D / own pivot: always its own picture
             } else if (maskByTarget.containsKey(c.id)) {
                 // Cut by a mask layer: the layer needs a picture of its own, or the cut would also take
                 // the layers it shares the picture with.
@@ -1103,18 +1103,24 @@ class NativePreviewEngine(context: Context) {
             // photos run theirs inside the fx pass on their own texture, but an overlay's picture
             // is frame-sized, so the masks are remapped from the layer's box into the picture's
             // space (OverlayMasks) and run as their own pass — on the effects' result when effects
-            // ran, exactly like the native side orders them (masks last). Pose pictures keep the
-            // pre-Graph behaviour; the live video fill is already on the frame and is not cut
-            // (no imported wipe combines with a video fill).
-            if (g.ownMask && !g.pose && !fillDrawn) {
+            // ran, exactly like the native side orders them (masks last). Pose pictures are cut
+            // too (build 166): the mask belongs to the layer's picture, so it is applied to the
+            // upright picture — with the box of the UPRIGHT clip (centred, unturned), the same
+            // clip the painters drew — and the projection then carries the cut along. The live
+            // video fill is already on the frame and is not cut (no imported wipe combines
+            // with a video fill).
+            if (g.ownMask && !fillDrawn) {
                 val orig = layout[i].clips.singleOrNull()
                 val eval = texts.firstOrNull()
                 if (orig != null && eval != null) {
                     val raw = ClipMaskLibrary.toNative(orig.masks, t - orig.startMs, CutoutMasks.sourceMs(orig, t))
                     if (raw != null) {
                         val stickerBm = if (eval.type == LayerType.STICKER) StickerLibrary.frameFor(eval.uri, eval.sourceOffsetMs(t - eval.startMs)) else null
+                        val boxClip = if (g.pose) {
+                            if (cam.activeFor(eval, t)) uprightForCamera(eval) else uprightForPose(eval)
+                        } else eval
                         val box = OverlayMasks.boxOf(
-                            eval,
+                            boxClip,
                             textDrawn = if (g.textBoxW > 0f) g.textBoxW to g.textBoxH else null,
                             stickerSize = stickerBm?.let { it.width to it.height },
                             w, h, k, dens

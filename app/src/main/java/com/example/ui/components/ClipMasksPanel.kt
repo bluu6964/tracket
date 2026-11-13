@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ClipMask
 import com.example.model.ClipMaskLibrary
+import com.example.model.LayerType
 import com.example.model.MaskFrame
 import com.example.model.MaskMode
 import com.example.model.MaskShape
@@ -62,7 +63,16 @@ import com.example.ui.theme.amCyanVioletBrush
 import com.example.ui.util.bouncyClickable
 
 /** Width / height of the layer's picture (the mask boxes are square in pixels, so the panel must know it). */
-fun maskPictureAspect(clip: TimelineClip): Float = if (clip.sourceAspect > 0.05f) clip.sourceAspect else 16f / 9f
+/**
+ * The aspect (w / h) of the box a layer's masks are fractions of: a media layer's picture,
+ * a shape layer's shape box (build 166 — masks on every picture layer), else the fallback.
+ */
+fun maskPictureAspect(clip: TimelineClip): Float = when {
+    clip.sourceAspect > 0.05f -> clip.sourceAspect
+    clip.type == LayerType.SHAPE && clip.shapeScaleX > 1e-4f && clip.shapeScaleY > 1e-4f ->
+        (clip.shapeScaleX / clip.shapeScaleY).coerceIn(0.2f, 5f)
+    else -> 16f / 9f
+}
 
 private val addTiles: List<Pair<String, String>> = listOf(
     "rect" to "Rectangle", "ellipse" to "Ellipse", "polygon" to "Polygon", "star" to "Star",

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MusicNote
@@ -48,6 +49,8 @@ fun AddLayerSheet(
     onSticker: () -> Unit,
     /** Ready-made compositions (build 143): opens the Templates picker. */
     onTemplates: () -> Unit = {},
+    /** Vector drawing (build 166): draw a freehand path that becomes a shape layer. */
+    onDraw: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel) {
@@ -69,6 +72,10 @@ fun AddLayerSheet(
                 Item("Audio", Icons.Default.MusicNote, "add_sheet_audio") { onDismiss(); onAudio() }
                 Item("Stickers", Icons.Default.SentimentSatisfiedAlt, "add_sheet_sticker") { onDismiss(); onSticker() }
                 Item("Templates", Icons.Default.Layers, "add_sheet_templates") { onDismiss(); onTemplates() }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Item("Draw", Icons.Default.Brush, "add_sheet_draw") { onDismiss(); onDraw() }
             }
         }
     }

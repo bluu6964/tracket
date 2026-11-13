@@ -1377,7 +1377,6 @@ fun VideoEditorScreen(
     }
 
     var renameTargetId by remember { mutableStateOf<String?>(null) }
-    var transitionTargetId by remember { mutableStateOf<String?>(null) }
     /** "Save as Template" (Templates v2): the Group layer waiting for its template name. */
     var saveTemplateGroupId by remember { mutableStateOf<String?>(null) }
     /** The person's own template library (filesDir/templates, next to the projects). */
@@ -1511,26 +1510,6 @@ fun VideoEditorScreen(
                 onDismiss = { saveTemplateGroupId = null }
             )
         }
-    }
-    transitionTargetId?.let { id ->
-        val trCanvasW = if (previewFrameWidthPx > 1f) previewFrameWidthPx else 1000f
-        val trCanvasH = trCanvasW / selectedAspectRatio.ratioFloat.coerceAtLeast(0.1f)
-        com.example.ui.components.TransitionDialog(
-            onApply = { presetId, dir, ms ->
-                transitionTargetId = null
-                val ok = viewModel.applyClipTransition(id, presetId, dir, ms, trCanvasW, trCanvasH)
-                scope.launch {
-                    snackbarHostState.currentSnackbarData?.dismiss()
-                    snackbarHostState.showSnackbar(if (ok) "Transition added" else "This layer cannot take a transition")
-                }
-            },
-            onRemove = {
-                transitionTargetId = null
-                viewModel.beginAdjust()
-                viewModel.setClipAnim(com.example.model.AnimSlot.IN, null, com.example.model.AnimDir.LEFT, 0L, null, trCanvasW, trCanvasH)
-            },
-            onDismiss = { transitionTargetId = null }
-        )
     }
     askFaceSwap?.let { pending ->
         val modelReady = com.example.engine.FaceModelDownloader.isDownloaded(context)
@@ -2103,6 +2082,12 @@ fun VideoEditorScreen(
     var maskSelPoint by remember { mutableStateOf(-1) }
     var maskPenPoints by remember { mutableStateOf<List<Pair<Float, Float>>?>(null) }
     var showClipAnimationsSheet by remember { mutableStateOf(false) }
+    // Vector drawing (build 166): draw mode, the stroke being drawn (frame fractions), its options.
+    var showDrawMode by remember { mutableStateOf(false) }
+    var drawPoints by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
+    var drawSmooth by remember { mutableStateOf(true) }
+    var drawClosed by remember { mutableStateOf(false) }
+    var drawWidth by remember { mutableFloatStateOf(6f) }
     var animPreviewJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showClipReplaceSheet by remember { mutableStateOf(false) }
     var showClipBlendSheet by remember { mutableStateOf(false) }
@@ -2361,9 +2346,23 @@ fun VideoEditorScreen(
                             if (planarRunning) PlanarRunOverlay(planarLive) else TrackRunOverlay(trackLive)
                         }
                     } else null
-                val maskEditClip = if (showClipMasksSheet) tracks.flatMap { it.clips }.firstOrNull { it.id == selectedClipId } else null
+                // The canvas drag overlay's geometry is the media picture's (MaskEditOverlay maps the
+                // layer as a fitted picture), so it engages for video / photo layers; on shape / text /
+                // sticker / group layers the mask is edited with the panel's sliders instead (build 166).
+                val maskEditClip = if (showClipMasksSheet) tracks.flatMap { it.clips }.firstOrNull {
+                    it.id == selectedClipId && it.type == LayerType.VIDEO
+                } else null
                 val canvasOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? =
-                    if (maskEditClip != null) {
+                    if (showDrawMode) {
+                        {
+                            com.example.ui.components.DrawVectorOverlay(
+                                points = drawPoints,
+                                strokeWidthDp = drawWidth,
+                                closed = drawClosed,
+                                onStroke = { drawPoints = it }
+                            )
+                        }
+                    } else if (maskEditClip != null) {
                         {
                             val t = playheadState.value
                             com.example.ui.components.MaskEditOverlay(
@@ -2388,7 +2387,7 @@ fun VideoEditorScreen(
                     } else trackOverlay
                 CanvasArea(
                     nativePreview = nativePreview,
-                    selectionHidden = showClipMasksSheet,
+                    selectionHidden = showClipMasksSheet || showDrawMode,
                     height = canvasH,
                     aspectRatio = selectedAspectRatio,
                     playheadMs = playheadProvider,
@@ -2641,9 +2640,16 @@ fun VideoEditorScreen(
                                 }
                             },
                             onMasks = {
-                                // Masks (shapes with feather / invert / combine modes) are drawn by the C++ engine on video / photo layers.
+                                // Masks (shapes with feather / invert / combine modes) work on every
+                                // layer with a picture (build 166, item 2): video / photo, shape, text,
+                                // sticker and group layers — the engines apply a layer's own masks on
+                                // all of them, in preview and export alike. Layers without a picture
+                                // (audio, Null, Camera, Chain, Controller) have nothing to mask.
                                 val target = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
-                                if (target != null && target.type == LayerType.VIDEO) {
+                                if (target != null && (target.type == LayerType.VIDEO || target.type == LayerType.SHAPE ||
+                                        target.type == LayerType.TEXT || target.type == LayerType.STICKER ||
+                                        target.type == LayerType.GROUP)
+                                ) {
                                     if (!target.isActiveAt(playheadState.value)) {
                                         viewModel.seekTo(target.startMs)
                                     }
@@ -2656,7 +2662,7 @@ fun VideoEditorScreen(
                                 } else {
                                     snackbarHostState.currentSnackbarData?.dismiss()
                                     scope.launch {
-                                        snackbarHostState.showSnackbar("Masks work on video and photo layers")
+                                        snackbarHostState.showSnackbar("Masks work on video, photo, shape, text, sticker and group layers")
                                     }
                                 }
                             },
@@ -2859,14 +2865,10 @@ fun VideoEditorScreen(
                             ) {
                                 { startFreezeFrame(targetClipId) }
                             } else null,
-                            onTransition = if (tracks.flatMap { it.clips }.any {
-                                    it.id == targetClipId && it.type != LayerType.GROUP && it.type != LayerType.NULL &&
-                                        it.type != LayerType.CAMERA && it.type != LayerType.CHAIN && it.type != LayerType.AUDIO &&
-                                        it.type != LayerType.CONTROLLER
-                                }
-                            ) {
-                                { transitionTargetId = targetClipId }
-                            } else null
+                            // Used-tool state (build 166, item 5): the tools already applied
+                            // to this layer read white, the rest grey (UsedTools' rule).
+                            usedTools = tracks.flatMap { it.clips }.firstOrNull { it.id == targetClipId }
+                                ?.let { com.example.model.UsedTools.usedToolsOf(it) } ?: emptySet()
                         )
                     } else {
                         BottomToolbar(
@@ -3603,6 +3605,81 @@ fun VideoEditorScreen(
                 }
             }
 
+        // ---- Draw panel (build 166): the vector drawing tool's options, same place as Masks ----
+        val closeDraw = {
+            showDrawMode = false
+            drawPoints = emptyList()
+        }
+        BackHandler(enabled = showDrawMode) { closeDraw() }
+        if (showDrawMode) {
+            com.example.ui.components.TransformHeaderBar(
+                height = headerH,
+                title = "Draw",
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(31f)
+                    .enterPop()
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = panelTop)
+                    .fillMaxWidth()
+                    .zIndex(30f)
+                    .enterPop(fromBottom = true)
+                    .background(EditorBackground)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
+            ) {
+                com.example.ui.components.TimescaleSection(
+                    height = timescaleH,
+                    playheadMs = { playheadState.value },
+                    totalDurationMs = totalDurationMs,
+                    onBack = closeDraw
+                )
+                com.example.ui.components.DrawVectorPanel(
+                    smooth = drawSmooth,
+                    onSmooth = { drawSmooth = it },
+                    closed = drawClosed,
+                    onClosed = { drawClosed = it },
+                    widthDp = drawWidth,
+                    onWidth = { drawWidth = it },
+                    hasStroke = drawPoints.size >= 2,
+                    onClear = { drawPoints = emptyList() },
+                    onCancel = closeDraw,
+                    onDone = {
+                        val cw = if (previewFrameWidthPx > 1f) previewFrameWidthPx else 1000f
+                        val chh = cw / selectedAspectRatio.ratioFloat.coerceAtLeast(0.1f)
+                        val built = com.example.model.VectorDraw.build(
+                            drawPoints, cw, chh, previewDensity, drawSmooth, drawClosed
+                        )
+                        if (built == null) {
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar("Draw a line or a shape first")
+                            }
+                        } else {
+                            val dur = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
+                                minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
+                            } else 4000L
+                            viewModel.addDrawnPath(
+                                drawn = built,
+                                durationMs = dur,
+                                fillMode = if (drawClosed) com.example.model.FILL_SOLID else com.example.model.FILL_NONE,
+                                fillColor = 0xFFFFFFFF,
+                                strokeWidth = drawWidth,
+                                strokeColor = 0xFFFFFFFF
+                            )
+                            closeDraw()
+                        }
+                    }
+                )
+            }
+        }
+
         if (showClipCropSheet) {
             val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
                 ?: tracks.flatMap { it.clips }.firstOrNull()
@@ -4104,6 +4181,11 @@ fun VideoEditorScreen(
             onAudio = { audioPicker.launch(arrayOf("audio/*")) },
             onSticker = { showStickerSheet = true },
             onTemplates = { showTemplates = true },
+            onDraw = {
+                drawPoints = emptyList()
+                viewModel.pause()
+                showDrawMode = true
+            },
             onDismiss = { showAddLayerSheet = false }
         )
     }

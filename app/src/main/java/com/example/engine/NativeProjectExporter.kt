@@ -285,7 +285,7 @@ class NativeProjectExporter(private val context: Context) {
                             level += OverlayGroup(listOf(c), spec.shaderId, fx = hasFx, mask = maskByTarget[c.id].orEmpty(), mediaFill = true, ownMask = hasOwnMasks)
                         } else if (overlayNeedsPose(c) || cam.affects(c)) {
                             if (cur.isNotEmpty()) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
-                            level += OverlayGroup(listOf(c), spec.shaderId, pose = true, fx = hasFx)
+                            level += OverlayGroup(listOf(c), spec.shaderId, pose = true, fx = hasFx, ownMask = hasOwnMasks)
                         } else if (maskByTarget.containsKey(c.id)) {
                             // Cut by a mask layer: a picture of its own, or the cut would also take the
                             // layers it shares the picture with.
@@ -1039,18 +1039,23 @@ class NativeProjectExporter(private val context: Context) {
                                 // texture, but an overlay's picture is frame-sized, so the masks are
                                 // remapped from the layer's box into the picture's space (OverlayMasks)
                                 // and run as their own pass, on the effects' result when effects ran.
-                                // Pose pictures keep the pre-Graph behaviour; the live video fill is
+                                // Pose pictures are cut too (build 166, mirroring the preview): the
+                                // mask is applied to the upright picture with the UPRIGHT clip's box,
+                                // and the projection carries the cut along. The live video fill is
                                 // already on the frame and is not cut (no imported wipe combines with
                                 // a video fill).
-                                if (g.ownMask && !g.pose && !fillDrawn) {
+                                if (g.ownMask && !fillDrawn) {
                                     val orig = g.clips.singleOrNull()
                                     val eval = rendered.firstOrNull()
                                     if (orig != null && eval != null) {
                                         val raw = ClipMaskLibrary.toNative(orig.masks, timeMs - orig.startMs, CutoutMasks.sourceMs(orig, timeMs))
                                         if (raw != null) {
                                             val stickerBm = if (eval.type == LayerType.STICKER) StickerLibrary.frameFor(eval.uri, eval.sourceOffsetMs(timeMs - eval.startMs)) else null
+                                            val boxClip = if (g.pose) {
+                                                if (cam.activeFor(eval, timeMs)) uprightForCamera(eval) else uprightForPose(eval)
+                                            } else eval
                                             val box = OverlayMasks.boxOf(
-                                                eval,
+                                                boxClip,
                                                 textDrawn = if (g.textBoxW > 0f) g.textBoxW to g.textBoxH else null,
                                                 stickerSize = stickerBm?.let { it.width to it.height },
                                                 w, h, if (previewW > 0f) w / previewW else 1f, PreviewFrameRef.density

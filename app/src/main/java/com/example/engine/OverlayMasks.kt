@@ -32,7 +32,12 @@ import kotlin.math.sin
  * layer's box into the picture's space. The remap is pure geometry (this file, unit tested):
  * a mask state is fractions of the layer's box; the box sits in the frame at a known centre,
  * size and rotation (the same numbers the painters draw with); the mask pass runs on a target
- * rect of the frame (the whole frame, or the fx region when effects ran first). All sizes are
+ * rect of the frame (the whole frame, or the fx region when effects ran first).
+ *
+ * Build 166: pose pictures (3D-turned / camera-seen layers) are cut too — the pass runs on
+ * the upright picture with the UPRIGHT clip's box ([boxOf] of uprightForPose /
+ * uprightForCamera: centred, unturned), and the renderer's projection carries the cut
+ * along with the picture. Before, a pose layer's own masks were silently never applied. All sizes are
  * carried through in pixels, so the native side — which converts the fractions back against
  * the target's pixel size — lands on the same coverage the layer's own texture would have had:
  *  - centre: box centre + the layer rotation applied to the state's centre offset in the box;

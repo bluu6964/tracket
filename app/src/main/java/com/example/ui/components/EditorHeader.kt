@@ -217,6 +217,12 @@ private fun DownloadGlyph() {
  * Header shown while a layer is selected (it replaces [EditorHeader]): back arrow (deselect), the layer's colour dot, its
  * NAME (tap = rename) and a line about the layer (type, time range, length, hidden / parent). Export etc. come back when
  * the layer is deselected.
+ *
+ * Build 166 (item 4 — Sarowar: the selected-layer header "ভালো দেখাচ্ছে না"): a clean
+ * CapCut-style pass in the settled B/W language — the same flat pill as [EditorHeader],
+ * a steady spacing rhythm (10 dp identity gaps, 8 dp between the action discs), a larger
+ * brighter layer name (15 sp) and a legible info line (11.5 sp grey). Same buttons,
+ * same order, same behaviour — look only.
  */
 @Composable
 fun LayerHeader(
@@ -267,9 +273,9 @@ fun LayerHeader(
                     drawLine(TextPrimary, Offset(m, size.height / 2f), Offset(size.width - m, size.height - m), w, StrokeCap.Round)
                 }
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(10.dp))
             Box(Modifier.size(10.dp).background(Color(colorArgb.toInt()), CircleShape))
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(10.dp))
             // Name + info: tapping them renames the layer.
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
@@ -277,16 +283,17 @@ fun LayerHeader(
                     .clip(RoundedCornerShape(10.dp))
                     .semantics { contentDescription = "Rename layer" }
                     .bouncyClickable(pressedScale = 0.97f, onClick = onRename)
-                    .padding(horizontal = 4.dp)
+                    .padding(horizontal = 6.dp)
                     .testTag("layer_header_name"),
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {
-                Text(name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                Text(name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text(info, color = AmTextDim, fontSize = 10.5.sp, maxLines = 1,
+                Text(info, color = AmTextDim, fontSize = 11.5.sp, letterSpacing = 0.2.sp, maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
             if (onToggleVisible != null) {
+                Spacer(Modifier.width(8.dp))
                 Box(
                     modifier = Modifier
                         .size(btnH)
@@ -311,8 +318,8 @@ fun LayerHeader(
                         if (!visible) drawLine(c, Offset(2.5f * u, 15.5f * u), Offset(15.5f * u, 2.5f * u), 1.8f * u, StrokeCap.Round)
                     }
                 }
-                Spacer(Modifier.width(6.dp))
             }
+            Spacer(Modifier.width(8.dp))
             // Rename button (pencil)
             Box(
                 modifier = Modifier

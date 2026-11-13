@@ -12,6 +12,7 @@ import com.example.model.MAX_SPEED
 import com.example.model.AspectRatio
 import com.example.model.CarouselParams
 import com.example.model.CarouselTemplate
+import com.example.model.VectorDraw
 import com.example.model.DonutChartTemplate
 import com.example.model.GenieTemplate
 import com.example.model.LogoRevealTemplate
@@ -744,71 +745,6 @@ class VideoEditorViewModel : ViewModel() {
         return true
     }
 
-    /**
-     * Transition into this layer: the layer comes in with the In animation [presetId] over [durationMs]. When another layer
-     * ends just before this one starts (or overlaps it a little), this layer is moved so the two overlap for exactly the
-     * length of the animation, and its lane is put above the earlier one: the earlier layer stays visible below while this
-     * one fades / slides / zooms in, and the earlier layer leaves with the same kind of animation (Out, opposite direction).
-     * Returns false when the layer cannot take a transition.
-     */
-    fun applyClipTransition(clipId: String, presetId: String, dir: AnimDir, durationMs: Long, canvasW: Float, canvasH: Float): Boolean {
-        val preset = AnimPresets.byId(presetId) ?: return false
-        val tracks0 = _tracks.value
-        val all = tracks0.flatMap { it.clips }
-        val b = all.firstOrNull { it.id == clipId } ?: return false
-        fun visual(c: TimelineClip) = c.type != LayerType.AUDIO && c.type != LayerType.NULL && c.type != LayerType.CAMERA &&
-            c.type != LayerType.CHAIN && c.type != LayerType.GROUP && c.type != LayerType.CONTROLLER
-        if (!visual(b)) return false
-        val prev = all.filter { it.id != b.id && visual(it) && it.groupId == b.groupId && it.startMs < b.startMs }
-            .maxByOrNull { it.endMs }
-        var d = durationMs.coerceIn(ANIM_MIN_MS, b.durationMs.coerceAtLeast(ANIM_MIN_MS))
-        var start = b.startMs
-        if (prev != null) {
-            val gap = b.startMs - prev.endMs
-            if (gap > -d && gap <= 2000L) {
-                val ns = (prev.endMs - d).coerceAtLeast(maxOf(prev.startMs, 0L))
-                val dd = prev.endMs - ns
-                if (dd >= ANIM_MIN_MS) { start = ns; d = dd }
-            }
-        }
-        pushHistory()
-        val moved = b.copy(startMs = start)
-        val len = d.coerceAtMost(moved.maxAnimMs(AnimSlot.IN)).coerceAtLeast(ANIM_MIN_MS)
-        val animated = moved.withClipAnim(AnimSlot.IN, preset, dir, len, null, canvasW, canvasH)
-        // Cross-transition: the earlier layer leaves with the same kind of animation over the overlap (a slide pushes it out
-        // the opposite side), so the two really go into each other and not only the new one comes in.
-        val outPrev = if (prev != null && prev.endMs - start >= ANIM_MIN_MS) {
-            val outDir = when (dir) {
-                AnimDir.LEFT -> AnimDir.RIGHT
-                AnimDir.RIGHT -> AnimDir.LEFT
-                AnimDir.UP -> AnimDir.DOWN
-                AnimDir.DOWN -> AnimDir.UP
-            }
-            val outLen = (prev.endMs - start).coerceAtMost(prev.maxAnimMs(AnimSlot.OUT)).coerceAtLeast(ANIM_MIN_MS)
-            prev.withClipAnim(AnimSlot.OUT, preset, outDir, outLen, null, canvasW, canvasH)
-        } else null
-        var tracks = tracks0.map { t ->
-            t.copy(clips = t.clips.map {
-                if (it.id == clipId) animated else if (outPrev != null && it.id == outPrev.id) outPrev else it
-            })
-        }
-        if (prev != null && b.chainId == null) {
-            val bi = tracks.indexOfFirst { l -> l.clips.any { it.id == clipId } }
-            val pi = tracks.indexOfFirst { l -> l.clips.any { it.id == prev.id } }
-            if (pi >= 0 && bi > pi && tracks[bi].clips.size == 1) {
-                // Lane 0 is the top: this layer's lane goes right above the earlier layer's lane.
-                val lane = tracks[bi]
-                val rest = tracks.toMutableList()
-                rest.removeAt(bi)
-                rest.add(pi, lane)
-                tracks = rest
-            }
-        }
-        _tracks.value = LaneLayout.normalize(tracks)
-        recomputeTotal()
-        return true
-    }
-
     fun setClipColor(color: Long) {
         val clipId = _selectedClipId.value ?: return
         pushHistory()
@@ -817,6 +753,48 @@ class VideoEditorViewModel : ViewModel() {
                 if (clip.id == clipId) clip.copy(color = color) else clip
             })
         }
+    }
+
+    /**
+     * Adds a layer drawn with the vector drawing tool (build 166): [drawn] is the pure
+     * geometry [VectorDraw] built from the stroke (normalised segments + placement), so
+     * the layer is an ordinary PATH shape — the same storage an imported Alight `<path>`
+     * shape gets — placed and sized exactly where the user drew it. [fillMode] /
+     * [fillColor] paint the inside of a closed drawing; an open line is stroke-only.
+     */
+    fun addDrawnPath(
+        drawn: VectorDraw.DrawnPath,
+        durationMs: Long = 4000L,
+        fillMode: Int,
+        fillColor: Long,
+        strokeWidth: Float,
+        strokeColor: Long = 0xFFFFFFFF
+    ) {
+        pushHistory()
+        val newClip = TimelineClip(
+            id = UUID.randomUUID().toString(),
+            name = "Drawing",
+            type = LayerType.SHAPE,
+            startMs = _currentPlayheadMs.value,
+            durationMs = durationMs.coerceIn(250L, 60_000L),
+            color = 0xFFFF3377,
+            textColor = fillColor,
+            fillMode = fillMode,
+            shapePattern = "PATH",
+            pathSegments = drawn.segments,
+            shapeOffsetX = drawn.offsetX,
+            shapeOffsetY = drawn.offsetY,
+            shapeScaleX = drawn.shapeScale,
+            shapeScaleY = drawn.shapeScale,
+            strokeWidth = strokeWidth.coerceIn(0f, 40f),
+            strokeColor = strokeColor,
+            transformX = drawn.offsetX,
+            transformY = drawn.offsetY,
+            scalePercent = (drawn.shapeScale * 100f).coerceAtLeast(1f)
+        )
+        _tracks.value = placeNewLayer(_tracks.value, newClip)
+        setSelected(newClip.id)
+        recomputeTotal()
     }
 
     /**

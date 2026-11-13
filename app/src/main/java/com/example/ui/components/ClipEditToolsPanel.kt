@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -44,7 +46,6 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material3.Icon
@@ -63,10 +64,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmCornerItem
 import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
-import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
 
 data class ClipToolItem(
@@ -103,7 +105,7 @@ fun ClipEditToolsPanel(
     /** Face AI (video layers): face tracking tools, first one = blur on face / eyes / nose / lips. */
     onFaceAi: (() -> Unit)? = null,
     onFaceSwap: (() -> Unit)? = null,
-    /** Masks (video / photo layers): shapes that hide parts of the layer. */
+    /** Masks (every picture layer: video / photo, shape, text, sticker, group). */
     onMasks: (() -> Unit)? = null,
     /** Only set for text layers: adds an "Edit" tool that opens Text edit. */
     onEditText: (() -> Unit)? = null,
@@ -119,8 +121,13 @@ fun ClipEditToolsPanel(
     onRename: (() -> Unit)? = null,
     /** Video layers: freeze frame (holds the picture at the playhead). */
     onFreeze: (() -> Unit)? = null,
-    /** Picture layers: a transition into this layer (fade / slide / zoom ... over the layer before it). */
-    onTransition: (() -> Unit)? = null,
+    /**
+     * Tools already USED on this layer (build 166, item 5 — the rule is
+     * [com.example.model.UsedTools.usedToolsOf]): a used tool reads WHITE (white icon,
+     * bold white label, white tile outline), an unused one stays grey, so what is
+     * applied to the layer is visible at a glance.
+     */
+    usedTools: Set<String> = emptySet(),
     /**
      * Null / 3D Camera layers have no picture, so only the tools that do something for them are shown (like the audio panel):
      * when set, tools whose id is not in this set are left out. null = every tool the layer type offers.
@@ -149,7 +156,6 @@ fun ClipEditToolsPanel(
     else emptyList()) + (if (onParent != null) listOf(ClipToolItem("parent", "Parent", Icons.Default.AccountTree))
     else emptyList()) + (if (onUngroup != null) listOf(ClipToolItem("ungroup", "Ungroup", Icons.Default.LayersClear))
     else emptyList()) + (if (onSaveTemplate != null) listOf(ClipToolItem("save_template", "Save as Template", Icons.Default.Save))
-    else emptyList()) + (if (onTransition != null) listOf(ClipToolItem("transition", "Transition", Icons.Default.Shuffle))
     else emptyList()) + (if (onFreeze != null) listOf(ClipToolItem("freeze", "Freeze", Icons.Default.Image))
     else emptyList()) + (if (onRename != null) listOf(ClipToolItem("rename", "Rename", Icons.Default.Edit))
     else emptyList())
@@ -245,7 +251,6 @@ fun ClipEditToolsPanel(
                                     "ungroup" -> onUngroup?.invoke()
                                     "save_template" -> onSaveTemplate?.invoke()
                                     "edit_group" -> onEditGroup?.invoke()
-                                    "transition" -> onTransition?.invoke()
                                     "freeze" -> onFreeze?.invoke()
                                     "rename" -> onRename?.invoke()
                                 }
@@ -254,17 +259,25 @@ fun ClipEditToolsPanel(
                         .testTag("clip_tool_${tool.id}"),
                     contentAlignment = Alignment.Center
                 ) {
+                    val used = tool.id in usedTools
                     FlatTile(Modifier.matchParentSize())
+                    if (used) {
+                        // Used on this layer: a white outline over the tile (B/W emphasis).
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .border(1.dp, Color.White, RoundedCornerShape(AmCornerItem))
+                        )
+                    }
                     Column(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                    val tint = IconActive
                     Icon(
                         imageVector = tool.icon,
                         contentDescription = tool.label,
-                        tint = tint,
+                        tint = if (used) Color.White else AmTextDim,
                         modifier = Modifier.size(23.dp)
                     )
 
@@ -272,9 +285,9 @@ fun ClipEditToolsPanel(
 
                     Text(
                         text = tool.label,
-                        color = TextPrimary,
+                        color = if (used) Color.White else AmTextDim,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Normal,
+                        fontWeight = if (used) FontWeight.Bold else FontWeight.Normal,
                         maxLines = 1
                     )
                     }

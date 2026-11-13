@@ -783,6 +783,20 @@ object ClipFxLibrary {
     // unoriented |cos| alternative is recorded in fx_plan.h, and the phone
     // comparison on omniframe-hardtrekk-hero arbitrates.
     const val RIPPLELIGHT_AM = "ripplelight_am"
+    // GRADIENT_OVERLAY_AM (native 230 + EXT 231): Alight's gradientoverlay2 — the
+    // round-5 group port (build 172). The effect composites a two-colour gradient
+    // OVER the layer's own pixels (its alpha gates the mix), in the layer's own
+    // space; it exists because a GROUP has no fill for the importer's gradient-fill
+    // mapping to land on, so gradientoverlay on a group becomes this op instead of
+    // a skip. Values [0] colour 1 packed 0xRRGGBB, [1] colour 2 packed, [2] angle
+    // deg, [3] scale, [4] offset x, [5] offset y (AM units, 500 = the layer box),
+    // [6] alpha; EXT [7] gradType (0 linear / 1 radial / 2 sweep), [8] blendMode
+    // (0 normal / 1 multiply / 2 screen), [9] colour 1 alpha, [10] colour 2 alpha,
+    // [11..13] unused. Keyframed angle / scale / alpha ride tails from index 14,
+    // in that order (see AmFxEval); the packed colours, gradType and blendMode
+    // never ride. The def's own defaults (def_gradientoverlay2.xml): colours
+    // #FFEE5533 / #FFFFEE88, angle 0, scale 1, alpha 0.75, linear, normal.
+    const val GRADIENT_OVERLAY_AM = "gradient_overlay_am"
 
     /**
      * Most effects on one layer (kFxMaxOps in cpp/engine/fx_plan.h — the pair is ONE bound:
@@ -2144,6 +2158,22 @@ object ClipFxLibrary {
                 FxParamDef("Center Y", 0f, 1f, 0.5f, "", step = 0.01f)
             )
         ),
+        // Gradient Overlay: the seven panel params are the def's own (two packed
+        // colours, angle, scale, offset, alpha); gradType / blendMode and the two
+        // colour alphas ride the EXT group (extraValues: the def's own defaults —
+        // linear, normal, both colours fully opaque).
+        FxDef(
+            GRADIENT_OVERLAY_AM, 230, "Gradient Overlay (Alight)", "Color", "A two-colour gradient composited over the layer's own pixels (Alight Motion's Gradient Overlay)",
+            listOf(
+                FxParamDef("Colour 1", 0f, 16777215f, 0xEE5533.toFloat(), "", step = 1f),
+                FxParamDef("Colour 2", 0f, 16777215f, 0xFFEE88.toFloat(), "", step = 1f),
+                FxParamDef("Angle", 0f, 3600f, 0f, "°", step = 0.5f),
+                FxParamDef("Scale", 0.1f, 10f, 1f, "", step = 0.01f),
+                FxParamDef("Offset X", -500f, 500f, 0f, "", step = 1f),
+                FxParamDef("Offset Y", -500f, 500f, 0f, "", step = 1f),
+                FxParamDef("Alpha", 0f, 1f, 0.75f, "", step = 0.001f)
+            )
+        ),
         FxDef(
             RADIAL_BLUR, 8, "Radial Blur", "Blur", "Spin or zoom blur around a centre",
             listOf(
@@ -2728,6 +2758,9 @@ object ClipFxLibrary {
         // Ripple Light's EXT defaults are the def's own: light intensity 0.3,
         // sharpness 2, white light, blend 1, fixedUV on.
         RIPPLELIGHT_AM -> listOf(0.3f, 2f, 0xFFFFFF.toFloat(), 1f, 1f, 0f, 0f)
+        // Gradient Overlay's EXT defaults are the def's own: linear, normal,
+        // both colours fully opaque.
+        GRADIENT_OVERLAY_AM -> listOf(0f, 0f, 1f, 1f, 0f, 0f, 0f)
         else -> emptyList()
     }
 
@@ -2779,6 +2812,7 @@ object ClipFxLibrary {
         TILESHIFT2_AM -> 224
         FRACTAL_WARP3_AM -> 226
         RIPPLELIGHT_AM -> 229
+        GRADIENT_OVERLAY_AM -> 231
         else -> null
     }
 

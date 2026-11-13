@@ -8,6 +8,7 @@ import com.example.model.hasPie
 import com.example.model.pieSegmentsAt
 import com.example.model.renderAt
 import com.example.model.unpackColor
+import com.example.model.valueAt
 
 /**
  * Preview version of [renderAt] (video, photo, text, shape and sticker layers): the keyframe + tracking maths runs in C++ (cpp/engine/layer_anim.cpp, the SAME
@@ -49,8 +50,13 @@ internal object NativeRenderAt {
         // tracks): rebuild it from the evaluated angles with the model's own builder, so the
         // preview here and the export (which goes through the model's renderAt) agree.
         // An `.arc`'s outline is parametric the same way.
+        // A shape's keyframed corner radius is parametric the same way (the native anim has
+        // no slot for it either): evaluate it with the model's own sampler (build 172).
         return if (c.hasPie) base.copy(pathSegments = c.pieSegmentsAt(timeMs - c.startMs))
-        else if (c.hasArc) base.copy(pathSegments = c.arcSegmentsAt(timeMs - c.startMs)) else base
+        else if (c.hasArc) base.copy(pathSegments = c.arcSegmentsAt(timeMs - c.startMs))
+        else if (!c.keyframes[AnimProp.SHAPE_CORNER_RADIUS].isNullOrEmpty())
+            base.copy(shapeCornerRadius = c.keyframes[AnimProp.SHAPE_CORNER_RADIUS]!!.valueAt(timeMs - c.startMs).first)
+        else base
     }
 
     private fun renderAtKeyframed(c: TimelineClip, timeMs: Long, trackMs: Long = timeMs): TimelineClip {

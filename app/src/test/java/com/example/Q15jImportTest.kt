@@ -406,7 +406,8 @@ $layers
     }
 
     @Test
-    fun catalogueGrewTo166() {
-        assertEquals(166, ClipFxLibrary.all.size)
+    fun catalogueGrewTo167() {
+        // Build 172 adds Gradient Overlay (Alight) to the catalogue.
+        assertEquals(167, ClipFxLibrary.all.size)
     }
 }

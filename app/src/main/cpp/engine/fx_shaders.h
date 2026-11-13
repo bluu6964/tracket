@@ -14,7 +14,8 @@
 //               22 fractal warp (Alight), 23 stripes (Alight), 24 turbulent displace 3 (Alight), 25 roughen edges (Alight), 26 bend warp (Alight),
 //               27 halftone lines (Alight), 28 rgb glitch (Alight), 29 fisheye / anti-fisheye (Alight), 30 refraction warp (Alight),
 //               31 turbulent displace 2 (Alight), 32 cc glass (Alight), 33 solid colour wipe (Alight),
-//               34 tile shift 2 (Alight), 35 ripple light (Alight)
+//               34 tile shift 2 (Alight), 35 ripple light (Alight),
+//               36 gradient overlay (Alight)
 //   kFxStyle  : 0 mosaic, 1 halftone, 2 scanlines, 3 glitch, 4 emboss, 5 find edges, 6 cartoon, 7 sketch, 8 oil paint, 9 strobe, 10 VHS, 11 old film, 12 light leak, 13 lens flare,
 //               14 find edges (Alight), 15 dissolve (Alight), 16 simple stars (Alight), 17 dots (Alight), 18 ridges (Alight),
 //               19 clouds / turbulence 2 (Alight), 20 checkerboard 2 (Alight), 21 shape field (Alight), 22 halftone dots (Alight)
@@ -2100,6 +2101,54 @@ void main() {
         vec4 outColor = vec4(mixedColor, displacedColor.a);
         if (uQ[4] > 0.5) outColor *= originalColor.a;
         oColor = outColor;
+        return;
+    }
+    if (uMode == 36) {
+        // v184: Alight's gradientoverlay2 (the group port — build 172): the def's
+        // shader line by line. uP: colour 1 packed, colour 2 packed, angle (deg),
+        // scale, offset x / y (AM units, 500 = the layer box), alpha; uQ: gradType
+        // (0 linear / 1 radial / 2 sweep), blendMode (0 normal / 1 multiply /
+        // 2 screen), colour 1 alpha, colour 2 alpha. vUv IS the def's acLayerNorm
+        // (v = 1 at the top, y up); the mat2 is the def's own, columns (sin, -cos)
+        // and (cos, sin), so the angle-0 gradient runs top to bottom and angle 90
+        // left to right. The multiply / screen branches unpremultiply by
+        // max(texA, 1e-4), the fxAmBlendShort guard; the colours unpack with the
+        // engine's integer amUnpackColor, so pure white stays white (the mode-33
+        // lesson). The sweep uses the def's own 6.28 wrap. fxGradientOverlayAmT /
+        // fxGradientOverlayAmPixel in fx_plan.cpp are the CPU twins — keep the
+        // three in step.
+        vec4 texColor = textureLod(uTex, vUv, 0.0);
+        vec4 color1 = vec4(amUnpackColor(uP[0]), uQ[2]);
+        vec4 color2 = vec4(amUnpackColor(uP[1]), uQ[3]);
+        float a = uP[2] * 0.0174533;
+        vec2 st = vUv;
+        st -= 0.5;
+        st -= (vec2(uP[4], uP[5]) * vec2(1.0, -1.0)) / 500.0;
+        st /= max(uP[3], 1e-4);
+        st *= mat2(sin(a), -cos(a), cos(a), sin(a));
+        st += 0.5;
+        float t;
+        if (uQ[0] < 0.5) {
+            t = st.x;
+        } else if (uQ[0] < 1.5) {
+            t = length(st - 0.5) * 2.0;
+        } else if (uQ[0] < 2.5) {
+            vec2 xy = st - 0.5;
+            t = mod(atan(xy.x, xy.y) + 6.28, 6.28) / 6.28;
+        } else {
+            t = st.x;
+        }
+        t = clamp(t, 0.0, 1.0);
+        vec4 color = mix(color1, color2, t);
+        vec4 result;
+        if (uQ[1] > 0.5 && uQ[1] < 1.5) {
+            result = vec4((texColor.rgb / max(texColor.a, 1e-4)) * color.rgb, 1.0) * texColor.a;
+        } else if (uQ[1] > 1.5) {
+            result = vec4(1.0 - ((1.0 - (texColor.rgb / max(texColor.a, 1e-4))) * (1.0 - color.rgb)), 1.0) * texColor.a;
+        } else {
+            result = vec4(color.rgb, 1.0) * texColor.a;
+        }
+        oColor = mix(texColor, result, uP[6] * color.a);
         return;
     }
     vec2 p = toP(vUv);

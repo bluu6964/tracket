@@ -830,11 +830,28 @@ object AlightXmlImporter {
         // (rho x the smaller rendered half extent) at any keyframed size: rho = 1 is a stadium.
         var shapeCornerRadius = -1f
         var cornerLocal = 0f   // the clamped radius in the shape's own units (a path outline needs it raw)
+        var cornerKeys = emptyList<Keyframe>()
         val cornerT = elementChildren(el).firstOrNull { it.tagName == "property" && it.getAttribute("name") == "cornerRadius" }
             ?.let { readTrack(it) }
         if (cornerT != null && pattern == "ROUNDED_RECT") {
+            // Keyframed (build 172): each key converts to the stored dp with the shape's size AT
+            // THAT KEY's time (the size may itself be keyframed — the stored rho is per-key, so
+            // the arc stays circular at any animated size); the keys ride AnimProp
+            // .SHAPE_CORNER_RADIUS and the painters read them through TimelineClip.at.
+            fun storedAt(t: Float, r: Float): Float {
+                val sizeAt = sizeT?.valueAtEased(t) ?: listOf(100f, 100f)
+                val sw = sizeAt.getOrNull(0) ?: 100f
+                val sh = sizeAt.getOrNull(1) ?: sw
+                val smaller = minOf(sw, sh)
+                if (smaller <= 0f) return 0f
+                return (APP_SHAPE_BOX_DP / 2f * minOf(r, smaller).coerceAtLeast(0f) / smaller)
+                    .coerceIn(0f, APP_SHAPE_BOX_DP / 2f)
+            }
             if (cornerT.keys.size >= 2) {
-                w += "Keyframed corner radius of a shape is not supported yet: the first value is used"
+                cornerKeys = cornerT.keys.mapIndexed { i, k ->
+                    val e = cornerT.keys.getOrNull(i + 1)?.easing ?: Easing.LINEAR
+                    Keyframe((k.t.coerceIn(0f, 1f) * durMs).roundToLong(), storedAt(k.t, k.v.firstOrNull() ?: 0f), 0f, e)
+                }.distinctBy { it.timeMs }
             }
             val rLocal = cornerT.first().firstOrNull()
             val sizeFirst = sizeT?.first() ?: listOf(100f, 100f)
@@ -879,6 +896,9 @@ object AlightXmlImporter {
         val sizeKeys = composedSizeKeys(sizeT, tr.scl, durMs, box)
         if (sizeKeys.isNotEmpty()) {
             keyframes[AnimProp.SCALE] = sizeKeys
+        }
+        if (cornerKeys.isNotEmpty()) {
+            keyframes[AnimProp.SHAPE_CORNER_RADIUS] = cornerKeys
         }
 
         val posX = pivotFold?.first?.first ?: ctx.posX(tr.loc?.first() ?: emptyList())
@@ -936,7 +956,7 @@ object AlightXmlImporter {
      * to either side, so the lobes come out as rounded petals and the valleys as sharp corners.
      * This is a line-by-line port of that script's getPath into [PathSeg]s, finished by the shared
      * path-shape tail ([finishPathShape]). The four parameters are plain properties; a keyframed
-     * one keeps its first value with a warning, like a shape's corner radius.
+     * one keeps its first value with a warning.
      */
     private fun readMultifoilShape(el: Element, ctx: Ctx): TimelineClip? {
         val w = ctx.warnings
@@ -3106,12 +3126,14 @@ object AlightXmlImporter {
      * mode (in Alight the gradient composites OVER the layer's fill; the app's gradient REPLACES it),
      * keyframed geometry, and the sweep's wrap (AM jumps from colour 2 back to colour 1, the app's
      * sweep blends back).
+     * On a GROUP the fill mapping has nowhere to land (a group has no fill), so the effect becomes
+     * the native Gradient Overlay (Alight) op instead of a skip (build 172 — see
+     * [applyGradientOverlayGroup]).
      */
     private fun applyGradientOverlay(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long, target: FxTarget): TimelineClip {
         val w = ctx.warnings
         if (target == FxTarget.GROUP) {
-            w += "Effect gradientoverlay on a group is not supported yet: skipped"
-            return clip0
+            return applyGradientOverlayGroup(fx, clip0, ctx)
         }
         var clip = clip0
         val props = fxProps(fx)
@@ -3178,6 +3200,74 @@ object AlightXmlImporter {
             }
         }
         return clip
+    }
+
+    /**
+     * `com.alightcreative.gradientoverlay2` on a GROUP -> the app's Gradient Overlay (Alight)
+     * native op (build 172): a group has no fill for the gradient-fill mapping to land on, so the
+     * effect becomes a real op on the group's composed picture (the group draw path runs a group's
+     * own effects over that picture like a photo's — see NativePreviewEngine.drawGroupLayer).
+     * The def is hunt-staging/defs-batch5/def_gradientoverlay2.xml, ported line by line in
+     * kFxWarp mode 36: t from the layer-norm coordinate (centre 0.5 + offset / 500, / scale, the
+     * mat2 rotation), linear / radial / sweep by gradType, then the blend switch (normal /
+     * multiply / screen) and mix(tex, result, alpha x colourAlpha). Keyframed angle / scale /
+     * alpha ride tails from index 14 in AmFxEval's order; the packed colours, gradType and
+     * blendMode never ride — a keyframed colour keeps its first value with a warning, like the
+     * fill path's keyframed offset. The op runs on the composed picture, so its layer norm is
+     * the PICTURE's norm: exact when the group's placed box fills the frame (omniframe-evergreen's
+     * radial; the two uniform-colour omniframe-montagem-guerreirro-pf instances, where the
+     * geometry cannot matter) and approximate by the box offset otherwise (khanbh-op02's linear —
+     * its embed canvas IS the scene canvas, so the offset is only the group's small placement
+     * shift). A non-normal blend mode is honoured by the op itself here (the fill path's
+     * "imported as normal" warning does not apply); an unknown gradType falls back to linear.
+     * Corpus: exactly the 3 group instances above, all constant, all blend normal.
+     */
+    private fun applyGradientOverlayGroup(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
+        val w = ctx.warnings
+        val props = fxProps(fx)
+        val angleT = props["angle"]
+        val scaleT = props["scale"]
+        val alphaT = props["alpha"]
+        fun colour(name: String, def: Long): Pair<Float, Float> {
+            val t = props[name]
+            if (t != null && t.keys.size >= 2) {
+                w += "Effect gradientoverlay: keyframed " + name + " is not supported yet: the first value is used"
+            }
+            val c = if (t == null) def else unpacked(t.first())
+            return (c and 0xFFFFFFL).toFloat() to (((c shr 24) and 0xFF) / 255f)
+        }
+        val (c1, a1) = colour("color1", 0xFFEE5533L)
+        val (c2, a2) = colour("color2", 0xFFFFEE88L)
+        val gt = props["gradType"]?.scalarAt(0f)?.toInt() ?: 0
+        val gradType = when (gt) {
+            0, 1, 2 -> gt
+            else -> {
+                w += "Effect gradientoverlay: gradient type " + gt + " is not supported yet: a linear gradient is used"
+                0
+            }
+        }
+        val blend = props["blendMode"]?.scalarAt(0f)?.toInt() ?: 0
+        val blendMode = when (blend) {
+            0, 1, 2 -> blend
+            else -> {
+                w += "Effect gradientoverlay: blend mode " + blend + " is not supported yet: imported as normal"
+                0
+            }
+        }
+        val offT = props["offset"]
+        if (offT != null && offT.keys.size >= 2) {
+            w += "Effect gradientoverlay: keyframed offset is not supported yet: the first value is used"
+        }
+        val off = offT?.first() ?: emptyList()
+        val values = listOf(
+            c1, c2,
+            (angleT?.scalarAtEased(0f) ?: 0f).coerceIn(0f, 3600f),
+            (scaleT?.scalarAtEased(0f) ?: 1f).coerceIn(0.1f, 10f),
+            off.getOrNull(0) ?: 0f, off.getOrNull(1) ?: 0f,
+            (alphaT?.scalarAtEased(0f) ?: 0.75f).coerceIn(0f, 1f),
+            gradType.toFloat(), blendMode.toFloat(), a1, a2, 0f, 0f, 0f
+        ) + tailsOf(trackTail(angleT), trackTail(scaleT), trackTail(alphaT))
+        return addFx(clip0, ctx, ClipFxLibrary.GRADIENT_OVERLAY_AM, values, "gradientoverlay")
     }
 
     /** The layer's box in scene pixels: a shape's rendered size, otherwise (text, group content) the scene itself. */
@@ -3526,24 +3616,31 @@ object AlightXmlImporter {
         val startT = props["start"]
         val endT = props["end"]
         if (startT == null && endT == null) return clip0
-        val angle = props["angle"]?.firstValue(w, "wipe", "angle") ?: 0f
+        // Keyframed angle (build 172: ritz-prst sweeps 90 -> 450 and 270 -> 630, a full turn
+        // of the wipe direction): the mask's rectangle is rebuilt per key with the angle AT
+        // that key's time, so the band rotates as it opens; the angle keys join the start /
+        // end keys in the mask's key times. A static angle behaves exactly as before.
+        val angleT = props["angle"]
+        val angle0 = angleT?.scalarAt(0f) ?: 0f
         val feather = props["feather"]?.firstValue(w, "wipe", "feather") ?: 0f
         fun sAt(n: Float) = startT?.scalarAt(n) ?: 0f
         fun eAt(n: Float) = endT?.scalarAt(n) ?: 1f
-        val norms = (((startT?.keys ?: emptyList()) + (endT?.keys ?: emptyList())).map { it.t } + listOf(0f, 1f)).distinct()
+        fun aAt(n: Float) = angleT?.scalarAt(n) ?: angle0
+        val norms = (((startT?.keys ?: emptyList()) + (endT?.keys ?: emptyList()) +
+            (angleT?.keys ?: emptyList())).map { it.t } + listOf(0f, 1f)).distinct()
         if (norms.all { sAt(it) <= 0f && eAt(it) >= 1f }) return clip0   // open the whole time: no mask needed
 
-        val rad = Math.toRadians(angle.toDouble())
-        val c = cos(rad).toFloat()
-        val sn = sin(rad).toFloat()
-        val len = abs(c) + abs(sn)                                   // projection span of the unit box
-        val projMin = minOf(0f, c) + minOf(0f, sn)                   // projection of the box's near corner
-        val projC = (c + sn) / 2f                                    // projection of the box centre
         val (boxW, boxH) = layerBoxPx(clip0, ctx)
-        val extent = boxW * abs(c) + boxH * abs(sn)
-        val featherPct = if (extent > 1f) (feather / extent * 100f).coerceIn(0f, 100f) else 0f
         if (feather > 0f) w += "Effect wipe: its feather is mapped approximately"
-        fun state(s: Float, e: Float): MaskState {
+        fun state(s: Float, e: Float, angle: Float): MaskState {
+            val rad = Math.toRadians(angle.toDouble())
+            val c = cos(rad).toFloat()
+            val sn = sin(rad).toFloat()
+            val len = abs(c) + abs(sn)                                   // projection span of the unit box
+            val projMin = minOf(0f, c) + minOf(0f, sn)                   // projection of the box's near corner
+            val projC = (c + sn) / 2f                                    // projection of the box centre
+            val extent = boxW * abs(c) + boxH * abs(sn)
+            val featherPct = if (extent > 1f) (feather / extent * 100f).coerceIn(0f, 100f) else 0f
             val d = projMin + (s + e) / 2f * len - projC
             // The band's extents are measured in the box's real pixels, not the unit box: a mask
             // state's w / h are fractions of the box's WIDTH / HEIGHT and the native plan turns
@@ -3562,9 +3659,9 @@ object AlightXmlImporter {
                 rot = angle, feather = featherPct, opacity = 100f
             )
         }
-        val keyframed = (startT?.keys?.size ?: 0) >= 2 || (endT?.keys?.size ?: 0) >= 2
+        val keyframed = (startT?.keys?.size ?: 0) >= 2 || (endT?.keys?.size ?: 0) >= 2 || (angleT?.keys?.size ?: 0) >= 2
         val mask = if (!keyframed) {
-            ClipMask(shape = MaskShape.RECT, mode = MaskMode.ADD, state = state(sAt(0f), eAt(0f)))
+            ClipMask(shape = MaskShape.RECT, mode = MaskMode.ADD, state = state(sAt(0f), eAt(0f), angle0))
         } else {
             val times = norms.map { (it.coerceIn(0f, 1f) * durMs).roundToLong() }.distinct().sorted()
             val keys = times.mapIndexed { i, t ->
@@ -3572,9 +3669,9 @@ object AlightXmlImporter {
                 val next = times.getOrNull(i + 1)
                 val e = if (next == null) Easing.LINEAR
                 else startT?.easingAtMs(next, durMs) ?: endT?.easingAtMs(next, durMs) ?: Easing.LINEAR
-                MaskKey(t, state(sAt(n), eAt(n)), e)
+                MaskKey(t, state(sAt(n), eAt(n), aAt(n)), e)
             }
-            ClipMask(shape = MaskShape.RECT, mode = MaskMode.ADD, state = keys.firstOrNull()?.state ?: state(0f, 1f), keys = keys)
+            ClipMask(shape = MaskShape.RECT, mode = MaskMode.ADD, state = keys.firstOrNull()?.state ?: state(0f, 1f, angle0), keys = keys)
         }
         return clip0.copy(masks = clip0.masks + mask)
     }
@@ -5519,20 +5616,25 @@ object AlightXmlImporter {
      * Corpus: 10 instances, all constant (amount 209.5 / 64.5, angle 45). NOTE: none of the 10
      * is hidden — 9 carry locallyApplied="false", which Alight still renders (and the importer
      * has always imported as active); the hidden rule does not come into it.
+     * Keyframed strength / phase ride tails (build 172: blxze-brepizx-pack's strength
+     * 0.625 -> 0.746, blxze-pack-v4's phase 0.5 -> 4.27); the slots hold the values x100,
+     * so the tails are pre-converted to slot units (the Long Shadow precedent) at scale 1.
      */
     private fun applyHalftoneDots(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
         val amount = props["amount"]?.firstValue(w, "halftonedots", "amount") ?: 100f
-        val strength = (props["strength"]?.firstValue(w, "halftonedots", "strength") ?: 0.5f) * 100f
+        val strT = props["strength"]
+        val phaseT = props["phase"]
+        val strength = (strT?.scalarAtEased(0f) ?: 0.5f) * 100f
         val angle = props["angle"]?.firstValue(w, "halftonedots", "angle") ?: 45f
-        val phase = (props["phase"]?.firstValue(w, "halftonedots", "phase") ?: 0.5f) * 100f
+        val phase = (phaseT?.scalarAtEased(0f) ?: 0.5f) * 100f
         val c1 = props["color1"]?.packedColor(w, "halftonedots", "color1") ?: 0x113355.toFloat()
         val c2 = props["color2"]?.packedColor(w, "halftonedots", "color2") ?: 0xFFEEDD.toFloat()
         val values = listOf(
             amount.coerceIn(0f, 500f), strength.coerceIn(0f, 100f), angle,
             phase.coerceIn(-100000f, 100000f), c1, c2, 0f
-        )
+        ) + tailsOf(trackTail(strT) { it * 100f }, trackTail(phaseT) { it * 100f })
         return addFx(clip0, ctx, ClipFxLibrary.HALFTONE_DOTS, values, "halftonedots")
     }
 
@@ -5572,6 +5674,13 @@ object AlightXmlImporter {
      * (evolution + t*speed - speed), the across-axis component scaled by `slack` (def 0.25),
      * the pair rotated by `angle`. Unlike shake2 there is no freq / zshake. The noise is the
      * Ashima snoise AM's own shaders use ([simplexNoise3]); the seed offsets are the def's.
+     * Keyframed speed / evolution / seed (build 172: three corpus instances, e.g. the
+     * blxze-pack-v4 shake that ramps 7.5 -> 3 while its evolution falls 10 -> 0) are read
+     * per frame inside the bake — the phase at a frame is the def's formula with that
+     * frame's values, 2*pi*(evolution(t) + speed(t)*tAbs - speed(t)), so a keyframed
+     * evolution re-times the noise directly instead of through the integrated phase;
+     * with static tracks the formula is exactly the old phase0 + speed integration.
+     * `angle` / `slack` are static in the corpus and keep their first value.
      */
     private fun applyShakeV1(fx: Element, clip0: TimelineClip, ctx: Ctx, durMs: Long): TimelineClip {
         val w = ctx.warnings
@@ -5580,9 +5689,12 @@ object AlightXmlImporter {
         val magMax = (magT.keys.map { abs(it.v.firstOrNull() ?: 0f) } +
             listOf(abs(magT.constant.firstOrNull() ?: 0f), abs(magT.first().firstOrNull() ?: 0f))).maxOrNull() ?: 0f
         if (magMax < 1e-4f) return clip0
-        val speed = props["speed"]?.firstValue(w, "shake", "speed") ?: 1f
-        val evolution = props["evolution"]?.firstValue(w, "shake", "evolution") ?: 0f
-        val seed = (props["seed"]?.firstValue(w, "shake", "seed") ?: 0f).toDouble()
+        val speedT = props["speed"]
+        val evoT = props["evolution"]
+        val seedT = props["seed"]
+        fun speedAt(n: Float) = speedT?.scalarAtEased(n) ?: 1f
+        val speed = speedAt(0f)
+        val evolution = evoT?.scalarAtEased(0f) ?: 0f
         val angle = props["angle"]?.firstValue(w, "shake", "angle") ?: 45f
         val slack = props["slack"]?.firstValue(w, "shake", "slack") ?: 0.25f
         val rad = Math.toRadians(angle.toDouble())
@@ -5590,19 +5702,31 @@ object AlightXmlImporter {
         val sa = sin(rad).toFloat()
         // bakeDelta integrates a layer-local phase; v1's evolution runs on absolute time, so
         // the phase starts at evolution - speed + speed * (the layer's start in seconds).
+        // The integrated phase is only the sampler's clock here: the displacement reads the
+        // phase from the def's formula at each frame, so keyframed speed / evolution / seed
+        // land exactly (see the class doc above).
         val phase0 = 2.0 * Math.PI * (evolution - speed + speed * (clip0.startMs / 1000f))
-        val extra = magT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() }
+        val extra = (magT.keys.map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } +
+            (speedT?.keys ?: emptyList()).map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } +
+            (evoT?.keys ?: emptyList()).map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() } +
+            (seedT?.keys ?: emptyList()).map { (it.t.coerceIn(0f, 1f) * durMs).roundToLong() })
         val baseKeys = clip0.keyframes[AnimProp.POSITION]
         val basePlain = clip0.propValues(AnimProp.POSITION)
-        return bakeDelta(clip0, AnimProp.POSITION, durMs, ctx, phase0, { speed }, extra) { phase, norm ->
-            val evo = phase / (2.0 * Math.PI)
+        return bakeDelta(clip0, AnimProp.POSITION, durMs, ctx, phase0, ::speedAt, extra) { _, norm ->
             val tMs = (norm * durMs).roundToLong()
+            val evo = evoT?.scalarAtEased(norm) ?: evolution
+            val spd = speedAt(norm)
+            val sd = (seedT?.scalarAtEased(norm) ?: 0f).toDouble()
+            // The def's absolute-time evolution at this frame (tAbs in seconds).
+            val tAbs = (clip0.startMs + tMs) / 1000.0
+            val phase = 2.0 * Math.PI * (evo + spd * tAbs - spd)
+            val evoPhase = phase / (2.0 * Math.PI)
             val base = baseKeys?.valueAt(tMs) ?: basePlain
             val locX = (base.first / ctx.k + ctx.sceneW / 2f).toDouble()
             val locY = (base.second / ctx.k + ctx.sceneH / 2f).toDouble()
             val mag = magT.scalarAtEased(norm).toDouble()
-            val dx = simplexNoise3(locX + seed * 54623.245, locY, evo + seed * 49235.319798) * mag
-            val dy = simplexNoise3(locX, locY + seed * 8723.5647, evo + 7468.329 + seed * 19337.940385) * mag * slack
+            val dx = simplexNoise3(locX + sd * 54623.245, locY, evoPhase + sd * 49235.319798) * mag
+            val dy = simplexNoise3(locX, locY + sd * 8723.5647, evoPhase + 7468.329 + sd * 19337.940385) * mag * slack
             ((dx * ca - dy * sa) * ctx.k).toFloat() to ((dx * sa + dy * ca) * ctx.k).toFloat()
         }
     }
@@ -6296,8 +6420,14 @@ object AlightXmlImporter {
     /**
      * `turbulentdisplace3` -> the app's Turbulent Displace 3 (Alight): Ashima turbulence
      * along a direction (X / Y / XY / R / phi-r / phi). Keyframed intensity / scale ride
-     * tails. screenSpace only swaps the stretch in the layer-anchored port (the pattern
-     * itself stays layer-anchored; reported when asked). A stray `FIXTURB` property in
+     * tails, and keyframed evolution / seed ride tails after them (build 172: seven
+     * evolution instances, e.g. blxze-brepizx-pack 0 -> 1.54 and omniframe-warps 0.61 -> 0,
+     * plus blxze-pack-v4's keyframed seed). screenSpace only swaps the stretch in the
+     * layer-anchored port (the pattern itself stays layer-anchored; reported when asked):
+     * the def's screen branch needs the fragment's screen-normalised coordinate
+     * (acScreenNorm) and the layer-to-screen matrix, which the warp pass does not carry —
+     * the same limit as turbulentdisplace2 / wavewarp2 / fractalwarp / tileshift2 / stripes,
+     * so it stays a precise warning rather than a guessed port. A stray `FIXTURB` property in
      * some exports is not in AM's def and is ignored, like any unknown property.
      */
     private fun applyTurbulentDisplace3Am(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
@@ -6305,6 +6435,8 @@ object AlightXmlImporter {
         val props = fxProps(fx)
         val intT = props["intensity"]
         val scaleT = props["scale"]
+        val evoT = props["evolution"]
+        val seedT = props["seed"]
         val parr = props["parr"]?.valueAtEased(0f)
         val pos = props["position"]?.valueAtEased(0f)
         val stretch = props["stretch"]?.valueAtEased(0f)
@@ -6316,8 +6448,8 @@ object AlightXmlImporter {
         val values = listOf(
             (intT?.scalarAtEased(0f) ?: 0.25f).coerceIn(0f, 2.5f),
             (scaleT?.scalarAtEased(0f) ?: 1f),
-            props["evolution"]?.firstValue(w, "turbulentdisplace3", "evolution") ?: 0f,
-            props["seed"]?.firstValue(w, "turbulentdisplace3", "seed") ?: 0f,
+            evoT?.scalarAtEased(0f) ?: 0f,
+            seedT?.scalarAtEased(0f) ?: 0f,
             (props["direction"]?.firstValue(w, "turbulentdisplace3", "direction") ?: 4f).coerceIn(0f, 5f),
             (props["octaves"]?.firstValue(w, "turbulentdisplace3", "octaves") ?: 6f).coerceIn(1f, 9f),
             (props["offs"]?.firstValue(w, "turbulentdisplace3", "offset") ?: 0f).coerceIn(-1f, 1f),
@@ -6325,7 +6457,7 @@ object AlightXmlImporter {
             pos?.getOrNull(0) ?: 0f, pos?.getOrNull(1) ?: 0f,
             stretch?.getOrNull(0) ?: 1f, stretch?.getOrNull(1) ?: 1f,
             flags
-        ) + tailsOf(trackTail(intT), trackTail(scaleT))
+        ) + tailsOf(trackTail(intT), trackTail(scaleT), trackTail(evoT), trackTail(seedT))
         return addFx(clip0, ctx, ClipFxLibrary.TURBULENT_DISPLACE3_AM, values, "turbulentdisplace3")
     }
 
@@ -6353,22 +6485,25 @@ object AlightXmlImporter {
 
     /**
      * `streaks` -> the app's Streaks (Alight): a directional multi-tap smear whose taps
-     * combine per channel (min / max / off / average). A keyframed strength rides the tail.
+     * combine per channel (min / max / off / average). A keyframed strength rides the tail,
+     * and a keyframed alpha rides the tail after it (build 172: robo-full-spider-man-edit
+     * fades all 7 of its streaks 1 -> 0 / 0 -> 1 while their strength pulses 0 -> 0.02).
      */
     private fun applyStreaksAm(fx: Element, clip0: TimelineClip, ctx: Ctx): TimelineClip {
         val w = ctx.warnings
         val props = fxProps(fx)
         val strT = props["strength"]
+        val alphaT = props["alpha"]
         fun mode(name: String): Float =
             (props[name]?.firstValue(w, "streaks", name) ?: 1f).coerceIn(0f, 3f)
         val values = listOf(
             (strT?.scalarAtEased(0f) ?: 0.15f).coerceIn(0f, 1f),
             props["angle"]?.firstValue(w, "streaks", "angle") ?: 0f,
             (props["bias"]?.firstValue(w, "streaks", "bias") ?: 0f).coerceIn(-1f, 1f),
-            (props["alpha"]?.firstValue(w, "streaks", "alpha") ?: 1f).coerceIn(0f, 1f),
+            (alphaT?.scalarAtEased(0f) ?: 1f).coerceIn(0f, 1f),
             mode("rmode"), mode("gmode"), mode("bmode"), mode("amode"),
             0f, 0f, 0f, 0f, 0f, 0f
-        ) + tailsOf(trackTail(strT))
+        ) + tailsOf(trackTail(strT), trackTail(alphaT))
         return addFx(clip0, ctx, ClipFxLibrary.STREAKS_AM, values, "streaks")
     }
 

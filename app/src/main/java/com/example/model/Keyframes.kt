@@ -30,7 +30,17 @@ enum class AnimProp(val isColor: Boolean = false) {
     SPEED,
 
     /** Stroke trim (draw-on): a = visible outline start, b = visible outline end, both 0..1 of the outline length. */
-    STROKE_TRIM
+    STROKE_TRIM,
+
+    /**
+     * A rounded shape's corner radius in the stored dp (65 x rho, rho = the radius as a fraction
+     * of the shape's smaller half extent — the [TimelineClip.shapeCornerRadius] unit; see
+     * [TimelineClip.shapeCornerRadii]). Keyframed by the importer when Alight animates a shape's
+     * `cornerRadius` (build 172); the painters read it through [TimelineClip.at] like every
+     * other keyframed property, and the native preview evaluates it with the model's own sampler
+     * (see NativeRenderAt, the pie / arc precedent).
+     */
+    SHAPE_CORNER_RADIUS
 }
 
 /** ARGB colour -> (A,R) and (G,B) packed as two exact floats (each < 65536). */
@@ -236,6 +246,7 @@ fun TimelineClip.propValues(p: AnimProp): Pair<Float, Float> = when (p) {
     AnimProp.OPACITY -> opacity to 0f
     AnimProp.SPEED -> speed to 0f
     AnimProp.STROKE_TRIM -> strokeTrimStart to strokeTrimEnd
+    AnimProp.SHAPE_CORNER_RADIUS -> shapeCornerRadius to 0f
 }
 
 fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when (p) {
@@ -259,6 +270,7 @@ fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when 
     AnimProp.OPACITY -> copy(opacity = a)
     AnimProp.SPEED -> copy(speed = a.coerceIn(MIN_SPEED, MAX_SPEED))
     AnimProp.STROKE_TRIM -> copy(strokeTrimStart = a.coerceIn(0f, 1f), strokeTrimEnd = b.coerceIn(0f, 1f))
+    AnimProp.SHAPE_CORNER_RADIUS -> copy(shapeCornerRadius = a)
 }
 
 /** True for an imported `.pie` wedge: its outline is rebuilt per frame from its angle tracks. */

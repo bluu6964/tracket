@@ -900,6 +900,36 @@ enum FxType : int {
     // multiplied by the original pixel's alpha (the anti-overdraw clamp).
     FX_RIPPLELIGHT_AM = 228,
     FX_RIPPLELIGHT_AM_EXT = 229,
+    // v184 (build 172): Alight's gradientoverlay2 — the group port (the def is
+    // hunt-staging/defs-batch5/def_gradientoverlay2.xml; the three corpus group
+    // instances are all constant, all blend normal: khanbh-op02 white -> grey
+    // linear, omniframe-evergreen radial, omniframe-montagem-guerreirro-pf
+    // uniform-colour linear x2). Port = the def's shader line by line, in the
+    // def's layer-norm space — which here is vUv itself (v = 1 at the top = the
+    // def's acLayerNorm, y up): centre 0.5 + offset / 500 (the offset's y is
+    // flipped, like the def), / scale, the mat2 rotation, then linear (t = st.x)
+    // / radial (t = 2 x centre distance) / sweep (t = the wrapped atan from the
+    // +y ray), clamped, mixed through the two colours; the blend switch
+    // (normal / multiply / screen — the multiply / screen branches unpremultiply
+    // by max(texA, 1e-4), the fxAmBlendShort guard) and mix(tex, result,
+    // alpha x colourAlpha), colourAlpha = mix(c1.a, c2.a, t). p: [0] colour 1
+    // packed 0xRRGGBB, [1] colour 2 packed, [2] angle deg, [3] scale, [4] offset
+    // x, [5] offset y (AM units, 500 = the layer box), [6] alpha; q (EXT):
+    // [0] gradType (0 linear / 1 radial / 2 sweep), [1] blendMode (0 normal /
+    // 1 multiply / 2 screen), [2] colour 1 alpha, [3] colour 2 alpha,
+    // [4..6] unused. kFxWarp mode 36. DIVERGENCE, recorded not guessed: on a
+    // group the op runs on the composed picture, so its layer norm is the
+    // picture's norm — exact when the group's placed box fills the frame
+    // (evergreen's radial; the two uniform-colour montage instances, where the
+    // geometry cannot matter) and approximate by the box offset otherwise
+    // (khanbh-op02's linear — its embed canvas IS the scene canvas, so the
+    // offset is only the group's small placement shift). The def's own defaults:
+    // colours #FFEE5533 / #FFFFEE88, angle 0, scale 1, alpha 0.75, linear,
+    // normal. fxIsIdentity = alpha 0 (the mix factor is 0, so the output is the
+    // pixel — the colour alphas gate the same factor, so they need no separate
+    // branch).
+    FX_GRADIENT_OVERLAY_AM = 230,
+    FX_GRADIENT_OVERLAY_AM_EXT = 231,
     FX_MAX = FX_COPY_BG
 };
 
@@ -1337,6 +1367,22 @@ void fxRipplelightAmPixel(float sampR, float sampG, float sampB, float sampA,
                           float light, float lightR, float lightG, float lightB,
                           float blend, bool fixedUV,
                           float* outR, float* outG, float* outB, float* outA);
+// ---- v184 (build 172): Alight's gradientoverlay2 (the group port) ----
+// CPU reference of Gradient Overlay's geometry: the def's t at a fragment —
+// layer norm (v = 1 at the top = the def's acLayerNorm, y up), centre 0.5 +
+// offset / 500 (the offset's y flipped, like the def), / scale, the mat2
+// rotation, then linear / radial / sweep by gradType, clamped. Float32
+// throughout, like the shader. The mat2 is the def's own: columns (sin, -cos)
+// and (cos, sin), so st.x = sin*x + cos*y after the rotation.
+// CPU reference of Gradient Overlay's composite: the gradient colour at t
+// (mix of the two unpacked colours and their alphas, via fxUnpackRgb — the
+// integer unpack, so pure white 0xFFFFFF stays white), the def's blend switch
+// (normal / multiply / screen — the multiply / screen branches unpremultiply
+// by max(texA, 1e-4), the fxAmBlendShort guard), then mix(tex, result,
+// alpha x colourAlpha). tex is premultiplied; out is premultiplied.
+float fxGradientOverlayAmT(float uvX, float uvY, float angleDeg, float scale,
+                           float offX, float offY, int gradType);
+void fxGradientOverlayAmPixel(const FxOp& op, float t, const float tex[4], float* out);
 // CPU reference of Stripes (AM's stripes): the band value (0..1) at a fragment; st is the
 // def's layer space, ((uv flipped to top-down) * picture px - centre px) / |picture px| —
 // computed here from (uvX, uvY) and the picture size. amount / phase / width / smoothing /

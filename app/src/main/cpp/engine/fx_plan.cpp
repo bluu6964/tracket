@@ -139,6 +139,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
                            : t == FX_TILESHIFT2_AM_EXT ? FX_TILESHIFT2_AM
                            : t == FX_FRACTAL_WARP3_AM_EXT ? FX_FRACTAL_WARP3_AM
                            : t == FX_RIPPLELIGHT_AM_EXT ? FX_RIPPLELIGHT_AM
+                           : t == FX_GRADIENT_OVERLAY_AM_EXT ? FX_GRADIENT_OVERLAY_AM
                                                      : FX_NONE;
         if (extOwner != FX_NONE) {
             if (owner >= 0 && out[owner].type == extOwner) {
@@ -194,7 +195,7 @@ int fxParseOps(const float* flat, int n, FxOp* out) {
             t != FX_LENSBLUR_OBS_AM && t != FX_SOLID_WIPE_AM && t != FX_SOFTBLOOM_AM &&
             t != FX_LENSD_AM && t != FX_BCC_FILM_GLOW_AM &&
             t != FX_PAGECURL_AM && t != FX_TILESHIFT2_AM && t != FX_FRACTAL_WARP3_AM &&
-            t != FX_RIPPLELIGHT_AM &&
+            t != FX_RIPPLELIGHT_AM && t != FX_GRADIENT_OVERLAY_AM &&
             t != FX_MB4_POS && t != FX_MB4_SCALE && t != FX_MB4_ANGLE) {
             owner = -1;
             extFoldedOp = -1;
@@ -486,6 +487,7 @@ FxShaderRef fxShaderOf(int type) {
         case FX_FRACTAL_WARP3_AM: r = {FXG_WARP, 22}; break;
         case FX_TILESHIFT2_AM: r = {FXG_WARP, 34}; break;
         case FX_RIPPLELIGHT_AM: r = {FXG_WARP, 35}; break;
+        case FX_GRADIENT_OVERLAY_AM: r = {FXG_WARP, 36}; break;
         case FX_SHAPEFIELD_AM: r = {FXG_STYLE, 21}; break;
         case FX_HALFTONE_DOTS_AM: r = {FXG_STYLE, 22}; break;
         default: break;
@@ -688,6 +690,9 @@ bool fxIsIdentity(const FxOp& o) {
         // pixel), so the only remaining change is the light — which reaches the
         // output only when lightIntensity > 0 AND blend > 0.
         case FX_RIPPLELIGHT_AM: return p[0] < 0.0005f && (o.q[0] < 0.0005f || o.q[3] < 0.0005f);
+        // Gradient Overlay: alpha 0 makes the mix factor 0, so the output is the
+        // pixel (the colour alphas gate the same factor — no separate branch).
+        case FX_GRADIENT_OVERLAY_AM: return p[6] < 0.0005f;
         default: return false;
     }
 }
@@ -2691,6 +2696,71 @@ void fxRipplelightAmPixel(float sampR, float sampG, float sampB, float sampA,
         a = sampA * origA;
     }
     *outR = mixR; *outG = mixG; *outB = mixB; *outA = a;
+}
+
+float fxGradientOverlayAmT(float uvX, float uvY, float angleDeg, float scale,
+                           float offX, float offY, int gradType) {
+    // The def's t at a fragment, line by line: the layer norm (uv is vUv, v = 1
+    // at the top = the def's acLayerNorm, y up), centre 0.5 + offset / 500 (the
+    // offset's y flipped, like the def), / scale, the mat2 rotation, then linear /
+    // radial / sweep by gradType, clamped. The mat2 is the def's own: st *=
+    // mat2(sin, -cos, cos, sin) = (x*sin + y*cos, -x*cos + y*sin) (the
+    // tileshift2 twin's convention), so the angle-0 gradient runs top to bottom
+    // and angle 90 left to right. The sweep uses the def's own 6.28 wrap.
+    // Float32 throughout, like the shader.
+    float stx = uvX - 0.5f;
+    float sty = uvY - 0.5f;
+    stx -= offX / 500.f;
+    sty += offY / 500.f;
+    const float sc = std::max(scale, 1e-4f);
+    stx /= sc;
+    sty /= sc;
+    const float a = angleDeg * 0.0174533f;
+    const float sn = std::sin(a), cs = std::cos(a);
+    const float rx = stx * sn + sty * cs;
+    const float ry = -stx * cs + sty * sn;
+    const float sx = rx + 0.5f, sy = ry + 0.5f;
+    float t;
+    if (gradType == 0) {
+        t = sx;
+    } else if (gradType == 1) {
+        const float dx = sx - 0.5f, dy = sy - 0.5f;
+        t = std::sqrt(dx * dx + dy * dy) * 2.f;
+    } else if (gradType == 2) {
+        const float xyx = sx - 0.5f, xyy = sy - 0.5f;
+        t = std::fmod(std::atan2(xyx, xyy) + 6.28f, 6.28f) / 6.28f;
+    } else {
+        t = sx;
+    }
+    return std::min(1.f, std::max(0.f, t));
+}
+
+void fxGradientOverlayAmPixel(const FxOp& op, float t, const float tex[4], float* out) {
+    // The def's composite at the gradient parameter t: the mix of the two
+    // unpacked colours and their alphas (via fxUnpackRgb — the integer unpack,
+    // identical to q15jUnpack, so pure white 0xFFFFFF stays white), the def's blend switch (normal / multiply
+    // / screen — the multiply / screen branches unpremultiply by max(texA, 1e-4),
+    // the fxAmBlendShort guard), then mix(tex, result, alpha x colourAlpha).
+    // tex is premultiplied; out is premultiplied.
+    float c1[3], c2[3];
+    fxUnpackRgb(op.p[0], &c1[0], &c1[1], &c1[2]);
+    fxUnpackRgb(op.p[1], &c2[0], &c2[1], &c2[2]);
+    const float a1 = op.q[2], a2 = op.q[3];
+    float col[4];
+    for (int k = 0; k < 3; ++k) col[k] = c1[k] + (c2[k] - c1[k]) * t;
+    col[3] = a1 + (a2 - a1) * t;
+    const int blendMode = (int)std::lround(op.q[1]);
+    float result[4];
+    const float texA = tex[3];
+    for (int k = 0; k < 3; ++k) {
+        const float straight = tex[k] / std::max(texA, 1e-4f);
+        result[k] = (blendMode == 1 ? straight * col[k]
+                     : blendMode == 2 ? 1.f - (1.f - straight) * (1.f - col[k])
+                                      : col[k]) * texA;
+    }
+    result[3] = texA;
+    const float f = op.p[6] * col[3];
+    for (int k = 0; k < 4; ++k) out[k] = tex[k] + (result[k] - tex[k]) * f;
 }
 
 namespace {

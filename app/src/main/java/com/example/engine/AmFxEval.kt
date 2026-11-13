@@ -105,9 +105,13 @@ internal object AmFxEval {
         ClipFxLibrary.SQUEEZE_AM -> listOf(Tracked(0, 1f))                         // strength
         ClipFxLibrary.FRACTAL_WARP_AM -> listOf(Tracked(0, 1f), Tracked(4, 1f), Tracked(5, 1f), Tracked(6, 1f), Tracked(7, 1f), Tracked(1, 1f))  // magnitude, offs x, offs y, parallax x, parallax y, scale
         ClipFxLibrary.STRIPES_AM -> listOf(Tracked(3, 1f), Tracked(1, 1f))         // phase, width
-        ClipFxLibrary.TURBULENT_DISPLACE3_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f))  // intensity, scale
+        ClipFxLibrary.TURBULENT_DISPLACE3_AM -> listOf(Tracked(0, 1f), Tracked(1, 1f), Tracked(2, 1f), Tracked(3, 1f))  // intensity, scale, evolution, seed
         ClipFxLibrary.ROUGHEN_EDGES_AM -> listOf(Tracked(2, 1f))                   // evolution
-        ClipFxLibrary.STREAKS_AM -> listOf(Tracked(0, 1f))                         // strength
+        ClipFxLibrary.STREAKS_AM -> listOf(Tracked(0, 1f), Tracked(3, 1f))          // strength, alpha
+        // Build 172 (the smaller-fry batch): Halftone Dots' strength / phase — the
+        // slots hold the values x100, so the tails are pre-converted to slot units
+        // (the Long Shadow precedent) at scale 1.
+        ClipFxLibrary.HALFTONE_DOTS -> listOf(Tracked(1, 1f), Tracked(3, 1f))       // strength, phase
         ClipFxLibrary.SIMPLE_STARS_AM -> listOf(Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f), Tracked(1, 1f))  // parallax x, y, z, star size
         ClipFxLibrary.DOTS_AM -> listOf(Tracked(1, 1f), Tracked(6, 1f))            // phase, density
         ClipFxLibrary.RIDGES_AM -> listOf(Tracked(7, 1f), Tracked(8, 1f), Tracked(9, 1f), Tracked(10, 1f), Tracked(2, 1f))  // offs x, offs y, parallax x, parallax y, evolution
@@ -162,6 +166,10 @@ internal object AmFxEval {
             Tracked(0, 1f), Tracked(1, 1f), Tracked(2, 1f), Tracked(3, 1f),
             Tracked(4, 1f), Tracked(7, 1f), Tracked(8, 1f), Tracked(10, 1f)
         )
+        // Build 172 (the smaller-fry batch): Gradient Overlay's angle / scale /
+        // alpha ride tails from index 14 (EXT) — the packed colours, gradType and
+        // blendMode never ride (first value + warning at import, like every colour).
+        ClipFxLibrary.GRADIENT_OVERLAY_AM -> listOf(Tracked(2, 1f), Tracked(3, 1f), Tracked(6, 1f))  // angle, scale, alpha
         // v180 (Queue 15j): the second-wave ports — AM units (scale 1). Plain tails
         // start at 7, EXT effects' at 14 (LENSD), EXT2 effects' at 21 (REFRACTION,
         // SHAPEFIELD); see tailStart.
@@ -191,7 +199,7 @@ internal object AmFxEval {
         ClipFxLibrary.BBMAKER_AM, ClipFxLibrary.OPTIC_COMP_AM,
         ClipFxLibrary.LENSD_AM, ClipFxLibrary.TURBULENT_DISPLACE2_AM,
         ClipFxLibrary.TILESHIFT2_AM, ClipFxLibrary.FRACTAL_WARP3_AM,
-        ClipFxLibrary.RIPPLELIGHT_AM -> EXT_TAIL_START
+        ClipFxLibrary.RIPPLELIGHT_AM, ClipFxLibrary.GRADIENT_OVERLAY_AM -> EXT_TAIL_START
         ClipFxLibrary.EXTRUDE_AM, ClipFxLibrary.EXTRUDE_FLAT_AM,
         ClipFxLibrary.ELECTRIC_EDGES_AM, ClipFxLibrary.TURBULENCE2_AM,
         ClipFxLibrary.DEEP_GLOW2_AM, ClipFxLibrary.PAGECURL_AM,

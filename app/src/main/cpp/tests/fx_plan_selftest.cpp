@@ -2435,6 +2435,104 @@ int main() {
         id171.p[0] = 0.02f; id171.q[0] = 0.f;
         CHECK(!fxIsIdentity(id171), "ripplelight strength 0.02 is not identity");
     }
+    {
+        // Gradient Overlay (build 172): the def's t, then the composite. The
+        // angle-0 gradient runs top to bottom (the def's mat2 is a quarter turn
+        // at angle 0) and angle 90 left to right; the sweep's zero ray is the
+        // +y ray of the rotated space (left at angle 0). The T pins are a
+        // float32 mirror of the twin (the sweep quarters carry the def's 6.28
+        // wrap, so they pin to 1e-3, not exactly).
+        float gt;
+        gt = fxGradientOverlayAmT(0.5f, 0.5f, 0.f, 1.f, 0.f, 0.f, 0);
+        CHECK(gt == 0.5f, "gradientoverlay linear centre (%g)", gt);
+        gt = fxGradientOverlayAmT(0.5f, 0.f, 0.f, 1.f, 0.f, 0.f, 0);
+        CHECK(gt == 0.f, "gradientoverlay linear top is 0 (%g)", gt);
+        gt = fxGradientOverlayAmT(0.5f, 1.f, 0.f, 1.f, 0.f, 0.f, 0);
+        CHECK(gt == 1.f, "gradientoverlay linear bottom is 1 (%g)", gt);
+        gt = fxGradientOverlayAmT(0.f, 0.5f, 90.f, 1.f, 0.f, 0.f, 0);
+        CHECK(gt == 0.f, "gradientoverlay angle-90 left is 0 (%g)", gt);
+        gt = fxGradientOverlayAmT(1.f, 0.5f, 90.f, 1.f, 0.f, 0.f, 0);
+        CHECK(gt == 1.f, "gradientoverlay angle-90 right is 1 (%g)", gt);
+        gt = fxGradientOverlayAmT(0.5f, 0.f, 0.f, 2.f, 0.f, 0.f, 0);
+        CHECK(gt == 0.25f, "gradientoverlay scale 2 compresses (%g)", gt);
+        gt = fxGradientOverlayAmT(0.5f, 0.5f, 0.f, 1.f, 0.f, 30.f, 0);
+        CHECK(std::fabs(gt - 0.56f) < 1e-6f, "gradientoverlay offset y shifts (%g)", gt);
+        gt = fxGradientOverlayAmT(0.5f, 0.5f, 90.f, 1.f, 30.f, 0.f, 0);
+        CHECK(std::fabs(gt - 0.44f) < 1e-6f, "gradientoverlay offset x shifts at angle 90 (%g)", gt);
+        float gr0 = fxGradientOverlayAmT(0.5f, 0.5f, 0.f, 1.f, 0.f, 0.f, 1);
+        float gr1 = fxGradientOverlayAmT(0.f, 0.5f, 0.f, 1.f, 0.f, 0.f, 1);
+        float gr2 = fxGradientOverlayAmT(0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 1);
+        CHECK(gr0 == 0.f && gr1 == 1.f && gr2 == 1.f,
+              "gradientoverlay radial centre/edge/corner (%g %g %g)", gr0, gr1, gr2);
+        float gs0 = fxGradientOverlayAmT(0.f, 0.5f, 0.f, 1.f, 0.f, 0.f, 2);
+        float gs1 = fxGradientOverlayAmT(0.5f, 1.f, 0.f, 1.f, 0.f, 0.f, 2);
+        float gs2 = fxGradientOverlayAmT(1.f, 0.5f, 0.f, 1.f, 0.f, 0.f, 2);
+        float gs3 = fxGradientOverlayAmT(0.5f, 0.f, 0.f, 1.f, 0.f, 0.f, 2);
+        CHECK(std::fabs(gs0) < 1e-3f && std::fabs(gs1 - 0.25f) < 1e-3f &&
+              std::fabs(gs2 - 0.5f) < 1e-3f && std::fabs(gs3 - 0.75f) < 1e-3f,
+              "gradientoverlay sweep quarters (%g %g %g %g)", gs0, gs1, gs2, gs3);
+        gt = fxGradientOverlayAmT(0.f, 0.5f, 63.f, 1.f, 0.f, 0.f, 0);
+        CHECK(std::fabs(gt - 0.054497f) < 1e-3f, "gradientoverlay corpus angle 63 left (%g)", gt);
+        // The composite: the def's colours #EE5533 / #FFEE88 at t = 0.5, normal
+        // blend, alpha 1 over a mid-grey premultiplied texel; then the alpha-0
+        // identity, the white edge (pure white stays white — the mode-33
+        // lesson), the multiply / screen branches at 0x808080, and the colour
+        // alpha gating the mix.
+        FxOp op172{}; op172.type = FX_GRADIENT_OVERLAY_AM;
+        op172.p[0] = 0xEE5533; op172.p[1] = 0xFFEE88; op172.p[6] = 1.f;
+        op172.q[0] = 0.f; op172.q[1] = 0.f; op172.q[2] = 1.f; op172.q[3] = 1.f;
+        float tex172[4] = {0.4f, 0.4f, 0.4f, 0.8f};
+        float out172[4];
+        fxGradientOverlayAmPixel(op172, 0.5f, tex172, out172);
+        CHECK(std::fabs(out172[0] - 0.773333f) < 1e-5f && std::fabs(out172[1] - 0.506667f) < 1e-5f &&
+              std::fabs(out172[2] - 0.293333f) < 1e-5f && out172[3] == 0.8f,
+              "gradientoverlay normal compose (%g %g %g %g)", out172[0], out172[1], out172[2], out172[3]);
+        op172.p[6] = 0.f;
+        fxGradientOverlayAmPixel(op172, 0.5f, tex172, out172);
+        CHECK(out172[0] == 0.4f && out172[1] == 0.4f && out172[2] == 0.4f && out172[3] == 0.8f,
+              "gradientoverlay alpha 0 is the identity (%g %g %g %g)", out172[0], out172[1], out172[2], out172[3]);
+        op172.p[0] = 0xFFFFFF; op172.p[1] = 0xFFFFFF; op172.p[6] = 1.f;
+        float texWhite[4] = {0.2f, 0.2f, 0.2f, 1.f};
+        fxGradientOverlayAmPixel(op172, 0.5f, texWhite, out172);
+        CHECK(out172[0] == 1.f && out172[1] == 1.f && out172[2] == 1.f && out172[3] == 1.f,
+              "gradientoverlay white stays white (%g %g %g %g)", out172[0], out172[1], out172[2], out172[3]);
+        op172.p[0] = 0x808080; op172.p[1] = 0x808080; op172.q[1] = 1.f;
+        fxGradientOverlayAmPixel(op172, 0.f, tex172, out172);
+        CHECK(std::fabs(out172[0] - 0.200784f) < 1e-6f && std::fabs(out172[1] - 0.200784f) < 1e-6f &&
+              std::fabs(out172[2] - 0.200784f) < 1e-6f && out172[3] == 0.8f,
+              "gradientoverlay multiply compose (%g %g %g %g)", out172[0], out172[1], out172[2], out172[3]);
+        op172.q[1] = 2.f;
+        fxGradientOverlayAmPixel(op172, 0.f, tex172, out172);
+        CHECK(std::fabs(out172[0] - 0.600784f) < 1e-6f && std::fabs(out172[1] - 0.600784f) < 1e-6f &&
+              std::fabs(out172[2] - 0.600784f) < 1e-6f && out172[3] == 0.8f,
+              "gradientoverlay screen compose (%g %g %g %g)", out172[0], out172[1], out172[2], out172[3]);
+        op172.p[0] = 0xFFFFFF; op172.p[1] = 0xFFFFFF; op172.q[1] = 0.f;
+        op172.q[2] = 0.5f; op172.q[3] = 1.f;
+        fxGradientOverlayAmPixel(op172, 0.f, tex172, out172);
+        CHECK(std::fabs(out172[0] - 0.6f) < 1e-6f && std::fabs(out172[1] - 0.6f) < 1e-6f &&
+              std::fabs(out172[2] - 0.6f) < 1e-6f && out172[3] == 0.8f,
+              "gradientoverlay colour alpha gates the mix (%g %g %g %g)", out172[0], out172[1], out172[2], out172[3]);
+        // Parsing: the two-bank chain folds into one op; a bare EXT is dropped;
+        // a foreign EXT after the owner is dropped.
+        FxOp ops172[kFxMaxOps];
+        float flatGo2[] = {230, 15662899, 16772872, 0, 1, 0, 0, 0.75f,
+                           231, 1, 0, 1, 1, 0, 0, 0};
+        CHECK(fxParseOps(flatGo2, 16, ops172) == 1 && ops172[0].type == FX_GRADIENT_OVERLAY_AM &&
+              ops172[0].p[0] == 15662899.f && ops172[0].q[0] == 1.f && ops172[0].q[2] == 1.f &&
+              ops172[0].q[3] == 1.f, "gradientoverlay two-bank chain folds");
+        float flatBareGo[] = {231, 1, 0, 1, 1, 0, 0, 0};
+        CHECK(fxParseOps(flatBareGo, 8, ops172) == 0, "bare gradientoverlay EXT is dropped");
+        float flatForeignGo[] = {230, 1, 1, 1, 1, 1, 1, 1, 229, 2, 2, 2, 2, 2, 2, 2};
+        CHECK(fxParseOps(flatForeignGo, 16, ops172) == 1 && ops172[0].type == FX_GRADIENT_OVERLAY_AM &&
+              ops172[0].q[0] == 0.f, "ripplelight EXT after a gradientoverlay is dropped");
+        // Routing + identity: warp mode 36; identity only when alpha is 0.
+        CHECK(fxShaderOf(FX_GRADIENT_OVERLAY_AM).group == FXG_WARP &&
+              fxShaderOf(FX_GRADIENT_OVERLAY_AM).mode == 36, "gradientoverlay is warp mode 36");
+        FxOp id172{}; id172.type = FX_GRADIENT_OVERLAY_AM; id172.p[6] = 0.75f;
+        CHECK(!fxIsIdentity(id172), "gradientoverlay alpha 0.75 is not identity");
+        id172.p[6] = 0.f;
+        CHECK(fxIsIdentity(id172), "gradientoverlay alpha 0 is identity");
+    }
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

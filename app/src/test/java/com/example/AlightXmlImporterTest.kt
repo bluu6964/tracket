@@ -761,7 +761,10 @@ $layers
     }
 
     @Test
-    fun keyframedCornerRadiusUsesTheFirstValueWithANote() {
+    fun keyframedCornerRadiusRidesKeys() {
+        // Build 172: a keyframed corner radius no longer flattens to its first value — each
+        // key converts to the stored dp with the shape's size AT that key's time, and the keys
+        // ride AnimProp.SHAPE_CORNER_RADIUS (the painters read them through TimelineClip.at).
         val xml = scene(
             """<shape id="9" label="Pill" startTime="0" endTime="1000" fillType="color" mediaFillMode="stretch" s=".roundrect">
   <transform><location value="540,960,0" /><scale value="1,1" /></transform>
@@ -772,7 +775,34 @@ $layers
         val c = r.snapshot.tracks.flatMap { it.clips }[0]
         // First value 20 (smaller half extent 100, so no clamp) -> 65 * 20 / 100.
         assertEquals(65f * 20f / 100f, c.shapeCornerRadius, 0.01f)
-        assertTrue(r.warnings.any { it.contains("corner radius") && it.contains("first value") })
+        assertFalse(r.warnings.any { it.contains("corner radius") })
+        val keys = c.keyframes[AnimProp.SHAPE_CORNER_RADIUS]!!
+        assertEquals(listOf(0L, 1000L), keys.map { it.timeMs })
+        assertEquals(13f, keys[0].a, 0.01f)
+        assertEquals(52f, keys[1].a, 0.01f)   // 65 * 80 / 100
+        assertEquals(13f, c.at(0L).shapeCornerRadius, 0.01f)
+        assertEquals(32.5f, c.at(500L).shapeCornerRadius, 0.01f)   // linear 13 -> 52, half-way
+        assertEquals(52f, c.at(1000L).shapeCornerRadius, 0.01f)
+    }
+
+    @Test
+    fun keyframedCornerRadiusUsesTheSizeAtEachKey() {
+        // The stored rho is per-key: with a keyframed size the radius converts against the
+        // size AT that key's time, so the arc stays circular at any animated size. Size
+        // 100x100 -> 200x50 (smaller 100 -> 50) with a constant radius of 50.
+        val xml = scene(
+            """<shape id="9" label="Pill" startTime="0" endTime="1000" fillType="color" mediaFillMode="stretch" s=".roundrect">
+  <transform><location value="540,960,0" /><scale value="1,1" /></transform>
+  <property name="size" type="vec2"><kf t="0.000000" v="100.000000,100.000000" /><kf t="1.000000" v="200.000000,50.000000" /></property>
+  <property name="cornerRadius" type="float"><kf t="0.000000" v="50.000000" /><kf t="1.000000" v="50.000000" /></property></shape>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertFalse(r.warnings.any { it.contains("corner radius") })
+        val keys = c.keyframes[AnimProp.SHAPE_CORNER_RADIUS]!!
+        assertEquals(32.5f, keys[0].a, 0.01f)   // 65 * 50 / 100
+        assertEquals(65f, keys[1].a, 0.01f)     // 65 * min(50, 50) / 50: the stadium end
+        assertEquals(48.75f, c.at(500L).shapeCornerRadius, 0.01f)
     }
 
     @Test
@@ -1823,6 +1853,94 @@ $layers
     }
 
     @Test
+    fun gradientOverlayOnAGroupBecomesTheNativeOp() {
+        // Build 172: a group has no fill for the gradient-fill mapping to land on,
+        // so gradientoverlay2 on a group becomes the Gradient Overlay (Alight) native
+        // op on the group's composed picture — NOT a skip. Instance: khanbh-op02's
+        // "Group and Mask 1" (white -> grey, linear, angle 0, offset (0, 30),
+        // scale 0.49, alpha 1).
+        val xml = scene(
+            """<embedScene id="2" label="G" startTime="0" endTime="1000" fillType="intrinsic" outTime="1000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ffffffff" /><property name="color2" type="color" value="#ff787878" /><property name="angle" type="float" value="0" /><property name="offset" type="vec2" value="0,30" /><property name="scale" type="float" value="0.49" /><property name="alpha" type="float" value="1" /><property name="gradType" type="int" value="0" /><property name="blendMode" type="int" value="0" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="1000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="1000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertFalse(r.warnings.any { it.contains("on a group is not supported yet") })
+        val g = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val fx = g.effects.first { it.type == ClipFxLibrary.GRADIENT_OVERLAY_AM }
+        assertEquals(16777215f, fx.values[0], 0.001f)  // colour 1 packed (white)
+        assertEquals(7895160f, fx.values[1], 0.001f)   // colour 2 packed (#787878)
+        assertEquals(0f, fx.values[2], 0.001f)         // angle
+        assertEquals(0.49f, fx.values[3], 0.001f)      // scale
+        assertEquals(0f, fx.values[4], 0.001f)         // offset x
+        assertEquals(30f, fx.values[5], 0.001f)        // offset y
+        assertEquals(1f, fx.values[6], 0.001f)         // alpha
+        assertEquals(0f, fx.values[7], 0.001f)         // gradType linear
+        assertEquals(0f, fx.values[8], 0.001f)         // blendMode normal
+        assertEquals(1f, fx.values[9], 0.001f)         // colour 1 alpha
+        assertEquals(1f, fx.values[10], 0.001f)        // colour 2 alpha
+        assertEquals(14, fx.values.size)               // constant: no tails
+        assertTrue(g.fillMode != com.example.model.FILL_GRADIENT)   // the fill was not replaced
+    }
+
+    @Test
+    fun gradientOverlayOnAGroupKeyframedAngleRidesTheTail() {
+        // Build 172: omniframe-evergreen's radial group instance — angle keyframed
+        // 0 -> 112.5, scale 2.54, alpha 0.658. Angle rides the tail from index 14;
+        // the constant scale / alpha contribute count-0 placeholders after it.
+        val xml = scene(
+            """<embedScene id="2" label="G" startTime="0" endTime="1000" fillType="intrinsic" outTime="1000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ff427d42" /><property name="color2" type="color" value="#ffffffff" /><property name="angle" type="float"><kf t="0" v="0" /><kf t="1" v="112.5" /></property><property name="scale" type="float" value="2.54" /><property name="alpha" type="float" value="0.658" /><property name="gradType" type="int" value="1" /><property name="blendMode" type="int" value="0" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="1000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="1000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val g = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val fx = g.effects.first { it.type == ClipFxLibrary.GRADIENT_OVERLAY_AM }
+        assertEquals(1f, fx.values[7], 0.001f)     // gradType radial
+        assertEquals(2.54f, fx.values[3], 0.001f)  // scale at t = 0
+        assertEquals(0.658f, fx.values[6], 0.001f) // alpha at t = 0
+        assertEquals(2f, fx.values[14], 0.001f)    // angle tail: two keys, from EXT_TAIL_START
+        assertEquals(0f, fx.values[27], 0.001f)    // scale placeholder
+        assertEquals(0f, fx.values[28], 0.001f)    // alpha placeholder
+        val mid = AmFxEval.resolve(listOf(fx), g, g.startMs + g.durationMs / 2).single()
+        assertEquals(56.25f, mid.values[2], 0.01f) // linear 0 -> 112.5, half-way
+        val end = AmFxEval.resolve(listOf(fx), g, g.startMs + g.durationMs).single()
+        assertEquals(112.5f, end.values[2], 0.01f)
+    }
+
+    @Test
+    fun gradientOverlayOnAGroupKeyframedColourAndUnknownGradTypeWarn() {
+        // Build 172: the packed colours, gradType and blendMode never ride — a
+        // keyframed colour keeps its first value with a warning, and an unknown
+        // gradType falls back to linear with a warning.
+        val xml = scene(
+            """<embedScene id="2" label="G" startTime="0" endTime="1000" fillType="intrinsic" outTime="1000">
+  <transform><location value="540,960,0" /></transform>
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color"><kf t="0" v="#ff0000ff" /><kf t="1" v="#ffff0000" /></property><property name="color2" type="color" value="#ffffffff" /><property name="angle" type="float" value="0" /><property name="scale" type="float" value="1" /><property name="alpha" type="float" value="1" /><property name="gradType" type="int" value="5" /><property name="blendMode" type="int" value="0" /></effect>
+  <scene title="" width="1080" height="1920" totalTime="1000" fps="30">
+  <shape id="3" label="Inner" startTime="0" endTime="1000" fillType="color" s=".rect"><transform><location value="540,960,0" /><scale value="1,1" /></transform><fillColor value="#ffffffff" /><property name="size" type="vec2" value="100,100" /></shape>
+  </scene>
+</embedScene>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertTrue(r.warnings.any { it.contains("keyframed color1 is not supported yet") })
+        assertTrue(r.warnings.any { it.contains("gradient type 5 is not supported yet") })
+        val g = r.snapshot.tracks.flatMap { it.clips }.first { it.type == LayerType.GROUP }
+        val fx = g.effects.first { it.type == ClipFxLibrary.GRADIENT_OVERLAY_AM }
+        assertEquals(255f, fx.values[0], 0.001f)  // colour 1 keeps its first value (#0000ff)
+        assertEquals(0f, fx.values[7], 0.001f)    // gradType falls back to linear
+    }
+
+    @Test
     fun solidColorOnTheStIntroIconKeepsThePictureFill() {
         // The proving instance of round 5: ST Intro's send-message.png carries solidcolor
         // #ffb891ff. Alight flattens the ICON's silhouette to that colour (invisible against the
@@ -1956,6 +2074,93 @@ $layers
         assertEquals(1.0f, peak.values[0], 0.01f)    // the EV peak
         assertEquals(10f, peak.values[1], 0.01f)     // offset 0.1 -> 10 at its last key
         assertEquals(100f, peak.values[2], 0.001f)   // gamma constant
+    }
+
+    @Test
+    fun keyframedHalftoneDotsStrengthAndPhaseRideTails() {
+        // Build 172: the slots hold strength / phase x100, so the tails are pre-converted to
+        // slot units (the Long Shadow precedent) at scale 1. Values: blxze-brepizx-pack's
+        // strength 0.625 -> 0.746, blxze-pack-v4's phase 0.5 -> 4.27.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.halftonedots" locallyApplied="true"><property name="amount" type="float" value="100" /><property name="strength" type="float"><kf t="0" v="0.625" /><kf t="1" v="0.746" /></property><property name="angle" type="float" value="45" /><property name="phase" type="float"><kf t="0" v="0.5" /><kf t="1" v="4.27" /></property><property name="color1" type="color" value="#ff113355" /><property name="color2" type="color" value="#ffffeedd" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.HALFTONE_DOTS }
+        assertEquals(100f, fx.values[0], 0.001f)   // amount
+        assertEquals(62.5f, fx.values[1], 0.001f)  // strength x100 at t = 0
+        assertEquals(45f, fx.values[2], 0.001f)    // angle
+        assertEquals(50f, fx.values[3], 0.001f)    // phase x100 at t = 0
+        assertEquals(2f, fx.values[7], 0.001f)     // strength tail: two keys, from index 7
+        assertEquals(2f, fx.values[20], 0.001f)    // phase tail follows (7 + 1 + 2 * 6)
+        val mid = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs / 2).single()
+        assertEquals(68.55f, mid.values[1], 0.01f)   // linear 62.5 -> 74.6, half-way
+        assertEquals(238.5f, mid.values[3], 0.01f)  // linear 50 -> 427, half-way
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(74.6f, end.values[1], 0.01f)
+        assertEquals(427f, end.values[3], 0.01f)
+    }
+
+    @Test
+    fun keyframedStreaksAlphaRidesTheTail() {
+        // Build 172: robo-full-spider-man-edit fades all 7 of its streaks 1 -> 0 / 0 -> 1
+        // while their strength pulses 0 -> 0.02. Strength rides first, alpha after it.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.streaks" locallyApplied="true"><property name="strength" type="float"><kf t="0" v="0" /><kf t="1" v="0.02" /></property><property name="angle" type="float" value="0" /><property name="bias" type="float" value="0" /><property name="alpha" type="float"><kf t="0" v="1" /><kf t="1" v="0" /></property><property name="rmode" type="float" value="1" /><property name="gmode" type="float" value="1" /><property name="bmode" type="float" value="1" /><property name="amode" type="float" value="1" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.STREAKS_AM }
+        assertEquals(0f, fx.values[0], 0.001f)   // strength at t = 0
+        assertEquals(1f, fx.values[3], 0.001f)   // alpha at t = 0
+        assertEquals(2f, fx.values[14], 0.001f)  // strength tail: two keys, from EXT_TAIL_START
+        assertEquals(2f, fx.values[27], 0.001f)  // alpha tail follows (14 + 1 + 2 * 6)
+        val mid = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs / 2).single()
+        assertEquals(0.01f, mid.values[0], 0.001f)
+        assertEquals(0.5f, mid.values[3], 0.001f)
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(0.02f, end.values[0], 0.001f)
+        assertEquals(0f, end.values[3], 0.001f)
+    }
+
+    @Test
+    fun keyframedTurbulentDisplaceEvolutionAndSeedRideTails() {
+        // Build 172: omniframe-warps' evolution 0.61 -> 0, blxze-pack-v4's seed 0 -> 5.
+        // Intensity / scale are constant, so they contribute count-0 placeholders and the
+        // evolution / seed tails follow in AmFxEval's declared order.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.turbulentdisplace3" locallyApplied="true"><property name="intensity" type="float" value="0.25" /><property name="scale" type="float" value="1" /><property name="evolution" type="float"><kf t="0" v="0.61" /><kf t="1" v="0" /></property><property name="seed" type="float"><kf t="0" v="0" /><kf t="1" v="5" /></property><property name="direction" type="float" value="4" /><property name="octaves" type="float" value="6" /><property name="offset" type="float" value="0" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val fx = c.effects.first { it.type == ClipFxLibrary.TURBULENT_DISPLACE3_AM }
+        assertEquals(0.25f, fx.values[0], 0.001f)  // intensity
+        assertEquals(0.61f, fx.values[2], 0.001f)  // evolution at t = 0
+        assertEquals(0f, fx.values[3], 0.001f)     // seed at t = 0
+        assertEquals(0f, fx.values[14], 0.001f)    // intensity: constant, placeholder
+        assertEquals(0f, fx.values[15], 0.001f)    // scale: constant, placeholder
+        assertEquals(2f, fx.values[16], 0.001f)    // evolution tail: two keys
+        assertEquals(2f, fx.values[29], 0.001f)    // seed tail follows (16 + 1 + 2 * 6)
+        val mid = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs / 2).single()
+        assertEquals(0.305f, mid.values[2], 0.001f)  // linear 0.61 -> 0, half-way
+        assertEquals(2.5f, mid.values[3], 0.001f)    // linear 0 -> 5, half-way
+        val end = AmFxEval.resolve(listOf(fx), c, c.startMs + c.durationMs).single()
+        assertEquals(0f, end.values[2], 0.001f)
+        assertEquals(5f, end.values[3], 0.001f)
+    }
+
+    @Test
+    fun turbulentDisplaceScreenSpaceStaysWarned() {
+        // Build 172 NOTE: the def's screen branch needs the fragment's screen-normalised
+        // coordinate and the layer-to-screen matrix, which the warp pass does not carry — the
+        // same limit as turbulentdisplace2 / wavewarp2 / fractalwarp / tileshift2 / stripes.
+        // It stays a precise warning rather than a guessed port.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.turbulentdisplace3" locallyApplied="true"><property name="intensity" type="float" value="0.25" /><property name="scale" type="float" value="1" /><property name="evolution" type="float" value="0" /><property name="seed" type="float" value="0" /><property name="screenSpace" type="bool" value="true" /></effect>"""
+        ), 1080f)
+        assertTrue(r.warnings.any { it.contains("turbulentdisplace3: screen space is not reproduced") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertTrue(c.effects.any { it.type == ClipFxLibrary.TURBULENT_DISPLACE3_AM })   // still imported, layer-anchored
     }
 
     @Test
@@ -2214,6 +2419,24 @@ $layers
         assertEquals(0.6865f, k1.state.cy, 0.001f)    // band centre
         assertEquals(90f, k1.state.rot, 0.001f)
         assertEquals(0.627f, m.keys[2].state.w, 0.001f)
+    }
+
+    @Test
+    fun keyframedWipeAngleRotatesTheBand() {
+        // Build 172: ritz-prst sweeps its wipe angle 90 -> 450 (and a second wipe 270 -> 630),
+        // a full turn of the wipe direction. The mask's rectangle is rebuilt per key with the
+        // angle AT that key's time, so the band rotates as it opens.
+        val r = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.wipe2" locallyApplied="true"><property name="start" type="float"><kf t="0" v="0" /><kf t="1" v="1" /></property><property name="end" type="float" value="1" /><property name="angle" type="float"><kf t="0" v="90" /><kf t="1" v="450" /></property><property name="feather" type="float" value="0" /></effect>"""
+        ), 1080f)
+        assertFalse(r.warnings.any { it.contains("keyframed angle") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(1, c.masks.size)
+        val m = c.masks[0]
+        assertEquals(listOf(0L, 2000L), m.keys.map { it.timeMs })
+        assertEquals(90f, m.keys[0].state.rot, 0.001f)
+        assertEquals(450f, m.keys[1].state.rot, 0.001f)
+        assertEquals(90f, m.state.rot, 0.001f)   // the static state is the first key's
     }
 
     @Test
@@ -4259,6 +4482,40 @@ $layers
         // |d| <= mag * sqrt(1 + slack^2) ~ 124 at the pulse peaks, and the noise really moves.
         assertTrue(pos.all { abs(it.a) <= 130f && abs(it.b) <= 130f })
         assertTrue(pos.maxOf { Math.hypot(it.a.toDouble(), it.b.toDouble()) } > 5.0)
+        val again = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(pos, again.keyframes[AnimProp.POSITION])   // deterministic
+    }
+
+    @Test
+    fun shakeV1KeyframedSpeedEvolutionSeedLand() {
+        // Build 172: verbatim blxze-pack-v4 shake (one of its 11): speed ramps 7.5 -> 3 while
+        // evolution falls 10 -> 0 and the seed walks 0.1 -> 0 -> 0.000128. The phase at a frame
+        // is the def's formula with that frame's values, so a keyframed evolution re-times the
+        // noise directly; with static tracks the formula is exactly the old phase0 + speed
+        // integration. The differential pins prove each track lands: freezing any one of them
+        // to its t = 0 value changes the baked positions.
+        val xml = shapeWith(
+            """<effect id="com.alightcreative.effects.shake" locallyApplied="false"><property name="mag" type="float"><kf t="0.001876" v="15.000000" /><kf t="0.595989" v="0.000000" /></property><property name="speed" type="float"><kf t="0.001876" v="7.500000" /><kf t="0.595989" v="3.000000" /></property><property name="evolution" type="float"><kf t="0.001876" v="10.000000" /><kf t="0.595989" v="0.000000" /></property><property name="seed" type="float"><kf t="0.001876" v="0.100000" /><kf t="1.010791" v="0.000000" /><kf t="0.595989" v="0.000128" /></property><property name="angle" type="float" value="45.000000" /><property name="slack" type="float" value="0.250000" /></effect>"""
+        )
+        val r = AlightXmlImporter.parse(xml, 1080f)
+        assertTrue(r.warnings.none { it.contains("keyframed speed") || it.contains("keyframed evolution") || it.contains("keyframed seed") })
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        val pos = c.keyframes[AnimProp.POSITION]!!
+        assertTrue(pos.size >= 8)
+        // The port's simplex noise reaches ~4.2 (transcribed and measured: the t = 0 sample
+        // is -2.71), so |d| <= mag * ~4.2 * sqrt(1 + slack^2) ~ 65 at the pulse peak — the
+        // bound is the noise's range, not mag itself; and the noise really moves.
+        assertTrue(pos.all { abs(it.a) <= 75f && abs(it.b) <= 75f })
+        assertTrue(pos.maxOf { Math.hypot(it.a.toDouble(), it.b.toDouble()) } > 2.0)
+        assertTrue(pos.maxOf { Math.hypot(it.a.toDouble(), it.b.toDouble()) } <= 85.0)
+        val frozenEvo = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.shake" locallyApplied="false"><property name="mag" type="float"><kf t="0.001876" v="15.000000" /><kf t="0.595989" v="0.000000" /></property><property name="speed" type="float"><kf t="0.001876" v="7.500000" /><kf t="0.595989" v="3.000000" /></property><property name="evolution" type="float" value="10.000000" /><property name="seed" type="float"><kf t="0.001876" v="0.100000" /><kf t="1.010791" v="0.000000" /><kf t="0.595989" v="0.000128" /></property><property name="angle" type="float" value="45.000000" /><property name="slack" type="float" value="0.250000" /></effect>"""
+        ), 1080f).snapshot.tracks.flatMap { it.clips }[0].keyframes[AnimProp.POSITION]!!
+        assertTrue(pos != frozenEvo)   // the keyframed evolution changes the bake
+        val frozenSeed = AlightXmlImporter.parse(shapeWith(
+            """<effect id="com.alightcreative.effects.shake" locallyApplied="false"><property name="mag" type="float"><kf t="0.001876" v="15.000000" /><kf t="0.595989" v="0.000000" /></property><property name="speed" type="float"><kf t="0.001876" v="7.500000" /><kf t="0.595989" v="3.000000" /></property><property name="evolution" type="float"><kf t="0.001876" v="10.000000" /><kf t="0.595989" v="0.000000" /></property><property name="seed" type="float" value="0.000000" /><property name="angle" type="float" value="45.000000" /><property name="slack" type="float" value="0.250000" /></effect>"""
+        ), 1080f).snapshot.tracks.flatMap { it.clips }[0].keyframes[AnimProp.POSITION]!!
+        assertTrue(pos != frozenSeed)   // the keyframed seed changes the bake
         val again = AlightXmlImporter.parse(xml, 1080f).snapshot.tracks.flatMap { it.clips }[0]
         assertEquals(pos, again.keyframes[AnimProp.POSITION])   // deterministic
     }

@@ -1672,6 +1672,7 @@ fun VideoEditorScreen(
     val projectStore = remember { com.example.engine.ProjectStore(context) }
     val projectId by viewModel.projectId.collectAsState()
     var showProjects by remember { mutableStateOf(false) }
+    var showTemplates by remember { mutableStateOf(false) }
     var projectList by remember { mutableStateOf(emptyList<com.example.model.ProjectMeta>()) }
 
     // ---- Missing media substitution (build 111): files an imported preset points at lived on the
@@ -3687,6 +3688,7 @@ fun VideoEditorScreen(
                 exportProjectLauncher.launch(safe + "." + com.example.engine.ProjectArchive.EXTENSION)
             },
             onImport = { importProjectLauncher.launch(arrayOf("*/*")) },
+            onTemplates = { showProjects = false; showTemplates = true },
             missingMediaCount = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority).size,
             onFixMissingMedia = {
                 missingMediaItems = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority)
@@ -3705,6 +3707,40 @@ fun VideoEditorScreen(
                         projectStore.delete(id)
                         projectStore.list()
                     }
+                }
+            }
+        )
+    }
+
+    if (showTemplates) {
+        com.example.ui.components.TemplatesDialog(
+            onDismiss = { showTemplates = false },
+            onUseCarousel = {
+                scope.launch {
+                    saveProjectNow()
+                    val assets = withContext(Dispatchers.IO) {
+                        com.example.engine.TemplateAssets.carouselUris(context)
+                    }
+                    if (assets == null) {
+                        android.widget.Toast.makeText(
+                            context, "Could not prepare the template pictures", android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        return@launch
+                    }
+                    // Authored against the live preview frame, like an XML import; the template
+                    // itself is never mutated — this snapshot becomes a brand-new project.
+                    val snap = com.example.model.CarouselTemplate.build(
+                        previewFrameWidthPx, assets.backgroundUri, assets.cardUris
+                    )
+                    val meta = withContext(Dispatchers.IO) { projectStore.create("Carousel", snap) }
+                    viewModel.loadProject(snap, meta.id)
+                    withContext(Dispatchers.IO) { projectStore.lastId = meta.id }
+                    showTemplates = false
+                    android.widget.Toast.makeText(
+                        context,
+                        "Carousel template: tap a card, then Color → Fill → Image to use your own photo",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
             }
         )

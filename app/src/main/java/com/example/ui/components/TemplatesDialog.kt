@@ -66,6 +66,8 @@ import com.example.model.GenieSpec
 import com.example.model.GenieTemplate
 import com.example.model.LogoRevealSpec
 import com.example.model.LogoRevealTemplate
+import com.example.model.LowerThirdSpec
+import com.example.model.LowerThirdTemplate
 import com.example.model.PieCounterSpec
 import com.example.model.PieCounterTemplate
 import com.example.model.PopTitleSpec
@@ -102,6 +104,7 @@ fun TemplatesDialog(
     onAddPopTitle: () -> Unit,
     onAddLogoReveal: () -> Unit,
     onAddWordPop: () -> Unit,
+    onAddLowerThird: () -> Unit = {},
     onAddGenie: () -> Unit = {},
     onAddPieCounter: () -> Unit = {},
     onAddDonutChart: () -> Unit = {},
@@ -275,6 +278,28 @@ fun TemplatesDialog(
                         "Every word is its own layer: open the group, tap a word and " +
                         "retype it — Bengali included — or move, retime and recolour " +
                         "each word on its own.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                LowerThirdPreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Lower Third — Name Strap",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "A name and title slide in over an amber bar at the bottom left, hold, and slide out · 4s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddLowerThird, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "Open the group and retype the name and the title line — " +
+                        "Bengali included — the staging stays on your words.",
                     color = TextSecondary, fontSize = 12.sp
                 )
                 Spacer(Modifier.height(18.dp))
@@ -662,6 +687,67 @@ private fun WordPopPreview(modifier: Modifier = Modifier) {
                         scaleX = w.scalePercent / 100f
                         scaleY = w.scalePercent / 100f
                     }
+            )
+        }
+    }
+}
+
+/**
+ * Live preview of the Lower Third: the template built headlessly at a nominal 720x1280
+ * and EVALUATED — the very clips an insert would create, run through the model's own
+ * keyframe evaluator ([at]) on the frame clock — so what plays here is exactly what
+ * lands in the project (the bar growing at the bottom left, the name and subtitle
+ * sliding in beside it in turn, the hold, the shared slide-out, looping every 4 s).
+ * Each text is drawn centred on its evaluated position, the way the text painters
+ * centre a layer's line on the layer's position.
+ */
+@Composable
+private fun LowerThirdPreview(modifier: Modifier = Modifier) {
+    val ins = remember { LowerThirdTemplate.buildGroup(720f, 1280f, 0L, idBase = "preview") }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % LowerThirdSpec.DURATION_MS) + LowerThirdSpec.DURATION_MS) % LowerThirdSpec.DURATION_MS
+    val bar = ins.bar.at(t)
+    val name = ins.nameLayer.at(t)
+    val sub = ins.subtitleLayer.at(t)
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(9f / 16f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A3440), Color(0xFF12181F))))
+    ) {
+        val density = LocalDensity.current
+        // Preview px per nominal stored px; the nominal shape box is 720 x 130/360 = 260.
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(
+                    x = with(density) { (bar.transformX * unit).toDp() },
+                    y = with(density) { (bar.transformY * unit).toDp() }
+                )
+                .width(with(density) { (260f * bar.shapeScaleX * unit).toDp() })
+                .height(with(density) { (260f * bar.shapeScaleY * unit).toDp() })
+                .graphicsLayer { alpha = bar.opacity / 100f }
+                .background(Color(LowerThirdSpec.ACCENT.toInt()), RoundedCornerShape(50))
+        )
+        for ((clip, evaluated) in listOf(ins.nameLayer to name, ins.subtitleLayer to sub)) {
+            Text(
+                text = clip.text ?: "",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = with(density) { (evaluated.scalePercent / 100f * 0.11f * 720f * unit).toSp() },
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(
+                        x = with(density) { (evaluated.transformX * unit).toDp() },
+                        y = with(density) { (evaluated.transformY * unit).toDp() }
+                    )
+                    .graphicsLayer { alpha = evaluated.opacity / 100f }
             )
         }
     }

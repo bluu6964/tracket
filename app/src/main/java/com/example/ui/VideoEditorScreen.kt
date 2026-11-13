@@ -3848,6 +3848,19 @@ fun VideoEditorScreen(
                     android.widget.Toast.LENGTH_LONG
                 ).show()
             },
+            onAddLowerThird = {
+                // No pictures to prepare: two text layers + the accent bar, authored
+                // against the same live preview frame as the other text templates.
+                viewModel.insertLowerThirdTemplate(
+                    previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                )
+                showTemplates = false
+                android.widget.Toast.makeText(
+                    context,
+                    "Lower Third added as one group layer. Open the group and retype the name and title — the staging stays on your words",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            },
             onAddGenie = {
                 scope.launch {
                     val assets = withContext(Dispatchers.IO) {

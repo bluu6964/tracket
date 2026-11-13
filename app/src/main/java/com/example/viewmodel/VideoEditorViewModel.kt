@@ -15,6 +15,7 @@ import com.example.model.CarouselTemplate
 import com.example.model.DonutChartTemplate
 import com.example.model.GenieTemplate
 import com.example.model.LogoRevealTemplate
+import com.example.model.LowerThirdTemplate
 import com.example.model.PieCounterTemplate
 import com.example.model.PopTitleTemplate
 import com.example.model.SocialGrowthTemplate
@@ -1199,6 +1200,32 @@ class VideoEditorViewModel : ViewModel() {
             previewWidthPx, previewHeightPx,
             insertAtMs = _currentPlayheadMs.value,
             idBase = "wordpop-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null  // the group lands at the top level, like the Pop Title's
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates: inserts the "Lower Third" template into the CURRENT project as ONE
+     * Group layer at the playhead — an amber accent bar growing at the bottom left, a
+     * plain name TEXT layer staging in beside it and a plain subtitle TEXT layer at a
+     * static 58% staging in after it, then a shared slide/fade exit (see
+     * [LowerThirdTemplate.buildGroup] — the design banked in the 2026-11-13 STOP note).
+     * One undo step; the group ends up selected. No generated pictures are needed, so
+     * this runs on the caller's thread. Returns the group's id.
+     */
+    fun insertLowerThirdTemplate(
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String {
+        val insert = LowerThirdTemplate.buildGroup(
+            previewWidthPx, previewHeightPx,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "lowerthird-" + UUID.randomUUID().toString().take(8)
         )
         pushHistory()
         _editingGroupId.value = null  // the group lands at the top level, like the Pop Title's

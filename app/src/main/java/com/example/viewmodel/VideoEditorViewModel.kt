@@ -11,6 +11,7 @@ import com.example.model.MAX_CLIP_VOLUME
 import com.example.model.MAX_SPEED
 import com.example.model.AspectRatio
 import com.example.model.CarouselTemplate
+import com.example.model.LogoRevealTemplate
 import com.example.model.PopTitleTemplate
 import com.example.model.ControllerFanOut
 import com.example.model.ExportSettings
@@ -1112,6 +1113,34 @@ class VideoEditorViewModel : ViewModel() {
             previewWidthPx, previewHeightPx,
             insertAtMs = _currentPlayheadMs.value,
             idBase = "poptitle-" + UUID.randomUUID().toString().take(8)
+        )
+        pushHistory()
+        _editingGroupId.value = null  // the group lands at the top level, like the Carousel's
+        _tracks.value = LaneLayout.placeAll(_tracks.value, insert.lanesTopFirst)
+        setSelected(insert.group.id)
+        recomputeTotal()
+        return insert.group.id
+    }
+
+    /**
+     * Templates (logo-animation template #1): inserts the "Logo Reveal" template into the
+     * CURRENT project as ONE Group layer at the playhead — a logo slot (an image-filled
+     * shape fed by the generated placeholder, replaced like a Carousel card) that pops in,
+     * with a plain brand-name TEXT layer rising in under it, then a static hold (see
+     * [LogoRevealTemplate.buildGroup]). One undo step; the group ends up selected.
+     * [previewWidthPx] / [previewHeightPx] are the editor preview frame's size (the
+     * stored-units basis). Returns the group's id, or null when [logoUri] is blank.
+     */
+    fun insertLogoRevealTemplate(
+        logoUri: String,
+        previewWidthPx: Float,
+        previewHeightPx: Float
+    ): String? {
+        if (logoUri.isBlank()) return null
+        val insert = LogoRevealTemplate.buildGroup(
+            previewWidthPx, previewHeightPx, logoUri,
+            insertAtMs = _currentPlayheadMs.value,
+            idBase = "logoreveal-" + UUID.randomUUID().toString().take(8)
         )
         pushHistory()
         _editingGroupId.value = null  // the group lands at the top level, like the Carousel's

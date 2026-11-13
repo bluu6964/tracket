@@ -19,7 +19,8 @@ import java.io.File
  * APK. The carousel's background is the measured reference backdrop (vertical grey gradient +
  * 34 px grid, see [CarouselSpec]) rendered fresh; the 8 card pictures are neutral abstract
  * placeholders of our own (the reference video's card art is third-party work and is NOT
- * reused) — each is a slot the user replaces with their own photo.
+ * reused) — each is a slot the user replaces with their own photo. The Logo Reveal's
+ * placeholder is likewise our own abstract emblem ([logoBitmap]).
  */
 object TemplateAssets {
 
@@ -29,6 +30,7 @@ object TemplateAssets {
     private const val BG_W = 1440
     private const val BG_H = 900
     private const val CARD_PX = 288
+    private const val LOGO_PX = 512
 
     private fun lift(argb: Long, by: Int): Int {
         val r = ((argb shr 16) and 0xFF).toInt()
@@ -161,6 +163,50 @@ object TemplateAssets {
     }
 
     /**
+     * The Logo Reveal template's placeholder mark: a deep indigo → violet wash with one
+     * bold white emblem of our own (a ring around a diamond, over a soft glow disc).
+     * Abstract on purpose — it marks the logo slot the user replaces with their real logo
+     * (Color → Fill → Image); it is not a brand and not artwork to keep.
+     */
+    fun logoBitmap(): Bitmap {
+        val bmp = Bitmap.createBitmap(LOGO_PX, LOGO_PX, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val grad = LinearGradient(
+            0f, 0f, LOGO_PX.toFloat(), LOGO_PX.toFloat(),
+            0xFF3949AB.toInt(), 0xFF6A1B9A.toInt(), Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, LOGO_PX.toFloat(), LOGO_PX.toFloat(), Paint().apply { shader = grad })
+        val cx = LOGO_PX / 2f
+        val cy = LOGO_PX / 2f
+        // Soft glow disc under the emblem.
+        canvas.drawCircle(cx, cy, LOGO_PX * 0.36f, Paint().apply {
+            color = Color.WHITE
+            alpha = 36
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        })
+        // The ring.
+        canvas.drawCircle(cx, cy, LOGO_PX * 0.27f, Paint().apply {
+            color = Color.WHITE
+            alpha = 235
+            style = Paint.Style.STROKE
+            strokeWidth = LOGO_PX * 0.055f
+            isAntiAlias = true
+        })
+        // The diamond core.
+        val d = LOGO_PX * 0.115f
+        canvas.drawPath(Path().apply {
+            moveTo(cx, cy - d); lineTo(cx + d, cy); lineTo(cx, cy + d); lineTo(cx - d, cy); close()
+        }, Paint().apply {
+            color = Color.WHITE
+            alpha = 235
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        })
+        return bmp
+    }
+
+    /**
      * Generates the carousel's pictures into the app's own import storage (the same place the
      * XML import flow copies media to) and returns their uris, or null when a write fails.
      */
@@ -170,6 +216,11 @@ object TemplateAssets {
             saveToImports(context, placeholderBitmap(i), "carousel_card_${i + 1}.png") ?: return null
         }
         CarouselAssets(bg, cards)
+    }.getOrNull()
+
+    /** Generates the Logo Reveal placeholder into import storage; its uri, or null on failure. */
+    fun logoUri(context: Context): String? = runCatching {
+        saveToImports(context, logoBitmap(), "logo_reveal.png")
     }.getOrNull()
 
     /** Writes [bmp] as a PNG under filesDir/imports and returns its shareable uri (like

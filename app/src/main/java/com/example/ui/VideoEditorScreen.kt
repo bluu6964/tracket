@@ -3766,6 +3766,31 @@ fun VideoEditorScreen(
                     "Pop Title added as one group layer. Open the group and retype the text — the animation stays on your words",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
+            },
+            onAddLogoReveal = {
+                scope.launch {
+                    val uri = withContext(Dispatchers.IO) {
+                        com.example.engine.TemplateAssets.logoUri(context)
+                    }
+                    if (uri == null) {
+                        android.widget.Toast.makeText(
+                            context, "Could not prepare the template picture", android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        return@launch
+                    }
+                    val groupId = viewModel.insertLogoRevealTemplate(
+                        uri,
+                        previewFrameWidthPx, previewFrameWidthPx / selectedAspectRatio.ratioFloat
+                    )
+                    showTemplates = false
+                    android.widget.Toast.makeText(
+                        context,
+                        if (groupId != null)
+                            "Logo Reveal added as one group layer. Open the group, tap the logo, then Color → Fill → Image to use your own logo"
+                        else "Could not add the template",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         )
     }

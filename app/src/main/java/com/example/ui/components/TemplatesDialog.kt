@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -46,6 +48,8 @@ import androidx.compose.ui.unit.sp
 import com.example.engine.TemplateAssets
 import com.example.model.CarouselSpec
 import com.example.model.CarouselTemplate
+import com.example.model.LogoRevealSpec
+import com.example.model.LogoRevealTemplate
 import com.example.model.PopTitleSpec
 import com.example.model.PopTitleTemplate
 import com.example.model.at
@@ -59,13 +63,15 @@ private val DialogFill = Color(0xFF10161B)
  * user adds to the project that is OPEN. Templates live where layers are added — the
  * editor's + sheet — and choosing one inserts it into the current timeline as ONE Group
  * layer the user then customises in place (every picture in a template is a replaceable
- * slot). Two templates: the Carousel photo ring and the Pop Title text animation.
+ * slot). Three templates: the Carousel photo ring, the Pop Title text animation and the
+ * Logo Reveal logo animation.
  */
 @Composable
 fun TemplatesDialog(
     onDismiss: () -> Unit,
     onAddCarousel: () -> Unit,
-    onAddPopTitle: () -> Unit
+    onAddPopTitle: () -> Unit,
+    onAddLogoReveal: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -118,6 +124,29 @@ fun TemplatesDialog(
                     "Lands in this project's timeline at the playhead as a single group. " +
                         "Open the group and retype the text — the animation stays on your " +
                         "words, Bengali included.",
+                    color = TextSecondary, fontSize = 12.sp
+                )
+                Spacer(Modifier.height(18.dp))
+                LogoRevealPreview(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Logo Reveal — Logo Animation",
+                    color = HeaderText, fontWeight = FontWeight.SemiBold, fontSize = 16.sp
+                )
+                Text(
+                    "Your logo pops in and your brand name rises under it, then holds · 3s · added as one group layer",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onAddLogoReveal, modifier = Modifier.fillMaxWidth()) {
+                    Text("Add to project")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Lands in this project's timeline at the playhead as a single group. " +
+                        "To use your own logo: open the group, tap the logo, then " +
+                        "Color → Fill → Image and pick it. Retype the brand name — " +
+                        "Bengali included. Stretch the group longer to hold the reveal.",
                     color = TextSecondary, fontSize = 12.sp
                 )
             }
@@ -253,6 +282,60 @@ private fun PopTitlePreview(modifier: Modifier = Modifier) {
                     alpha = text.opacity / 100f
                     scaleX = text.scalePercent / 100f
                     scaleY = text.scalePercent / 100f
+                    translationY = text.transformY * unit
+                }
+        )
+    }
+}
+
+/**
+ * Live preview of the Logo Reveal: the template built headlessly at a nominal 720x405 and
+ * EVALUATED — the very clips an insert would create, run through the model's own keyframe
+ * evaluator ([at]) on the frame clock — so what plays here is exactly what lands in the
+ * project (the logo's Back-out pop, the name rising in under it, then the hold, looping
+ * every 3 s). The badge picture is the template's own generated placeholder.
+ */
+@Composable
+private fun LogoRevealPreview(modifier: Modifier = Modifier) {
+    val ins = remember { LogoRevealTemplate.buildGroup(720f, 405f, "", 0L, idBase = "preview") }
+    val logoArt = remember { TemplateAssets.logoBitmap().asImageBitmap() }
+    var frameMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            withFrameMillis { frameMs = it }
+        }
+    }
+    val t = ((frameMs % LogoRevealSpec.DURATION_MS) + LogoRevealSpec.DURATION_MS) % LogoRevealSpec.DURATION_MS
+    val logo = ins.logoLayer.at(t)
+    val text = ins.textLayer.at(t)
+    BoxWithConstraints(
+        modifier = modifier
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF2A3440), Color(0xFF12181F))))
+    ) {
+        val density = LocalDensity.current
+        // Preview px per nominal stored px; the nominal shape box is 720 x 130/360 = 260.
+        val unit = with(density) { maxWidth.toPx() } / 720f
+        Image(
+            bitmap = logoArt,
+            contentDescription = null,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = with(density) { (logo.transformY * unit).toDp() })
+                .size(with(density) { (260f * logo.shapeScaleX * unit).toDp() })
+                .clip(RoundedCornerShape(20))
+                .graphicsLayer { alpha = logo.opacity / 100f }
+        )
+        Text(
+            text = LogoRevealSpec.SAMPLE_TEXT,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = with(density) { (0.11f * 720f * unit).toSp() },
+            modifier = Modifier
+                .align(Alignment.Center)
+                .graphicsLayer {
+                    alpha = text.opacity / 100f
                     translationY = text.transformY * unit
                 }
         )

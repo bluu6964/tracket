@@ -82,6 +82,16 @@ import com.example.model.indexOnTime
 import com.example.model.segmentIndexAt
 import com.example.model.LayerType
 import com.example.model.TimelineClip
+import com.example.ui.theme.AmBase
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmHairlineStrong
+import com.example.ui.theme.AmInk
+import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmPanelHigh
+import com.example.ui.theme.AmTextFaint
+import com.example.ui.theme.AmTickMajor
+import com.example.ui.theme.AmTickMinor
 import com.example.ui.theme.CanvasBackground
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
@@ -90,6 +100,8 @@ import com.example.ui.theme.RulerSubTickColor
 import com.example.ui.theme.RulerTickColor
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.amGlassBrush
+import com.example.ui.theme.amMintCyanBrush
 import com.example.ui.util.bouncyClickable
 
 private enum class Transform2DPart { POSITION, SCALE, ROTATION }
@@ -246,7 +258,7 @@ fun TransformView(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(if (panelOnly) EditorBackground else Color(0xFF0F0F0F))
+            .background(if (panelOnly) EditorBackground else AmBase)
             .testTag("transform_screen")
     ) {
         if (panelOnly) {
@@ -272,8 +284,11 @@ fun TransformView(
                 .fillMaxWidth()
                 // In the editor the panel takes all the space under the layer strip.
                 .then(if (panelOnly) Modifier.weight(1f) else Modifier)
-                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                .background(Color(0xFF141414))
+                .glassSurface(
+                    RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                    fill = amGlassBrush()
+                )
+                .panelSheenStrip()
                 .padding(horizontal = 16.dp, vertical = 6.dp)
         ) {
             // Drag handle pill at top
@@ -282,7 +297,7 @@ fun TransformView(
                     .align(Alignment.CenterHorizontally)
                     .width(36.dp)
                     .height(4.dp)
-                    .background(Color(0xFF3F3F3F), RoundedCornerShape(2.dp))
+                    .background(AmHairlineStrong, RoundedCornerShape(2.dp))
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -494,17 +509,20 @@ fun TransformView(
                         modifier = Modifier
                             .weight(1f)
                             .height(38.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSelected) Color(0xFFF3F4F6) else Color(0xFF232323))
+                            .then(
+                                if (isSelected) Modifier.background(amMintCyanBrush(), RoundedCornerShape(8.dp))
+                                else Modifier
+                            )
                             .bouncyClickable(
                                 pressedScale = 0.94f,
                                 onClick = { activeTab = tab }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
+                        if (!isSelected) KitGlassTile(Modifier.matchParentSize())
                         Text(
                             text = tab.title,
-                            color = if (isSelected) Color(0xFF111111) else Color(0xFFE5E7EB),
+                            color = if (isSelected) AmInk else TextPrimary,
                             fontSize = 14.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                         )
@@ -521,7 +539,7 @@ fun TransformView(
 @Composable
 fun PivotTargetCrosshair(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier.size(36.dp)) {
-        val pinkColor = Color(0xFFABE41D)
+        val pinkColor = AmMint
         val cX = size.width / 2f
         val cY = size.height / 2f
         val centerRadius = 3.5.dp.toPx()
@@ -591,8 +609,8 @@ private fun PositionPad(
                 .weight(1f)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color(0xFF1A1A1A))
-                .border(1.dp, Color(0xFF2C2C2C), RoundedCornerShape(10.dp))
+                .background(AmPanel)
+                .border(1.dp, AmHairline, RoundedCornerShape(10.dp))
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -627,23 +645,23 @@ private fun PositionPad(
                 val grid = 24.dp.toPx()
                 var gx = w / 2f % grid
                 while (gx < w) {
-                    drawLine(Color(0xFF262626), Offset(gx, 0f), Offset(gx, h), strokeWidth = 1.dp.toPx())
+                    drawLine(AmTickMinor, Offset(gx, 0f), Offset(gx, h), strokeWidth = 1.dp.toPx())
                     gx += grid
                 }
                 var gy = h / 2f % grid
                 while (gy < h) {
-                    drawLine(Color(0xFF262626), Offset(0f, gy), Offset(w, gy), strokeWidth = 1.dp.toPx())
+                    drawLine(AmTickMinor, Offset(0f, gy), Offset(w, gy), strokeWidth = 1.dp.toPx())
                     gy += grid
                 }
                 // Center axes
-                drawLine(Color(0xFF4A4A4A), Offset(w / 2f, 0f), Offset(w / 2f, h), strokeWidth = 1.5.dp.toPx())
-                drawLine(Color(0xFF4A4A4A), Offset(0f, h / 2f), Offset(w, h / 2f), strokeWidth = 1.5.dp.toPx())
+                drawLine(AmTickMajor, Offset(w / 2f, 0f), Offset(w / 2f, h), strokeWidth = 1.5.dp.toPx())
+                drawLine(AmTickMajor, Offset(0f, h / 2f), Offset(w, h / 2f), strokeWidth = 1.5.dp.toPx())
                 // Current position
                 val r = 9.dp.toPx()
                 val dx = (w / 2f + (x / visualRange) * (w / 2f)).coerceIn(r, w - r)
                 val dy = (h / 2f + (y / visualRange) * (h / 2f)).coerceIn(r, h - r)
-                drawCircle(Color(0xFFABE41D).copy(alpha = 0.25f), radius = r * 1.9f, center = Offset(dx, dy))
-                drawCircle(Color(0xFFABE41D), radius = r, center = Offset(dx, dy))
+                drawCircle(AmMint.copy(alpha = 0.25f), radius = r * 1.9f, center = Offset(dx, dy))
+                drawCircle(AmMint, radius = r, center = Offset(dx, dy))
             }
         }
     }
@@ -664,15 +682,15 @@ private fun IconRail(
     ) {
         items.forEachIndexed { i, item ->
             val selected = i == selectedIndex
-            val tint = if (selected) Color(0xFFABE41D) else TextPrimary
+            val tint = if (selected) AmMint else TextPrimary
             Box(
                 modifier = Modifier
                     .size(width = 40.dp, height = 32.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) Color(0xFF2E2E2E) else Color.Transparent)
                     .bouncyClickable(onClick = { onSelect(i) }),
                 contentAlignment = Alignment.Center
             ) {
+                if (selected) KitGlassTile(Modifier.matchParentSize())
                 Icon(
                     imageVector = item.icon,
                     contentDescription = item.description,
@@ -715,7 +733,7 @@ internal fun TransformValueHeader(
     onEasing: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val accent = Color(0xFFABE41D)
+    val accent = AmMint
     Row(
         modifier = modifier.fillMaxWidth().height(40.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -763,7 +781,7 @@ internal fun TransformValueHeader(
                 modifier = Modifier
                     .size(22.dp)
                     .graphicsLayer { rotationZ = 45f }
-                    .background(if (onKeyframeNow) accent else Color(0xFF3B3B3B), RoundedCornerShape(3.dp))
+                    .background(if (onKeyframeNow) accent else AmPanelHigh, RoundedCornerShape(3.dp))
                     .then(
                         if (hasKeyframes && !onKeyframeNow) Modifier.border(1.5.dp, accent, RoundedCornerShape(3.dp))
                         else Modifier
@@ -788,7 +806,7 @@ internal fun TransformValueHeader(
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (easingOpen) Color(0xFF2E2E2E) else Color.Transparent)
+                .background(if (easingOpen) AmPanelHigh else Color.Transparent)
                 .bouncyClickable(onClick = { if (easingEnabled) onEasing() })
                 .testTag("transform_easing_button"),
             contentAlignment = Alignment.Center
@@ -797,9 +815,9 @@ internal fun TransformValueHeader(
                 drawEasingIcon(
                     easing = if (easingEnabled) easing else null,
                     color = when {
-                        !easingEnabled -> Color(0xFF4A4A4A)
+                        !easingEnabled -> AmTextFaint
                         easingOpen -> accent
-                        else -> Color(0xFFE5E7EB)
+                        else -> TextPrimary
                     },
                     strokeWidth = 2.dp.toPx()
                 )

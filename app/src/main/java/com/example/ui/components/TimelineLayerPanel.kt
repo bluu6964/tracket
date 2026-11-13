@@ -115,6 +115,16 @@ import com.example.model.MultiSelectOps
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
 import com.example.model.TimelineTrack
+import com.example.ui.theme.AmBaseDeep
+import com.example.ui.theme.AmCyanBright
+import com.example.ui.theme.AmDanger
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmInk
+import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmTextDim
+import com.example.ui.theme.AmTextFaint
+import com.example.ui.theme.AmViolet
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.IconActive
@@ -123,6 +133,9 @@ import com.example.ui.theme.NeonGreen
 import com.example.ui.theme.PlayheadColor
 import com.example.ui.theme.SelectedClipBorder
 import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.amCyanVioletBrush
+import com.example.ui.theme.amMintCyanBrush
+import com.example.ui.theme.amMintCyanVerticalBrush
 import com.example.ui.util.bouncyClickable
 import com.example.ui.util.neonGlow
 import com.example.ui.util.drawGlowLine
@@ -233,7 +246,7 @@ fun TimelineLayerPanel(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
-            .background(TimelineBlack)
+            .background(AmBaseDeep)
             .testTag("layer_panel_timeline")
             // One gesture loop: 1-finger horizontal = scrub/fling, 2-finger = pinch zoom.
             // detectTransformGestures was eating single-finger swipes, so this is unified.
@@ -521,6 +534,7 @@ fun TimelineLayerPanel(
                 .bouncyClickable(onClick = onToggleMasterAudio),
             contentAlignment = Alignment.Center
         ) {
+            KitGlassDisc(Modifier.matchParentSize())
             Icon(
                 imageVector = if (isMasterMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeDown,
                 contentDescription = "Master Audio",
@@ -532,6 +546,7 @@ fun TimelineLayerPanel(
         // 4. VERTICAL LOCKED PLAYHEAD LINE ("খারাভাবে middle এ locked timeline")
         // Reference look: 2.3 dp white line inside a 9 dp translucent band, round ends, starting just
         // under the ruler.
+        val thumbBmp = kitThumbBitmap()
         Canvas(
             modifier = Modifier
                 .width(12.dp)
@@ -541,14 +556,18 @@ fun TimelineLayerPanel(
             val cx = size.width / 2f
             val top = 3.dp.toPx()
             val bottom = size.height - 2.dp.toPx()
+            // Redesign Stage 2: the white line becomes the mint->cyan gradient inside a soft mint
+            // band, with a small glowing knob at the top. Widths and offsets are unchanged.
             drawLine(
-                Color.White.copy(alpha = 0.165f), Offset(cx, top + 4.5.dp.toPx()), Offset(cx, bottom - 4.5.dp.toPx()),
+                AmMint.copy(alpha = 0.10f), Offset(cx, top + 4.5.dp.toPx()), Offset(cx, bottom - 4.5.dp.toPx()),
                 strokeWidth = 9.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round
             )
             drawLine(
-                Color(0xFFF5F5F5), Offset(cx, top), Offset(cx, bottom),
+                amMintCyanVerticalBrush(), Offset(cx, top), Offset(cx, bottom),
                 strokeWidth = 2.3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round
             )
+            // The knob is the kit's glowing thumb asset (build 162) over the line's top.
+            drawKitThumb(thumbBmp, Offset(cx, top + 4.dp.toPx()), 11.dp.toPx())
         }
 
         // Round neon add button (bottom right). Sits above the selected-layer bar when it is shown.
@@ -595,7 +614,7 @@ fun TimelineLayerPanel(
                     label = "Master", tint = IconActive, onClick = onToggleMasterAudio,
                     modifier = Modifier.weight(1f), tag = "bar_master"
                 )
-                SelectedBarButton(Icons.Default.ContentCut, "Split", NeonCyan, onSplitClip, Modifier.weight(1f), tag = "bar_split")
+                SelectedBarButton(Icons.Default.ContentCut, "Split", AmMint, onSplitClip, Modifier.weight(1f), tag = "bar_split")
                 SelectedBarButton(Icons.Default.ContentCopy, "Copy", IconActive, onDuplicateClip, Modifier.weight(1f), tag = "bar_copy")
                 if (onSpeed != null) {
                     SelectedBarButton(Icons.Default.Speed, "Speed", IconActive, onSpeed, Modifier.weight(1f), tag = "bar_speed")
@@ -631,24 +650,26 @@ private fun SelectedBarButton(
     destructive: Boolean = false,
     tag: String = ""
 ) {
-    Column(
+    Box(
         modifier = modifier
             .fillMaxHeight()
             .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Brush.verticalGradient(listOf(PillTop, PillBottom)))
-            .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
             .bouncyClickable(onClick = onClick)
             .testTag(tag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        contentAlignment = Alignment.Center
     ) {
+        KitGlassPill(Modifier.matchParentSize())
+        Box(
+            Modifier
+                .matchParentSize()
+                .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
+        ) {}
         // Icon only (no name text); the label stays as the accessibility description.
         // A destructive action (Delete) reads red — the flag used to be accepted but never applied.
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = if (destructive) Color(0xFFFF6B6B) else tint,
+            tint = if (destructive) AmDanger else tint,
             modifier = Modifier.size(22.dp)
         )
     }
@@ -714,17 +735,6 @@ private fun LayerLaneControl(
             .height(height)
             .fillMaxWidth()
             .clip(pillShape)
-            .background(LanePillDark)
-            .border(
-                0.75.dp,
-                Brush.verticalGradient(
-                    listOf(
-                        Color.White.copy(alpha = pillBorderTop),
-                        Color.White.copy(alpha = 0.22f)
-                    )
-                ),
-                pillShape
-            )
             // Tap = select (or check/uncheck in multi-select); long press = start multi-select.
             .pointerInput(clip.id) {
                 detectTapGestures(
@@ -738,6 +748,26 @@ private fun LayerLaneControl(
                 )
             }
     ) {
+        // Kit glass pill under the lane content (build 162); the edge is drawn OVER it —
+        // selected lane: the cyan->violet edge of the redesign language; otherwise the
+        // familiar soft white edge.
+        KitGlassPill(Modifier.matchParentSize())
+        Box(
+            Modifier
+                .matchParentSize()
+                .border(
+                    0.75.dp,
+                    if (isSelected) Brush.verticalGradient(
+                        listOf(AmCyanBright.copy(alpha = 0.9f), AmViolet.copy(alpha = 0.55f))
+                    ) else Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = pillBorderTop),
+                            Color.White.copy(alpha = 0.22f)
+                        )
+                    ),
+                    pillShape
+                )
+        ) {}
         Row(
             modifier = Modifier
                 .fillMaxSize()
@@ -752,13 +782,13 @@ private fun LayerLaneControl(
                         Box(
                             modifier = Modifier
                                 .size(22.dp)
-                                .background(NeonLime, CircleShape),
+                                .background(amMintCyanBrush(), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Selected",
-                                tint = Color(0xFF0A0A0A),
+                                tint = AmInk,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -1045,7 +1075,6 @@ private fun TrimHandle(
                 if (isLeft) RoundedCornerShape(topStart = 9.dp, bottomStart = 9.dp, topEnd = 2.dp, bottomEnd = 2.dp)
                 else RoundedCornerShape(topEnd = 9.dp, bottomEnd = 9.dp, topStart = 2.dp, bottomStart = 2.dp)
             )
-            .background(Brush.verticalGradient(listOf(TrimHandleTop, TrimHandleBottom)))
             .pointerInput(pxPerMs, pxPerDp) {
                 var acc = 0f
                 detectHorizontalDragGestures(
@@ -1065,6 +1094,7 @@ private fun TrimHandle(
             },
         contentAlignment = Alignment.Center
     ) {
+        KitGlassTile(Modifier.matchParentSize())
         Icon(
             imageVector = if (isLeft) Icons.Default.ChevronLeft else Icons.Default.ChevronRight,
             contentDescription = if (isLeft) "Trim start" else "Trim end",
@@ -1117,10 +1147,10 @@ fun TimelineClipItem(
             }
             .clip(if (isChain) androidx.compose.ui.graphics.RectangleShape else RoundedCornerShape(8.dp))
             .bouncyClickable(pressedScale = 1f, onClick = onClick)
-            // Selected (single or multi-select): white bounding box (no inner shadow).
+            // Selected (single or multi-select): cyan->violet gradient edge (redesign language).
             .then(
                 if ((isSelected || isMultiSelected) && !isChain) {
-                    Modifier.border(1.5.dp, Color.White, RoundedCornerShape(8.dp))
+                    Modifier.border(1.5.dp, amCyanVioletBrush(), RoundedCornerShape(8.dp))
                 } else {
                     Modifier
                 }
@@ -1176,7 +1206,7 @@ fun TimelineClipItem(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFF1E1E1E))
+                            .background(AmPanel)
                     ) {
                         Row(
                             modifier = Modifier
@@ -1188,13 +1218,13 @@ fun TimelineClipItem(
                             Box(
                                 modifier = Modifier
                                     .size(22.dp)
-                                    .background(NeonGreen.copy(alpha = 0.25f), CircleShape),
+                                    .background(AmMint.copy(alpha = 0.25f), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Mic,
                                     contentDescription = "Mic",
-                                    tint = NeonGreen,
+                                    tint = AmMint,
                                     modifier = Modifier.size(14.dp)
                                 )
                             }
@@ -1203,7 +1233,7 @@ fun TimelineClipItem(
                                     modifier = Modifier
                                         .width(16.dp)
                                         .height(4.dp)
-                                        .background(Color(0xFF4B4B4B), RoundedCornerShape(2.dp))
+                                        .background(AmTextFaint, RoundedCornerShape(2.dp))
                                 )
                             }
                         }
@@ -1295,7 +1325,7 @@ fun TimelineClipItem(
                         lineTo(cx - half * 0.8f, cy)
                         close()
                     }
-                    drawPath(d, Color(0xFFB8B8B8), style = Stroke(width = 4.dp.toPx(), join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                    drawPath(d, AmTextDim, style = Stroke(width = 4.dp.toPx(), join = androidx.compose.ui.graphics.StrokeJoin.Round))
                     drawPath(d, Color.White)
                 }
             }
@@ -1447,7 +1477,7 @@ private fun VideoFrameStrip(
     val tilePxW = with(density) { ThumbTileWidth.roundToPx() }
     val tilePxH = with(density) { ThumbTileHeight.roundToPx() }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1B1B1B))) {
+    Box(modifier = Modifier.fillMaxSize().background(AmPanel)) {
         for (i in first..last) {
             val key: String
             var frameMs = 0L

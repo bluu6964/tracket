@@ -14,10 +14,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.FabBlueDeep
-import com.example.ui.theme.FabBlueLight
-import com.example.ui.theme.FabBlueMid
-import com.example.ui.theme.FabCyan
+import com.example.ui.theme.AmBaseDeep
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmCyanBright
+import com.example.ui.theme.AmVioletDeep
 import com.example.ui.util.bouncyClickable
 
 /**
@@ -45,43 +45,43 @@ fun NeonAddFab(
             // glow (drawn outside the bounds)
             drawCircle(
                 brush = Brush.radialGradient(
-                    0.50f to FabCyan.copy(alpha = 0.20f),
-                    0.72f to FabCyan.copy(alpha = 0.07f),
+                    0.50f to AmCyanBright.copy(alpha = 0.20f),
+                    0.72f to AmCyanBright.copy(alpha = 0.07f),
                     1.00f to Color.Transparent,
                     center = c, radius = d * 0.95f
                 ),
                 radius = d * 0.95f, center = c
             )
             // dark disc
-            drawCircle(Color(0xFF050505), radius = 26.2f * u, center = c)
+            drawCircle(AmBaseDeep, radius = 26.2f * u, center = c)
 
             // outer cyan ring: 280 degrees, gap at the upper right
             val ringStroke = 4.3f * u
             val ringR = 30.5f * u - ringStroke / 2f
             drawArc(
-                color = FabCyan,
+                color = AmCyanBright,
                 startAngle = -25f, sweepAngle = 280f, useCenter = false,
                 topLeft = Offset(c.x - ringR, c.y - ringR), size = Size(ringR * 2, ringR * 2),
                 style = Stroke(ringStroke, cap = StrokeCap.Round)
             )
 
-            // inner blue arcs
+            // inner arcs (redesign Stage 2: the blue family becomes cyan->violet)
             val innerR = 18.5f * u
             val innerStroke = 2.4f * u
             val tl = Offset(c.x - innerR, c.y - innerR)
             val sz = Size(innerR * 2, innerR * 2)
             drawArc(
-                color = FabBlueDeep,
+                color = AmVioletDeep,
                 startAngle = 183f, sweepAngle = 117f, useCenter = false,
                 topLeft = tl, size = sz,
                 style = Stroke(innerStroke, cap = StrokeCap.Round)
             )
             drawArc(
                 brush = Brush.sweepGradient(
-                    0.00f to FabBlueLight,
-                    0.25f to FabBlueMid,
-                    0.46f to FabBlueDeep,
-                    1.00f to FabBlueDeep,
+                    0.00f to AmCyanBright,
+                    0.25f to AmCyan,
+                    0.46f to AmVioletDeep,
+                    1.00f to AmVioletDeep,
                     center = c
                 ),
                 startAngle = 2f, sweepAngle = 162f, useCenter = false,

@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -54,6 +53,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -62,8 +63,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmHairline
 import com.example.ui.theme.EditorBackground
-import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
@@ -160,6 +161,10 @@ fun ClipEditToolsPanel(
             .fillMaxWidth()
             .height(height)
             .background(EditorBackground)
+            .drawBehind {
+                // Hairline separating the tools row from the timeline (redesign glass language).
+                drawLine(AmHairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx())
+            }
             .padding(vertical = 4.dp)
             .testTag("clip_edit_tools_panel"),
         verticalAlignment = Alignment.CenterVertically
@@ -169,7 +174,6 @@ fun ClipEditToolsPanel(
             modifier = Modifier
                 .padding(start = 8.dp, end = 6.dp)
                 .size(46.dp)
-                .clip(RoundedCornerShape(14.dp))
                 .bouncyClickable(
                     pressedScale = 0.88f,
                     hoverScale = 1.08f,
@@ -178,6 +182,7 @@ fun ClipEditToolsPanel(
                 .testTag("clip_tools_back_button"),
             contentAlignment = Alignment.Center
         ) {
+            KitGlassTile(Modifier.matchParentSize())
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "Exit Clip Edit",
@@ -191,7 +196,7 @@ fun ClipEditToolsPanel(
             modifier = Modifier
                 .width(1.dp)
                 .height(32.dp)
-                .background(Color(0xFF262C38))
+                .background(AmHairline)
         )
 
         // 2. Horizontal Scrolling Tools Panel (matching screenshot). A video layer can offer
@@ -211,7 +216,7 @@ fun ClipEditToolsPanel(
             verticalAlignment = Alignment.CenterVertically
         ) {
             items(tools) { tool ->
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxHeight()
                         .bouncyClickable(
@@ -246,12 +251,15 @@ fun ClipEditToolsPanel(
                                 }
                             }
                         )
-                        .clip(RoundedCornerShape(13.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
                         .testTag("clip_tool_${tool.id}"),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                    contentAlignment = Alignment.Center
                 ) {
+                    KitGlassTile(Modifier.matchParentSize())
+                    Column(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
                     val tint = IconActive
                     Icon(
                         imageVector = tool.icon,
@@ -269,6 +277,7 @@ fun ClipEditToolsPanel(
                         fontWeight = FontWeight.Normal,
                         maxLines = 1
                     )
+                    }
                 }
             }
         }

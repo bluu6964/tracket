@@ -31,12 +31,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.TIMELINE_PX_PER_MS
+import com.example.ui.theme.AmBaseDeep
+import com.example.ui.theme.AmCyanBright
+import com.example.ui.theme.AmOrange
+import com.example.ui.theme.AmTextFaint
 import com.example.ui.theme.IconActive
-import com.example.ui.theme.RulerGrey
-import com.example.ui.theme.RulerOrange
-import com.example.ui.theme.RulerTimePill
-import com.example.ui.theme.RulerTimeText
-import com.example.ui.theme.TimelineBlack
+import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
 import java.util.Locale
 
@@ -48,7 +48,7 @@ private val PillHeight = 19.dp
 private val BarWidth = 4.dp
 private val BarHeight = 16.5.dp
 private val MinBarPitch = 8.dp
-private val BeatMarkColor = Color(0xFF3DDCFF)
+private val BeatMarkColor = AmCyanBright
 private val TickSteps = longArrayOf(200L, 500L, 1000L, 2000L, 5000L, 10_000L, 30_000L, 60_000L)
 
 /**
@@ -73,7 +73,7 @@ fun TimescaleSection(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
-            .background(TimelineBlack)
+            .background(AmBaseDeep)
             .testTag("timescale_section")
     ) {
         val rightPillWidth = when {
@@ -94,12 +94,19 @@ fun TimescaleSection(
                     .testTag("panel_back_button"),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Back",
-                    tint = IconActive,
-                    modifier = Modifier.size(24.dp)
-                )
+                // Kit glass disc behind the chevron (build 162); the 44 dp hit area is unchanged.
+                Box(
+                    modifier = Modifier.size(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    KitGlassDisc(Modifier.matchParentSize())
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Back",
+                        tint = IconActive,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 
@@ -139,7 +146,7 @@ fun TimescaleSection(
                     val rightFade = 0.72f + 0.28f * ((areaEnd - x) / (pitch * 6f)).coerceIn(0f, 1f)
                     val alpha = minOf(leftFade, rightFade)
                     drawRoundRect(
-                        color = lerp(RulerGrey, RulerOrange, elapsed).copy(alpha = alpha),
+                        color = lerp(AmTextFaint, AmOrange, elapsed).copy(alpha = alpha),
                         topLeft = Offset(left, top),
                         size = Size(barW, barH),
                         cornerRadius = corner
@@ -175,10 +182,10 @@ fun TimescaleSection(
                 .padding(start = backInset + PillMargin)
                 .width(leftPillWidth)
                 .height(PillHeight)
-                .background(RulerTimePill, RoundedCornerShape(6.dp))
                 .testTag("playhead_time_pill"),
             contentAlignment = Alignment.Center
         ) {
+            KitGlassPill(Modifier.matchParentSize())
             PillText { formatClock(playheadMs()) }
         }
         Box(
@@ -187,10 +194,10 @@ fun TimescaleSection(
                 .padding(end = PillMargin)
                 .width(rightPillWidth)
                 .height(PillHeight)
-                .background(RulerTimePill, RoundedCornerShape(6.dp))
                 .testTag("total_time_pill"),
             contentAlignment = Alignment.Center
         ) {
+            KitGlassPill(Modifier.matchParentSize())
             PillText { formatClock(totalDurationMs) }
         }
     }
@@ -201,7 +208,7 @@ fun TimescaleSection(
 private fun PillText(text: () -> String) {
     Text(
         text = text(),
-        color = RulerTimeText,
+        color = TextPrimary,
         fontSize = 13.sp,
         fontWeight = FontWeight.Medium,
         textAlign = TextAlign.Center,

@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Category
@@ -32,11 +31,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.EditorSurface
-import com.example.ui.theme.EditorSurfaceVariant
-import com.example.ui.theme.IconActive
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
 import com.example.ui.util.bouncyClickable
 
 /** Opened by the round "+" button and the add-layer icon: what kind of layer to add. */
@@ -52,10 +50,11 @@ fun AddLayerSheet(
     onTemplates: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = EditorSurface) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .panelSheenStrip()
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 28.dp)
         ) {
@@ -78,17 +77,22 @@ fun AddLayerSheet(
 
 @Composable
 private fun RowScope.Item(label: String, icon: ImageVector, tag: String, onClick: () -> Unit) {
-    Column(
+    Box(
         modifier = Modifier
             .weight(1f)
-            .background(EditorSurfaceVariant, RoundedCornerShape(14.dp))
             .bouncyClickable(onClick = onClick)
-            .padding(vertical = 16.dp)
             .testTag(tag),
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentAlignment = Alignment.Center
     ) {
-        Icon(icon, label, tint = IconActive, modifier = Modifier.size(26.dp))
-        Spacer(Modifier.height(6.dp))
-        Text(label, color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        // Kit glass tile under the icon + label (build 162 asset redo).
+        KitGlassTile(Modifier.matchParentSize())
+        Column(
+            modifier = Modifier.padding(vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(icon, label, tint = AmCyan, modifier = Modifier.size(26.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(label, color = AmTextDim, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
     }
 }

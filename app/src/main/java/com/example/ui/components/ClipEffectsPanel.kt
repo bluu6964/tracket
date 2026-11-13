@@ -106,16 +106,19 @@ import com.example.model.ClipFx
 import com.example.model.ClipFxLibrary
 import com.example.model.FxDef
 import com.example.model.TimelineClip
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmInk
+import com.example.ui.theme.AmMicroLabel
+import com.example.ui.theme.AmPanelHigh
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorBackground
-import com.example.ui.theme.EditorSurfaceVariant
-import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.amCyanVioletBrush
+import com.example.ui.theme.amGlassBrush
+import com.example.ui.theme.amMintCyanBrush
 import com.example.ui.util.bouncyClickable
-
-/** Dark inside of an effect card: the ruler ticks of [RulerDialSlider] (grey) show best on it, as in Transform. */
-private val CardBody = Color(0xFF1B1B1B)
-private val CardLine = Color(0xFF333333)
 
 /**
  * Effects panel (same place and look as Transform / Animations: the timescale and the selected layer stay visible
@@ -161,18 +164,25 @@ fun ClipEffectsPanel(
                 Box(
                     modifier = Modifier
                         .padding(end = 8.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (on) NeonCyan else EditorSurfaceVariant)
                         .bouncyClickable(onClick = { category = cat })
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
                         .testTag("fx_category_$cat"),
                     contentAlignment = Alignment.Center
                 ) {
+                    KitGlassPill(Modifier.matchParentSize())
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .then(
+                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RoundedCornerShape(16.dp))
+                                else Modifier.border(1.dp, AmHairline, RoundedCornerShape(16.dp))
+                            )
+                    ) {}
                     Text(
                         cat,
-                        color = if (on) Color.Black else TextPrimary,
+                        color = if (on) TextPrimary else AmTextDim,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
             }
@@ -210,11 +220,11 @@ fun ClipEffectsPanel(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "Applied",
-                color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                color = AmTextDim, style = AmMicroLabel,
                 modifier = Modifier.weight(1f)
             )
             if (effects.isNotEmpty()) {
-                Text("${effects.size} / ${ClipFxLibrary.MAX_EFFECTS}", color = TextSecondary, fontSize = 12.sp)
+                Text("${effects.size} / ${ClipFxLibrary.MAX_EFFECTS}", color = AmTextDim, fontSize = 12.sp)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -222,14 +232,14 @@ fun ClipEffectsPanel(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, CardLine, RoundedCornerShape(14.dp))
+                    .glassSurface(RoundedCornerShape(14.dp), fill = amGlassBrush())
+                    .panelSheenStrip()
                     .padding(vertical = 18.dp, horizontal = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     "Nothing yet. Tap an effect above to add it to this layer.",
-                    color = TextSecondary, fontSize = 13.sp
+                    color = AmTextDim, fontSize = 13.sp
                 )
             }
         }
@@ -240,12 +250,12 @@ fun ClipEffectsPanel(
                 modifier = Modifier
                     .padding(bottom = 10.dp)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(CardBody)
-                    .border(
-                        if (selected) 1.5.dp else 1.dp,
-                        if (selected) NeonCyan else CardLine,
-                        RoundedCornerShape(14.dp)
+                    .glassSurface(
+                        RoundedCornerShape(14.dp),
+                        fill = amGlassBrush(),
+                        borderColor = AmHairline,
+                        borderBrush = if (selected) amCyanVioletBrush() else null,
+                        borderWidth = if (selected) 1.5.dp else 1.dp
                     )
                     .testTag("fx_row_${fx.type}")
             ) {
@@ -253,21 +263,19 @@ fun ClipEffectsPanel(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(if (selected) Color(0xFF262626) else Color.Transparent)
+                        .background(if (selected) AmPanelHigh.copy(alpha = 0.6f) else Color.Transparent)
                         .bouncyClickable(pressedScale = 0.99f, onClick = { selectedId = if (selected) null else fx.id })
                         .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(EditorSurfaceVariant),
+                        modifier = Modifier.size(34.dp),
                         contentAlignment = Alignment.Center
                     ) {
+                        KitGlassTile(Modifier.matchParentSize())
                         Icon(
                             fxIcon(def.id), contentDescription = null,
-                            tint = if (!fx.enabled) TextSecondary else if (selected) NeonCyan else Color.White,
+                            tint = if (!fx.enabled) TextSecondary else if (selected) AmCyan else Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -275,7 +283,7 @@ fun ClipEffectsPanel(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             def.name,
-                            color = if (!fx.enabled) TextSecondary else if (selected) NeonCyan else TextPrimary,
+                            color = if (!fx.enabled) TextSecondary else if (selected) AmCyan else TextPrimary,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -377,22 +385,25 @@ fun ClipEffectsPanel(
                                 modifier = Modifier.testTag("fx_slider_${fx.type}_$idx")
                             )
                         }
-                        Row(
+                        Box(
                             modifier = Modifier
                                 .padding(top = 4.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(EditorSurfaceVariant)
                                 .bouncyClickable(onClick = {
                                     val vals = def.params.map { it.default } + fx.values.drop(def.params.size)
                                     onChange(effects.map { if (it.id == fx.id) it.copy(values = vals) else it })
                                 })
-                                .padding(horizontal = 12.dp, vertical = 11.dp)
                                 .testTag("fx_reset_${fx.type}"),
-                            verticalAlignment = Alignment.CenterVertically
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(16.dp))
+                            KitGlassPill(Modifier.matchParentSize())
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = AmCyan, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Reset", color = NeonCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Reset", color = AmCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
@@ -423,15 +434,15 @@ private fun KeyPickerRow(swatch: Color, onPick: () -> Unit) {
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(18.dp))
-                .background(NeonCyan)
+                .background(amMintCyanBrush())
                 .bouncyClickable(onClick = onPick)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .testTag("fx_key_pick"),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Colorize, contentDescription = null, tint = Color.Black, modifier = Modifier.size(17.dp))
+            Icon(Icons.Default.Colorize, contentDescription = null, tint = AmInk, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
-            Text("Pick from picture", color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("Pick from picture", color = AmInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -505,12 +516,10 @@ private fun FxTile(def: FxDef, full: Boolean, onClick: () -> Unit) {
     ) {
         Box(modifier = Modifier.size(64.dp)) {
             Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(EditorSurfaceVariant),
+                modifier = Modifier.size(64.dp),
                 contentAlignment = Alignment.Center
             ) {
+                KitGlassTile(Modifier.matchParentSize())
                 Icon(
                     fxIcon(def.id), contentDescription = def.name,
                     tint = if (full) TextSecondary else Color.White, modifier = Modifier.size(28.dp)
@@ -522,10 +531,10 @@ private fun FxTile(def: FxDef, full: Boolean, onClick: () -> Unit) {
                     .align(Alignment.TopEnd)
                     .size(20.dp)
                     .clip(CircleShape)
-                    .background(if (full) Color(0xFF555555) else NeonCyan),
+                    .background(if (full) Color(0xFF3A4058) else amMintCyanBrush()),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.Add, contentDescription = null, tint = if (full) TextSecondary else AmInk, modifier = Modifier.size(14.dp))
             }
         }
         Spacer(Modifier.height(6.dp))

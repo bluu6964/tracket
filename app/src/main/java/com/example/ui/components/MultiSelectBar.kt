@@ -25,10 +25,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.example.model.MultiAction
 import com.example.model.MultiBarMode
+import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
 
-private val BarColor = Color(0xFF363636)
-private val TileColor = Color(0xFF505050)
 private val IconColor = Color.White
 
 /**
@@ -46,8 +45,8 @@ fun MultiSelectBar(
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .height(54.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(BarColor)
+            .glassSurface(RoundedCornerShape(14.dp), fill = amGlassBrush())
+            .panelSheenStrip()
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -110,11 +109,10 @@ private fun AlignTile(
     Box(
         modifier = Modifier
             .size(width = 34.dp, height = 36.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(TileColor)
             .bouncyClickable { onAction(action) },
         contentAlignment = Alignment.Center
     ) {
+        KitGlassTile(Modifier.matchParentSize())
         Canvas(modifier = Modifier.size(width = 24.dp, height = 20.dp)) { draw() }
     }
 }

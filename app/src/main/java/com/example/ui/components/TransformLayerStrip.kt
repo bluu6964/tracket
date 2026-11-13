@@ -70,6 +70,9 @@ import androidx.compose.ui.unit.sp
 import com.example.model.LayerType
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.model.TimelineClip
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmTextFaint
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.PlayheadColor
@@ -140,11 +143,10 @@ fun TransformHeaderBar(
                     .align(Alignment.CenterEnd)
                     .padding(end = 12.dp)
                     .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF1D1D1D))
                     .bouncyClickable(onClick = onReset),
                 contentAlignment = Alignment.Center
             ) {
+                KitGlassTile(Modifier.matchParentSize())
                 Icon(Icons.Default.Refresh, "Reset", tint = IconActive, modifier = Modifier.size(20.dp))
             }
         }
@@ -217,7 +219,7 @@ fun TransformPlaybackRow(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.Undo, "Undo",
-                    tint = if (canUndo) IconActive else Color(0xFF4A4A4A),
+                    tint = if (canUndo) IconActive else AmTextFaint,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -227,7 +229,7 @@ fun TransformPlaybackRow(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.Redo, "Redo",
-                    tint = if (canRedo) IconActive else Color(0xFF4A4A4A),
+                    tint = if (canRedo) IconActive else AmTextFaint,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -362,12 +364,10 @@ fun TransformLayerStrip(
                 .align(Alignment.CenterStart)
                 .padding(start = 12.dp)
                 .size(32.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color(0xFF1D1D1D))
-                .border(1.dp, Color(0xFF333333), RoundedCornerShape(6.dp))
                 .bouncyClickable(onClick = onReset),
             contentAlignment = Alignment.Center
         ) {
+            KitGlassTile(Modifier.matchParentSize())
             Icon(Icons.Default.Refresh, "Reset Transform", tint = IconActive, modifier = Modifier.size(18.dp))
         }
 
@@ -490,5 +490,5 @@ private fun stripShapeColor(clip: TimelineClip): Color {
     val r = ((raw shr 16) and 0xFF).toInt()
     val g = ((raw shr 8) and 0xFF).toInt()
     val b = (raw and 0xFF).toInt()
-    return if (a == 0 && r == 0 && g == 0 && b == 0) Color(0xFFABE41D) else Color(r, g, b, if (a == 0) 255 else a)
+    return if (a == 0 && r == 0 && g == 0 && b == 0) AmMint else Color(r, g, b, if (a == 0) 255 else a)
 }

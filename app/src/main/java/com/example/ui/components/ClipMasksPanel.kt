@@ -52,10 +52,13 @@ import com.example.model.MaskState
 import com.example.model.TimelineClip
 import com.example.model.sourceOffsetMs
 import com.example.model.neighbourKey
-import com.example.ui.theme.EditorSurfaceVariant
-import com.example.ui.theme.NeonCyan
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmMicroLabel
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.amCyanVioletBrush
 import com.example.ui.util.bouncyClickable
 
 /** Width / height of the layer's picture (the mask boxes are square in pixels, so the panel must know it). */
@@ -124,7 +127,7 @@ fun ClipMasksPanel(
             return@Column
         }
 
-        Text("Add a mask", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text("Add a mask", color = AmTextDim, style = AmMicroLabel)
         Spacer(Modifier.height(6.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(addTiles) { (id, label) ->
@@ -149,28 +152,36 @@ fun ClipMasksPanel(
         }
         Spacer(Modifier.height(14.dp))
 
-        Text("Masks (combined top to bottom)", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text("Masks (combined top to bottom)", color = AmTextDim, style = AmMicroLabel)
         Spacer(Modifier.height(6.dp))
         if (masks.isEmpty()) {
             Text("Nothing yet. Tap a shape above, then drag it on the picture.", color = TextSecondary, fontSize = 13.sp)
         }
         masks.forEachIndexed { idx, m ->
             val on = m.id == selectedId
-            Row(
+            Box(
                 modifier = Modifier
                     .padding(bottom = 8.dp)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(EditorSurfaceVariant)
-                    .border(if (on) 1.5.dp else 0.dp, if (on) NeonCyan else Color.Transparent, RoundedCornerShape(12.dp))
                     .bouncyClickable(pressedScale = 0.99f, onClick = { onSelect(if (on) null else m.id) })
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
                     .testTag("mask_row_$idx"),
-                verticalAlignment = Alignment.CenterVertically
+                contentAlignment = Alignment.Center
             ) {
+                KitGlassPill(Modifier.matchParentSize())
+                if (on) Box(
+                    Modifier
+                        .matchParentSize()
+                        .border(1.5.dp, amCyanVioletBrush(), RoundedCornerShape(12.dp))
+                ) {}
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                 Text(
                     "${idx + 1}. ${MaskShape.names[m.shape] ?: "Mask"}" + (if (m.isAnimated) "  ◆" else ""),
-                    color = if (!m.enabled) TextSecondary else if (on) NeonCyan else TextPrimary,
+                    color = if (!m.enabled) TextSecondary else if (on) AmCyan else TextPrimary,
                     fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
@@ -194,6 +205,7 @@ fun ClipMasksPanel(
                     if (selectedId == m.id) onSelect(null)
                     onChange(masks.filter { it.id != m.id })
                 }
+                }
             }
         }
 
@@ -204,7 +216,7 @@ fun ClipMasksPanel(
             val keyIdx = selected.keyIndexAt(rel)
             fun edit(ns: MaskState) = replace(selected.withShownStateAt(rel, src, ns))
             Spacer(Modifier.height(6.dp))
-            Text("Combine", color = TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("Combine", color = AmTextDim, style = AmMicroLabel)
             Spacer(Modifier.height(6.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(MaskMode.names) { (mode, label) ->
@@ -320,17 +332,24 @@ private fun MaskSlider(label: String, value: Float, min: Float, max: Float, unit
 private fun Chip(label: String, on: Boolean, enabled: Boolean = true, tag: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (on) NeonCyan else EditorSurfaceVariant)
             .bouncyClickable(onClick = { if (enabled) onClick() })
-            .padding(horizontal = 14.dp, vertical = 6.dp)
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
+        KitGlassPill(Modifier.matchParentSize())
+        Box(
+            Modifier
+                .matchParentSize()
+                .then(
+                    if (on) Modifier.border(1.dp, amCyanVioletBrush(), RoundedCornerShape(16.dp))
+                    else Modifier.border(1.dp, AmHairline, RoundedCornerShape(16.dp))
+                )
+        ) {}
         Text(
             label,
-            color = if (!enabled) TextSecondary else if (on) Color.Black else TextPrimary,
-            fontSize = 13.sp, fontWeight = FontWeight.SemiBold
+            color = if (!enabled) TextSecondary else TextPrimary,
+            fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
         )
     }
 }
@@ -369,12 +388,10 @@ private fun ShapeTile(id: String, label: String, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(EditorSurfaceVariant),
+            modifier = Modifier.size(56.dp),
             contentAlignment = Alignment.Center
         ) {
+            KitGlassTile(Modifier.matchParentSize())
             Canvas(Modifier.size(30.dp)) { drawGlyph(id) }
         }
         Spacer(Modifier.height(4.dp))

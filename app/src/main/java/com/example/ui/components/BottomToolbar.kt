@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -46,19 +45,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.AmCornerItem
 import com.example.ui.theme.AmDanger
 import com.example.ui.theme.AmHairline
 import com.example.ui.theme.AmInk
-import com.example.ui.theme.AmMint
 import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.amGlassChipBrush
 import com.example.ui.theme.amMintCyanBrush
 import com.example.ui.util.bouncyClickable
-import com.example.ui.util.neonCircleGlow
 
 @Composable
 fun BottomToolbar(
@@ -103,27 +98,38 @@ private fun RowScope.ToolbarItem(
     onClick: () -> Unit,
     primary: Boolean = false
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .weight(1f)
             .fillMaxHeight()
-            .glassSurface(RoundedCornerShape(AmCornerItem), fill = amGlassChipBrush())
             .bouncyClickable(pressedScale = 0.94f, hoverScale = 1.015f, onClick = onClick)
-            .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag(testTag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        contentAlignment = Alignment.Center
     ) {
+        // Kit glass tile under the code-drawn icon + label (build 162 asset redo).
+        KitGlassTile(Modifier.matchParentSize())
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 2.dp, vertical = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
         if (primary) {
             Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .neonCircleGlow(AmMint)
-                    .background(amMintCyanBrush(), CircleShape)
-                    .clip(CircleShape),
+                modifier = Modifier.size(38.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, label, tint = AmInk, modifier = Modifier.size(21.dp))
+                KitGlowRing(Modifier.size(54.dp))
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .background(amMintCyanBrush(), CircleShape)
+                        .clip(CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, label, tint = AmInk, modifier = Modifier.size(21.dp))
+                }
             }
         } else {
             Box(
@@ -141,6 +147,7 @@ private fun RowScope.ToolbarItem(
             fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1
         )
+        }
     }
 }
 
@@ -225,21 +232,27 @@ fun ChainAddPanel(
 @Composable
 private fun ChainToolItem(label: String, icon: ImageVector, testTag: String, onClick: () -> Unit) {
     val destructive = label == "Delete"
-    Column(
+    Box(
         modifier = Modifier
             .width(62.dp)
             .fillMaxHeight()
-            .glassSurface(RoundedCornerShape(AmCornerItem), fill = amGlassChipBrush())
             .bouncyClickable(pressedScale = 0.94f, hoverScale = 1.015f, onClick = onClick)
-            .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag(testTag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        contentAlignment = Alignment.Center
     ) {
+        KitGlassTile(Modifier.matchParentSize())
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 2.dp, vertical = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
         Box(modifier = Modifier.size(38.dp), contentAlignment = Alignment.Center) {
             Icon(icon, label, tint = if (destructive) AmDanger else IconActive, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(3.dp))
         Text(label, color = AmTextDim, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        }
     }
 }

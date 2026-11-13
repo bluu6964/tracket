@@ -40,7 +40,6 @@ import com.example.ui.theme.AmInk
 import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.amGlassBrush
-import com.example.ui.theme.amGlassChipBrush
 import com.example.ui.util.bouncyClickable
 
 /**
@@ -79,6 +78,7 @@ fun EditorHeader(
                 .fillMaxWidth()
                 .height(barH)
                 .glassSurface(CircleShape, fill = amGlassBrush())
+                .panelSheenStrip()
         ) {
             // ── Close ──────────────────────────────────────────────
             Box(
@@ -87,12 +87,12 @@ fun EditorHeader(
                     .padding(start = 12.dp)
                     .width(btnH * 1.27f)
                     .height(btnH)
-                    .glassSurface(RoundedCornerShape(btnH * 0.45f), fill = amGlassChipBrush())
                     .semantics { contentDescription = "Back to projects" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onBackClick)
                     .testTag("header_back_button"),
                 contentAlignment = Alignment.Center
             ) {
+                KitGlassTile(Modifier.matchParentSize())
                 Canvas(Modifier.size(15.dp)) {
                     val c = TextPrimary
                     val w = 2.7.dp.toPx()
@@ -108,12 +108,14 @@ fun EditorHeader(
                     .align(Alignment.CenterStart)
                     .offset(x = 104.dp - 20.dp)
                     .size(40.dp)
-                    .glassSurface(RoundedCornerShape(12.dp), fill = amGlassChipBrush())
                     .semantics { contentDescription = "Save frame as picture" }
                     .bouncyClickable(onClick = onSaveFrameClick)
                     .testTag("header_save_frame_button"),
                 contentAlignment = Alignment.Center
-            ) { SaveFrameGlyph() }
+            ) {
+                KitGlassTile(Modifier.matchParentSize())
+                SaveFrameGlyph()
+            }
 
             // ── Resolution pill + Export ───────────────────────────
             Row(
@@ -123,15 +125,19 @@ fun EditorHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Row(
+                Box(
                     modifier = Modifier
                         .height(btnH - 4.dp)
-                        .glassSurface(CircleShape, fill = amGlassChipBrush())
+                        .semantics { contentDescription = "Preview resolution" }
                         .bouncyClickable(pressedScale = 0.95f, onClick = onResolutionClick)
-                        .padding(horizontal = 14.dp)
                         .testTag("header_resolution_pill"),
-                    verticalAlignment = Alignment.CenterVertically
+                    contentAlignment = Alignment.Center
                 ) {
+                    KitGlassPill(Modifier.matchParentSize())
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                     Text(resolutionLabel, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     Spacer(Modifier.width(8.dp))
                     Canvas(Modifier.size(width = 8.dp, height = 5.5.dp)) {
@@ -140,6 +146,7 @@ fun EditorHeader(
                         }
                         drawPath(p, TextPrimary)
                         drawPath(p, TextPrimary, style = Stroke(1.2.dp.toPx(), join = StrokeJoin.Round))
+                    }
                     }
                 }
                 GradientPillButton(
@@ -240,6 +247,7 @@ fun LayerHeader(
                 .fillMaxWidth()
                 .height(barH)
                 .glassSurface(CircleShape, fill = amGlassBrush())
+                .panelSheenStrip()
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -248,12 +256,12 @@ fun LayerHeader(
                 modifier = Modifier
                     .width(btnH * 1.27f)
                     .height(btnH)
-                    .glassSurface(RoundedCornerShape(btnH * 0.45f), fill = amGlassChipBrush())
                     .semantics { contentDescription = "Back to layers" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onBack)
                     .testTag("layer_header_back"),
                 contentAlignment = Alignment.Center
             ) {
+                KitGlassTile(Modifier.matchParentSize())
                 Canvas(Modifier.size(15.dp)) {
                     val w = 2.7.dp.toPx()
                     val m = w / 2f
@@ -284,12 +292,12 @@ fun LayerHeader(
                 Box(
                     modifier = Modifier
                         .size(btnH)
-                        .glassSurface(CircleShape, fill = amGlassChipBrush())
                         .semantics { contentDescription = if (visible) "Hide layer" else "Show layer" }
                         .bouncyClickable(pressedScale = 0.92f, onClick = onToggleVisible)
                         .testTag("layer_header_eye"),
                     contentAlignment = Alignment.Center
                 ) {
+                    KitGlassDisc(Modifier.matchParentSize())
                     Canvas(Modifier.size(18.dp)) {
                         val u = size.width / 18f
                         val c = if (visible) AmCyan else TextPrimary.copy(alpha = 0.5f)
@@ -311,12 +319,12 @@ fun LayerHeader(
             Box(
                 modifier = Modifier
                     .size(btnH)
-                    .glassSurface(CircleShape, fill = amGlassChipBrush())
                     .semantics { contentDescription = "Rename layer" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onRename)
                     .testTag("layer_header_rename"),
                 contentAlignment = Alignment.Center
             ) {
+                KitGlassDisc(Modifier.matchParentSize())
                 Canvas(Modifier.size(16.dp)) {
                     val u = size.width / 16f
                     val st = Stroke(1.8f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)

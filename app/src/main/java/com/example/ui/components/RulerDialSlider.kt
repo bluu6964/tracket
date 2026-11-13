@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.size
@@ -37,13 +36,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.AmCornerMicro
 import com.example.ui.theme.AmCyan
 import com.example.ui.theme.AmMint
 import com.example.ui.theme.AmTickMajor
 import com.example.ui.theme.AmTickMinor
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.amGlassChipBrush
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
@@ -81,6 +78,7 @@ fun RulerDial(
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val scope = rememberCoroutineScope()
     val flingJob = remember { arrayOfNulls<Job>(1) }
+    val thumbBmp = kitThumbBitmap()
 
     Box(
         modifier = modifier
@@ -204,6 +202,9 @@ fun RulerDial(
                 strokeWidth = 2.5.dp.toPx(),
                 cap = StrokeCap.Round
             )
+            // The needle's jewel: the kit's glowing thumb asset centred on the line
+            // (build 162 — a rendered core + halo instead of the flat halo line alone).
+            drawKitThumb(thumbBmp, Offset(centerX, h / 2f), 15.dp.toPx())
         }
     }
 }
@@ -285,13 +286,10 @@ fun RulerDialSlider(
         if (showValue) Box(
             modifier = Modifier
                 .width(68.dp)
-                .height(30.dp)
-                .glassSurface(
-                    RoundedCornerShape(AmCornerMicro),
-                    fill = amGlassChipBrush()
-                ),
+                .height(30.dp),
             contentAlignment = Alignment.Center
         ) {
+            KitGlassPill(Modifier.matchParentSize())
             Text(
                 text = displayValue,
                 color = TextPrimary,

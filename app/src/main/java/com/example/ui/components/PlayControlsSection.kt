@@ -5,12 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,13 +34,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.AmBase
 import com.example.ui.theme.AmCornerMicro
-import com.example.ui.theme.AmMint
 import com.example.ui.theme.IconDisabled
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.amGlassChipBrush
-import com.example.ui.theme.amMintCyanBrush
 import com.example.ui.util.bouncyClickable
-import com.example.ui.util.neonCircleGlow
 
 private val IconWhite = Color(0xFFF2F2F2)
 private val BadgeOrange = Color(0xFFFF8C00)
@@ -123,23 +120,18 @@ fun PlayControlsSection(
             }
         }
 
-        // ── Centre: play / pause — glass disc, gradient ring, the bar's one glow ──
+        // ── Centre: play / pause — kit glow ring + glass disc, the bar's one glow ──
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
                 .size(44.dp)
-                .neonCircleGlow(AmMint)
-                .glassSurface(
-                    CircleShape,
-                    fill = amGlassChipBrush(),
-                    borderBrush = amMintCyanBrush(),
-                    borderWidth = 1.5.dp
-                )
                 .semantics { contentDescription = if (isPlaying) "Pause" else "Play" }
                 .bouncyClickable(pressedScale = 0.88f, onClick = onPlayPauseClick)
                 .testTag("play_pause_button"),
             contentAlignment = Alignment.Center
         ) {
+            KitGlowRing(Modifier.size(66.dp))
+            KitGlassDisc(Modifier.fillMaxSize())
             PlayGlyph(isPlaying)
         }
 

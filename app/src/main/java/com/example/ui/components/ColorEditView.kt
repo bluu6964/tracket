@@ -85,8 +85,14 @@ import com.example.model.GRAD_LINEAR
 import com.example.model.GRAD_RADIAL
 import com.example.model.GRAD_SWEEP
 import com.example.model.TimelineClip
+import com.example.ui.theme.AmBase
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmPanelHigh
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
 import java.util.Locale
 import kotlin.math.atan2
@@ -94,10 +100,12 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private val CePanelBg = Color(0xFF202233)
-private val CeTabBg = Color(0xFF33364F)
-private val CeInnerBg = Color(0xFF151722)
-private val CeAccent = Color(0xFF22E6A8)
+// Redesign Stage 2: the sheet's flat navy palette now points at the shared design tokens
+// (panel glass, raised chip tone, recessed base, mint accent). Same geometry and layout.
+private val CePanelBg = AmPanel
+private val CeTabBg = AmPanelHigh
+private val CeInnerBg = AmBase
+private val CeAccent = AmMint
 
 private val CeSwatches = listOf(
     0xFFFF4444, 0xFFF5B342, 0xFFFAE764, 0xFF1FD91F, 0xFF18E2E2, 0xFF3F4DF2, 0xFFD73FDA,
@@ -137,8 +145,11 @@ fun ColorEditSheet(
         modifier = modifier
             .fillMaxWidth()
             .then(if (fullHeight != null) Modifier.height(fullHeight) else Modifier)
-            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-            .background(CePanelBg)
+            .glassSurface(
+                RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                fill = amGlassBrush()
+            )
+            .panelSheenStrip()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -533,7 +544,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.RailButton(
             .fillMaxWidth()
             .padding(2.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) Color(0xFF16473B) else CeTabBg)
+            .background(if (selected) AmMint.copy(alpha = 0.16f) else CeTabBg)
             .bouncyClickable(pressedScale = 0.92f, onClick = onClick)
             .testTag(tag),
         contentAlignment = Alignment.Center
@@ -832,7 +843,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.RailWheelButton(selec
             .fillMaxWidth()
             .padding(2.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) Color(0xFF16473B) else CeTabBg)
+            .background(if (selected) AmMint.copy(alpha = 0.16f) else CeTabBg)
             .bouncyClickable(pressedScale = 0.92f, onClick = onClick)
             .testTag("color_view_wheel"),
         contentAlignment = Alignment.Center
@@ -869,7 +880,7 @@ private fun ImageFillPanel(
                 .size(120.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(CeInnerBg)
-                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
                 .bouncyClickable(pressedScale = 0.95f, onClick = onPickImage)
                 .testTag("fill_image_preview"),
             contentAlignment = Alignment.Center

@@ -73,11 +73,15 @@ import com.example.model.ClipAnim
 import com.example.model.Easing
 import com.example.model.TimelineClip
 import com.example.model.maxAnimMs
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmHairline
 import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.amCyanVioletBrush
+import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
 import kotlin.math.roundToInt
 
@@ -156,18 +160,25 @@ fun ClipAnimationsPanel(
                 Box(
                     modifier = Modifier
                         .padding(end = 8.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (on) NeonCyan else EditorSurfaceVariant)
                         .bouncyClickable(onClick = { slot = s })
-                        .padding(horizontal = 18.dp, vertical = 6.dp)
                         .testTag("anim_tab_${s.name.lowercase()}"),
                     contentAlignment = Alignment.Center
                 ) {
+                    KitGlassPill(Modifier.matchParentSize())
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .then(
+                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RoundedCornerShape(16.dp))
+                                else Modifier.border(1.dp, AmHairline, RoundedCornerShape(16.dp))
+                            )
+                    ) {}
                     Text(
                         s.label,
-                        color = if (on) Color.Black else TextPrimary,
+                        color = TextPrimary,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)
                     )
                 }
             }
@@ -179,14 +190,20 @@ fun ClipAnimationsPanel(
                         modifier = Modifier
                             .padding(start = 6.dp)
                             .clip(RoundedCornerShape(16.dp))
-                            .background(if (on) NeonCyan.copy(alpha = 0.2f) else EditorSurfaceVariant)
-                            .border(1.dp, if (on) NeonCyan else Color.Transparent, RoundedCornerShape(16.dp))
+                            .then(
+                                if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
+                                else Modifier
+                            )
+                            .border(1.dp, if (on) AmCyan else Color.Transparent, RoundedCornerShape(16.dp))
                             .bouncyClickable(onClick = { section = sec })
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
                             .testTag("anim_section_${sec.name.lowercase()}"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(sec.label, color = if (on) NeonCyan else TextPrimary, fontSize = 12.sp)
+                        if (!on) KitGlassPill(Modifier.matchParentSize())
+                        Text(
+                            sec.label, color = if (on) AmCyan else TextPrimary, fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
                     }
                 }
             }
@@ -239,21 +256,25 @@ fun ClipAnimationsPanel(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(if (on) NeonCyan.copy(alpha = 0.2f) else EditorSurfaceVariant)
-                                    .border(1.5.dp, if (on) NeonCyan else Color.Transparent, RoundedCornerShape(10.dp))
+                                    .then(
+                                        if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                                        else Modifier
+                                    )
+                                    .border(1.5.dp, if (on) AmCyan else Color.Transparent, RoundedCornerShape(10.dp))
                                     .bouncyClickable(onClick = {
                                         dir = d
                                         applyAnim(appliedPreset, d, durMs.toLong(), easing)
                                         onPreview(slot, durMs.toLong())
                                     })
-                                    .padding(horizontal = 14.dp, vertical = 6.dp)
                                     .testTag("anim_dir_${d.name.lowercase()}"),
                                 contentAlignment = Alignment.Center
                             ) {
+                                if (!on) KitGlassPill(Modifier.matchParentSize())
                                 Text(
                                     if (spin) (if (d == AnimDir.RIGHT) "↻ Clockwise" else "↺ Counter")
                                     else "${d.arrow} ${d.label}",
-                                    color = TextPrimary, fontSize = 13.sp
+                                    color = TextPrimary, fontSize = 13.sp,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                 )
                             }
                         }
@@ -276,8 +297,8 @@ fun ClipAnimationsPanel(
                     onValueChangeFinished = { onPreview(slot, durMs.toLong()) },
                     valueRange = ANIM_MIN_MS.toFloat()..sliderMax,
                     colors = SliderDefaults.colors(
-                        thumbColor = NeonCyan,
-                        activeTrackColor = NeonCyan,
+                        thumbColor = AmCyan,
+                        activeTrackColor = AmCyan,
                         inactiveTrackColor = EditorSurfaceVariant
                     ),
                     modifier = Modifier.testTag("anim_length_slider")
@@ -390,9 +411,7 @@ private fun AnimShapePreview(
     Canvas(
         modifier
             .aspectRatio(ratio, matchHeightConstraintsFirst = true)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF1B1C1E))
-            .border(1.dp, Color(0xFF3A3C40), RoundedCornerShape(8.dp))
+            .glassSurface(RoundedCornerShape(8.dp), fill = amGlassBrush())
     ) {
         val k = size.width / previewW // preview px -> screen px
         val base = size.height * 0.5f
@@ -440,11 +459,15 @@ private fun AnimTile(label: String, icon: ImageVector, selected: Boolean, tag: S
             modifier = Modifier
                 .size(60.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(if (selected) NeonCyan.copy(alpha = 0.2f) else EditorSurfaceVariant)
-                .border(if (selected) 2.dp else 1.dp, if (selected) NeonCyan else Color.Transparent, RoundedCornerShape(12.dp)),
+                .then(
+                    if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+                    else Modifier
+                )
+                .border(if (selected) 2.dp else 1.dp, if (selected) AmCyan else Color.Transparent, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = label, tint = if (selected) NeonCyan else Color.White, modifier = Modifier.size(26.dp))
+            if (!selected) KitGlassTile(Modifier.matchParentSize())
+            Icon(icon, contentDescription = label, tint = if (selected) AmCyan else Color.White, modifier = Modifier.size(26.dp))
         }
         Spacer(Modifier.height(5.dp))
         Text(label, color = TextPrimary, fontSize = 11.sp, maxLines = 1)
@@ -453,22 +476,29 @@ private fun AnimTile(label: String, icon: ImageVector, selected: Boolean, tag: S
 
 @Composable
 private fun CurveChip(label: String, easing: Easing?, selected: Boolean, onClick: () -> Unit) {
-    Column(
+    Box(
         modifier = Modifier
             .width(62.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) NeonCyan.copy(alpha = 0.2f) else EditorSurfaceVariant)
-            .border(1.5.dp, if (selected) NeonCyan else Color.Transparent, RoundedCornerShape(10.dp))
-            .bouncyClickable(onClick = onClick)
-            .padding(vertical = 6.dp, horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .then(
+                if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                else Modifier
+            )
+            .border(1.5.dp, if (selected) AmCyan else Color.Transparent, RoundedCornerShape(10.dp))
+            .bouncyClickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
+        if (!selected) KitGlassTile(Modifier.matchParentSize())
+        Column(
+            modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         if (easing == null) {
             Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-                Text("A", color = if (selected) NeonCyan else Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("A", color = if (selected) AmCyan else Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         } else {
-            val tint = if (selected) NeonCyan else Color.White
+            val tint = if (selected) AmCyan else Color.White
             Canvas(Modifier.size(34.dp)) {
                 val pad = 4.dp.toPx()
                 val w = size.width - 2 * pad
@@ -485,5 +515,6 @@ private fun CurveChip(label: String, easing: Easing?, selected: Boolean, onClick
             }
         }
         Text(label, color = TextPrimary, fontSize = 9.sp, maxLines = 1)
+        }
     }
 }

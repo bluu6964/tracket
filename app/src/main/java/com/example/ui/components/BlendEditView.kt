@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
@@ -44,6 +43,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Paint
@@ -65,8 +65,15 @@ import com.example.model.Easing
 import com.example.model.TimelineClip
 import com.example.model.indexOnTime
 import com.example.model.segmentIndexAt
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmPanelHigh
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.amCyanVioletBrush
+import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
 import com.example.ui.util.composeBlendMode
 import com.example.ui.util.matteFilter
@@ -75,9 +82,9 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private val BePanelBg = Color(0xFF1B1D27)
-private val BeButtonBg = Color(0xFF2A2D39)
-private val BeLime = Color(0xFFC6F01E)
+// Redesign Stage 2: flat greys now point at the shared design tokens (panel / raised chip tone).
+private val BePanelBg = AmPanel
+private val BeButtonBg = AmPanelHigh
 
 /**
  * "Blending" editor of a layer (Alight Motion style): reset button, opacity slider with its
@@ -124,8 +131,11 @@ fun BlendEditSheet(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-            .background(BePanelBg)
+            .glassSurface(
+                RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                fill = amGlassBrush()
+            )
+            .panelSheenStrip()
             // swallow touches so nothing underneath can be hit
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -167,8 +177,6 @@ fun BlendEditSheet(
             Box(
                 modifier = Modifier
                     .size(width = 56.dp, height = 46.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(BeButtonBg)
                     .bouncyClickable(pressedScale = 0.92f) {
                         (onReset ?: { onUpdate { it.copy(opacity = 100f, blendMode = BlendModes.NORMAL) } })()
                         category = BlendModes.find(BlendModes.NORMAL).category
@@ -176,6 +184,7 @@ fun BlendEditSheet(
                     .testTag("blend_reset"),
                 contentAlignment = Alignment.Center
             ) {
+                KitGlassTile(Modifier.matchParentSize())
                 Icon(
                     Icons.Default.Refresh, "Reset",
                     tint = TextSecondary, modifier = Modifier.size(24.dp)
@@ -209,7 +218,7 @@ fun BlendEditSheet(
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("opacity", color = TextSecondary, fontSize = 15.sp)
+            Text("opacity", color = AmTextDim, fontSize = 15.sp)
             Spacer(Modifier.width(10.dp))
             OpacitySlider(
                 value = clip.opacity,
@@ -222,11 +231,10 @@ fun BlendEditSheet(
             Spacer(Modifier.width(8.dp))
             Box(
                 modifier = Modifier
-                    .size(width = 76.dp, height = 50.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(BeButtonBg),
+                    .size(width = 76.dp, height = 50.dp),
                 contentAlignment = Alignment.Center
             ) {
+                KitGlassPill(Modifier.matchParentSize())
                 Text(
                     "${clip.opacity.roundToInt()}",
                     color = TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
@@ -290,15 +298,16 @@ fun BlendEditSheet(
                     modifier = Modifier
                         .height(44.dp)
                         .bouncyClickable(pressedScale = 0.94f) { category = name }
-                        .padding(horizontal = 14.dp)
                         .testTag("blend_tab_$name"),
                     contentAlignment = Alignment.Center
                 ) {
+                    if (on) KitGlassPill(Modifier.matchParentSize())
                     Text(
                         name,
                         color = if (on) TextPrimary else TextSecondary,
                         fontSize = 17.sp,
-                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 14.dp)
                     )
                 }
             }
@@ -317,6 +326,7 @@ private fun OpacitySlider(
     modifier: Modifier = Modifier
 ) {
     val latestChange by rememberUpdatedState(onValueChange)
+    val thumbBmp = kitThumbBitmap()
     Canvas(
         modifier = modifier.pointerInput(Unit) {
             awaitEachGesture {
@@ -338,11 +348,18 @@ private fun OpacitySlider(
         val thumbR = 11.dp.toPx()
         val y = size.height / 2f
         val x = thumbR + (size.width - 2f * thumbR) * (value / 100f).coerceIn(0f, 1f)
+        // Redesign Stage 2: the lime line becomes the mint->cyan gradient; the thumb gains a soft
+        // mint halo. Geometry (thumb radius, span math) is untouched.
         drawLine(
-            color = BeLime, start = Offset(thumbR, y), end = Offset(size.width - thumbR, y),
+            brush = Brush.horizontalGradient(listOf(AmMint, AmCyan)),
+            start = Offset(thumbR, y), end = Offset(size.width - thumbR, y),
             strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round
         )
-        drawCircle(color = BeLime, radius = thumbR, center = Offset(x, y))
+        // Kit thumb halo under the solid mint thumb (build 162): geometry untouched,
+        // the flat alpha halo becomes the rendered volumetric glow.
+        drawKitThumb(thumbBmp, Offset(x, y), thumbR * 2.0f)
+        drawCircle(color = AmMint, radius = thumbR, center = Offset(x, y))
+        drawCircle(color = Color.White, radius = thumbR * 0.35f, center = Offset(x, y))
     }
 }
 
@@ -357,7 +374,7 @@ private fun BlendThumb(spec: BlendSpec, selected: Boolean, modifier: Modifier = 
         modifier = modifier
             .clip(shape)
             .background(BeButtonBg)
-            .then(if (selected) Modifier.border(2.dp, Color.White, shape) else Modifier)
+            .then(if (selected) Modifier.border(2.dp, amCyanVioletBrush(), shape) else Modifier)
             .padding(if (selected) 2.dp else 0.dp)
     ) {
         Canvas(

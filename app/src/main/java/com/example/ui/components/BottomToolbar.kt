@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -36,6 +36,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -44,12 +46,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmCornerItem
+import com.example.ui.theme.AmDanger
+import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmInk
+import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorBackground
-import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.amGlassChipBrush
+import com.example.ui.theme.amMintCyanBrush
 import com.example.ui.util.bouncyClickable
+import com.example.ui.util.neonCircleGlow
 
 @Composable
 fun BottomToolbar(
@@ -66,13 +75,19 @@ fun BottomToolbar(
             .fillMaxWidth()
             .height(height)
             .background(EditorBackground)
+            .drawBehind {
+                // Hairline separating the footer from the timeline (redesign glass language).
+                drawLine(AmHairline, Offset(0f, 0f), Offset(size.width, 0f), strokeWidth = 1.dp.toPx())
+            }
             .padding(horizontal = 8.dp, vertical = 5.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // The add-layer "+" lives here since build 145 (Sarowar: in the bottom toolbar with
         // the other tools, not up by the timeline): it opens the same AddLayerSheet as before.
-        ToolbarItem("Add", Icons.Default.Add, "toolbar_add_button", onAddClick)
+        // Same five items, same order — Stage 1 of the redesign only changes the look:
+        // glass pills, and Add (the bar's primary action) carries the one gradient badge.
+        ToolbarItem("Add", Icons.Default.Add, "toolbar_add_button", onAddClick, primary = true)
         ToolbarItem("Null", Icons.Default.CenterFocusWeak, "toolbar_null_button", onNullClick)
         ToolbarItem("Controller", Icons.Default.Tune, "toolbar_controller_button", onControllerClick)
         ToolbarItem("Chain", Icons.Default.ViewStream, "toolbar_chain_button", onChainClick)
@@ -85,34 +100,49 @@ private fun RowScope.ToolbarItem(
     label: String,
     icon: ImageVector,
     testTag: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    primary: Boolean = false
 ) {
     Column(
         modifier = Modifier
             .weight(1f)
             .fillMaxHeight()
-            .clipRounded()
+            .glassSurface(RoundedCornerShape(AmCornerItem), fill = amGlassChipBrush())
             .bouncyClickable(pressedScale = 0.94f, hoverScale = 1.015f, onClick = onClick)
             .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag(testTag),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                ,
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, label, tint = IconActive, modifier = Modifier.size(20.dp))
+        if (primary) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .neonCircleGlow(AmMint)
+                    .background(amMintCyanBrush(), CircleShape)
+                    .clip(CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, label, tint = AmInk, modifier = Modifier.size(21.dp))
+            }
+        } else {
+            Box(
+                modifier = Modifier.size(38.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, label, tint = IconActive, modifier = Modifier.size(20.dp))
+            }
         }
         Spacer(Modifier.height(3.dp))
-        Text(label, color = TextSecondary.copy(alpha = 0.95f), fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text(
+            label,
+            color = if (primary) TextPrimary else AmTextDim,
+            fontSize = 10.sp,
+            fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1
+        )
     }
 }
-
-/** The toolbar item's rounded frame: clips the item's content to the 14 dp rounded rect (the name used to promise a clip the code never did). */
-private fun Modifier.clipRounded() = this.clip(RoundedCornerShape(14.dp)).background(Color.Transparent, RoundedCornerShape(14.dp))
 
 /**
  * Shown while a Chain layer is selected: only ways to put layers INTO the chain (the chain has no picture of its own, so
@@ -191,14 +221,15 @@ fun ChainAddPanel(
     }
 }
 
-/** A tool of [ChainAddPanel]: fixed width, so the row can scroll. */
+/** A tool of [ChainAddPanel]: fixed width, so the row can scroll. Same glass pill as the toolbar's items. */
 @Composable
 private fun ChainToolItem(label: String, icon: ImageVector, testTag: String, onClick: () -> Unit) {
+    val destructive = label == "Delete"
     Column(
         modifier = Modifier
             .width(62.dp)
             .fillMaxHeight()
-            .clipRounded()
+            .glassSurface(RoundedCornerShape(AmCornerItem), fill = amGlassChipBrush())
             .bouncyClickable(pressedScale = 0.94f, hoverScale = 1.015f, onClick = onClick)
             .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag(testTag),
@@ -206,9 +237,9 @@ private fun ChainToolItem(label: String, icon: ImageVector, testTag: String, onC
         verticalArrangement = Arrangement.Center
     ) {
         Box(modifier = Modifier.size(38.dp), contentAlignment = Alignment.Center) {
-            Icon(icon, label, tint = IconActive, modifier = Modifier.size(20.dp))
+            Icon(icon, label, tint = if (destructive) AmDanger else IconActive, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(3.dp))
-        Text(label, color = TextSecondary.copy(alpha = 0.95f), fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Text(label, color = AmTextDim, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
     }
 }

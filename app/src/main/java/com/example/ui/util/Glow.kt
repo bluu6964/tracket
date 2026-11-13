@@ -39,3 +39,23 @@ fun DrawScope.drawGlowLine(x: Float, color: Color = Color(0xFFFFFFFF)) {
     drawLine(color.copy(alpha = 0.16f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 7.dp.toPx())
     drawLine(color, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
 }
+
+/**
+ * Circular sibling of [neonGlow] for round buttons (play, icon badges): stacked
+ * translucent discs behind the composable → the soft bloom of the redesign references.
+ * Part of the Stage-1 redesign token layer ([com.example.ui.theme.AmGlowRadius] /
+ * [com.example.ui.theme.AmGlowAlpha] carry the default specs).
+ */
+fun Modifier.neonCircleGlow(
+    color: Color,
+    radius: Dp = 12.dp,
+    alpha: Float = 0.42f
+): Modifier = drawBehind {
+    val r = radius.toPx()
+    val steps = 9
+    val base = minOf(size.width, size.height) / 2f
+    val c = Offset(size.width / 2f, size.height / 2f)
+    for (i in steps downTo 1) {
+        drawCircle(color.copy(alpha = alpha / steps), radius = base + r * i / steps, center = c)
+    }
+}

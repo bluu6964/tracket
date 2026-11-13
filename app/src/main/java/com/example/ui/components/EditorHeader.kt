@@ -2,7 +2,6 @@ package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -35,21 +34,20 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.AspectRatio
-import com.example.ui.theme.HeaderBarBorder
-import com.example.ui.theme.HeaderBarFill
-import com.example.ui.theme.HeaderButtonFill
-import com.example.ui.theme.HeaderCyan
-import com.example.ui.theme.HeaderPillFill
-import com.example.ui.theme.HeaderText
-import com.example.ui.theme.TimelineBlack
+import com.example.ui.theme.AmBase
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmInk
+import com.example.ui.theme.AmTextDim
+import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.amGlassBrush
+import com.example.ui.theme.amGlassChipBrush
 import com.example.ui.util.bouncyClickable
 
-private val Ink = Color(0xFF05080A)
-
 /**
- * Header drawn like the design reference: one rounded bar holding
- *   [X]   [crop-scissor icon]                 [1080P v]  [download | Export]
- * [aspectRatio] is kept for the callers; the ratio itself is chosen in the sheet the scissor icon and
+ * Header in the redesign's glass language (Stage 1): one glass pill bar holding
+ *   [X]   [camera icon]                 [1080P v]  [download | Export]
+ * The Export pill is the bar's one glowing accent (mint→cyan gradient). [aspectRatio]
+ * is kept for the callers; the ratio itself is chosen in the sheet the camera icon and
  * the resolution pill open.
  */
 @Composable
@@ -72,7 +70,7 @@ fun EditorHeader(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
-            .background(TimelineBlack)
+            .background(AmBase)
             .padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -80,8 +78,7 @@ fun EditorHeader(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(barH)
-                .background(HeaderBarFill, CircleShape)
-                .border(1.dp, HeaderBarBorder, CircleShape)
+                .glassSurface(CircleShape, fill = amGlassBrush())
         ) {
             // ── Close ──────────────────────────────────────────────
             Box(
@@ -90,15 +87,14 @@ fun EditorHeader(
                     .padding(start = 12.dp)
                     .width(btnH * 1.27f)
                     .height(btnH)
-                    .clip(RoundedCornerShape(btnH * 0.45f))
-                    .background(HeaderButtonFill)
+                    .glassSurface(RoundedCornerShape(btnH * 0.45f), fill = amGlassChipBrush())
                     .semantics { contentDescription = "Back to projects" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onBackClick)
                     .testTag("header_back_button"),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(Modifier.size(15.dp)) {
-                    val c = HeaderText
+                    val c = TextPrimary
                     val w = 2.7.dp.toPx()
                     val m = w / 2f
                     drawLine(c, Offset(m, m), Offset(size.width - m, size.height - m), w, StrokeCap.Round)
@@ -112,8 +108,7 @@ fun EditorHeader(
                     .align(Alignment.CenterStart)
                     .offset(x = 104.dp - 20.dp)
                     .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(HeaderButtonFill)
+                    .glassSurface(RoundedCornerShape(12.dp), fill = amGlassChipBrush())
                     .semantics { contentDescription = "Save frame as picture" }
                     .bouncyClickable(onClick = onSaveFrameClick)
                     .testTag("header_save_frame_button"),
@@ -131,38 +126,34 @@ fun EditorHeader(
                 Row(
                     modifier = Modifier
                         .height(btnH - 4.dp)
-                        .clip(CircleShape)
-                        .background(HeaderPillFill)
+                        .glassSurface(CircleShape, fill = amGlassChipBrush())
                         .bouncyClickable(pressedScale = 0.95f, onClick = onResolutionClick)
                         .padding(horizontal = 14.dp)
                         .testTag("header_resolution_pill"),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(resolutionLabel, color = HeaderText, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text(resolutionLabel, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     Spacer(Modifier.width(8.dp))
                     Canvas(Modifier.size(width = 8.dp, height = 5.5.dp)) {
                         val p = Path().apply {
                             moveTo(0f, 0f); lineTo(size.width, 0f); lineTo(size.width / 2f, size.height); close()
                         }
-                        drawPath(p, HeaderText)
-                        drawPath(p, HeaderText, style = Stroke(1.2.dp.toPx(), join = StrokeJoin.Round))
+                        drawPath(p, TextPrimary)
+                        drawPath(p, TextPrimary, style = Stroke(1.2.dp.toPx(), join = StrokeJoin.Round))
                     }
                 }
-                Row(
+                GradientPillButton(
+                    onClick = onExportClick,
                     modifier = Modifier
                         .height(btnH)
-                        .clip(CircleShape)
-                        .background(HeaderCyan)
-                        .bouncyClickable(pressedScale = 0.94f, onClick = onExportClick)
-                        .padding(horizontal = 11.dp)
                         .testTag("header_export_button"),
-                    verticalAlignment = Alignment.CenterVertically
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 11.dp)
                 ) {
                     DownloadGlyph()
                     Spacer(Modifier.width(9.dp))
-                    Box(Modifier.width(1.dp).height(13.dp).background(Ink.copy(alpha = 0.85f)))
+                    Box(Modifier.width(1.dp).height(13.dp).background(AmInk.copy(alpha = 0.85f)))
                     Spacer(Modifier.width(9.dp))
-                    Text("Export", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text("Export", color = AmInk, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             }
         }
@@ -174,7 +165,7 @@ fun EditorHeader(
 private fun SaveFrameGlyph() {
     Canvas(Modifier.size(28.dp)) {
         val u = size.width / 28f
-        val c = HeaderCyan
+        val c = AmCyan
         val st = Stroke(2.5f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)
         val body = Path().apply {
             moveTo(3.5f * u, 9.5f * u)
@@ -194,7 +185,7 @@ private fun SaveFrameGlyph() {
     }
 }
 
-/** Arrow down into a tray (dark on the cyan button), 19 dp wide. */
+/** Arrow down into a tray (dark on the gradient button), 19 dp wide. */
 @Composable
 private fun DownloadGlyph() {
     Canvas(Modifier.size(20.dp)) {
@@ -204,7 +195,7 @@ private fun DownloadGlyph() {
             moveTo(10f * u, 1.6f * u); lineTo(10f * u, 11.8f * u)
             moveTo(5.6f * u, 7.6f * u); lineTo(10f * u, 12f * u); lineTo(14.4f * u, 7.6f * u)
         }
-        drawPath(arrow, Ink, style = st)
+        drawPath(arrow, AmInk, style = st)
         val tray = Path().apply {
             moveTo(1.6f * u, 12.5f * u); lineTo(1.6f * u, 16.2f * u)
             quadraticBezierTo(1.6f * u, 18.4f * u, 3.8f * u, 18.4f * u)
@@ -212,7 +203,7 @@ private fun DownloadGlyph() {
             quadraticBezierTo(18.4f * u, 18.4f * u, 18.4f * u, 16.2f * u)
             lineTo(18.4f * u, 12.5f * u)
         }
-        drawPath(tray, Ink, style = st)
+        drawPath(tray, AmInk, style = st)
     }
 }
 
@@ -240,7 +231,7 @@ fun LayerHeader(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
-            .background(TimelineBlack)
+            .background(AmBase)
             .padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -248,8 +239,7 @@ fun LayerHeader(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(barH)
-                .background(HeaderBarFill, CircleShape)
-                .border(1.dp, HeaderBarBorder, CircleShape)
+                .glassSurface(CircleShape, fill = amGlassBrush())
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -258,8 +248,7 @@ fun LayerHeader(
                 modifier = Modifier
                     .width(btnH * 1.27f)
                     .height(btnH)
-                    .clip(RoundedCornerShape(btnH * 0.45f))
-                    .background(HeaderButtonFill)
+                    .glassSurface(RoundedCornerShape(btnH * 0.45f), fill = amGlassChipBrush())
                     .semantics { contentDescription = "Back to layers" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onBack)
                     .testTag("layer_header_back"),
@@ -268,8 +257,8 @@ fun LayerHeader(
                 Canvas(Modifier.size(15.dp)) {
                     val w = 2.7.dp.toPx()
                     val m = w / 2f
-                    drawLine(HeaderText, Offset(size.width - m, m), Offset(m, size.height / 2f), w, StrokeCap.Round)
-                    drawLine(HeaderText, Offset(m, size.height / 2f), Offset(size.width - m, size.height - m), w, StrokeCap.Round)
+                    drawLine(TextPrimary, Offset(size.width - m, m), Offset(m, size.height / 2f), w, StrokeCap.Round)
+                    drawLine(TextPrimary, Offset(m, size.height / 2f), Offset(size.width - m, size.height - m), w, StrokeCap.Round)
                 }
             }
             Spacer(Modifier.width(12.dp))
@@ -286,17 +275,16 @@ fun LayerHeader(
                     .testTag("layer_header_name"),
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(name, color = HeaderText, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                Text(name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text(info, color = HeaderText.copy(alpha = 0.6f), fontSize = 10.5.sp, maxLines = 1,
+                Text(info, color = AmTextDim, fontSize = 10.5.sp, maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
             if (onToggleVisible != null) {
                 Box(
                     modifier = Modifier
                         .size(btnH)
-                        .clip(CircleShape)
-                        .background(HeaderPillFill)
+                        .glassSurface(CircleShape, fill = amGlassChipBrush())
                         .semantics { contentDescription = if (visible) "Hide layer" else "Show layer" }
                         .bouncyClickable(pressedScale = 0.92f, onClick = onToggleVisible)
                         .testTag("layer_header_eye"),
@@ -304,7 +292,7 @@ fun LayerHeader(
                 ) {
                     Canvas(Modifier.size(18.dp)) {
                         val u = size.width / 18f
-                        val c = if (visible) HeaderCyan else HeaderText.copy(alpha = 0.5f)
+                        val c = if (visible) AmCyan else TextPrimary.copy(alpha = 0.5f)
                         val st = Stroke(1.8f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         val eye = Path().apply {
                             moveTo(1.5f * u, 9f * u)
@@ -323,8 +311,7 @@ fun LayerHeader(
             Box(
                 modifier = Modifier
                     .size(btnH)
-                    .clip(CircleShape)
-                    .background(HeaderPillFill)
+                    .glassSurface(CircleShape, fill = amGlassChipBrush())
                     .semantics { contentDescription = "Rename layer" }
                     .bouncyClickable(pressedScale = 0.92f, onClick = onRename)
                     .testTag("layer_header_rename"),
@@ -337,7 +324,7 @@ fun LayerHeader(
                         moveTo(2f * u, 14f * u); lineTo(2.8f * u, 10.6f * u); lineTo(11.4f * u, 2f * u)
                         lineTo(14f * u, 4.6f * u); lineTo(5.4f * u, 13.2f * u); close()
                     }
-                    drawPath(p, HeaderCyan, style = st)
+                    drawPath(p, AmCyan, style = st)
                 }
             }
         }

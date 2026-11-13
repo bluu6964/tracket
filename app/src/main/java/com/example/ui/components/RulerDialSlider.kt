@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.size
@@ -25,7 +26,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.text.font.FontFamily
@@ -35,7 +37,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmCornerMicro
+import com.example.ui.theme.AmCyan
+import com.example.ui.theme.AmMint
+import com.example.ui.theme.AmTickMajor
+import com.example.ui.theme.AmTickMinor
 import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.amGlassChipBrush
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
@@ -167,21 +175,34 @@ fun RulerDial(
                 val tickHeight = if (isMajorTick) h * 0.75f else h * 0.42f
                 val yStart = (h - tickHeight) / 2f
                 drawLine(
-                    color = Color(0xFF4A4A4A),
+                    color = if (isMajorTick) AmTickMajor else AmTickMinor,
                     start = Offset(x, yStart),
                     end = Offset(x, yStart + tickHeight),
                     strokeWidth = 1.5.dp.toPx()
                 )
             }
 
-            // Center indicator (needle)
+            // Center indicator (needle): the slider's accent — a mint→cyan gradient
+            // line with a soft halo (redesign Stage 1; geometry and drag law unchanged).
             val needleHeight = h * 0.82f
             val needleStart = (h - needleHeight) / 2f
             drawLine(
-                color = Color(0xFFABE41D),
+                color = AmMint.copy(alpha = 0.20f),
                 start = Offset(centerX, needleStart),
                 end = Offset(centerX, needleStart + needleHeight),
-                strokeWidth = 2.5.dp.toPx()
+                strokeWidth = 7.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                brush = Brush.verticalGradient(
+                    listOf(AmMint, AmCyan),
+                    startY = needleStart,
+                    endY = needleStart + needleHeight
+                ),
+                start = Offset(centerX, needleStart),
+                end = Offset(centerX, needleStart + needleHeight),
+                strokeWidth = 2.5.dp.toPx(),
+                cap = StrokeCap.Round
             )
         }
     }
@@ -259,15 +280,27 @@ fun RulerDialSlider(
                 .fillMaxHeight()
         )
 
-        // 3. Current value on the right (e.g., "20%", "45°", "0%")
-        if (showValue) Text(
-            text = displayValue,
-            color = TextPrimary,
-            fontSize = 13.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.End,
-            modifier = Modifier.width(68.dp)
-        )
+        // 3. Current value on the right (e.g., "20%", "45°", "0%") — in a small glass
+        // pill, per the redesign brief ("slider value in a small pill").
+        if (showValue) Box(
+            modifier = Modifier
+                .width(68.dp)
+                .height(30.dp)
+                .glassSurface(
+                    RoundedCornerShape(AmCornerMicro),
+                    fill = amGlassChipBrush()
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = displayValue,
+                color = TextPrimary,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
+        }
     }
 }

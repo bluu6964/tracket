@@ -10,11 +10,13 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
-    primary = NeonCyan,
-    onPrimary = EditorBackground,
+    // Redesign Stage 1: Material's accent roles now ride the token layer (mint primary,
+    // cyan secondary — theme/DesignTokens.kt); surfaces keep their stage-by-stage fills.
+    primary = AmMint,
+    onPrimary = AmInk,
     primaryContainer = EditorSurfaceVariant,
     onPrimaryContainer = TextPrimary,
-    secondary = ElectricBlue,
+    secondary = AmCyan,
     onSecondary = TextPrimary,
     background = EditorBackground,
     onBackground = TextPrimary,

@@ -2,7 +2,6 @@ package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -11,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,17 +32,26 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmBase
+import com.example.ui.theme.AmCornerMicro
+import com.example.ui.theme.AmMint
 import com.example.ui.theme.IconDisabled
-import com.example.ui.theme.TimelineBlack
+import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.amGlassChipBrush
+import com.example.ui.theme.amMintCyanBrush
 import com.example.ui.util.bouncyClickable
+import com.example.ui.util.neonCircleGlow
 
 private val IconWhite = Color(0xFFF2F2F2)
 private val BadgeOrange = Color(0xFFFF8C00)
 
 /**
- * Top control bar, drawn to match the design reference (positions in dp from the reference):
+ * Top control bar (positions in dp from the original design reference, restyled in the
+ * redesign's glass language — Stage 1):
  *   [undo] [redo] [Full]            [ play ]            [frame] [grid] [beat mark +]
  * All glyphs are drawn here (no stock icons) so stroke weight and proportions match.
+ * The play button is this bar's one glowing accent: a glass disc with a mint→cyan
+ * gradient ring. Same controls, same order, same actions as before the restyle.
  *
  * [onPreviousClick] / [onNextClick] are kept so the callers do not change; the reference design has no
  * previous / next buttons.
@@ -72,7 +81,7 @@ fun PlayControlsSection(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
-            .background(TimelineBlack)
+            .background(AmBase)
     ) {
         // ── Left: undo · redo · Full ───────────────────────────────────
         Row(
@@ -99,12 +108,12 @@ fun PlayControlsSection(
                     modifier = Modifier
                         .width(26.dp)
                         .height(17.5.dp)
-                        .border(1.9.dp, IconWhite, RoundedCornerShape(5.dp)),
+                        .glassSurface(RoundedCornerShape(AmCornerMicro), fill = amGlassChipBrush()),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = resolutionLabel,
-                        color = IconWhite,
+                        color = TextPrimary,
                         fontSize = 9.5.sp,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = TextAlign.Center,
@@ -114,11 +123,18 @@ fun PlayControlsSection(
             }
         }
 
-        // ── Centre: play / pause ───────────────────────────────────────
+        // ── Centre: play / pause — glass disc, gradient ring, the bar's one glow ──
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
                 .size(44.dp)
+                .neonCircleGlow(AmMint)
+                .glassSurface(
+                    CircleShape,
+                    fill = amGlassChipBrush(),
+                    borderBrush = amMintCyanBrush(),
+                    borderWidth = 1.5.dp
+                )
                 .semantics { contentDescription = if (isPlaying) "Pause" else "Play" }
                 .bouncyClickable(pressedScale = 0.88f, onClick = onPlayPauseClick)
                 .testTag("play_pause_button"),
@@ -156,14 +172,14 @@ private fun IconButton44(
     description: String,
     content: @Composable () -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .semantics { contentDescription = description }
-            .bouncyClickable(enabled = enabled, onClick = onClick)
-            .testTag(tag),
-        contentAlignment = Alignment.Center
-    ) { content() }
+    // The bar's standard small button is now the shared glass disc (GlassComponents).
+    GlassIconButton(
+        onClick = onClick,
+        description = description,
+        enabled = enabled,
+        tag = tag,
+        content = content
+    )
 }
 
 // ── Glyphs ───────────────────────────────────────────────────────────────

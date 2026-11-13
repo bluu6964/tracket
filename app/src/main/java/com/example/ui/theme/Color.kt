@@ -2,8 +2,10 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// After Motion dark palette: off-black (#0F0F0F) app theme, full-black canvas.
-val EditorBackground = Color(0xFF0F0F0F)
+// After Motion dark palette. Since the 2026-11-13 redesign (Stage 1) the app base is
+// the token layer's near-black navy (#0A0A12 — see theme/DesignTokens.kt, AmBase);
+// surfaces not yet reached by a redesign stage keep their flat fills below.
+val EditorBackground = Color(0xFF0A0A12)
 val EditorSurface = Color(0xFF2E2E2E)
 // Timeline lane controls (left pills)
 val LanePill = Color(0xFF1E1E1E)

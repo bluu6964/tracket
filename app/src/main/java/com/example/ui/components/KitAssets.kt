@@ -1,19 +1,33 @@
 package com.example.ui.components
 
+import android.graphics.BitmapFactory
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.R
+
+/**
+ * Decodes a kit PNG once per id. (BitmapFactory rather than compose-ui's
+ * imageResource, which this project's Compose BOM no longer resolves.)
+ */
+@Composable
+private fun kitBitmap(@DrawableRes id: Int): ImageBitmap {
+    val context = LocalContext.current
+    return remember(id) { BitmapFactory.decodeResource(context.resources, id).asImageBitmap() }
+}
 
 /**
  * The redesign ASSET KIT (build 162) — Sarowar rejected Stage 1's flat Compose
@@ -33,7 +47,7 @@ import com.example.R
 
 @Composable
 fun KitGlowRing(modifier: Modifier = Modifier, violet: Boolean = false, alpha: Float = 1f) {
-    val bmp = imageResource(if (violet) R.drawable.am_glow_ring_violet else R.drawable.am_glow_ring_mint)
+    val bmp = kitBitmap(if (violet) R.drawable.am_glow_ring_violet else R.drawable.am_glow_ring_mint)
     Canvas(modifier) {
         drawImage(bmp, dstSize = IntSize(size.width.toInt(), size.height.toInt()),
             alpha = alpha, blendMode = BlendMode.Plus)
@@ -42,7 +56,7 @@ fun KitGlowRing(modifier: Modifier = Modifier, violet: Boolean = false, alpha: F
 
 @Composable
 fun KitGlowPill(modifier: Modifier = Modifier, alpha: Float = 1f) {
-    val bmp = imageResource(R.drawable.am_glow_pill_mint)
+    val bmp = kitBitmap(R.drawable.am_glow_pill_mint)
     Canvas(modifier) {
         drawImage(bmp, dstSize = IntSize(size.width.toInt(), size.height.toInt()),
             alpha = alpha, blendMode = BlendMode.Plus)
@@ -51,7 +65,7 @@ fun KitGlowPill(modifier: Modifier = Modifier, alpha: Float = 1f) {
 
 @Composable
 fun KitGlassDisc(modifier: Modifier = Modifier) {
-    val bmp = imageResource(R.drawable.am_glass_disc)
+    val bmp = kitBitmap(R.drawable.am_glass_disc)
     Canvas(modifier) {
         drawImage(bmp, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
     }
@@ -59,7 +73,7 @@ fun KitGlassDisc(modifier: Modifier = Modifier) {
 
 @Composable
 fun KitGlassTile(modifier: Modifier = Modifier) {
-    val bmp = imageResource(R.drawable.am_glass_tile)
+    val bmp = kitBitmap(R.drawable.am_glass_tile)
     Canvas(modifier) {
         drawImage(bmp, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
     }
@@ -67,7 +81,7 @@ fun KitGlassTile(modifier: Modifier = Modifier) {
 
 @Composable
 fun KitGlassPill(modifier: Modifier = Modifier) {
-    val bmp = imageResource(R.drawable.am_glass_pill)
+    val bmp = kitBitmap(R.drawable.am_glass_pill)
     Canvas(modifier) {
         drawImage(bmp, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
     }
@@ -75,7 +89,7 @@ fun KitGlassPill(modifier: Modifier = Modifier) {
 
 /** The glowing slider thumb bitmap, for Canvas-based controls (dial slider, playhead). */
 @Composable
-fun kitThumbBitmap(): ImageBitmap = imageResource(R.drawable.am_glow_thumb)
+fun kitThumbBitmap(): ImageBitmap = kitBitmap(R.drawable.am_glow_thumb)
 
 /** Draws the kit thumb additively, centred on [center], [radiusPx] across the halo. */
 fun DrawScope.drawKitThumb(bmp: ImageBitmap, center: Offset, radiusPx: Float) {
@@ -94,7 +108,7 @@ fun DrawScope.drawKitThumb(bmp: ImageBitmap, center: Offset, radiusPx: Float) {
  * it draws over the fill, under the content.
  */
 fun Modifier.panelSheenStrip(): Modifier = composed {
-    val bmp = imageResource(R.drawable.am_panel_sheen)
+    val bmp = kitBitmap(R.drawable.am_panel_sheen)
     drawWithContent {
         val h = minOf(30.dp.toPx(), size.height)
         drawImage(bmp, dstSize = IntSize(size.width.toInt(), h.toInt()))

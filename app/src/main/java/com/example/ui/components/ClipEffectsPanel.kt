@@ -531,7 +531,10 @@ private fun FxTile(def: FxDef, full: Boolean, onClick: () -> Unit) {
                     .align(Alignment.TopEnd)
                     .size(20.dp)
                     .clip(CircleShape)
-                    .background(if (full) Color(0xFF3A4058) else amMintCyanBrush()),
+                    .then(
+                        if (full) Modifier.background(Color(0xFF3A4058))
+                        else Modifier.background(amMintCyanBrush())
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, tint = if (full) TextSecondary else AmInk, modifier = Modifier.size(14.dp))

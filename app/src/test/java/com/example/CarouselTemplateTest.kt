@@ -23,20 +23,27 @@ import kotlin.math.hypot
 import kotlin.math.sin
 
 /**
- * Builds 142-143 (Templates v1 + the in-project group rework): the Carousel template's
- * measured motion law, pinned against the group model it inserts. The reference law
- * (720x450, 30 fps, 5.03 s; fit in after-motion-dev/carousel-ref): one clockwise revolution
- * per 5.0 s, seamless, eased by cubic-bezier(0.78, 0.013, 0.194, 1.0); ring centre (364, 224),
- * radius 133.2; cards 95x95, corner 14, upright, constant scale. Expected values here are
- * recomputed from those spec numbers with the app's own pre-existing [Easing] evaluator —
- * an independent code path from the builder's Double bezier.
+ * Builds 142-144 (Templates v1, the in-project group rework, the NULL-RIG rework): the
+ * Carousel template's measured motion law, pinned against the model it inserts. The
+ * reference law (720x450, 30 fps, 5.03 s; fit in after-motion-dev/carousel-ref): one
+ * clockwise revolution per 5.0 s, seamless, eased by cubic-bezier(0.78, 0.013, 0.194, 1.0);
+ * ring centre (364, 224), radius 133.2; cards 95x95, corner 14, upright, constant scale.
+ * Expected values here are recomputed from those spec numbers with the app's own
+ * pre-existing [Easing] evaluator — an independent code path from the builder's Double
+ * bezier.
  *
  * Build 143 model (Sarowar's correction): inserting the template adds ONE Group layer to
- * the project at the playhead, holding the whole composition as 17 ordinary children
- * (Background + 8 shadow twins + 8 cards, each in its own lane, linked to the group with
- * the REST reference pose). The group's own transform is the canvas fit (see
+ * the project at the playhead. The group's own transform is the canvas fit (see
  * [CarouselTemplate.carouselFit]); the composed pins below run the children through
  * ParentRig — the same composition the preview and the export use.
+ *
+ * Build 144 rig (Sarowar's second correction: the animation must be driven by a Null layer
+ * in the timeline, not by keys baked into every child): the group holds 18 ordinary
+ * children — a "Carousel Null" on the ring centre carrying the ENTIRE motion as one
+ * ROTATION track (the measured law as degrees), the 8 cards + 8 shadow twins parented to
+ * that null at their fixed t=0 ring poses with rotation-locked links and NO keyframes of
+ * their own, and the static Background linked to the group. The pins below prove the
+ * composed result matches build 142/143's baked law, and that the null alone controls it.
  */
 class CarouselTemplateTest {
 
@@ -74,18 +81,19 @@ class CarouselTemplateTest {
     }
 
     @Test
-    fun insertIsOneGroupWithSeventeenChildrenInOrder() {
-        // Exactly ONE top-level layer is added: the group. The 17 children are inside it.
-        assertEquals(18, allClips.size)
+    fun insertIsOneGroupWithEighteenChildrenInOrder() {
+        // Exactly ONE top-level layer is added: the group. The 18 children are inside it.
+        assertEquals(19, allClips.size)
         val topLevel = GroupOps.scopeTracks(projectTracks, null).flatMap { it.clips }
         assertEquals(listOf(ins.group.id), topLevel.map { it.id })
         assertEquals(LayerType.GROUP, ins.group.type)
         assertEquals("Carousel", ins.group.name)
         assertEquals(at0, ins.group.startMs)
         assertEquals(5000L, ins.group.durationMs)
-        // Lane order (top lane first) is build 142's track order: per card the photo lane
-        // above its shadow lane, Background last.
+        // Lane order (top lane first): the null's lane, then build 142's track order for the
+        // picture layers — per card the photo lane above its shadow lane, Background last.
         val expected = ArrayList<String>()
+        expected += "test-null"
         for (i in 1..8) {
             expected += "test-card-$i"
             expected += "test-shadow-$i"
@@ -93,19 +101,46 @@ class CarouselTemplateTest {
         expected += "test-bg"
         assertEquals(expected, children.map { it.id })
         assertEquals(children.map { it.id }.toSet(), GroupOps.childrenOf(projectTracks, ins.group.id).map { it.id }.toSet())
-        // Every child: ordinary clip of the group — groupId + a parent link with the REST ref pose.
+        // Every child: an ordinary clip of the group, spanning the whole template.
         for (c in children) {
             assertEquals(ins.group.id, c.groupId)
             assertEquals(at0, c.startMs)
             assertEquals(5000L, c.durationMs)
+        }
+        // The null: an ordinary Null layer of the group (REST link, like the background),
+        // parked on the ring centre in stored units — (364-360, 224-225) x k.
+        val n = ins.nullLayer
+        assertEquals(LayerType.NULL, n.type)
+        assertEquals("Carousel Null", n.name)
+        assertEquals(children.first().id, n.id)
+        assertEquals(4f * k, n.transformX, 0.01f)
+        assertEquals(-1f * k, n.transformY, 0.01f)
+        val nLink = n.parent ?: error("the null has no parent link")
+        assertEquals(ins.group.id, nLink.id)
+        assertEquals(0f, nLink.refX, 0f)
+        assertEquals(0f, nLink.refY, 0f)
+        assertEquals(100f, nLink.refScale, 0f)
+        assertEquals(0f, nLink.refRot, 0f)
+        // Cards + shadows: SHAPE layers parented to the NULL — ref = the null's rest pose
+        // (ring centre, scale 100, rotation 0), rotation LOCKED (the Parent Helper lock that
+        // keeps them upright while their positions ride the null's turn).
+        for (c in cards + shadows) {
             assertEquals(LayerType.SHAPE, c.type)
             val link = c.parent ?: error("child ${c.id} has no parent link")
-            assertEquals(ins.group.id, link.id)
-            assertEquals(0f, link.refX, 0f)
-            assertEquals(0f, link.refY, 0f)
+            assertEquals(n.id, link.id)
+            assertEquals(4f * k, link.refX, 0.01f)
+            assertEquals(-1f * k, link.refY, 0.01f)
             assertEquals(100f, link.refScale, 0f)
             assertEquals(0f, link.refRot, 0f)
+            assertTrue("card/shadow link must be rotation-locked: ${c.id}", link.lockRotate)
         }
+        // The background stays a static child of the group (REST ref pose), as in build 143.
+        val bgLink = children.single { it.id == "test-bg" }.parent ?: error("background has no parent link")
+        assertEquals(ins.group.id, bgLink.id)
+        assertEquals(0f, bgLink.refX, 0f)
+        assertEquals(0f, bgLink.refY, 0f)
+        assertEquals(100f, bgLink.refScale, 0f)
+        assertEquals(0f, bgLink.refRot, 0f)
         // Placement read-back: the group's children come back in exactly the builder's lane order.
         assertEquals(
             children.map { it.id },
@@ -166,15 +201,16 @@ class CarouselTemplateTest {
 
     @Test
     fun cardCentresRideTheRingPerTheLaw() {
-        // Children evaluated through the group (ParentRig), un-fitted back into template
-        // units. Between keys (worst case mid-segment): chord sagitta at 50 ms steps is
-        // ~0.24 px and the slice easings track the master law, so centres stay within
-        // ~1 px of the circle point the law prescribes, at the prescribed angle.
+        // Children evaluated through the rig chain card -> null -> group (ParentRig),
+        // un-fitted back into template units. Rotation is rigid, so there is no chord
+        // sagitta any more: the radius is exact, and the only residual is the tangential
+        // error of the null track's slice easings vs the master law (same class as the
+        // build-142/143 bake, well inside 1 px mid-segment).
         for (loopMs in listOf(0L, 137L, 1250L, 2500L, 2625L, 3750L, 4999L)) {
             for (i in 0..7) {
                 val (sx, sy) = templateSceneOf(cards[i], at0 + loopMs)
                 val (ex, ey) = expectedCenter(loopMs, i)
-                assertEquals("card $i radius at $loopMs", 133.2, hypot(sx - 364.0, sy - 224.0), 1.0)
+                assertEquals("card $i radius at $loopMs", 133.2, hypot(sx - 364.0, sy - 224.0), 0.35)
                 assertEquals("card $i x at $loopMs", ex, sx, 1.2)
                 assertEquals("card $i y at $loopMs", ey, sy, 1.2)
             }
@@ -214,21 +250,27 @@ class CarouselTemplateTest {
 
     @Test
     fun cardsStayUprightAtConstantScale() {
-        for (c in cards + shadows) {
+        // Build 144: no baked keys anywhere on the picture layers — the cards and shadows
+        // hold their fixed t=0 ring poses and the null does all the travelling.
+        for ((i, c) in (cards + shadows).withIndex()) {
+            assertTrue("no keyframes at all on ${c.id}", c.keyframes.isEmpty())
             assertEquals(0f, c.rotationDeg, 0f)
-            assertTrue("no rotation keys", c.keyframes[AnimProp.ROTATION].isNullOrEmpty())
-            assertTrue("no scale keys", c.keyframes[AnimProp.SCALE].isNullOrEmpty())
-            val keys = c.keyframes.getValue(AnimProp.POSITION)
-            assertEquals(101, keys.size)
-            assertEquals(0L, keys.first().timeMs)
-            assertEquals(5000L, keys.last().timeMs)
-            // Loop closure is exact: the last key is the first key's position.
-            assertEquals(keys.first().a, keys.last().a, 0f)
-            assertEquals(keys.first().b, keys.last().b, 0f)
-            // Through the group the card still never turns: the fit is a pure scale.
+            // The stored pose IS the t=0 ring point (in stored units).
+            val idx = if (c.id.contains("card")) i else i - 8
+            val a = Math.toRadians(idx * 45.0)
+            val dy = if (c.id.contains("shadow")) CarouselSpec.SHADOW_DY else 0f
+            assertEquals(((364.0 + 133.2 * cos(a) - 360.0) * k).toFloat(), c.transformX, 0.05f)
+            assertEquals(((224.0 + 133.2 * sin(a) + dy - 225.0) * k).toFloat(), c.transformY, 0.05f)
+        }
+        // Through the rig the cards still never turn and never change size: the rotation
+        // lock holds their own rotation at 0 while the null swings their positions, and
+        // the composed scale is just their stored scale x the group fit.
+        val (_, _, fit) = CarouselTemplate.carouselFit(pw, ph)
+        for (c in cards + shadows) {
             for (t in listOf(at0, at0 + 1234L, at0 + 2500L, at0 + 4999L)) {
                 val a = rig.adjusted(c, t)
-                assertEquals(0f, a.rotationDeg, 0f)
+                assertEquals("upright at $t: ${c.id}", 0f, a.rotationDeg, 0f)
+                assertEquals("constant scale at $t: ${c.id}", c.scalePercent * fit, a.scalePercent, 0.01f)
             }
         }
     }
@@ -242,8 +284,75 @@ class CarouselTemplateTest {
             for (loopMs in listOf(0L, 1750L, 3200L, 4999L)) {
                 val (cx, cy) = templateSceneOf(cards[i], at0 + loopMs)
                 val (sx, sy) = templateSceneOf(s, at0 + loopMs)
-                assertEquals("shadow $i x at $loopMs", cx, sx, 0.05)
-                assertEquals("shadow $i dy at $loopMs", cy + CarouselSpec.SHADOW_DY, sy, 0.05)
+                // Build 144: the twin rides the same null as its card, so the offset is the
+                // measured 2.5 px drop ROTATED by the null's own rotation (a static local
+                // offset under a rotating parent — exactly what a real Alight null rig
+                // produces): the distance from the card is exactly the drop, in the rig's
+                // direction, whatever the card's own ring phase.
+                val th = Math.toRadians(360.0 * CarouselTemplate.progress(loopMs / 5000.0))
+                assertEquals("shadow $i dx at $loopMs", -CarouselSpec.SHADOW_DY * sin(th), sx - cx, 0.05)
+                assertEquals("shadow $i dy at $loopMs", CarouselSpec.SHADOW_DY * cos(th), sy - cy, 0.05)
+                assertEquals(
+                    "shadow $i distance at $loopMs",
+                    CarouselSpec.SHADOW_DY.toDouble(), hypot(sx - cx, sy - cy), 0.05
+                )
+            }
+        }
+    }
+
+    @Test
+    fun nullLayerCarriesTheOnlyMotionTrack() {
+        // The null's ROTATION track is the measured law in degrees: 101 keys, 0 -> 360 over
+        // the 5 s, cross-checked against the app's Float Easing evaluator (independent path).
+        val keys = ins.nullLayer.keyframes.getValue(AnimProp.ROTATION)
+        assertEquals(1, ins.nullLayer.keyframes.size)
+        assertEquals(101, keys.size)
+        assertEquals(0L, keys.first().timeMs)
+        assertEquals(5000L, keys.last().timeMs)
+        assertEquals(0f, keys.first().a, 0f)
+        assertEquals(360f, keys.last().a, 0f)
+        var prev = -1f
+        for (key in keys) {
+            assertEquals(key.timeMs % 50L, 0L)
+            val want = 360.0 * law.apply(key.timeMs / 5000f).toDouble()
+            assertEquals("null rotation at ${key.timeMs}", want, key.a.toDouble(), 1.0)
+            assertTrue("monotonic at ${key.timeMs}", key.a > prev)
+            prev = key.a
+        }
+        // And it is the ONLY motion in the group: the group itself and every other child
+        // carry no keyframes at all — no POSITION keys anywhere, no second rotation track.
+        assertTrue("group has no keys", ins.group.keyframes.isEmpty())
+        for (c in children) {
+            if (c.id == ins.nullLayer.id) continue
+            assertTrue("no keys on ${c.id}", c.keyframes.isEmpty())
+        }
+        for (c in allClips) {
+            assertTrue("no POSITION keys on ${c.id}", c.keyframes[AnimProp.POSITION].isNullOrEmpty())
+        }
+    }
+
+    @Test
+    fun editingTheNullRotationMovesEveryCard() {
+        // The control property (Sarowar's requirement): the null alone drives the ring.
+        // Replace its track by one fixed rotation of 137 degrees — every card must sit on
+        // the ring at its phase + 137, at any time, with the radius untouched.
+        val fixed = ins.nullLayer.copy(rotationDeg = 137f, keyframes = emptyMap())
+        val clips = ins.lanesTopFirst.map { if (it.id == fixed.id) fixed else it }
+        val rig2 = ParentRig(clips) { c, t -> c.renderAt(t) }
+        val (_, _, fit) = CarouselTemplate.carouselFit(pw, ph)
+        fun sceneOf(clip: TimelineClip, tMs: Long): Pair<Double, Double> {
+            val a = rig2.adjusted(clip, tMs)
+            return ((a.transformX - ins.group.transformX) / fit / k + 360.0) to
+                ((a.transformY - ins.group.transformY) / fit / k + 225.0)
+        }
+        for (t in listOf(at0, at0 + 2600L)) {
+            for (i in 0..7) {
+                val card = clips.single { it.id == "test-card-${i + 1}" }
+                val (sx, sy) = sceneOf(card, t)
+                val ang = Math.toRadians(i * 45.0 + 137.0)
+                assertEquals("moved card $i x at $t", 364.0 + 133.2 * cos(ang), sx, 0.35)
+                assertEquals("moved card $i y at $t", 224.0 + 133.2 * sin(ang), sy, 0.35)
+                assertEquals("moved card $i radius at $t", 133.2, hypot(sx - 364.0, sy - 224.0), 0.35)
             }
         }
     }

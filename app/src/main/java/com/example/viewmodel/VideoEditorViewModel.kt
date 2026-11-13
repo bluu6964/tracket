@@ -1006,12 +1006,13 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     /**
-     * Templates (build 143): inserts the Carousel template into the CURRENT project as ONE
-     * Group layer at the playhead — the whole composition (background, 8 shadow twins,
-     * 8 photo cards) as ordinary children inside it, fitted to the canvas by the group's own
-     * transform (see [CarouselTemplate.buildGroup]). One undo step; the group ends up
-     * selected so the user sees what landed. [previewWidthPx] / [previewHeightPx] are the
-     * editor preview frame's size (the stored-units basis). Returns the group's id.
+     * Templates (build 143; null rig build 144): inserts the Carousel template into the
+     * CURRENT project as ONE Group layer at the playhead — the whole composition (the
+     * "Carousel Null" rig layer, background, 8 shadow twins, 8 photo cards) as ordinary
+     * children inside it, fitted to the canvas by the group's own transform (see
+     * [CarouselTemplate.buildGroup]). One undo step; the group ends up selected so the user
+     * sees what landed. [previewWidthPx] / [previewHeightPx] are the editor preview frame's
+     * size (the stored-units basis). Returns the group's id.
      */
     fun insertCarouselTemplate(
         backgroundUri: String,

@@ -33,8 +33,10 @@ import com.example.ui.theme.TextSecondary
 import com.example.ui.util.bouncyClickable
 
 /**
- * Parent picker: the layer follows the chosen parent layer (a Null object or a Controller).
- * [nulls] = (id, name) of the parent layers it may use (no loops), [currentId] = the parent now (null = none).
+ * Parent picker: the layer follows the chosen parent layer (a Null object), or is CONNECTED
+ * to the chosen Controller (build 146: a connection, not a parent — edits of the Controller
+ * fan out onto the connected layers). [nulls] = (id, name) of the layers it may link to
+ * (no loops), [currentId] = the link now (the parent, else the connection; null = none).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,7 +58,7 @@ fun ParentSheet(
             Text("Parent of $layerName", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text(
-                "The layer follows the move, turn and size of its parent. A Controller parent also hands down its opacity, blend mode and effects.",
+                "The layer follows the move, turn and size of its parent (a Null). A Controller is not a parent: the layer is only connected to it, and whatever is done to the Controller is done to the connected layers too, each in its own place.",
                 color = TextSecondary, fontSize = 12.sp
             )
             Spacer(Modifier.height(14.dp))

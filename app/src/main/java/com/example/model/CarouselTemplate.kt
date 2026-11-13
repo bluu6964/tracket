@@ -50,18 +50,22 @@ import kotlin.math.sin
  * construction, and editing the rig layer's rotation track (values, timing, easing)
  * re-times / re-shapes the whole carousel at once.
  *
- * Build 145 (Sarowar's refinement of the driver, same day): the rig layer is a CONTROLLER
- * ("Carousel Controller", [LayerType.CONTROLLER]) rather than a plain Null — a null only
- * carries transform, while a Controller hands EVERYTHING applied to it down to the layers
- * connected to it: transform (as here), opacity (multiplies), blend mode (inherited by
- * connected layers still on the default), and its effect stack (applied to EACH connected
- * layer individually, after the layer's own stack — per-layer application is Sarowar's
- * settled decision). So on top of the rotation control, setting opacity / a blend mode /
- * effects on this one layer restyles all 16 card layers at once; the Background stays
- * outside the cascade (it is linked to the group, not to the controller).
+ * Build 145 (Sarowar's refinement of the driver, same day) briefly made the rig layer a
+ * CONTROLLER that cascaded its values through ParentRig. Build 146 (his correction after
+ * testing 145: "কন্ট্রোলার তো null er মতন আচরণ করছে" — the Controller behaved like a Null)
+ * splits the two jobs by his principle "যেটার কাজ যেখানে সেটা সেখানে রাখবে" — each tool
+ * stays where its job is, and nothing unneeded is kept:
+ *  - the ORBIT is a transform-driving job, so it belongs to the NULL: the build-144 rig
+ *    stands exactly as it was ("Carousel Null", one rotation track, rotation-locked cards).
+ *  - the MULTI-EDIT job belongs to the CONTROLLER: the group also holds a "Carousel
+ *    Controller", connected to the 16 card/shadow layers purely as their fan-out edit
+ *    handle (see [com.example.model.ControllerFanOut]) — neutral values at insert, no
+ *    keyframes, no parenting, no driving. Editing it (move / turn / scale / opacity /
+ *    blend / effects) rewrites each connected card/shadow in its own place; the Null and
+ *    the Background are not connected to it and are never touched by it.
  *
- * One deliberate nuance vs the build-142/143 bake: a shadow twin's 2.5 px offset now rotates
- * WITH the ring (its local offset from the centre is fixed, so the offset direction turns
+ * One deliberate nuance vs the build-142/143 bake: a shadow twin's 2.5 px offset rotates
+ * WITH the ring (its local offset from the null is fixed, so the offset direction turns
  * and its distance from its card stays exactly 2.5 px), where the bake kept the offset
  * pointing straight down the screen. A screen-fixed offset cannot be expressed by a static
  * local pose under a rotating parent; the twin is a 16%-opacity, <=4%-luminance effect, and
@@ -187,7 +191,7 @@ object CarouselTemplate {
     }
 
     /**
-     * The controller's ROTATION track: the measured angular law as keyframed degrees —
+     * The null's ROTATION track: the measured angular law as keyframed degrees —
      * 0 at 0 ms rising monotonically to exactly 360 at [CarouselSpec.DURATION_MS], one key
      * every [CarouselSpec.STEP_MS], each segment carrying the renormalised slice of the
      * master bezier for that segment (the same slicing the build-142 position bake used), so
@@ -212,7 +216,7 @@ object CarouselTemplate {
     /**
      * A ring point in stored units: the t=0 pose of the card at ring phase [phaseDeg] (plus
      * [dyScene] scene px of vertical offset, the shadow twin's drop). This is the fixed local
-     * pose a card/shadow keeps for the whole loop — the controller's rotation does the travelling.
+     * pose a card/shadow keeps for the whole loop — the null's rotation does the travelling.
      */
     private fun ringStored(phaseDeg: Double, k: Float, dyScene: Float): Pair<Float, Float> {
         val a = Math.toRadians(phaseDeg)
@@ -247,14 +251,19 @@ object CarouselTemplate {
         return Triple(-cx * fit, -cy * fit, fit)
     }
 
-    /** What [buildGroup] hands back: the Group layer, the rig's Controller layer, its children, and the lanes to add. */
+    /** What [buildGroup] hands back: the Group layer, the rig's Null layer, the edit handle's
+     *  Controller layer, its children, and the lanes to add. */
     data class Insert(
         val group: TimelineClip,
-        /** The "Carousel Controller" inside the group: the one layer carrying the whole motion. */
+        /** The "Carousel Null" inside the group: the one layer carrying the whole motion. */
+        val nullLayer: TimelineClip,
+        /** The "Carousel Controller" inside the group: the fan-out edit handle the 16
+         *  card/shadow layers are connected to (neutral at insert; it drives nothing). */
         val controller: TimelineClip,
-        /** The layers inside the group in lane order (top lane first): the Controller, then per card
-         *  the photo lane above its shadow lane, the Background last (build 142's track order
-         *  for the 17 picture layers, with the controller's lane on top of them). */
+        /** The layers inside the group in lane order (top lane first): the Null, the
+         *  Controller, then per card the photo lane above its shadow lane, the Background
+         *  last (build 142's track order for the 17 picture layers, with the two rig lanes
+         *  on top of them). */
         val children: List<TimelineClip>,
         /** Lanes to place on top of the project, top lane first: the group, then [children]. */
         val lanesTopFirst: List<TimelineClip>
@@ -263,23 +272,25 @@ object CarouselTemplate {
     /**
      * The template as ONE Group layer + its children, ready to insert into the project that is
      * open (build 143 — the build-142 standalone-project builder is gone; build 144 — the
-     * rigged driver below; build 145 — the driver is a Controller). [previewWidthPx] /
+     * null rig; build 146 — the Controller alongside it as the edit handle). [previewWidthPx] /
      * [previewHeightPx] are the editor preview frame's size (the stored-units basis, like
      * the importer); [backgroundUri] / [cardUris] point at the generated background /
      * placeholder pictures (engine TemplateAssets); the group starts at [insertAtMs] (the
      * playhead) and spans the template's 5 s. Every call builds fresh clips under [idBase] —
      * inserting twice gives two independent carousels, and nothing shared is ever mutated.
      *
-     * The rig: the group's first child is a Controller layer on the ring centre carrying the
-     * ONLY keyframes of the composition — the ROTATION track of [rotationKeys]. Cards and
-     * shadows link to it with a rotation-locked [ParentLink] whose ref is the controller's
-     * rest pose (the ring centre, scale 100, rotation 0): ParentRig composes a card as
-     * group-fit ∘ (controller pose) ∘ (card's fixed offset from the centre, swung by the
-     * controller's rotation), which is exactly build 143's baked world path, and the lock
-     * keeps every card's own rotation at 0 while its position rides. Because the driver is a
-     * Controller, its opacity / blend mode / effects also cascade onto the cards and shadows
-     * (ParentRig's Controller inheritance). The background stays a static child of the
-     * group, outside the cascade, as before.
+     * The rig (build 144, restored verbatim by build 146): the group's first child is a
+     * Null layer on the ring centre carrying the ONLY keyframes of the composition — the
+     * ROTATION track of [rotationKeys]. Cards and shadows link to it with a rotation-locked
+     * [ParentLink] whose ref is the null's rest pose (the ring centre, scale 100, rotation
+     * 0): ParentRig composes a card as group-fit ∘ (null pose) ∘ (card's fixed offset from
+     * the centre, swung by the null's rotation), which is exactly build 143's baked world
+     * path, and the lock keeps every card's own rotation at 0 while its position rides.
+     * Beside it sits the "Carousel Controller" (build 146): an ordinary Controller layer of
+     * the group, neutral (no keyframes, opacity 100, blend Normal, no effects), with the 16
+     * cards/shadows CONNECTED to it ([TimelineClip.controllerId]) — their fan-out edit
+     * handle and nothing more. The background stays a static child of the group, connected
+     * to nothing, as before.
      */
     fun buildGroup(
         previewWidthPx: Float,
@@ -312,14 +323,39 @@ object CarouselTemplate {
             scalePercent = fit * 100f
         )
 
-        // The rig's heart (build 144; a Controller since build 145): a Controller layer on
-        // the ring centre, a child of the group like every other layer inside (REST link, so
+        // The rig's heart (build 144, restored verbatim by build 146): a Null layer on the
+        // ring centre, a child of the group like every other layer inside (REST link, so
         // the group fit reaches it unchanged), carrying the whole motion as its ROTATION
-        // track. Its colour is the app's Controller colour (the lane colour addClip gives
-        // LayerType.CONTROLLER).
-        val controllerId = "$idBase-controller"
+        // track. Its colour is the app's own Null colour (the importer's NULL_COLOR / the
+        // lane colour of LayerType.NULL).
+        val nullId = "$idBase-null"
         val centreX = (CarouselSpec.CENTER_X - CarouselSpec.SCENE_W / 2f) * k
         val centreY = (CarouselSpec.CENTER_Y - CarouselSpec.SCENE_H / 2f) * k
+        val nullClip = TimelineClip(
+            id = nullId,
+            name = "Carousel Null",
+            type = LayerType.NULL,
+            startMs = insertAtMs,
+            durationMs = CarouselSpec.DURATION_MS,
+            color = 0xFFE8A33DL,
+            transformX = centreX,
+            transformY = centreY,
+            keyframes = mapOf(AnimProp.ROTATION to rotationKeys()),
+            groupId = groupId,
+            parent = link
+        )
+        // Cards/shadows link to the null: the ref is its rest pose (ring centre, scale 100,
+        // rotation 0) and the link is rotation-LOCKED (Parent Helper): the position follows
+        // the null's turn in full, the layer's own rotation never inherits it — upright
+        // cards with no keyframes at all.
+        val nullLink = ParentLink(nullId, centreX, centreY, 100f, 0f, lockRotate = true)
+
+        // The edit handle (build 146): a Controller layer of the group, parked beside the
+        // null on the ring centre with NEUTRAL values (no keyframes, opacity 100, blend
+        // Normal, no effects). The 16 cards/shadows below are CONNECTED to it
+        // (controllerId): editing it fans the edit out onto each of them in its own place.
+        // It parents nothing and drives nothing — the null above does the driving.
+        val controllerId = "$idBase-controller"
         val controllerClip = TimelineClip(
             id = controllerId,
             name = "Carousel Controller",
@@ -329,22 +365,17 @@ object CarouselTemplate {
             color = 0xFF00B8A9L,
             transformX = centreX,
             transformY = centreY,
-            keyframes = mapOf(AnimProp.ROTATION to rotationKeys()),
             groupId = groupId,
             parent = link
         )
-        // Cards/shadows link to the controller: the ref is its rest pose (ring centre,
-        // scale 100, rotation 0) and the link is rotation-LOCKED (Parent Helper): the
-        // position follows the controller's turn in full, the layer's own rotation never
-        // inherits it — upright cards with no keyframes at all.
-        val controllerLink = ParentLink(controllerId, centreX, centreY, 100f, 0f, lockRotate = true)
 
-        // Children in lane order (top lane first): the controller's lane, then per card the
-        // photo lane above its shadow lane, the Background lane last (last track = painted
-        // first — the renderers walk the lanes reversed, and GroupOps keeps a group's
-        // children in lane order, so the inserted group paints exactly like the build-142
-        // project did).
-        val children = ArrayList<TimelineClip>(18)
+        // Children in lane order (top lane first): the null's lane, the controller's lane,
+        // then per card the photo lane above its shadow lane, the Background lane last
+        // (last track = painted first — the renderers walk the lanes reversed, and
+        // GroupOps keeps a group's children in lane order, so the inserted group paints
+        // exactly like the build-142 project did).
+        val children = ArrayList<TimelineClip>(19)
+        children += nullClip
         children += controllerClip
         // Background: a generated gradient+grid picture on a frame-covering rect (10 scene px
         // of bleed per side), in the template frame's own coordinates.
@@ -369,8 +400,9 @@ object CarouselTemplate {
         )
         for (i in 0 until CarouselSpec.CARD_COUNT) {
             val phase = i * 45.0
-            // Fixed local poses (the t=0 ring positions): the controller's rotation does the
-            // travelling, so neither layer carries a single keyframe (build 144).
+            // Fixed local poses (the t=0 ring positions): the null's rotation does the
+            // travelling, so neither layer carries a single keyframe (build 144). Both are
+            // connected to the Controller (their fan-out edit handle, build 146).
             val (shX, shY) = ringStored(phase, k, CarouselSpec.SHADOW_DY)
             val shadow = TimelineClip(
                 id = "$idBase-shadow-${i + 1}",
@@ -390,7 +422,8 @@ object CarouselTemplate {
                 transformX = shX,
                 transformY = shY,
                 groupId = groupId,
-                parent = controllerLink
+                parent = nullLink,
+                controllerId = controllerId
             )
             val (cdX, cdY) = ringStored(phase, k, 0f)
             val card = TimelineClip(
@@ -412,7 +445,8 @@ object CarouselTemplate {
                 transformX = cdX,
                 transformY = cdY,
                 groupId = groupId,
-                parent = controllerLink
+                parent = nullLink,
+                controllerId = controllerId
             )
             children += card
             children += shadow
@@ -421,6 +455,6 @@ object CarouselTemplate {
 
         // The group's lane sits above its children (the GroupOps.group arrangement).
         val lanesTopFirst = listOf(group) + children
-        return Insert(group, controllerClip, children, lanesTopFirst)
+        return Insert(group, nullClip, controllerClip, children, lanesTopFirst)
     }
 }

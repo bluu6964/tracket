@@ -135,12 +135,16 @@ enum class LayerType(val displayName: String) {
      */
     GROUP("Group"),
     /**
-     * Controller (build 145, Sarowar's design): an invisible rig layer like a Null, but everything applied to it
-     * cascades to the layers CONNECTED to it (their [TimelineClip.parent] points at it): its transform drives them
-     * (the Null behaviour, ParentRig), its opacity multiplies theirs, its blend mode is inherited by connected
-     * layers that still carry the default "Normal", and its effect stack runs on EACH connected layer
-     * individually, after that layer's own stack (per-layer application — Sarowar's decision, 2026-11-13).
-     * The Controller itself is never drawn / exported.
+     * Controller (build 145; semantics v2, build 146 — Sarowar's correction): an invisible layer whose job is
+     * SIMULTANEOUS MULTI-LAYER EDITING. It is NOT a parent and drives nothing: layers are merely CONNECTED to
+     * it ([TimelineClip.controllerId], or a legacy build-145 [TimelineClip.parent] link at it), and whatever is
+     * done to the Controller in the editor is done the same way to each connected layer IN ITS OWN PLACE —
+     * a position edit moves every connected layer by the same delta, a rotation turns each one around its
+     * OWN pivot (connected layers never orbit the Controller), a scale multiplies each one's own scale,
+     * and opacity / blend mode / effects are set to the Controller's values on each connected layer
+     * individually (per-layer application — Sarowar's decision, 2026-11-13). The fan-out happens at EDIT
+     * time ([ControllerFanOut], driven by the editor); ParentRig and the renderers ignore the connection
+     * completely. A Controller carries the same tools as any ordinary layer. It is never drawn / exported.
      */
     CONTROLLER("Controller")
 }
@@ -369,9 +373,17 @@ data class TimelineClip(
     val effects: List<ClipFx> = emptyList(),
     /** Masks of the Masks panel (shapes with feather / invert / combine mode, animatable), run by the C++ engine after the effects. See [ClipMaskLibrary]. */
     val masks: List<ClipMask> = emptyList(),
-    /** Parent (a Null object or a Controller): this layer follows the move / turn / scale of that layer, see ParentRig.
-     *  A Controller parent also hands down its opacity / blend mode / effects (see [LayerType.CONTROLLER]). */
+    /** Parent (a Null object or a Group): this layer follows the move / turn / scale of that layer, see ParentRig.
+     *  A [ParentLink] whose target is a Controller is a legacy build-145 connection: the rig ignores it
+     *  (build 146 — a Controller is not a parent); new connections live in [controllerId]. */
     val parent: ParentLink? = null,
+    /**
+     * The Controller this layer is CONNECTED to (build 146), null = connected to none. A connection is
+     * an EDITING relation only: the editor fans every edit of that Controller out onto this layer
+     * (see [ControllerFanOut]); nothing at render or evaluation time reads this field, and the layer
+     * keeps its own parent / group exactly as it would without the connection.
+     */
+    val controllerId: String? = null,
     /** Id of the Chain layer this layer sits in (same lane), null = a normal layer. */
     val chainId: String? = null,
     /** Id of the real Group layer this layer is inside (it follows that group, see [GroupOps]), null = not in a group. */

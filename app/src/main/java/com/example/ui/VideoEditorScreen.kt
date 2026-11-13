@@ -2578,11 +2578,10 @@ fun VideoEditorScreen(
                         ) else ClipEditToolsPanel(
                             height = toolbarH,
                             // Null / 3D Camera: no picture, so no Effects / Animations / Color / Crop / Blend; only what moves them.
-                            // Controller (build 145): also no picture of its own, but its Effects / Blend / Animations are
-                            // the point — they cascade to the connected layers — so it keeps exactly those plus move/parent/rename.
+                            // Controller (build 146): the SAME tools as any ordinary layer — editing it
+                            // IS editing its connected layers, so nothing is taken away (the handlers'
+                            // own type gates still apply, exactly as they do for other layer kinds).
                             onlyTools = when {
-                                tracks.any { t -> t.clips.any { it.id == targetClipId && it.type == LayerType.CONTROLLER } } ->
-                                    setOf("transform", "parent", "rename", "effects", "blend", "animations")
                                 tracks.any { t -> t.clips.any { it.id == targetClipId && (it.type == LayerType.NULL || it.type == LayerType.CAMERA) } } ->
                                     setOf("transform", "parent", "rename")
                                 else -> null
@@ -3175,8 +3174,7 @@ fun VideoEditorScreen(
                         onRedo = { viewModel.redo(); com.example.ui.buddy.BuddyBrain.react(com.example.ui.buddy.BuddyEvent.REDO) },
                         onDismiss = { showTransformMode = false },
                         panelOnly = true,
-                        // A Null / Controller only hands its move / scale / turn (and, for a Controller, its
-                        // opacity / blend / effects) to its connected layers (ParentRig): no 3D tab for them.
+                        // A Null / Controller has no picture of its own to tilt: no 3D tab for them.
                         show3d = selectedClip?.type != LayerType.NULL && selectedClip?.type != LayerType.CONTROLLER,
                         timescaleHeight = timescaleH,
                         resetTick = transformResetTick,
@@ -3925,7 +3923,7 @@ fun VideoEditorScreen(
             com.example.ui.components.ParentSheet(
                 layerName = child.text?.takeIf { it.isNotBlank() } ?: child.name,
                 nulls = all.filter { (it.type == LayerType.NULL || it.type == LayerType.CONTROLLER) && it.id != childId && !loops(it.id) }.map { it.id to it.name },
-                currentId = child.parent?.id,
+                currentId = child.parent?.id ?: child.controllerId,
                 onPick = { pid ->
                     if (!viewModel.setClipParent(childId, pid)) {
                         scope.launch { snackbarHostState.showSnackbar("This layer cannot be the parent") }

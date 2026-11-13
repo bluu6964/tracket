@@ -210,6 +210,9 @@ object GroupOps {
                 name = if (c.id == groupId) "${c.name} (Copy)" else c.name,
                 groupId = if (c.id == groupId) c.groupId else c.groupId?.let { newIds[it] ?: it },
                 parent = link,
+                // A Controller connection inside the group is remapped like the parent link:
+                // the copy's layers connect to the copy's Controller, never the original's.
+                controllerId = c.controllerId?.let { newIds[it] ?: it },
                 chainId = null
             )
         }

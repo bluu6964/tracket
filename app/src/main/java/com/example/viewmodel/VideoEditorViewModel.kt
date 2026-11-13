@@ -11,6 +11,7 @@ import com.example.model.MAX_CLIP_VOLUME
 import com.example.model.MAX_SPEED
 import com.example.model.AspectRatio
 import com.example.model.CarouselTemplate
+import com.example.model.ControllerFanOut
 import com.example.model.ExportSettings
 import com.example.model.ImportedMedia
 import com.example.model.GroupOps
@@ -579,12 +580,14 @@ class VideoEditorViewModel : ViewModel() {
 
     fun setClipBlendMode(mode: String) {
         val clipId = _selectedClipId.value ?: return
+        val before = clipNow(clipId)
         pushHistory()
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
                 if (clip.id == clipId) clip.copy(blendMode = mode) else clip
             })
         }
+        if (before != null) applyControllerFanOut(before)
     }
 
     /**
@@ -592,11 +595,13 @@ class VideoEditorViewModel : ViewModel() {
      * ([beginAdjust]), so a whole session of trying effects undoes at once. Effects are not keyframed.
      */
     fun setClipEffects(clipId: String, effects: List<com.example.model.ClipFx>) {
+        val before = clipNow(clipId)
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
                 if (clip.id == clipId) clip.copy(effects = effects) else clip
             })
         }
+        if (before != null) applyControllerFanOut(before)
     }
 
     /**
@@ -637,9 +642,21 @@ class VideoEditorViewModel : ViewModel() {
         canvasH: Float
     ) {
         val clipId = _selectedClipId.value ?: return
+        val target = clipNow(clipId)
         updateClipRaw(clipId) { c ->
             if (preset == null) c.withoutClipAnim(slot)
             else c.withClipAnim(slot, preset, dir, durationMs, easing, canvasW, canvasH)
+        }
+        // Controller (build 146): the same In / Out animation is applied to every connected
+        // layer — each one animates in its own place, like the Controller itself does.
+        if (target != null && target.type == LayerType.CONTROLLER) {
+            val connected = ControllerFanOut.connected(_tracks.value.flatMap { it.clips }, clipId)
+            for (c in connected) {
+                updateClipRaw(c.id) { lc ->
+                    if (preset == null) lc.withoutClipAnim(slot)
+                    else lc.withClipAnim(slot, preset, dir, durationMs, easing, canvasW, canvasH)
+                }
+            }
         }
     }
 
@@ -865,9 +882,10 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     /**
-     * Adds a Controller layer (build 145) at the playhead and selects it. Like a Null it is an
-     * invisible parent other layers connect to, but everything applied to it — transform,
-     * opacity, blend mode, effects — cascades to the connected layers (see ParentRig).
+     * Adds a Controller layer (build 145; semantics v2 build 146) at the playhead and selects
+     * it. An invisible EDIT handle: layers connected to it (Parent picker) are edited together
+     * through it — every edit of the Controller fans out onto each connected layer in its own
+     * place (see [ControllerFanOut]). It is not a parent and drives nothing.
      */
     fun addControllerLayer(durationMs: Long = 5000L) {
         addClip(type = LayerType.CONTROLLER, name = "Controller", durationMs = durationMs.coerceIn(250L, 60_000L))
@@ -879,17 +897,46 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     /**
-     * Makes the parent layer [parentId] (a Null, a Group or a Controller) the parent of [clipId] (null = no parent).
-     * The link saves the parent's pose at the playhead,
-     * so the layer stays where it is and then follows the parent's move / turn / scale. Returns false when it cannot be
-     * done (not a parent kind, or a loop).
+     * Links [clipId] to the layer [parentId] (null = no link). The Parent picker offers two
+     * different relations under one list, and each pick changes only its own relation:
+     *  - a Null or a Group becomes the layer's PARENT: the link saves the parent's pose at the
+     *    playhead, so the layer stays where it is and then follows the parent's move / turn /
+     *    scale (ParentRig). A layer that gets another parent than its group leaves the group.
+     *  - a Controller becomes the layer's CONNECTION (build 146): it is stored in
+     *    [TimelineClip.controllerId] and changes nothing about the layer's parent or rendering —
+     *    it only means edits of that Controller fan out onto the layer ([ControllerFanOut]). A
+     *    legacy build-145 parent link at a Controller is cleared (it was this same connection).
+     * Picking null clears BOTH relations. Returns false when it cannot be done (unknown layer,
+     * self-link, not a parent kind, or a parent loop).
      */
     fun setClipParent(clipId: String, parentId: String?): Boolean {
         val all = _tracks.value.flatMap { it.clips }
         if (all.none { it.id == clipId }) return false
+        if (parentId == null) {
+            pushHistory()
+            _tracks.value = _tracks.value.map { track ->
+                track.copy(clips = track.clips.map {
+                    if (it.id == clipId) it.copy(parent = null, controllerId = null) else it
+                })
+            }
+            return true
+        }
+        if (parentId == clipId) return false
+        val target = all.firstOrNull { it.id == parentId } ?: return false
+        if (target.type == LayerType.CONTROLLER) {
+            pushHistory()
+            _tracks.value = _tracks.value.map { track ->
+                track.copy(clips = track.clips.map {
+                    if (it.id == clipId) it.copy(
+                        controllerId = parentId,
+                        parent = if (it.parent?.id == parentId) null else it.parent
+                    ) else it
+                })
+            }
+            return true
+        }
         var link: com.example.model.ParentLink? = null
-        if (parentId != null) {
-            if (parentId == clipId) return false
+        run {
             val rig = com.example.engine.ParentRig(all) { c, t -> com.example.engine.NativeRenderAt.renderAt(c, t) }
             if (rig.wouldLoop(clipId, parentId)) return false
             val pose = rig.poseOf(parentId, _currentPlayheadMs.value) ?: return false
@@ -898,7 +945,10 @@ class VideoEditorViewModel : ViewModel() {
         pushHistory()
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map {
-                // A layer that gets another parent than its group leaves the group.
+                // A layer that gets another parent than its group leaves the group. Its
+                // Controller connection (controllerId) is a separate relation and survives;
+                // a legacy controller link sitting in the parent field is replaced with the
+                // rest of the link, as the picker showed only one current link.
                 if (it.id == clipId) it.copy(parent = link, groupId = if (it.groupId != null && link?.id != it.groupId) null else it.groupId) else it
             })
         }
@@ -1016,13 +1066,14 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     /**
-     * Templates (build 143; Controller rig build 145): inserts the Carousel template into the
+     * Templates (build 143; rig builds 144 + 146): inserts the Carousel template into the
      * CURRENT project as ONE Group layer at the playhead — the whole composition (the
-     * "Carousel Controller" rig layer, background, 8 shadow twins, 8 photo cards) as ordinary
-     * children inside it, fitted to the canvas by the group's own transform (see
-     * [CarouselTemplate.buildGroup]). One undo step; the group ends up selected so the user
-     * sees what landed. [previewWidthPx] / [previewHeightPx] are the editor preview frame's
-     * size (the stored-units basis). Returns the group's id.
+     * "Carousel Null" rig layer carrying the motion, the "Carousel Controller" edit handle,
+     * background, 8 shadow twins, 8 photo cards) as ordinary children inside it, fitted to
+     * the canvas by the group's own transform (see [CarouselTemplate.buildGroup]). One undo
+     * step; the group ends up selected so the user sees what landed. [previewWidthPx] /
+     * [previewHeightPx] are the editor preview frame's size (the stored-units basis).
+     * Returns the group's id.
      */
     fun insertCarouselTemplate(
         backgroundUri: String,
@@ -1052,11 +1103,13 @@ class VideoEditorViewModel : ViewModel() {
      * one step is pushed when the editor opens, so a whole editing session undoes at once.
      */
     fun updateClip(clipId: String, change: (TimelineClip) -> TimelineClip) {
+        val before = clipNow(clipId)
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map {
                 if (it.id == clipId) commitKeyframed(it, change(it), vsResolved = false) else it
             })
         }
+        if (before != null) applyControllerFanOut(before)
     }
 
     /**
@@ -1067,12 +1120,14 @@ class VideoEditorViewModel : ViewModel() {
     fun updateClipLive(clipId: String, change: (TimelineClip) -> TimelineClip) = updateClipColor(clipId, change)
 
     fun updateClipColor(clipId: String, change: (TimelineClip) -> TimelineClip) {
+        val before = clipNow(clipId)
         val t = _currentPlayheadMs.value
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map {
                 if (it.id == clipId) commitKeyframed(it, change(it.at(t)), vsResolved = true) else it
             })
         }
+        if (before != null) applyControllerFanOut(before)
     }
 
     /** Edit without any keyframe handling (Color reset also drops the colour keyframes). */
@@ -1101,6 +1156,7 @@ class VideoEditorViewModel : ViewModel() {
                 }
                 out
             }
+            for (p in on) mirrorKeyframeToggle(clip, p, added = false)
         } else {
             val resolved = clip.at(t)
             updateClipRaw(clipId) { c ->
@@ -1111,6 +1167,7 @@ class VideoEditorViewModel : ViewModel() {
                 }
                 out
             }
+            for (p in props) mirrorKeyframeToggle(clip, p, added = true)
         }
     }
 
@@ -1145,6 +1202,65 @@ class VideoEditorViewModel : ViewModel() {
             if (changed) out = out.withKeyframe(p, rel, na, nb)
         }
         return out
+    }
+
+    // ---- Controller fan-out (build 146) ------------------------------------
+    //
+    // A Controller is a simultaneous multi-layer edit handle: when an edit changes a
+    // Controller, the same change is fanned out onto every layer connected to it, in each
+    // layer's own place (see ControllerFanOut for the delta / value rules). The edit
+    // functions below capture the Controller's stored state BEFORE the edit and call
+    // [applyControllerFanOut] after it; the undo step is the caller's own (the fan-out
+    // adds none). Keyframe toggles / easing / In-Out animations are mirrored as the same
+    // operation instead ([mirrorKeyframeToggle] / the setClipAnim / setKeyframeEasing
+    // mirrors), because they edit the track structure rather than a playhead value.
+
+    /** The stored state of a layer right now (null when it is not on the timeline). */
+    private fun clipNow(clipId: String): TimelineClip? =
+        _tracks.value.flatMap { it.clips }.firstOrNull { it.id == clipId }
+
+    /**
+     * Fans the edit that took the Controller [before] to its current stored state out onto
+     * every connected layer. No-op for other layer kinds and for unchanged Controllers.
+     */
+    private fun applyControllerFanOut(before: TimelineClip) {
+        if (before.type != LayerType.CONTROLLER) return
+        val all = _tracks.value.flatMap { it.clips }
+        val after = all.firstOrNull { it.id == before.id } ?: return
+        if (after == before) return
+        val connected = ControllerFanOut.connected(all, before.id).map { it.id }.toSet()
+        if (connected.isEmpty()) return
+        val t = _currentPlayheadMs.value
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { c ->
+                if (c.id in connected) ControllerFanOut.fanned(c, before, after, t) else c
+            })
+        }
+    }
+
+    /**
+     * Mirrors a keyframe diamond toggle made on the Controller [controller] onto its
+     * connected layers: [added] true = each connected layer gets a keyframe of [prop] at
+     * the same absolute time holding its OWN value there; false = the keyframe it has at
+     * that time on [prop] is removed.
+     */
+    private fun mirrorKeyframeToggle(controller: TimelineClip, prop: AnimProp, added: Boolean) {
+        if (controller.type != LayerType.CONTROLLER) return
+        val t = _currentPlayheadMs.value
+        val all = _tracks.value.flatMap { it.clips }
+        for (c in ControllerFanOut.connected(all, controller.id)) {
+            if (t < c.startMs || t > c.endMs) continue
+            val rel = t - c.startMs
+            updateClipRaw(c.id) { lc ->
+                if (added) {
+                    val (a, b) = lc.at(t).propValues(prop)
+                    lc.withKeyframe(prop, rel, a, b)
+                } else {
+                    val i = lc.keyframes[prop].orEmpty().indexOnTime(rel)
+                    if (i >= 0) lc.withoutKeyframe(prop, i) else lc
+                }
+            }
+        }
     }
 
     /**
@@ -1182,9 +1298,11 @@ class VideoEditorViewModel : ViewModel() {
         pushHistory()
         if (idx >= 0) {
             updateClipRaw(clipId) { it.withoutKeyframe(prop, idx) }
+            mirrorKeyframeToggle(clip, prop, added = false)
         } else {
             val (a, b) = clip.at(t).propValues(prop)
             updateClipRaw(clipId) { it.withKeyframe(prop, rel, a, b) }
+            mirrorKeyframeToggle(clip, prop, added = true)
         }
     }
 
@@ -1193,14 +1311,28 @@ class VideoEditorViewModel : ViewModel() {
      * Live while a handle is dragged; the caller invokes [beginAdjust] once when the drag starts.
      */
     fun setKeyframeEasing(clipId: String, prop: AnimProp, keyframeTimeMs: Long, easing: Easing) {
+        val target = clipNow(clipId)
         updateClipRaw(clipId) { c ->
             val idx = c.keyframes[prop].orEmpty().indexOfFirst { it.timeMs == keyframeTimeMs }
             if (idx < 0) c else c.withEasing(prop, idx, easing)
+        }
+        // Controller (build 146): the same segment easing lands on each connected layer's
+        // keyframe at the same absolute time (the same operation, mirrored).
+        if (target != null && target.type == LayerType.CONTROLLER) {
+            val absTime = target.startMs + keyframeTimeMs
+            val all = _tracks.value.flatMap { it.clips }
+            for (c in ControllerFanOut.connected(all, target.id)) {
+                updateClipRaw(c.id) { lc ->
+                    val idx = lc.keyframes[prop].orEmpty().indexOfFirst { it.timeMs == absTime - lc.startMs }
+                    if (idx < 0) lc else lc.withEasing(prop, idx, easing)
+                }
+            }
         }
     }
 
     /** Scale + rotation from the selection frame handles (values are absolute, as the user sees them). */
     fun setScaleRotation(clipId: String, scalePercent: Float, rotationDeg: Float) {
+        val before = clipNow(clipId)
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map {
                 if (it.id == clipId) {
@@ -1208,6 +1340,7 @@ class VideoEditorViewModel : ViewModel() {
                 } else it
             })
         }
+        if (before != null) applyControllerFanOut(before)
     }
 
     /**
@@ -1436,6 +1569,7 @@ class VideoEditorViewModel : ViewModel() {
         scaleX: Float = 1f,
         scaleY: Float = 1f
     ) {
+        val before = clipNow(clipId)
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
                 if (clip.id == clipId) {
@@ -1458,6 +1592,7 @@ class VideoEditorViewModel : ViewModel() {
                 } else clip
             })
         }
+        if (before != null) applyControllerFanOut(before)
     }
 
     fun updateClipFullTransform(
@@ -1473,6 +1608,7 @@ class VideoEditorViewModel : ViewModel() {
         warp: Float = 0f,
         transformZ: Float = 0f
     ) {
+        val before = clipNow(clipId)
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
                 if (clip.id == clipId) {
@@ -1496,6 +1632,7 @@ class VideoEditorViewModel : ViewModel() {
                 } else clip
             })
         }
+        if (before != null) applyControllerFanOut(before)
     }
 
     fun updateClipCrop(

@@ -535,9 +535,9 @@ class NativePreviewEngine(context: Context) {
                 p.pin = CornerPinRuntime.quadOnCanvas(pinSpec, t, bp, outW, outH) ?: return
             }
             // Blend mode (same rule as the export): a matte on the lowest layer has nothing to cut, it behaves like Normal.
-            // A Controller parent's values count as the layer's own here (build 145): [eff] carries the
-            // inherited blend mode / effect stack; the transform still comes from the C++ numbers + applyToFp.
-            val eff = if (rig.hasLinks) rig.withControllerInheritance(c, t) else c
+            // The layer's own values are read directly: a Controller connection hands nothing down
+            // at render time (build 146 — its fan-out already rewrote the layer's stored values).
+            val eff = c
             val found = BlendModes.find(eff.blendMode)
             val blendId = if (c === firstMedia && found.kind == BlendKind.MATTE) 0 else found.shaderId
             // A Repeat-family effect on the picture (an imported Alight repeat, or one added in the
@@ -566,9 +566,8 @@ class NativePreviewEngine(context: Context) {
                 val img = src.image
                 if (img != null) {
                     if (!placeByCamera(cam, c, t, anim, fp, p, img.w, img.h, previewW)) return false
-                    // Effects of the Effects panel on a photo (before crop / transform, like on a video) —
-                    // plus a Controller parent's stack, appended per layer (build 145, via [eff]).
-                    val imgOps = fxOpsOf(eff, t, c)
+                    // Effects of the Effects panel on a photo (before crop / transform, like on a video).
+                    val imgOps = fxOpsOf(c, t)
                     val imgMasks = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
                     if (imgOps != null || imgMasks != null) {
                         val fxTex = r.applyFx(
@@ -595,7 +594,7 @@ class NativePreviewEngine(context: Context) {
                 val srcMs = anim.sourceMs(t)
                 val faceMask = NativeFxMasks.face(r, c, slot, srcMs, strict = false)
                 val cutMask = NativeFxMasks.cutout(r, c, slot, srcMs, strict = false)
-                val fxOps = fxOpsOf(eff, t, c)
+                val fxOps = fxOpsOf(c, t)
                 val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
                 if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
                     val fxTex = r.applyFx(
@@ -823,10 +822,9 @@ class NativePreviewEngine(context: Context) {
             return mediaLanes.any { it in (lo + 1) until hi }
         }
         for (c in overlays) {
-            // The grouping reads the EFFECTIVE blend / effects (build 145): a layer connected
-            // to a Controller blends and runs effects like the controller prescribes, so it
-            // needs its own picture exactly when its effective values say so.
-            val effC = if (rig.hasLinks) rig.withStaticControllerInheritance(c) else c
+            // The grouping reads the layer's OWN blend / effects: a Controller connection hands
+            // nothing down at render time (build 146), so the stored values are the whole truth.
+            val effC = c
             val spec = BlendModes.find(effC.blendMode)
             val hasFx = ClipFxLibrary.hasEffects(effC.effects)
             val hasOwnMasks = OverlayMasks.hasOwnMasks(c)

@@ -273,7 +273,7 @@ class NativeProjectExporter(private val context: Context) {
                     var cur = mutableListOf<TimelineClip>()
                     for (c in overlays) {
                         if (cur.isNotEmpty() && mediaBetween(cur.last(), c)) { level += OverlayGroup(cur, 0); cur = mutableListOf() }
-                        val effC = if (rig.hasLinks) rig.withStaticControllerInheritance(c) else c
+                        val effC = c
                         val spec = BlendModes.find(effC.blendMode)
                         val hasFx = ClipFxLibrary.hasEffects(effC.effects)
                         val hasOwnMasks = OverlayMasks.hasOwnMasks(c)
@@ -537,8 +537,9 @@ class NativeProjectExporter(private val context: Context) {
                                 p.pin = CornerPinRuntime.quadOnCanvas(pinSpec, timeMs, bp, w, h) ?: return
                             }
                             // A matte has nothing beneath the base layer to cut: it behaves like Normal.
-                            // A Controller parent's blend mode counts as the layer's own (build 145, via [eff]).
-                            val eff = if (rig.hasLinks) rig.withControllerInheritance(clip, timeMs) else clip
+                            // The layer's own blend mode is read directly: a Controller connection
+                            // hands nothing down at render time (build 146).
+                            val eff = clip
                             val found = BlendModes.find(eff.blendMode)
                             val blendId = if (clip === visuals.first() && found.kind == BlendKind.MATTE) 0 else found.shaderId
                             // A Repeat-family effect on the picture (an imported Alight repeat, or one
@@ -564,7 +565,7 @@ class NativeProjectExporter(private val context: Context) {
                             val img = images[clip.id]
                             if (img != null) {
                                 if (!placeByCamera(clip, timeMs, anim, fp, p, img.width, img.height)) return false
-                                val imgOps = fxOpsOf(eff, timeMs, clip)
+                                val imgOps = fxOpsOf(clip, timeMs)
                                 val imgMasks = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                                 if (imgOps != null || imgMasks != null) {
                                     val fxTex = renderer.applyFx(
@@ -622,7 +623,7 @@ class NativeProjectExporter(private val context: Context) {
                             // same order as the preview (face blur, then cutout).
                             val faceMask = NativeFxMasks.face(renderer, clip, layerIdx, sourceMs, strict = true)
                             val cutMask = NativeFxMasks.cutout(renderer, clip, layerIdx, sourceMs, strict = true)
-                            val fxOps = fxOpsOf(eff, timeMs, clip)
+                            val fxOps = fxOpsOf(clip, timeMs)
                             val maskOps = ClipMaskLibrary.toNative(clip.masks, timeMs - clip.startMs, CutoutMasks.sourceMs(clip, timeMs))
                             if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
                                 val fxTex = renderer.applyFx(
@@ -685,8 +686,7 @@ class NativeProjectExporter(private val context: Context) {
                         drawScopeRef(clip.id, depth + 1, timeMs)
                         val tex = renderer.endGroup()
                         if (tex == 0) return
-                        // [g] is the group fully evaluated through the rig: if the group itself is
-                        // connected to a Controller, its effective blend / effects are already on [g].
+                        // [g] is the group fully evaluated through the rig: its own blend / effects.
                         val blendId = BlendModes.find(g.blendMode).shaderId
                         val fxOps = fxOpsOf(g, timeMs, clip)
                         // The children's parent link to this group (its ref = the embed's pivot):

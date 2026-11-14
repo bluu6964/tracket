@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +27,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.example.model.MultiAction
 import com.example.model.MultiBarMode
+import com.example.model.SpatialAction
 import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
 
@@ -33,53 +35,91 @@ private val IconColor = Color.White
 
 /**
  * Bar shown at the bottom of the timeline while several layers are selected.
- * Left group depends on the playhead ([mode]); right group aligns the checked layers.
+ * First row: left group depends on the playhead ([mode]); right group aligns the checked
+ * layers IN TIME. Second row (build 188): canvas SPATIAL align / distribute of the checked
+ * layers (see [com.example.model.SpatialAlign]) — bare tiles like the rest of the bar;
+ * the two distribute tiles dim out below 3 checked layers (they need three to space).
  */
 @Composable
 fun MultiSelectBar(
     mode: MultiBarMode,
     onAction: (MultiAction) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** How many layers are checked (the distribute tiles need >= 3). */
+    selectedCount: Int = 0,
+    /** A spatial align / distribute tile of the second row. */
+    onSpatialAction: (SpatialAction) -> Unit = {}
 ) {
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp)
-            .height(54.dp)
             .glassSurface(RectangleShape, fill = amGlassBrush())
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(horizontal = 12.dp, vertical = 2.dp)
     ) {
         Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            when (mode) {
-                MultiBarMode.SPLIT -> {
-                    BarIcon(MultiAction.DELETE_LEFT, onAction) { drawSplitIcon(dashLeft = true, dashRight = false) }
-                    BarIcon(MultiAction.SPLIT, onAction) { drawSplitIcon(dashLeft = false, dashRight = false) }
-                    BarIcon(MultiAction.DELETE_RIGHT, onAction) { drawSplitIcon(dashLeft = false, dashRight = true) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                when (mode) {
+                    MultiBarMode.SPLIT -> {
+                        BarIcon(MultiAction.DELETE_LEFT, onAction) { drawSplitIcon(dashLeft = true, dashRight = false) }
+                        BarIcon(MultiAction.SPLIT, onAction) { drawSplitIcon(dashLeft = false, dashRight = false) }
+                        BarIcon(MultiAction.DELETE_RIGHT, onAction) { drawSplitIcon(dashLeft = false, dashRight = true) }
+                    }
+                    MultiBarMode.START -> {
+                        BarIcon(MultiAction.EXTEND_START, onAction) { drawExtendIcon(atStart = true) }
+                        BarIcon(MultiAction.MOVE_START, onAction) { drawMoveIcon(atStart = true) }
+                    }
+                    MultiBarMode.END -> {
+                        BarIcon(MultiAction.EXTEND_END, onAction) { drawExtendIcon(atStart = false) }
+                        BarIcon(MultiAction.MOVE_END, onAction) { drawMoveIcon(atStart = false) }
+                    }
                 }
-                MultiBarMode.START -> {
-                    BarIcon(MultiAction.EXTEND_START, onAction) { drawExtendIcon(atStart = true) }
-                    BarIcon(MultiAction.MOVE_START, onAction) { drawMoveIcon(atStart = true) }
-                }
-                MultiBarMode.END -> {
-                    BarIcon(MultiAction.EXTEND_END, onAction) { drawExtendIcon(atStart = false) }
-                    BarIcon(MultiAction.MOVE_END, onAction) { drawMoveIcon(atStart = false) }
-                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                AlignTile(MultiAction.ALIGN_START, onAction) { drawBars(BarsKind.LEFT) }
+                AlignTile(MultiAction.SEQUENCE, onAction) { drawBars(BarsKind.STAIR) }
+                AlignTile(MultiAction.ALIGN_END, onAction) { drawBars(BarsKind.RIGHT) }
+                AlignTile(MultiAction.CHAIN, onAction) { drawChainIcon() }
+                AlignTile(MultiAction.GROUP, onAction) { drawGroupIcon() }
             }
         }
         Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(38.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            AlignTile(MultiAction.ALIGN_START, onAction) { drawBars(BarsKind.LEFT) }
-            AlignTile(MultiAction.SEQUENCE, onAction) { drawBars(BarsKind.STAIR) }
-            AlignTile(MultiAction.ALIGN_END, onAction) { drawBars(BarsKind.RIGHT) }
-            AlignTile(MultiAction.CHAIN, onAction) { drawChainIcon() }
-            AlignTile(MultiAction.GROUP, onAction) { drawGroupIcon() }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                SpatialTile(SpatialAction.ALIGN_LEFT, onSpatialAction) { drawAlignGlyph(AlignGlyph.LEFT) }
+                SpatialTile(SpatialAction.ALIGN_CENTER_H, onSpatialAction) { drawAlignGlyph(AlignGlyph.CENTER_H) }
+                SpatialTile(SpatialAction.ALIGN_RIGHT, onSpatialAction) { drawAlignGlyph(AlignGlyph.RIGHT) }
+                SpatialTile(SpatialAction.ALIGN_TOP, onSpatialAction) { drawAlignGlyph(AlignGlyph.TOP) }
+                SpatialTile(SpatialAction.ALIGN_CENTER_V, onSpatialAction) { drawAlignGlyph(AlignGlyph.CENTER_V) }
+                SpatialTile(SpatialAction.ALIGN_BOTTOM, onSpatialAction) { drawAlignGlyph(AlignGlyph.BOTTOM) }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                SpatialTile(SpatialAction.DISTRIBUTE_H, onSpatialAction, enabled = selectedCount >= 3) { drawDistributeGlyph(horizontal = true) }
+                SpatialTile(SpatialAction.DISTRIBUTE_V, onSpatialAction, enabled = selectedCount >= 3) { drawDistributeGlyph(horizontal = false) }
+            }
         }
     }
 }
@@ -110,6 +150,24 @@ private fun AlignTile(
         modifier = Modifier
             .size(width = 34.dp, height = 36.dp)
             .bouncyClickable { onAction(action) },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(width = 24.dp, height = 20.dp)) { draw() }
+    }
+}
+
+/** A spatial align / distribute tile of the second row (same bare tile as [AlignTile]). */
+@Composable
+private fun SpatialTile(
+    action: SpatialAction,
+    onAction: (SpatialAction) -> Unit,
+    enabled: Boolean = true,
+    draw: DrawScope.() -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(width = 34.dp, height = 34.dp)
+            .bouncyClickable(enabled = enabled) { onAction(action) },
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.size(width = 24.dp, height = 20.dp)) { draw() }
@@ -224,6 +282,88 @@ private fun DrawScope.drawMoveIcon(atStart: Boolean) {
         drawLine(IconColor, Offset(x1, cy), Offset(x2, cy), strokeWidth = sw, cap = StrokeCap.Round)
         drawLine(IconColor, Offset(x2, cy), Offset(x2 - head, cy - head), strokeWidth = sw, cap = StrokeCap.Round)
         drawLine(IconColor, Offset(x2, cy), Offset(x2 - head, cy + head), strokeWidth = sw, cap = StrokeCap.Round)
+    }
+}
+
+private enum class AlignGlyph { LEFT, CENTER_H, RIGHT, TOP, CENTER_V, BOTTOM }
+
+/**
+ * Spatial align glyphs: a thin guide line (the edge / centre everything moves to) with
+ * three bars of different lengths against it — horizontal bars for the X actions,
+ * vertical bars for the Y actions.
+ */
+private fun DrawScope.drawAlignGlyph(kind: AlignGlyph) {
+    val w = size.width
+    val h = size.height
+    val sw = 1.6.dp.toPx()
+    val cr = CornerRadius(1.5.dp.toPx())
+    val lens = floatArrayOf(0.92f, 0.58f, 0.36f)
+    when (kind) {
+        AlignGlyph.LEFT, AlignGlyph.CENTER_H, AlignGlyph.RIGHT -> {
+            val gx = when (kind) {
+                AlignGlyph.LEFT -> 1.dp.toPx()
+                AlignGlyph.RIGHT -> w - 1.dp.toPx()
+                else -> w / 2f
+            }
+            drawLine(IconColor, Offset(gx, 0f), Offset(gx, h), strokeWidth = sw, cap = StrokeCap.Round)
+            val thick = h * 0.2f
+            val ys = floatArrayOf(0f, h * 0.4f, h * 0.8f)
+            for (i in 0..2) {
+                val len = w * lens[i]
+                val x = when (kind) {
+                    AlignGlyph.LEFT -> gx + 2.dp.toPx()
+                    AlignGlyph.RIGHT -> gx - 2.dp.toPx() - len
+                    else -> gx - len / 2f
+                }
+                drawRoundRect(IconColor, Offset(x, ys[i]), Size(len, thick), cr)
+            }
+        }
+        else -> {
+            val gy = when (kind) {
+                AlignGlyph.TOP -> 1.dp.toPx()
+                AlignGlyph.BOTTOM -> h - 1.dp.toPx()
+                else -> h / 2f
+            }
+            drawLine(IconColor, Offset(0f, gy), Offset(w, gy), strokeWidth = sw, cap = StrokeCap.Round)
+            val thick = w * 0.2f
+            val xs = floatArrayOf(0f, w * 0.4f, w * 0.8f)
+            for (i in 0..2) {
+                val len = h * lens[i]
+                val y = when (kind) {
+                    AlignGlyph.TOP -> gy + 2.dp.toPx()
+                    AlignGlyph.BOTTOM -> gy - 2.dp.toPx() - len
+                    else -> gy - len / 2f
+                }
+                drawRoundRect(IconColor, Offset(xs[i], y), Size(thick, len), cr)
+            }
+        }
+    }
+}
+
+/** Distribute glyphs: three equal blocks spaced evenly between two end ticks. */
+private fun DrawScope.drawDistributeGlyph(horizontal: Boolean) {
+    val w = size.width
+    val h = size.height
+    val sw = 1.6.dp.toPx()
+    val cr = CornerRadius(1.5.dp.toPx())
+    if (horizontal) {
+        drawLine(IconColor, Offset(0f, 0f), Offset(0f, h), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(IconColor, Offset(w, 0f), Offset(w, h), strokeWidth = sw, cap = StrokeCap.Round)
+        val bw = w * 0.18f
+        val bh = h * 0.52f
+        val top = (h - bh) / 2f
+        for (cx in floatArrayOf(0.25f, 0.5f, 0.75f)) {
+            drawRoundRect(IconColor, Offset(w * cx - bw / 2f, top), Size(bw, bh), cr)
+        }
+    } else {
+        drawLine(IconColor, Offset(0f, 0f), Offset(w, 0f), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(IconColor, Offset(0f, h), Offset(w, h), strokeWidth = sw, cap = StrokeCap.Round)
+        val bw = w * 0.52f
+        val bh = h * 0.18f
+        val left = (w - bw) / 2f
+        for (cy in floatArrayOf(0.25f, 0.5f, 0.75f)) {
+            drawRoundRect(IconColor, Offset(left, h * cy - bh / 2f), Size(bw, bh), cr)
+        }
     }
 }
 

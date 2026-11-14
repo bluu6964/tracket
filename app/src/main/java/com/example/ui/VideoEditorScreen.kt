@@ -163,6 +163,11 @@ fun VideoEditorScreen(
     val multiSelectIds by viewModel.multiSelectIds.collectAsState()
     val isMasterMuted by viewModel.isMasterMuted.collectAsState()
     val beatMarks by viewModel.beatMarks.collectAsState()
+    val markers by viewModel.markers.collectAsState()
+    // Named-marker dialogs (build 188): add-at-playhead, or edit the marker the user
+    // long-pressed on the ruler / the one already sitting at the playhead.
+    var showAddMarker by remember { mutableStateOf(false) }
+    var markerEditTarget by remember { mutableStateOf<com.example.model.TimelineMarker?>(null) }
     val tracks by viewModel.tracks.collectAsState()
     // Edit Group: inside a group only its layers are shown (timeline + canvas); outside, a group is one single layer.
     val editingGroupId by viewModel.editingGroupId.collectAsState()
@@ -2536,6 +2541,11 @@ fun VideoEditorScreen(
                         snackbarHostState.currentSnackbarData?.dismiss()
                         scope.launch { snackbarHostState.showSnackbar(if (added) "Beat mark added" else "Beat mark removed") }
                     },
+                    onMarkerClick = {
+                        // A marker already at the playhead is edited; otherwise a new one is named.
+                        val near = viewModel.markerNear(playheadState.value)
+                        if (near != null) markerEditTarget = near else showAddMarker = true
+                    },
                     onPreviousClick = { viewModel.jumpPrevious() },
                     onPlayPauseClick = { viewModel.togglePlayPause() },
                     onNextClick = { viewModel.jumpNext() },
@@ -2549,7 +2559,10 @@ fun VideoEditorScreen(
                     playheadMs = playheadProvider,
                     totalDurationMs = totalDurationMs,
                     pxPerMs = timelinePxPerMs,
-                    beatMarksMs = beatMarks
+                    beatMarksMs = beatMarks,
+                    markers = markers,
+                    onMarkerTap = { m -> viewModel.seekTo(m.timeMs) },
+                    onMarkerLongPress = { m -> markerEditTarget = m }
                 )
 
                 // 5. Layer Panel (5/18 of screen). Inside a group (Edit Group) a green bar on top leads back out.
@@ -2571,6 +2584,42 @@ fun VideoEditorScreen(
                     onLongPressLane = { id -> viewModel.enterMultiSelect(id) },
                     onToggleMulti = { id -> viewModel.toggleMultiSelect(id) },
                     onMultiAction = { viewModel.applyMultiAction(it) },
+                    // Canvas spatial align / distribute (build 188): the build-176/184
+                    // pattern run from the screen — the checked layers are rendered at the
+                    // playhead and measured through the SAME snapRectOf (cropped bounds
+                    // included since build 182), the pure SpatialAlign rule decides the
+                    // canvas-px deltas, each delta is converted back to stored units by
+                    // the layer's depth factor, and the batch lands through
+                    // viewModel.moveClipsBy as ONE undo step. Audio (no canvas presence)
+                    // and Chain (a container) never take part.
+                    onSpatialAction = { action ->
+                        val t = playheadState.value
+                        val fw = previewFrameWidthPx
+                        if (fw > 1f) {
+                            val fh = fw / selectedAspectRatio.ratioFloat
+                            val rendered = shownTracks.flatMap { it.clips }
+                                .filter {
+                                    it.id in multiSelectIds && it.isVisible && !it.isMask &&
+                                        it.isActiveAt(t) && !it.isBehindCamera &&
+                                        it.type != LayerType.AUDIO && it.type != LayerType.CHAIN
+                                }
+                                .map { com.example.engine.NativeRenderAt.renderAt(it, t, t) }
+                            val rects = rendered.mapNotNull { rc ->
+                                com.example.ui.components.snapRectOf(rc, fw, fh, previewDensity, canvasTextSizes, forDragged = true)
+                                    ?.let { r -> com.example.model.AlignRect(rc.id, r.left, r.top, r.right, r.bottom) }
+                            }
+                            val deltasPx = com.example.model.SpatialAlign.deltas(rects, action)
+                            if (deltasPx.isNotEmpty()) {
+                                val stored = HashMap<String, Pair<Float, Float>>()
+                                for ((id, d) in deltasPx) {
+                                    val rc = rendered.firstOrNull { it.id == id } ?: continue
+                                    val df = rc.depthFactor.coerceAtLeast(0.001f)
+                                    stored[id] = (d.first / df) to (d.second / df)
+                                }
+                                viewModel.moveClipsBy(stored)
+                            }
+                        }
+                    },
                     onSplitClip = {
                         com.example.ui.buddy.BuddyBrain.react(com.example.ui.buddy.BuddyEvent.SPLIT)
                         viewModel.splitSelectedClip()
@@ -4139,6 +4188,38 @@ fun VideoEditorScreen(
             currentResolution = selectedResolution,
             onResolutionSelected = { viewModel.setResolution(it) },
             onDismiss = { showResolutionSheet = false }
+        )
+    }
+
+    // Named markers (build 188): name a new marker at the playhead.
+    if (showAddMarker) {
+        com.example.ui.components.MarkerNameDialog(
+            marker = null,
+            timeLabel = com.example.ui.components.formatTimeCode(playheadState.value),
+            suggestedName = "Marker ${markers.size + 1}",
+            onConfirm = { name ->
+                viewModel.addMarker(playheadState.value, name)
+                showAddMarker = false
+            },
+            onDismiss = { showAddMarker = false }
+        )
+    }
+
+    // Named markers (build 188): rename / delete the marker at the playhead or long-pressed on the ruler.
+    markerEditTarget?.let { m ->
+        com.example.ui.components.MarkerNameDialog(
+            marker = m,
+            timeLabel = com.example.ui.components.formatTimeCode(m.timeMs),
+            suggestedName = m.name,
+            onConfirm = { name ->
+                viewModel.renameMarker(m.id, name)
+                markerEditTarget = null
+            },
+            onDelete = {
+                viewModel.deleteMarker(m.id)
+                markerEditTarget = null
+            },
+            onDismiss = { markerEditTarget = null }
         )
     }
 

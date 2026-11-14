@@ -18,7 +18,15 @@ data class ProjectSnapshot(
     val isMasterMuted: Boolean = false,
     val playheadMs: Long = 0L,
     /** Beat marks on the timeline (project time, ms, sorted). */
-    val beatMarksMs: List<Long> = emptyList()
+    val beatMarksMs: List<Long> = emptyList(),
+    /**
+     * Named timeline markers (build 188, see [TimelineMarker]), sorted by time.
+     * Additive exactly like [beatMarksMs] before it: the default makes project files
+     * written before build 188 (no "markers" key) load with an empty list, and
+     * ProjectStore's Json runs with ignoreUnknownKeys, so a file written by build 188+
+     * still opens in an older app version (the key is simply skipped there).
+     */
+    val markers: List<TimelineMarker> = emptyList()
 ) {
     companion object {
         const val CURRENT_VERSION = 1

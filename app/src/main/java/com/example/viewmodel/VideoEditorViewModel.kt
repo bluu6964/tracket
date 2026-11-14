@@ -63,6 +63,8 @@ import com.example.model.withShiftedKeyframes
 import com.example.model.withoutKeyframe
 import com.example.model.TimelineTrack
 import com.example.model.ProjectSnapshot
+import com.example.model.ProjectMarkers
+import com.example.model.TimelineMarker
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -340,6 +342,27 @@ class VideoEditorViewModel : ViewModel() {
             true
         }
     }
+
+    // ---- Named timeline markers (build 188): labelled flags on the ruler, saved with the project ----
+    private val _markers = MutableStateFlow<List<TimelineMarker>>(emptyList())
+    /** Named markers, sorted by time. Like the beat marks they live OUTSIDE the track undo history. */
+    val markers: StateFlow<List<TimelineMarker>> = _markers.asStateFlow()
+
+    fun addMarker(timeMs: Long, name: String) {
+        _markers.value = ProjectMarkers.add(_markers.value, timeMs, name)
+    }
+
+    fun renameMarker(id: String, name: String) {
+        _markers.value = ProjectMarkers.rename(_markers.value, id, name)
+    }
+
+    fun deleteMarker(id: String) {
+        _markers.value = ProjectMarkers.remove(_markers.value, id)
+    }
+
+    /** The marker at [timeMs] (within [MARKER_TOLERANCE_MS]), if any — the marker button then edits it instead of adding a second one on the same spot. */
+    fun markerNear(timeMs: Long): TimelineMarker? =
+        ProjectMarkers.nearest(_markers.value, timeMs, MARKER_TOLERANCE_MS)
 
     fun setCanvasColor(argb: Long) {
         _canvasColor.value = argb or 0xFF000000L // the canvas is always opaque
@@ -1901,6 +1924,49 @@ class VideoEditorViewModel : ViewModel() {
         if (before != null) applyControllerFanOut(before)
     }
 
+    /**
+     * Moves several layers by per-layer deltas (STORED units) as ONE undo step — the write
+     * path of canvas align / distribute (build 188). Each layer goes through [moveLayerBy],
+     * the same core as a canvas drag: the move is built on the layer as it looks at the
+     * playhead, so a position-keyframed layer gets a keyframe at the playhead instead of a
+     * silently changed stored value, and moving a Controller fans the delta out onto its
+     * connected layers exactly like a manual Controller move (the settled build-155 rule —
+     * a connected layer that is itself in the selection is moved by its own delta as well;
+     * if its Controller is also moved, the fan-out applies on top, as with two manual moves).
+     */
+    fun moveClipsBy(deltas: Map<String, Pair<Float, Float>>) {
+        val real = deltas.filter { (id, d) -> (d.first != 0f || d.second != 0f) && clipNow(id) != null }
+        if (real.isEmpty()) return
+        pushHistory()
+        for ((id, d) in real) moveLayerBy(id, d.first, d.second)
+    }
+
+    /**
+     * One layer moved by a stored-unit delta; the caller owns the undo step. A delta needs
+     * no tracking-offset correction (the offset is the same before and after the move, so it
+     * cancels — [updateClipTransform] subtracts it only because the canvas hands it an
+     * absolute drawn position). Scale / rotation / pivot are copied from the resolved layer
+     * untouched: an align never reshapes a layer.
+     */
+    private fun moveLayerBy(clipId: String, dx: Float, dy: Float) {
+        val before = clipNow(clipId) ?: return
+        val t = _currentPlayheadMs.value
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { clip ->
+                if (clip.id == clipId) {
+                    val resolved = clip.at(t)
+                    commitKeyframed(clip, resolved.copy(
+                        transformX = resolved.transformX + dx,
+                        transformY = resolved.transformY + dy,
+                        shapeOffsetX = resolved.transformX + dx,
+                        shapeOffsetY = resolved.transformY + dy
+                    ), vsResolved = true)
+                } else clip
+            })
+        }
+        applyControllerFanOut(before)
+    }
+
     fun updateClipFullTransform(
         clipId: String,
         transformX: Float,
@@ -2216,7 +2282,8 @@ class VideoEditorViewModel : ViewModel() {
         previewResolution = _selectedResolution.value,
         isMasterMuted = _isMasterMuted.value,
         playheadMs = _currentPlayheadMs.value,
-        beatMarksMs = _beatMarks.value
+        beatMarksMs = _beatMarks.value,
+        markers = _markers.value
     )
 
     /** Replaces everything with a saved project. Undo history and selection start empty. */
@@ -2234,6 +2301,7 @@ class VideoEditorViewModel : ViewModel() {
         _selectedResolution.value = s.previewResolution
         _isMasterMuted.value = s.isMasterMuted
         _beatMarks.value = s.beatMarksMs.filter { it >= 0L }.distinct().sorted()
+        _markers.value = ProjectMarkers.normalize(s.markers)
         _tracks.value = s.tracks
         _currentPlayheadMs.value = 0L
         recomputeTotal()
@@ -2260,3 +2328,6 @@ class VideoEditorViewModel : ViewModel() {
 
 /** A beat mark closer than this to the playhead counts as "the same spot" (the plus button then removes it). */
 const val BEAT_MARK_TOLERANCE_MS = 100L
+
+/** A named marker closer than this to the playhead counts as "at the playhead" (the marker button edits it instead of adding another). */
+const val MARKER_TOLERANCE_MS = 150L

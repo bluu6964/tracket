@@ -72,7 +72,9 @@ fun PlayControlsSection(
     /** Grid icon (canvas / project format). */
     onGridClick: () -> Unit = {},
     /** Plus icon at the right end: puts a beat mark at the playhead. */
-    onBeatMarkClick: () -> Unit = {}
+    onBeatMarkClick: () -> Unit = {},
+    /** Flag icon next to the beat mark: adds a NAMED marker at the playhead (or edits the one already there). */
+    onMarkerClick: () -> Unit = {}
 ) {
     Box(
         modifier = modifier
@@ -150,6 +152,9 @@ fun PlayControlsSection(
             }
             IconButton44(enabled = true, onClick = onBeatMarkClick, tag = "beat_mark_button", description = "Beat mark") {
                 BeatMarkGlyph()
+            }
+            IconButton44(enabled = true, onClick = onMarkerClick, tag = "marker_button", description = "Marker") {
+                MarkerGlyph()
             }
         }
     }
@@ -267,6 +272,24 @@ private fun GridGlyph() {
                 Size(sq, sq), CornerRadius(0.5f * u)
             )
         }
+    }
+}
+
+/** A flag on a pole (the named marker's ruler glyph): opens the marker name dialog. */
+@Composable
+private fun MarkerGlyph() {
+    Canvas(Modifier.size(24.dp)) {
+        val u = size.width / 24f
+        val c = Color(0xFFF2F2F2)
+        drawLine(c, Offset(7f * u, 3.2f * u), Offset(7f * u, 20.8f * u), 2.2f * u, StrokeCap.Round)
+        val flag = Path().apply {
+            moveTo(7f * u, 3.6f * u)
+            lineTo(19.5f * u, 7.2f * u)
+            lineTo(7f * u, 10.8f * u)
+            close()
+        }
+        drawPath(flag, c)
+        drawPath(flag, c, style = Stroke(1.4f * u, join = StrokeJoin.Round))
     }
 }
 

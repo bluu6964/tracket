@@ -16,21 +16,30 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.ProjectMarkers
 import com.example.model.TIMELINE_PX_PER_MS
+import com.example.model.TimelineMarker
 import com.example.ui.theme.AmBaseDeep
 import com.example.ui.theme.AmCyanBright
 import com.example.ui.theme.AmOrange
@@ -49,6 +58,8 @@ private val BarWidth = 4.dp
 private val BarHeight = 16.5.dp
 private val MinBarPitch = 8.dp
 private val BeatMarkColor = AmCyanBright
+/** Named markers (build 188): gold, so they never read as cyan beat marks or the orange playhead bars. */
+private val MarkerColor = Color(0xFFFFC02E)
 private val TickSteps = longArrayOf(200L, 500L, 1000L, 2000L, 5000L, 10_000L, 30_000L, 60_000L)
 
 /**
@@ -66,8 +77,18 @@ fun TimescaleSection(
     /** When set, a back chevron sits at the left end of the ruler. */
     onBack: (() -> Unit)? = null,
     /** Beat marks (project time, ms): drawn as cyan marks on the ruler. */
-    beatMarksMs: List<Long> = emptyList()
+    beatMarksMs: List<Long> = emptyList(),
+    /** Named markers (build 188): drawn as gold flags with their name where it fits. */
+    markers: List<TimelineMarker> = emptyList(),
+    /** Tap on a marker flag: jump the playhead to it. */
+    onMarkerTap: ((TimelineMarker) -> Unit)? = null,
+    /** Long-press on a marker flag: rename / delete it. */
+    onMarkerLongPress: ((TimelineMarker) -> Unit)? = null
 ) {
+    val markersNow by rememberUpdatedState(markers)
+    val markerTapNow by rememberUpdatedState(onMarkerTap)
+    val markerLongNow by rememberUpdatedState(onMarkerLongPress)
+    val pxPerMsNow by rememberUpdatedState(pxPerMs)
     val backInset = if (onBack != null) 44.dp else 0.dp
     BoxWithConstraints(
         modifier = modifier
@@ -110,7 +131,31 @@ fun TimescaleSection(
         }
 
         // ── Scrolling bars ─────────────────────────────────────────────
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (onMarkerTap != null || onMarkerLongPress != null) {
+                        Modifier.pointerInput(Unit) {
+                            // Inverse of the draw mapping below: x -> project time.
+                            // A tap / long-press near a marker flag acts on that marker;
+                            // anywhere else the ruler stays inert, as before.
+                            fun markerAt(pos: Offset): TimelineMarker? {
+                                val list = markersNow
+                                val pxPerMsPx = pxPerMsNow.dp.toPx()
+                                if (list.isEmpty() || pxPerMsPx <= 0f) return null
+                                val ms = playheadMs() + ((pos.x - size.width / 2f) / pxPerMsPx).toLong()
+                                val tolMs = (16.dp.toPx() / pxPerMsPx).toLong().coerceAtLeast(1L)
+                                return ProjectMarkers.nearest(list, ms, tolMs)
+                            }
+                            detectTapGestures(
+                                onTap = { pos -> markerAt(pos)?.let { m -> markerTapNow?.invoke(m) } },
+                                onLongPress = { pos -> markerAt(pos)?.let { m -> markerLongNow?.invoke(m) } }
+                            )
+                        }
+                    } else Modifier
+                )
+        ) {
             val currentMs = playheadMs()
             val w = size.width
             val centerPx = w / 2f
@@ -169,6 +214,46 @@ fun TimescaleSection(
                             size = Size(markW, markH),
                             cornerRadius = CornerRadius(markW / 2f)
                         )
+                    }
+                }
+            }
+
+            // Named markers (build 188): a gold flag — pole with a pennant at the top —
+            // and the marker's name beside the pennant when it fits inside the bar area.
+            if (markers.isNotEmpty()) {
+                val poleTop = size.height * 0.07f
+                val poleBottom = size.height * 0.93f
+                val flagH = size.height * 0.36f
+                val flagW = 7.dp.toPx()
+                val namePaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.rgb(0xFF, 0xC0, 0x2E)
+                    textSize = 9.dp.toPx()
+                    isAntiAlias = true
+                }
+                for (mk in markers) {
+                    val x = centerPx + (mk.timeMs - currentMs) * pxPerMsPx
+                    if (x < areaStart || x > areaEnd) continue
+                    drawLine(
+                        color = MarkerColor,
+                        start = Offset(x, poleTop + flagH),
+                        end = Offset(x, poleBottom),
+                        strokeWidth = 1.6.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                    val flag = Path().apply {
+                        moveTo(x, poleTop)
+                        lineTo(x + flagW, poleTop + flagH / 2f)
+                        lineTo(x, poleTop + flagH)
+                        close()
+                    }
+                    drawPath(flag, MarkerColor)
+                    if (mk.name.isNotEmpty()) {
+                        val nameX = x + flagW + 2.5.dp.toPx()
+                        if (nameX + namePaint.measureText(mk.name) <= areaEnd) {
+                            drawContext.canvas.nativeCanvas.drawText(
+                                mk.name, nameX, poleTop + flagH / 2f + 3.dp.toPx(), namePaint
+                            )
+                        }
                     }
                 }
             }

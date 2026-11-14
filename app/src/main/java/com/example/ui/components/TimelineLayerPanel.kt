@@ -205,6 +205,8 @@ fun TimelineLayerPanel(
     onToggleMulti: (clipId: String) -> Unit = {},
     /** A button of the multi-select bar. */
     onMultiAction: (MultiAction) -> Unit = {},
+    /** A spatial align / distribute tile of the multi-select bar (build 188). */
+    onSpatialAction: (com.example.model.SpatialAction) -> Unit = {},
     /** Quick actions (split/delete/…) + master speaker at the bottom-left. Off for the one-row editor strip. */
     showQuickActions: Boolean = true,
     /** Selected-layer bar (top panel): flip / replace. Replace is hidden when null. */
@@ -580,6 +582,7 @@ fun TimelineLayerPanel(
                 multiSelectIds = multiSelectIds,
                 playheadMs = playheadMs,
                 onAction = onMultiAction,
+                onSpatialAction = onSpatialAction,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .enterPop(fromBottom = true)
@@ -673,6 +676,7 @@ private fun MultiBarHost(
     multiSelectIds: Set<String>,
     playheadMs: () -> Long,
     onAction: (MultiAction) -> Unit,
+    onSpatialAction: (com.example.model.SpatialAction) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val mode by remember(tracks, multiSelectIds) {
@@ -681,7 +685,13 @@ private fun MultiBarHost(
             MultiSelectOps.barMode(checked, playheadMs())
         }
     }
-    MultiSelectBar(mode = mode, onAction = onAction, modifier = modifier)
+    MultiSelectBar(
+        mode = mode,
+        onAction = onAction,
+        selectedCount = multiSelectIds.size,
+        onSpatialAction = onSpatialAction,
+        modifier = modifier
+    )
 }
 
 @Composable

@@ -990,7 +990,8 @@ fun EditShapeView(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            androidx.compose.material3.Button(
+            // BARE (boxless order, build 183): a text action, no filled button box.
+            androidx.compose.material3.TextButton(
                 onClick = {
                     onSaveShape(
                         selectedShapeType,
@@ -1010,13 +1011,11 @@ fun EditShapeView(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(46.dp),
-                shape = RectangleShape,
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = NeonCyan)
+                    .height(46.dp)
             ) {
                 Text(
                     text = if (editing) "Save Shape" else "Add Shape to Timeline",
-                    color = EditorBackground,
+                    color = Color.White,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )

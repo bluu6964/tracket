@@ -92,7 +92,6 @@ fun EditorHeader(
                     .testTag("header_back_button"),
                 contentAlignment = Alignment.Center
             ) {
-                FlatTile(Modifier.matchParentSize())
                 Canvas(Modifier.size(15.dp)) {
                     val c = TextPrimary
                     val w = 2.7.dp.toPx()
@@ -113,7 +112,6 @@ fun EditorHeader(
                     .testTag("header_save_frame_button"),
                 contentAlignment = Alignment.Center
             ) {
-                FlatTile(Modifier.matchParentSize())
                 SaveFrameGlyph()
             }
 
@@ -133,7 +131,6 @@ fun EditorHeader(
                         .testTag("header_resolution_pill"),
                     contentAlignment = Alignment.Center
                 ) {
-                    FlatPill(Modifier.matchParentSize())
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -158,9 +155,11 @@ fun EditorHeader(
                 ) {
                     DownloadGlyph()
                     Spacer(Modifier.width(9.dp))
-                    Box(Modifier.width(1.dp).height(13.dp).background(AmInk.copy(alpha = 0.85f)))
+                    // Bare Export (boxless order, build 183): the divider + label are
+                    // white now — the white button fill they sat on is gone.
+                    Box(Modifier.width(1.dp).height(13.dp).background(TextPrimary.copy(alpha = 0.85f)))
                     Spacer(Modifier.width(9.dp))
-                    Text("Export", color = AmInk, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text("Export", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             }
         }
@@ -202,7 +201,7 @@ private fun DownloadGlyph() {
             moveTo(10f * u, 1.6f * u); lineTo(10f * u, 11.8f * u)
             moveTo(5.6f * u, 7.6f * u); lineTo(10f * u, 12f * u); lineTo(14.4f * u, 7.6f * u)
         }
-        drawPath(arrow, AmInk, style = st)
+        drawPath(arrow, TextPrimary, style = st)
         val tray = Path().apply {
             moveTo(1.6f * u, 12.5f * u); lineTo(1.6f * u, 16.2f * u)
             quadraticBezierTo(1.6f * u, 18.4f * u, 3.8f * u, 18.4f * u)
@@ -210,7 +209,7 @@ private fun DownloadGlyph() {
             quadraticBezierTo(18.4f * u, 18.4f * u, 18.4f * u, 16.2f * u)
             lineTo(18.4f * u, 12.5f * u)
         }
-        drawPath(tray, AmInk, style = st)
+        drawPath(tray, TextPrimary, style = st)
     }
 }
 
@@ -266,7 +265,6 @@ fun LayerHeader(
                     .testTag("layer_header_back"),
                 contentAlignment = Alignment.Center
             ) {
-                FlatTile(Modifier.matchParentSize())
                 Canvas(Modifier.size(15.dp)) {
                     val w = 2.7.dp.toPx()
                     val m = w / 2f
@@ -303,7 +301,6 @@ fun LayerHeader(
                         .testTag("layer_header_eye"),
                     contentAlignment = Alignment.Center
                 ) {
-                    FlatDisc(Modifier.matchParentSize())
                     Canvas(Modifier.size(18.dp)) {
                         val u = size.width / 18f
                         val c = if (visible) AmCyan else TextPrimary.copy(alpha = 0.5f)
@@ -330,7 +327,6 @@ fun LayerHeader(
                     .testTag("layer_header_rename"),
                 contentAlignment = Alignment.Center
             ) {
-                FlatDisc(Modifier.matchParentSize())
                 Canvas(Modifier.size(16.dp)) {
                     val u = size.width / 16f
                     val st = Stroke(1.8f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)

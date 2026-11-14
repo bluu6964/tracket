@@ -182,7 +182,6 @@ fun BlendEditSheet(
                     .testTag("blend_reset"),
                 contentAlignment = Alignment.Center
             ) {
-                FlatTile(Modifier.matchParentSize())
                 Icon(
                     Icons.Default.Refresh, "Reset",
                     tint = TextSecondary, modifier = Modifier.size(24.dp)
@@ -299,7 +298,6 @@ fun BlendEditSheet(
                         .testTag("blend_tab_$name"),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (on) FlatPill(Modifier.matchParentSize())
                     Text(
                         name,
                         color = if (on) TextPrimary else TextSecondary,

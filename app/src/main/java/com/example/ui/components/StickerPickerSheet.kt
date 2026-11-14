@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import com.example.engine.StickerLibrary
 import com.example.model.at
 import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmTextDim
 
 /**
  * Sticker picker: category tabs on top, a grid of thumbnails below. Static stickers are PNG
@@ -87,18 +88,17 @@ fun StickerPickerSheet(
                     val on = cat == selected
                     Box(
                         modifier = Modifier
-                            .clip(RectangleShape)
-                            // Selected tab: flat white (B/W language) — was lime #ABE41D.
-                            .background(if (on) Color.White else Color(0xFF2B2B2B))
                             .clickable { selected = cat }
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
+                        // BARE tab (boxless order, build 183): white bold vs grey label —
+                        // was a white/dark filled chip.
                         Text(
                             cat.replaceFirstChar { it.uppercase() },
-                            color = if (on) Color.Black else Color.White,
+                            color = if (on) Color.White else AmTextDim,
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium
                         )
                     }
                 }

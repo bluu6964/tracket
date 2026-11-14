@@ -210,7 +210,6 @@ fun ClipEditToolsPanel(
                 .testTag("clip_tools_back_button"),
             contentAlignment = Alignment.Center
         ) {
-            FlatTile(Modifier.matchParentSize())
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "Exit Clip Edit",
@@ -288,15 +287,8 @@ fun ClipEditToolsPanel(
                     contentAlignment = Alignment.Center
                 ) {
                     val used = tool.id in usedTools
-                    FlatTile(Modifier.matchParentSize())
-                    if (used) {
-                        // Used on this layer: a white outline over the tile (B/W emphasis).
-                        Box(
-                            Modifier
-                                .matchParentSize()
-                                .border(1.dp, Color.White, RectangleShape)
-                        )
-                    }
+                    // BARE since the boxless order (build 183): no tile, no used-outline —
+                    // the used state is the white bold icon + label below (build 166).
                     Column(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,

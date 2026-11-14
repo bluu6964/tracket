@@ -86,6 +86,7 @@ import com.example.model.TimelineClip
 import com.example.ui.theme.AmBase
 import com.example.ui.theme.AmHairline
 import com.example.ui.theme.AmHairlineStrong
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.AmInk
 import com.example.ui.theme.AmMint
 import com.example.ui.theme.AmPanel
@@ -505,24 +506,22 @@ fun TransformView(
             ) {
                 TransformTab.values().forEach { tab ->
                     val isSelected = tab == activeTab
+                    // BARE tabs (boxless order, build 183): the selected tab was a white
+                    // slab with black text, the other a grey tile — now the state is
+                    // white bold vs grey text alone.
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .height(38.dp)
-                            .then(
-                                if (isSelected) Modifier.background(amMintCyanBrush(), RectangleShape)
-                                else Modifier
-                            )
                             .bouncyClickable(
                                 pressedScale = 0.94f,
                                 onClick = { activeTab = tab }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (!isSelected) FlatTile(Modifier.matchParentSize())
                         Text(
                             text = tab.title,
-                            color = if (isSelected) AmInk else TextPrimary,
+                            color = if (isSelected) TextPrimary else AmTextDim,
                             fontSize = 14.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                         )
@@ -682,7 +681,9 @@ private fun IconRail(
     ) {
         items.forEachIndexed { i, item ->
             val selected = i == selectedIndex
-            val tint = if (selected) AmMint else TextPrimary
+            // BARE (boxless order, build 183): no tile behind the selected item —
+            // white vs grey carries the state (the two whites were indistinguishable).
+            val tint = if (selected) AmMint else AmTextDim
             Box(
                 modifier = Modifier
                     .size(width = 40.dp, height = 32.dp)
@@ -690,7 +691,6 @@ private fun IconRail(
                     .bouncyClickable(onClick = { onSelect(i) }),
                 contentAlignment = Alignment.Center
             ) {
-                if (selected) FlatTile(Modifier.matchParentSize())
                 Icon(
                     imageVector = item.icon,
                     contentDescription = item.description,

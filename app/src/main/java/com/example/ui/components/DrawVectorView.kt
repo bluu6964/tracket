@@ -165,7 +165,7 @@ fun DrawVectorPanel(
             Spacer(Modifier.width(10.dp))
             GradientPillButton(onClick = onDone, tag = "draw_done_button") {
                 Text(
-                    "Done", color = com.example.ui.theme.AmInk,
+                    "Done", color = TextPrimary,
                     fontSize = 14.sp, fontWeight = FontWeight.Bold
                 )
             }

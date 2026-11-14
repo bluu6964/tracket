@@ -268,7 +268,7 @@ fun PenToolPanel(
             PenPanelButton("Cancel", enabled = true, onClick = onCancel)
             Spacer(Modifier.width(10.dp))
             GradientPillButton(onClick = onDone, tag = "pen_done_button") {
-                Text("Done", color = AmInk, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Done", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
         Spacer(Modifier.height(4.dp))
@@ -590,7 +590,7 @@ fun NodeEditPanel(
             PenPanelButton("Delete point", enabled = canDelete, onClick = onDeletePoint)
             Spacer(Modifier.weight(1f))
             GradientPillButton(onClick = onDone, tag = "node_edit_done_button") {
-                Text("Done", color = AmInk, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Done", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

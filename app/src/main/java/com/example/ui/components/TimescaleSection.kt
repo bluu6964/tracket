@@ -94,12 +94,11 @@ fun TimescaleSection(
                     .testTag("panel_back_button"),
                 contentAlignment = Alignment.Center
             ) {
-                // Flat disc behind the chevron; the 44 dp hit area is unchanged.
+                // BARE chevron (boxless order, build 183); the 44 dp hit area is unchanged.
                 Box(
                     modifier = Modifier.size(32.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    FlatDisc(Modifier.matchParentSize())
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = "Back",

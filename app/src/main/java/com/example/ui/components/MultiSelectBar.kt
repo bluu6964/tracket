@@ -112,7 +112,6 @@ private fun AlignTile(
             .bouncyClickable { onAction(action) },
         contentAlignment = Alignment.Center
     ) {
-        FlatTile(Modifier.matchParentSize())
         Canvas(modifier = Modifier.size(width = 24.dp, height = 20.dp)) { draw() }
     }
 }

@@ -532,7 +532,6 @@ fun TimelineLayerPanel(
                 .bouncyClickable(onClick = onToggleMasterAudio),
             contentAlignment = Alignment.Center
         ) {
-            FlatDisc(Modifier.matchParentSize())
             Icon(
                 imageVector = if (isMasterMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeDown,
                 contentDescription = "Master Audio",
@@ -652,12 +651,6 @@ private fun SelectedBarButton(
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
-        FlatPill(Modifier.matchParentSize())
-        Box(
-            Modifier
-                .matchParentSize()
-                .border(1.dp, AmHairline, RectangleShape)
-        ) {}
         // Icon only (no name text); the label stays as the accessibility description.
         // A destructive action (Delete) reads red — the flag used to be accepted but never applied.
         Icon(

@@ -50,8 +50,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartButton
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +58,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -445,21 +444,20 @@ fun ExportModalDialog(
                         Text("Saved to Movies/MaxCut", color = Color.White.copy(alpha = 0.7f),
                             fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         Spacer(modifier = Modifier.height(24.dp))
+                        // BARE actions (boxless order, build 183): text buttons, no filled boxes.
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                            Button(
+                            TextButton(
                                 onClick = onDismiss,
-                                modifier = Modifier.weight(1f).height(48.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = EditorSurfaceVariant)
+                                modifier = Modifier.weight(1f).height(48.dp)
                             ) { Text("Done", color = Color.White, fontWeight = FontWeight.Bold) }
-                            Button(
+                            TextButton(
                                 onClick = onShare,
-                                modifier = Modifier.weight(1f).height(48.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+                                modifier = Modifier.weight(1f).height(48.dp)
                             ) {
                                 Icon(Icons.Default.Share, contentDescription = null,
-                                    tint = EditorBackground, modifier = Modifier.size(16.dp))
+                                    tint = Color.White, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Share", color = EditorBackground, fontWeight = FontWeight.Bold)
+                                Text("Share", color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -626,13 +624,12 @@ private fun ColumnScope.ExportSettingsPage(
     }
 
     Spacer(modifier = Modifier.height(12.dp))
-    Button(
+    // BARE (boxless order, build 183): the Export action is bold white text now.
+    TextButton(
         onClick = onStartExport,
-        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("export_now"),
-        shape = RectangleShape,
-        colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+        modifier = Modifier.fillMaxWidth().height(52.dp).testTag("export_now")
     ) {
-        Text("Export Now", color = EditorBackground, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text("Export Now", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
     }
     // Room for the round "close" tab at the bottom of the screen.
     Spacer(modifier = Modifier.height(68.dp))
@@ -910,17 +907,16 @@ fun AddTextSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            Button(
+            TextButton(
                 onClick = {
                     if (textInput.isNotBlank()) {
                         onAddText(textInput, selectedColor)
                     }
                     onDismiss()
                 },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Add to Timeline", color = EditorBackground, fontWeight = FontWeight.Bold)
+                Text("Add to Timeline", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
     }

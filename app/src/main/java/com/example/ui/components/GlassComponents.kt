@@ -80,7 +80,9 @@ fun FlatDisc(modifier: Modifier = Modifier) {
     )
 }
 
-/** Flat rounded-square base (toolbar/tool tiles): solid fill + hairline. */
+/** Flat square surface base (content surfaces that are NOT buttons — the fx-row
+ *  icon badge, timeline trim handles): solid fill + hairline. Toolbar/tool-panel
+ *  buttons stopped using it under Sarowar's boxless order 2026-11-14 (build 183). */
 @Composable
 fun FlatTile(modifier: Modifier = Modifier) {
     val shape = RectangleShape
@@ -116,7 +118,8 @@ fun DrawScope.drawFlatThumb(center: Offset, radiusPx: Float) {
     )
 }
 
-/** Round 44 dp flat icon button: a flat grey disc under the glyph. */
+/** Round 44 dp icon button — BARE since Sarowar's boxless order 2026-11-14 (build 183):
+ *  no disc under the glyph; the 44 dp touch target and the press scale stay. */
 @Composable
 fun GlassIconButton(
     onClick: () -> Unit,
@@ -131,17 +134,18 @@ fun GlassIconButton(
         .bouncyClickable(enabled = enabled, onClick = onClick)
     if (tag != null) m = m.testTag(tag)
     Box(m, contentAlignment = Alignment.Center) {
-        FlatDisc(Modifier.matchParentSize())
         content()
     }
 }
 
 /**
- * The primary action: a FLAT WHITE button (CapCut-style emphasis) — content colours
- * come from the call site (dark ink on white). ([glowColor] is gone with the glow;
- * the name is kept so call sites read as before.) Was a white PILL until Sarowar's
- * square order 2026-11-14 — buttons are chrome, so it is a square button now; the
- * white-fill/black-text emphasis is unchanged.
+ * The primary action button — BARE since Sarowar's boxless order 2026-11-14
+ * (build 183: "পুরো box ই remove করে ফেলতে" — remove the whole box, CapCut-style).
+ * It was a flat white square button until this build; now it renders ONLY its
+ * content (icon + label) with the press scale as feedback. Content colours come
+ * from the call site and are WHITE now (the white fill that carried dark ink is
+ * gone). The name is kept so call sites read as before. Touch geometry is
+ * unchanged: same padding, same row.
  */
 @Composable
 fun GradientPillButton(
@@ -156,8 +160,6 @@ fun GradientPillButton(
     Box(m, contentAlignment = Alignment.Center) {
         Row(
             Modifier
-                .background(Color.White, RectangleShape)
-                .clip(RectangleShape)
                 .bouncyClickable(pressedScale = 0.94f, onClick = onClick)
                 .padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically,
@@ -167,9 +169,10 @@ fun GradientPillButton(
 }
 
 /**
- * Flat chip / tab: a flat grey square under the label. Selected = white hairline +
- * bright bold label; unselected = plain hairline + dim label. A null [onClick]
- * renders static.
+ * Chip / tab. A CLICKABLE chip is BARE since Sarowar's boxless order 2026-11-14
+ * (build 183): no pill, no border — the label alone carries the state (selected =
+ * bright bold, unselected = dim). A null [onClick] renders a STATIC display chip
+ * and keeps its flat pill surface (it is a readout, not a button).
  */
 @Composable
 fun GlassChip(
@@ -183,15 +186,17 @@ fun GlassChip(
     if (onClick != null) m = m.bouncyClickable(pressedScale = 0.95f, onClick = onClick)
     if (tag != null) m = m.testTag(tag)
     Box(m, contentAlignment = Alignment.Center) {
-        FlatPill(Modifier.matchParentSize())
-        Box(
-            Modifier
-                .matchParentSize()
-                .then(
-                    if (selected) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
-                    else Modifier.border(1.dp, AmHairline, RectangleShape)
-                )
-        ) {}
+        if (onClick == null) {
+            FlatPill(Modifier.matchParentSize())
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .then(
+                        if (selected) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
+                        else Modifier.border(1.dp, AmHairline, RectangleShape)
+                    )
+            ) {}
+        }
         Text(
             text,
             color = if (selected) TextPrimary else AmTextDim,

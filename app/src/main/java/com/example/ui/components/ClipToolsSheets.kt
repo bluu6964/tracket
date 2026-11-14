@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ui.theme.AmPanel
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.TextPrimary
@@ -96,21 +97,14 @@ fun ClipEffectsSheet(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(RectangleShape)
-                                .background(if (isSelected) NeonCyan.copy(alpha = 0.2f) else EditorSurfaceVariant)
-                                .border(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) NeonCyan else Color.Transparent,
-                                    shape = RectangleShape
-                                ),
+                            modifier = Modifier.size(64.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = if (isSelected) NeonCyan else Color.White, modifier = Modifier.size(28.dp))
+                            // BARE tile (boxless order, build 183): white vs grey glyph.
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = if (isSelected) Color.White else AmTextDim, modifier = Modifier.size(28.dp))
                         }
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text(effect, color = TextPrimary, fontSize = 11.sp, maxLines = 1)
+                        Text(effect, color = if (isSelected) TextPrimary else AmTextDim, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
                     }
                 }
             }

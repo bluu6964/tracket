@@ -24,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -339,8 +338,9 @@ fun TemplatesDialog(
                             color = TextSecondary, fontSize = 13.sp
                         )
                         Spacer(Modifier.height(10.dp))
-                        Button(onClick = { onAddUserTemplate(tpl) }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Add to project")
+                        // BARE (boxless order, build 183): text action, no filled button.
+                        TextButton(onClick = { onAddUserTemplate(tpl) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Add to project", color = HeaderText, fontWeight = FontWeight.SemiBold)
                         }
                         TextButton(onClick = { pendingDelete = tpl }) {
                             Text("Delete template", color = TextSecondary)
@@ -422,8 +422,9 @@ private fun ColumnScope.TemplateSection(
         Text(description, color = TextSecondary, fontSize = 13.sp)
         settings?.invoke(this)
         Spacer(Modifier.height(10.dp))
-        Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
-            Text("Add to project")
+        // BARE (boxless order, build 183): text action, no filled button.
+        TextButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+            Text("Add to project", color = HeaderText, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(8.dp))
         Text(footnote, color = TextSecondary, fontSize = 12.sp)

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -47,12 +46,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.AmDanger
 import com.example.ui.theme.AmHairline
-import com.example.ui.theme.AmInk
 import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.amMintCyanBrush
 import com.example.ui.util.bouncyClickable
 
 @Composable
@@ -106,8 +103,8 @@ private fun RowScope.ToolbarItem(
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        // Flat tile under the code-drawn icon + label (B/W language).
-        FlatTile(Modifier.matchParentSize())
+        // BARE since Sarowar's boxless order 2026-11-14 (build 183): no tile under
+        // the icon + label — the button is just its glyph and text.
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -116,19 +113,13 @@ private fun RowScope.ToolbarItem(
             verticalArrangement = Arrangement.Center
         ) {
         if (primary) {
+            // The primary (Add) item's emphasis is its WHITE glyph now — the white
+            // disc badge it sat on went with the boxless order (build 183).
             Box(
                 modifier = Modifier.size(38.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .background(amMintCyanBrush(), CircleShape)
-                        .clip(CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(icon, label, tint = AmInk, modifier = Modifier.size(21.dp))
-                }
+                Icon(icon, label, tint = TextPrimary, modifier = Modifier.size(21.dp))
             }
         } else {
             Box(
@@ -227,7 +218,7 @@ fun ChainAddPanel(
     }
 }
 
-/** A tool of [ChainAddPanel]: fixed width, so the row can scroll. Same flat tile as the toolbar's items. */
+/** A tool of [ChainAddPanel]: fixed width, so the row can scroll. Bare like the toolbar's items (build 183). */
 @Composable
 private fun ChainToolItem(label: String, icon: ImageVector, testTag: String, onClick: () -> Unit) {
     val destructive = label == "Delete"
@@ -239,7 +230,6 @@ private fun ChainToolItem(label: String, icon: ImageVector, testTag: String, onC
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
-        FlatTile(Modifier.matchParentSize())
         Column(
             modifier = Modifier
                 .fillMaxSize()

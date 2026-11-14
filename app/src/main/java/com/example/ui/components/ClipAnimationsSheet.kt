@@ -76,6 +76,7 @@ import com.example.model.TimelineClip
 import com.example.model.maxAnimMs
 import com.example.ui.theme.AmCyan
 import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.EditorSurfaceVariant
 import com.example.ui.theme.NeonCyan
@@ -165,20 +166,12 @@ fun ClipAnimationsPanel(
                         .testTag("anim_tab_${s.name.lowercase()}"),
                     contentAlignment = Alignment.Center
                 ) {
-                    FlatPill(Modifier.matchParentSize())
-                    Box(
-                        Modifier
-                            .matchParentSize()
-                            .then(
-                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
-                                else Modifier.border(1.dp, AmHairline, RectangleShape)
-                            )
-                    ) {}
+                    // BARE tab (boxless order, build 183): white bold vs grey label.
                     Text(
                         s.label,
-                        color = TextPrimary,
+                        color = if (on) TextPrimary else AmTextDim,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)
                     )
                 }
@@ -190,19 +183,13 @@ fun ClipAnimationsPanel(
                     Box(
                         modifier = Modifier
                             .padding(start = 6.dp)
-                            .clip(RectangleShape)
-                            .then(
-                                if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
-                                else Modifier
-                            )
-                            .border(1.dp, if (on) AmCyan else Color.Transparent, RectangleShape)
                             .bouncyClickable(onClick = { section = sec })
                             .testTag("anim_section_${sec.name.lowercase()}"),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (!on) FlatPill(Modifier.matchParentSize())
                         Text(
-                            sec.label, color = if (on) AmCyan else TextPrimary, fontSize = 12.sp,
+                            sec.label, color = if (on) TextPrimary else AmTextDim, fontSize = 12.sp,
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                         )
                     }
@@ -256,12 +243,6 @@ fun ClipAnimationsPanel(
                             val spin = appliedPreset.id.startsWith("spin")
                             Box(
                                 modifier = Modifier
-                                    .clip(RectangleShape)
-                                    .then(
-                                        if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
-                                        else Modifier
-                                    )
-                                    .border(1.5.dp, if (on) AmCyan else Color.Transparent, RectangleShape)
                                     .bouncyClickable(onClick = {
                                         dir = d
                                         applyAnim(appliedPreset, d, durMs.toLong(), easing)
@@ -270,11 +251,11 @@ fun ClipAnimationsPanel(
                                     .testTag("anim_dir_${d.name.lowercase()}"),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (!on) FlatPill(Modifier.matchParentSize())
                                 Text(
                                     if (spin) (if (d == AnimDir.RIGHT) "↻ Clockwise" else "↺ Counter")
                                     else "${d.arrow} ${d.label}",
-                                    color = TextPrimary, fontSize = 13.sp,
+                                    color = if (on) TextPrimary else AmTextDim, fontSize = 13.sp,
+                                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                 )
                             }
@@ -457,21 +438,14 @@ private fun AnimTile(label: String, icon: ImageVector, selected: Boolean, tag: S
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier
-                .size(60.dp)
-                .clip(RectangleShape)
-                .then(
-                    if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
-                    else Modifier
-                )
-                .border(if (selected) 2.dp else 1.dp, if (selected) AmCyan else Color.Transparent, RectangleShape),
+            modifier = Modifier.size(60.dp),
             contentAlignment = Alignment.Center
         ) {
-            if (!selected) FlatTile(Modifier.matchParentSize())
-            Icon(icon, contentDescription = label, tint = if (selected) AmCyan else Color.White, modifier = Modifier.size(26.dp))
+            // BARE tile (boxless order, build 183): white vs grey glyph + label.
+            Icon(icon, contentDescription = label, tint = if (selected) Color.White else AmTextDim, modifier = Modifier.size(26.dp))
         }
         Spacer(Modifier.height(5.dp))
-        Text(label, color = TextPrimary, fontSize = 11.sp, maxLines = 1)
+        Text(label, color = if (selected) TextPrimary else AmTextDim, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
     }
 }
 
@@ -480,26 +454,19 @@ private fun CurveChip(label: String, easing: Easing?, selected: Boolean, onClick
     Box(
         modifier = Modifier
             .width(62.dp)
-            .clip(RectangleShape)
-            .then(
-                if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
-                else Modifier
-            )
-            .border(1.5.dp, if (selected) AmCyan else Color.Transparent, RectangleShape)
             .bouncyClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        if (!selected) FlatTile(Modifier.matchParentSize())
         Column(
             modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
         if (easing == null) {
             Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-                Text("A", color = if (selected) AmCyan else Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("A", color = if (selected) Color.White else AmTextDim, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         } else {
-            val tint = if (selected) AmCyan else Color.White
+            val tint = if (selected) Color.White else AmTextDim
             Canvas(Modifier.size(34.dp)) {
                 val pad = 4.dp.toPx()
                 val w = size.width - 2 * pad
@@ -515,7 +482,7 @@ private fun CurveChip(label: String, easing: Easing?, selected: Boolean, onClick
                 drawPath(path, tint, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
             }
         }
-        Text(label, color = TextPrimary, fontSize = 9.sp, maxLines = 1)
+        Text(label, color = if (selected) TextPrimary else AmTextDim, fontSize = 9.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
         }
     }
 }

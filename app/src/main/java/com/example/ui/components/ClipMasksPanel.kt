@@ -178,12 +178,8 @@ fun ClipMasksPanel(
                     .testTag("mask_row_$idx"),
                 contentAlignment = Alignment.Center
             ) {
-                FlatPill(Modifier.matchParentSize())
-                if (on) Box(
-                    Modifier
-                        .matchParentSize()
-                        .border(1.5.dp, amCyanVioletBrush(), RectangleShape)
-                ) {}
+                // BARE row (boxless order, build 183): no pill, no selection border —
+                // selection reads from the name: white bold vs grey.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -192,8 +188,8 @@ fun ClipMasksPanel(
                 ) {
                 Text(
                     "${idx + 1}. ${MaskShape.names[m.shape] ?: "Mask"}" + (if (m.isAnimated) "  ◆" else ""),
-                    color = if (!m.enabled) TextSecondary else if (on) AmCyan else TextPrimary,
-                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (!m.enabled) TextSecondary else if (on) TextPrimary else AmTextDim,
+                    fontSize = 14.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
@@ -347,19 +343,11 @@ private fun Chip(label: String, on: Boolean, enabled: Boolean = true, tag: Strin
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
-        FlatPill(Modifier.matchParentSize())
-        Box(
-            Modifier
-                .matchParentSize()
-                .then(
-                    if (on) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
-                    else Modifier.border(1.dp, AmHairline, RectangleShape)
-                )
-        ) {}
+        // BARE chip (boxless order, build 183): the label carries the state.
         Text(
             label,
-            color = if (!enabled) TextSecondary else TextPrimary,
-            fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            color = if (!enabled) TextSecondary else if (on) TextPrimary else AmTextDim,
+            fontSize = 13.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
         )
     }
@@ -402,7 +390,6 @@ private fun ShapeTile(id: String, label: String, onClick: () -> Unit) {
             modifier = Modifier.size(56.dp),
             contentAlignment = Alignment.Center
         ) {
-            FlatTile(Modifier.matchParentSize())
             Canvas(Modifier.size(30.dp)) { drawGlyph(id) }
         }
         Spacer(Modifier.height(4.dp))

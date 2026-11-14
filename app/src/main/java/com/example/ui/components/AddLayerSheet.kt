@@ -96,8 +96,7 @@ private fun RowScope.Item(label: String, icon: ImageVector, tag: String, onClick
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
-        // Flat tile under the icon + label (B/W language).
-        FlatTile(Modifier.matchParentSize())
+        // BARE since the boxless order (build 183): icon + label only, no tile.
         Column(
             modifier = Modifier.padding(vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally

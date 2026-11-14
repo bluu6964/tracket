@@ -169,15 +169,6 @@ fun ClipEffectsPanel(
                         .testTag("fx_category_$cat"),
                     contentAlignment = Alignment.Center
                 ) {
-                    FlatPill(Modifier.matchParentSize())
-                    Box(
-                        Modifier
-                            .matchParentSize()
-                            .then(
-                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
-                                else Modifier.border(1.dp, AmHairline, RectangleShape)
-                            )
-                    ) {}
                     Text(
                         cat,
                         color = if (on) TextPrimary else AmTextDim,
@@ -395,7 +386,6 @@ fun ClipEffectsPanel(
                                 .testTag("fx_reset_${fx.type}"),
                             contentAlignment = Alignment.Center
                         ) {
-                            FlatPill(Modifier.matchParentSize())
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -431,18 +421,17 @@ private fun KeyPickerRow(swatch: Color, onPick: () -> Unit) {
                 .testTag("fx_key_swatch")
         )
         Spacer(Modifier.width(12.dp))
+        // BARE (boxless order, build 183): no white fill under the label any more.
         Row(
             modifier = Modifier
-                .clip(RectangleShape)
-                .background(amMintCyanBrush())
                 .bouncyClickable(onClick = onPick)
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .testTag("fx_key_pick"),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Colorize, contentDescription = null, tint = AmInk, modifier = Modifier.size(17.dp))
+            Icon(Icons.Default.Colorize, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
-            Text("Pick from picture", color = AmInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("Pick from picture", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -519,25 +508,20 @@ private fun FxTile(def: FxDef, full: Boolean, onClick: () -> Unit) {
                 modifier = Modifier.size(64.dp),
                 contentAlignment = Alignment.Center
             ) {
-                FlatTile(Modifier.matchParentSize())
                 Icon(
                     fxIcon(def.id), contentDescription = def.name,
                     tint = if (full) TextSecondary else Color.White, modifier = Modifier.size(28.dp)
                 )
             }
-            // small "+" badge: tap = add
+            // small "+" badge: tap = add — BARE since the boxless order (build 183):
+            // the glyph alone, no disc under it.
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .then(
-                        if (full) Modifier.background(Color(0xFF3D3D3D))
-                        else Modifier.background(amMintCyanBrush())
-                    ),
+                    .size(20.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = if (full) TextSecondary else AmInk, modifier = Modifier.size(14.dp))
+                Icon(Icons.Default.Add, contentDescription = null, tint = if (full) TextSecondary else TextPrimary, modifier = Modifier.size(14.dp))
             }
         }
         Spacer(Modifier.height(6.dp))

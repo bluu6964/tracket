@@ -45,6 +45,7 @@ import com.example.ui.theme.AmPanel
 import com.example.ui.theme.AmPanelHigh
 import com.example.ui.theme.HeaderCyan
 import com.example.ui.theme.HeaderText
+import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -149,7 +150,7 @@ fun ProjectsDialog(
                 TextButton(onClick = onImport) { Text("Import", color = HeaderCyan) }
                 // The primary action: a flat white pill (B/W language), not a text button.
                 GradientPillButton(onClick = onNew) {
-                    Text("New project", color = AmInk, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text("New project", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 }
             }
         },

@@ -91,7 +91,6 @@ fun AudioClipToolsPanel(
                 .testTag("audio_tools_back_button"),
             contentAlignment = Alignment.Center
         ) {
-            FlatTile(Modifier.matchParentSize())
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "Exit audio edit",
@@ -136,7 +135,6 @@ fun AudioClipToolsPanel(
                         .testTag("audio_tool_${tool.id}"),
                     contentAlignment = Alignment.Center
                 ) {
-                    FlatTile(Modifier.matchParentSize())
                     Column(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,

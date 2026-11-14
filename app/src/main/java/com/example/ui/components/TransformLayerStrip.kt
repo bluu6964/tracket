@@ -147,7 +147,6 @@ fun TransformHeaderBar(
                     .bouncyClickable(onClick = onReset),
                 contentAlignment = Alignment.Center
             ) {
-                FlatTile(Modifier.matchParentSize())
                 Icon(Icons.Default.Refresh, "Reset", tint = IconActive, modifier = Modifier.size(20.dp))
             }
         }
@@ -368,7 +367,6 @@ fun TransformLayerStrip(
                 .bouncyClickable(onClick = onReset),
             contentAlignment = Alignment.Center
         ) {
-            FlatTile(Modifier.matchParentSize())
             Icon(Icons.Default.Refresh, "Reset Transform", tint = IconActive, modifier = Modifier.size(18.dp))
         }
 

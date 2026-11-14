@@ -101,11 +101,11 @@ fun PlayControlsSection(
                     .testTag("preview_resolution_button"),
                 contentAlignment = Alignment.Center
             ) {
+                // BARE (boxless order, build 183): the resolution label with no chip surface.
                 Box(
                     modifier = Modifier
                         .width(26.dp)
-                        .height(17.5.dp)
-                        .glassSurface(RectangleShape, fill = amGlassChipBrush()),
+                        .height(17.5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -120,7 +120,8 @@ fun PlayControlsSection(
             }
         }
 
-        // ── Centre: play / pause — flat grey disc, white glyph (B/W language) ──
+        // ── Centre: play / pause — BARE white glyph (boxless order, build 183; the
+        // flat grey disc it sat on is gone, the 44 dp target stays) ──
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -130,7 +131,6 @@ fun PlayControlsSection(
                 .testTag("play_pause_button"),
             contentAlignment = Alignment.Center
         ) {
-            FlatDisc(Modifier.fillMaxSize())
             PlayGlyph(isPlaying)
         }
 

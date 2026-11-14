@@ -341,6 +341,25 @@ data class TimelineClip(
     /** Audio layers: fade in / fade out length on the timeline, in ms (0 = no fade). */
     val fadeInMs: Long = 0L,
     val fadeOutMs: Long = 0L,
+    /**
+     * Audio ducking (build 194): while the trigger layer ([duckTriggerId], typically a voice)
+     * is loud, THIS layer's volume is automatically lowered by up to [duckAmountDb] dB and let
+     * back up in the gaps — the sidechain law lives in [Ducking] (pure, harness-pinned) and the
+     * gain rides the shared C++ mixer's per-sample gain next to volume and fades, so preview and
+     * export duck identically. The gain is computed live from the trigger's decoded envelope at
+     * the trigger's timeline placement (never baked into keyframes — there are no volume
+     * keyframes in this app, volume is the constant [volume] plus fades, and ducking multiplies
+     * both without replacing them). A null / dangling [duckTriggerId] (the trigger layer was
+     * deleted) reads as no ducking anywhere. Defaults = off: old project files load unducked
+     * and behave byte-identically.
+     */
+    val duckEnabled: Boolean = false,
+    /** The layer whose loudness drives this layer's ducking (another sound-carrying layer's id). */
+    val duckTriggerId: String? = null,
+    /** How far the volume drops at a full-scale trigger, in dB (0 = no drop). */
+    val duckAmountDb: Float = 12f,
+    /** Attack / release smoothing of the duck gain, 0 (snappy) .. 1 (very smooth). See [Ducking]. */
+    val duckSmoothness: Float = 0.5f,
     val isLocked: Boolean = false,
     /** When false the layer is hidden on the canvas and skipped on export (eye control). */
     val isVisible: Boolean = true,

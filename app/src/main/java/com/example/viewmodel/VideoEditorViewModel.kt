@@ -2243,6 +2243,26 @@ class VideoEditorViewModel : ViewModel() {
             )
         }
 
+    /**
+     * Audio ducking (build 194): this layer's volume is lowered while the trigger layer is
+     * loud (see [com.example.model.Ducking]). The trigger must be another layer — a layer
+     * never ducks under itself; a null / unknown trigger id simply never ducks.
+     */
+    fun setClipDucking(
+        clipId: String,
+        enabled: Boolean,
+        triggerId: String?,
+        amountDb: Float,
+        smoothness: Float
+    ) = updateClip(clipId) {
+        it.copy(
+            duckEnabled = enabled,
+            duckTriggerId = if (triggerId == clipId) null else triggerId,
+            duckAmountDb = amountDb.coerceIn(0f, com.example.model.Ducking.MAX_AMOUNT_DB),
+            duckSmoothness = smoothness.coerceIn(0f, 1f)
+        )
+    }
+
     fun setAudioSpeed(clipId: String, speed: Float) = setClipSpeed(clipId, speed)
 
     /**

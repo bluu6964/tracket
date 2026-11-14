@@ -212,9 +212,11 @@ JNIEXPORT void JNICALL Java_com_example_engine_AudioPreviewNative_nativeClearCli
 }
 
 // Same numbers as NativeExportEncoder.addAudioClip (microseconds on the timeline / in the file).
+// duckRelUs / duckGains (build 194, nullable): the clip's duck curve on its own clock —
+// microseconds from its start + the gain there; empty / null = no ducking.
 JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeAddClip(
-    JNIEnv*, jclass, jlong p, jint fd, jlong length, jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed,
-    jfloat volume, jlong fadeInUs, jlong fadeOutUs) {
+    JNIEnv* env, jclass, jlong p, jint fd, jlong length, jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed,
+    jfloat volume, jlong fadeInUs, jlong fadeOutUs, jlongArray duckRelUs, jfloatArray duckGains) {
     Handle* h = reinterpret_cast<Handle*>(p);
     std::lock_guard<std::mutex> lock(h->mu);
     const int copy = dup(fd);
@@ -230,6 +232,21 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeAddC
     s.volume = volume;
     s.fadeInFrames = frames(std::max<int64_t>(0, fadeInUs));
     s.fadeOutFrames = frames(std::max<int64_t>(0, fadeOutUs));
+    if (duckRelUs && duckGains) {
+        const jsize n = std::min(env->GetArrayLength(duckRelUs), env->GetArrayLength(duckGains));
+        if (n > 0) {
+            std::vector<jlong> rel((size_t)n);
+            std::vector<jfloat> g((size_t)n);
+            env->GetLongArrayRegion(duckRelUs, 0, n, rel.data());
+            env->GetFloatArrayRegion(duckGains, 0, n, g.data());
+            s.duckFrames.reserve((size_t)n);
+            s.duckGains.reserve((size_t)n);
+            for (jsize i = 0; i < n; ++i) {
+                s.duckFrames.push_back(frames(std::max<int64_t>(0, rel[(size_t)i])));
+                s.duckGains.push_back(g[(size_t)i]);
+            }
+        }
+    }
     h->fds.push_back(copy);
     h->lens.push_back(length);
     h->clips.push_back(s);

@@ -1,6 +1,7 @@
 package com.example.engine
 
 import android.content.Context
+import kotlinx.coroutines.runBlocking
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -1313,13 +1314,23 @@ class NativeProjectExporter(private val context: Context) {
     /** Video sound (unless muted) + audio layers (volume, fades); the choice is made in C++ ([ExportPlanNative.pickAudio]). Returns true if any clip was added. */
     private fun addAudio(encoder: NativeExportEncoder, tracks: List<TimelineTrack>, videoEndMs: Long): Boolean {
         var added = false
-        for (a in ExportPlanNative.pickAudio(tracks, videoEndMs)) {
+        val picks = ExportPlanNative.pickAudio(tracks, videoEndMs)
+        // Ducking (build 194): each ducked layer's curve is computed from its trigger's
+        // decoded envelope before its clip is added — the same DuckCurve computation the
+        // preview uses, so the export ducks exactly like the preview. A layer whose curve
+        // cannot be computed (silent / missing trigger) is simply added unducked.
+        val duckCurves: List<DuckCurve.Curve?> = picks.map { a ->
+            if (DuckCurve.keyFor(picks, a.clip) == null) null
+            else runBlocking { DuckCurve.compute(context, picks, a.clip) }
+        }
+        for ((index, a) in picks.withIndex()) {
             val c = a.clip
             val uri = Uri.parse(c.uri ?: continue)
             val pfd = try { context.contentResolver.openFileDescriptor(uri, "r") } catch (_: Exception) { null } ?: continue
             pfd.use {
+                val duck = duckCurves[index]
                 if (encoder.addAudioClip(it.fd, it.statSize, c.startMs, c.durationMs, c.trimStartMs,
-                        c.exportSpeed, a.volume, a.fadeInMs, a.fadeOutMs)) added = true
+                        c.exportSpeed, a.volume, a.fadeInMs, a.fadeOutMs, duck?.relUs, duck?.gains)) added = true
             }
         }
         return added

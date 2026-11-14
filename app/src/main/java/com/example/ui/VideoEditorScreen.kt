@@ -86,6 +86,7 @@ import com.example.model.isPathBearing
 import com.example.model.hasBlending
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.ui.components.AudioClipToolsPanel
+import com.example.ui.components.AudioDuckingSheet
 import com.example.ui.components.AudioFadeSheet
 import com.example.ui.components.AudioSpeedSheet
 import com.example.ui.components.AudioVolumeSheet
@@ -2164,6 +2165,7 @@ fun VideoEditorScreen(
     var showAudioVolumeSheet by remember { mutableStateOf(false) }
     var showAudioFadeSheet by remember { mutableStateOf(false) }
     var showAudioSpeedSheet by remember { mutableStateOf(false) }
+    var showAudioDuckingSheet by remember { mutableStateOf(false) }
     var showAddTextSheet by remember { mutableStateOf(false) }
     var showAddShapeSheet by remember { mutableStateOf(false) }
     var showStickerSheet by remember { mutableStateOf(false) }
@@ -2924,6 +2926,10 @@ fun VideoEditorScreen(
                             },
                             onReverse = { startAudioReverse(targetClipId) },
                             onDetectBeats = { startBeatDetect(targetClipId) },
+                            onDucking = {
+                                viewModel.beginAdjust()
+                                showAudioDuckingSheet = true
+                            },
                             onCaptions = { requestCaptions(targetClipId) },
                             onRename = { renameTargetId = targetClipId }
                         ) else ClipEditToolsPanel(
@@ -3707,12 +3713,14 @@ fun VideoEditorScreen(
                 showAudioVolumeSheet -> "Volume"
                 showAudioFadeSheet -> "Fade"
                 showAudioSpeedSheet -> "Speed"
+                showAudioDuckingSheet -> "Ducking"
                 else -> null
             }
             val closeAudioPanel = {
                 showAudioVolumeSheet = false
                 showAudioFadeSheet = false
                 showAudioSpeedSheet = false
+                showAudioDuckingSheet = false
             }
             LaunchedEffect(audioClip == null, audioPanelTitle) {
                 if (audioClip == null && audioPanelTitle != null) closeAudioPanel()
@@ -3793,6 +3801,19 @@ fun VideoEditorScreen(
                                         startSmoothSlowMo(audioClip.id)
                                     }
                                 } else null
+                            )
+                        } else if (showAudioDuckingSheet) {
+                            AudioDuckingSheet(
+                                clip = audioClip,
+                                triggers = tracks.flatMap { it.clips }.filter {
+                                    it.id != audioClip.id &&
+                                        ((it.type == LayerType.AUDIO && it.uri != null) ||
+                                            (it.type == LayerType.VIDEO && !it.isImage && it.uri != null))
+                                },
+                                onChange = { enabled, triggerId, amountDb, smoothness ->
+                                    viewModel.setClipDucking(audioClip.id, enabled, triggerId, amountDb, smoothness)
+                                },
+                                onDismiss = closeAudioPanel
                             )
                         }
                     }

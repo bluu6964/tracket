@@ -127,7 +127,9 @@ bool NativeExportEncoder::start(Renderer* renderer, const std::string& path,
 
 bool NativeExportEncoder::addAudioClip(int fd, int64_t length, int64_t startUs, int64_t durUs,
                                        int64_t trimStartUs, double speed, float volume,
-                                       int64_t fadeInUs, int64_t fadeOutUs) {
+                                       int64_t fadeInUs, int64_t fadeOutUs,
+                                       const std::vector<int64_t>& duckRelUs,
+                                       const std::vector<float>& duckGains) {
     if (hasAudio_) { error_ = "Add audio clips before startAudio()"; return false; }
     const int copy = dup(fd);
     if (copy < 0) { error_ = "Could not duplicate audio file descriptor"; return false; }
@@ -142,6 +144,13 @@ bool NativeExportEncoder::addAudioClip(int fd, int64_t length, int64_t startUs, 
     spec.volume = volume;
     spec.fadeInFrames = frames(std::max<int64_t>(0, fadeInUs));
     spec.fadeOutFrames = frames(std::max<int64_t>(0, fadeOutUs));
+    const size_t nd = std::min(duckRelUs.size(), duckGains.size());
+    spec.duckFrames.reserve(nd);
+    spec.duckGains.reserve(nd);
+    for (size_t i = 0; i < nd; ++i) {
+        spec.duckFrames.push_back(frames(std::max<int64_t>(0, duckRelUs[i])));
+        spec.duckGains.push_back(duckGains[i]);
+    }
     audioFiles_.push_back({copy, length});
     pendingClips_.push_back(spec);
     return true;

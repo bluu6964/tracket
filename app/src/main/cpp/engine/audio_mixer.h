@@ -1,7 +1,8 @@
 // After Motion native engine - timeline audio mixer. Pure C++ (testable on a computer).
 //
 // Mixes any number of clips (audio layers + the sound of video layers) onto the project timeline:
-// start offset, trim, constant speed (pitch preserved), volume and fade in / out - the same rules
+// start offset, trim, constant speed (pitch preserved), volume, fade in / out and ducking
+// (build 194: a per-clip gain curve computed from another layer's loudness) - the same rules
 // as the Media3 exporter (VideoExporter.buildAudioSequence + GainFadeAudioProcessor).
 #pragma once
 
@@ -24,6 +25,12 @@ struct AudioClipSpec {
     float volume = 1.0f;
     int64_t fadeInFrames = 0;
     int64_t fadeOutFrames = 0;
+    // Audio ducking (build 194): gain breakpoints on the clip's own clock (frames from its
+    // start, ascending) with the gain at each; the mix multiplies volume x fade x duck.
+    // Computed live by the Kotlin side from the trigger layer's envelope (model/Ducking) —
+    // empty = no ducking. Same length, at least one point when non-empty.
+    std::vector<int64_t> duckFrames;
+    std::vector<float> duckGains;
 };
 
 using SourceFactory = std::function<std::unique_ptr<FrameSource>(const AudioClipSpec&)>;
@@ -57,6 +64,10 @@ private:
         bool failed;
     };
     static float fadeGain(const AudioClipSpec& s, int64_t rel);
+    // Duck gain at clip-relative frame `rel`: linear between the spec's breakpoints,
+    // clamped to the end gains outside them, 1 when the clip has no duck curve.
+    // Mirrors model/Ducking.gainAt 1:1 — keep the two in step.
+    static float duckGain(const AudioClipSpec& s, int64_t rel);
     void open(Clip& c, int64_t from);
 
     SourceFactory factory_;

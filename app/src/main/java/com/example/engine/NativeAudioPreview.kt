@@ -5,6 +5,9 @@ import android.net.Uri
 import android.util.Log
 import com.example.model.TimelineTrack
 import com.example.model.exportSpeed
+import kotlinx.coroutines.runBlocking
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
@@ -19,7 +22,7 @@ internal object AudioPreviewNative {
     @JvmStatic external fun nativeClearClips(p: Long)
     @JvmStatic external fun nativeAddClip(
         p: Long, fd: Int, length: Long, startUs: Long, durUs: Long, trimStartUs: Long, speed: Double,
-        volume: Float, fadeInUs: Long, fadeOutUs: Long
+        volume: Float, fadeInUs: Long, fadeOutUs: Long, duckRelUs: LongArray?, duckGains: FloatArray?
     ): Boolean
 
     @JvmStatic external fun nativeStart(p: Long, positionUs: Long): Boolean
@@ -41,6 +44,11 @@ internal object AudioPreviewNative {
  *  - paused / scrubbing: silent (like the Media3 preview was).
  *
  * Speed keyframes: like the export, a layer with a speed ramp is played at its average speed.
+ *
+ * Ducking (build 194): a ducked layer's gain curve is decoded from its trigger off the sync
+ * path and cached by the exact fields it depends on ([DuckCurve.Key]); until the curve lands
+ * the layer plays unducked, and the curve's arrival changes the sound signature, so the next
+ * sync restarts the sound with the ducking in — the same restart any other sound change gets.
  */
 internal class NativeAudioPreview(context: Context) {
     private val appCtx = context.applicationContext
@@ -54,6 +62,14 @@ internal class NativeAudioPreview(context: Context) {
     private var running = false                 // a start was requested and not stopped since
     private var startedAtMs = 0L                // System.nanoTime based, of the last start request
     private val busy = AtomicBoolean(false)     // a start / stop job is queued or running
+
+    // Duck curves (build 194): computed on their own thread, read on the caller's thread.
+    private val duckWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "am-duck").apply { isDaemon = true } }
+    private val duckCache = ConcurrentHashMap<DuckCurve.Key, DuckCurve.Curve>()
+    private val duckInFlight: MutableSet<DuckCurve.Key> = Collections.newSetFromMap(ConcurrentHashMap())
+
+    /** Cache marker: this key was computed and has NO curve (silent / unresolvable trigger). */
+    private val noCurve = DuckCurve.Curve(LongArray(0), FloatArray(0))
 
     companion object {
         private const val TAG = "AmAudioPreview"
@@ -87,10 +103,35 @@ internal class NativeAudioPreview(context: Context) {
         }
         val endMs = tracks.maxOfOrNull { t -> t.clips.maxOfOrNull { it.endMs } ?: 0L } ?: 0L
         val picks = ExportPlanNative.pickAudio(tracks, endMs)
+        // Ducking (build 194): each pick's curve (or null), aligned with `picks`. A curve that
+        // is not computed yet is scheduled; the sound starts unducked and restarts ducked when
+        // the curve lands, because the signature below carries the curve's version.
+        val duckCurves: List<DuckCurve.Curve?> = picks.map { pick ->
+            val key = DuckCurve.keyFor(picks, pick.clip) ?: return@map null
+            val cached = duckCache[key]
+            if (cached != null) return@map if (cached === noCurve) null else cached
+            if (duckInFlight.add(key)) {
+                val duckedClip = pick.clip
+                duckWorker.execute {
+                    try {
+                        val curve = runBlocking { DuckCurve.compute(appCtx, picks, duckedClip) }
+                        if (duckCache.size > 64) duckCache.clear()
+                        duckCache[key] = curve ?: noCurve
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "duck curve computation failed", t)
+                        duckCache[key] = noCurve
+                    } finally {
+                        duckInFlight.remove(key)
+                    }
+                }
+            }
+            null
+        }
         // Everything that changes how it sounds, in one comparable value.
-        val sig: List<Any?> = picks.map {
+        val sig: List<Any?> = picks.mapIndexed { index, it ->
             val c = it.clip
-            listOf(c.id, c.uri, c.startMs, c.durationMs, c.trimStartMs, c.exportSpeed, it.volume, it.fadeInMs, it.fadeOutMs)
+            listOf(c.id, c.uri, c.startMs, c.durationMs, c.trimStartMs, c.exportSpeed, it.volume, it.fadeInMs, it.fadeOutMs,
+                duckCurves[index]?.version)
         }
         if (picks.isEmpty()) {
             if (running) stop()
@@ -133,14 +174,16 @@ internal class NativeAudioPreview(context: Context) {
                     if (p == 0L) return@withLock
                     AudioPreviewNative.nativeClearClips(p)
                     var added = 0
-                    for (a in picks) {
+                    for ((index, a) in picks.withIndex()) {
                         val c = a.clip
                         val uri = Uri.parse(c.uri ?: continue)
                         val pfd = try { appCtx.contentResolver.openFileDescriptor(uri, "r") } catch (_: Exception) { null } ?: continue
                         pfd.use {
+                            val duck = duckCurves[index]
                             if (AudioPreviewNative.nativeAddClip(
                                     p, it.fd, it.statSize, c.startMs * 1000L, c.durationMs * 1000L, c.trimStartMs * 1000L,
-                                    c.exportSpeed.toDouble(), a.volume, a.fadeInMs * 1000L, a.fadeOutMs * 1000L
+                                    c.exportSpeed.toDouble(), a.volume, a.fadeInMs * 1000L, a.fadeOutMs * 1000L,
+                                    duck?.relUs, duck?.gains
                                 )) added++
                         }
                     }
@@ -176,6 +219,7 @@ internal class NativeAudioPreview(context: Context) {
         if (released) return
         released = true
         running = false
+        duckWorker.shutdown()
         worker.execute {
             try {
                 lock.withLock {

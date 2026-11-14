@@ -71,6 +71,42 @@ int main() {
         m.render(4800, [&](const int16_t* p, int n, int64_t) { for (int i = 0; i < n * 2; ++i) peak = std::max(peak, (int)std::abs(p[i])); return true; });
         CHECK(peak > 10000, "second clip audible %d", peak);
     }
+    // 5) ducking (build 194): the gain curve multiplies volume x fade, interpolated linearly
+    // between breakpoints and clamped outside them (the model/Ducking.gainAt contract).
+    {
+        AudioClipSpec s; s.durFrames = s.fullDurFrames = kAudioRate; s.volume = 1.f;
+        s.duckFrames = {0, kAudioRate / 2, kAudioRate};
+        s.duckGains = {1.f, 0.25f, 1.f};
+        AudioMixer m([&](const AudioClipSpec&) { return std::unique_ptr<FrameSource>(new Sine(440, 999999)); }, kAudioRate);
+        m.addClip(s); std::vector<int16_t> out;
+        m.render(kAudioRate, [&](const int16_t* p, int n, int64_t) { out.insert(out.end(), p, p + n * 2); return true; });
+        auto peakAround = [&](int64_t centre) {
+            int peak = 0;
+            for (int64_t i = centre - 240; i < centre + 240; ++i) peak = std::max(peak, (int)std::abs(out[(size_t)i * 2]));
+            return peak;
+        };
+        const int full = peakAround(2400);                    // gain 1 at the start (sine 0.5 -> ~16384)
+        CHECK(full > 14000 && full < 18000, "duck start level %d", full);
+        const int mid = peakAround(kAudioRate / 4);           // halfway down the ramp: gain ~0.625
+        CHECK(mid > full * 0.45 && mid < full * 0.8, "duck ramp level %d vs full %d", mid, full);
+        const int dipped = peakAround(kAudioRate / 2);        // the floor point: gain 0.25
+        CHECK(dipped > full * 0.15 && dipped < full * 0.38, "duck floor level %d vs full %d", dipped, full);
+        printf("duck ok: full=%d mid=%d dipped=%d\n", full, mid, dipped);
+    }
+    // 6) ducking: past the last breakpoint the gain CLAMPS to it (no snap back to 1).
+    {
+        AudioClipSpec s; s.durFrames = s.fullDurFrames = kAudioRate; s.volume = 1.f;
+        s.duckFrames = {0, kAudioRate / 4};
+        s.duckGains = {1.f, 0.25f};
+        AudioMixer m([&](const AudioClipSpec&) { return std::unique_ptr<FrameSource>(new Sine(440, 999999)); }, kAudioRate);
+        m.addClip(s); std::vector<int16_t> out;
+        m.render(kAudioRate, [&](const int16_t* p, int n, int64_t) { out.insert(out.end(), p, p + n * 2); return true; });
+        int late = 0;
+        for (int64_t i = kAudioRate * 3 / 4 - 240; i < kAudioRate * 3 / 4 + 240; ++i)
+            late = std::max(late, (int)std::abs(out[(size_t)i * 2]));
+        CHECK(late > 3000 && late < 5500, "duck clamp level %d (want ~0.25 x 16384)", late);
+        printf("duck clamp ok: late=%d\n", late);
+    }
     printf(fails ? "FAILED\n" : "ALL OK\n");
     return fails ? 1 : 0;
 }

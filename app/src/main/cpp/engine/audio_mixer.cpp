@@ -7,6 +7,23 @@ namespace {
 constexpr int kChunk = 1024;
 }
 
+float AudioMixer::duckGain(const AudioClipSpec& s, int64_t rel) {
+    const size_t n = std::min(s.duckFrames.size(), s.duckGains.size());
+    if (n == 0) return 1.f;
+    if (rel <= s.duckFrames[0]) return s.duckGains[0];
+    if (rel >= s.duckFrames[n - 1]) return s.duckGains[n - 1];
+    // Binary search: duckFrames[lo] <= rel < duckFrames[lo + 1].
+    size_t lo = 0, hi = n - 1;
+    while (hi - lo > 1) {
+        const size_t mid = (lo + hi) / 2;
+        if (s.duckFrames[mid] <= rel) lo = mid; else hi = mid;
+    }
+    const int64_t span = s.duckFrames[lo + 1] - s.duckFrames[lo];
+    if (span <= 0) return s.duckGains[lo + 1];
+    const float f = (float)(rel - s.duckFrames[lo]) / (float)span;
+    return s.duckGains[lo] + (s.duckGains[lo + 1] - s.duckGains[lo]) * f;
+}
+
 float AudioMixer::fadeGain(const AudioClipSpec& s, int64_t rel) {
     float g = 1.f;
     if (s.fadeInFrames > 0 && rel < s.fadeInFrames)
@@ -71,8 +88,11 @@ bool AudioMixer::render(int64_t upToFrame, const PcmSink& sink) {
             std::fill(tmp.begin(), tmp.begin() + (size_t)cnt * 2, 0.f);
             c.src->read(tmp.data(), cnt);
             float* out = mix.data() + (size_t)(from - cursor_) * 2;
+            const bool ducked = !s.duckFrames.empty();
             for (int i = 0; i < cnt; ++i) {
-                const float g = s.volume * fadeGain(s, from + i - s.startFrame);
+                const int64_t rel = from + i - s.startFrame;
+                float g = s.volume * fadeGain(s, rel);
+                if (ducked) g *= duckGain(s, rel);
                 out[(size_t)i * 2] += tmp[(size_t)i * 2] * g;
                 out[(size_t)i * 2 + 1] += tmp[(size_t)i * 2 + 1] * g;
             }

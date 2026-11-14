@@ -1,6 +1,8 @@
 #include "prof.h"
 #include <jni.h>
 #include <android/log.h>
+#include <algorithm>
+#include <vector>
 #include "native_export_encoder.h"
 #include "renderer.h"
 
@@ -44,9 +46,22 @@ Java_com_example_engine_NativeExportNative_nativeError(JNIEnv* env, jclass, jlon
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_engine_NativeExportNative_nativeAddAudioClip(JNIEnv*, jclass, jlong p, jint fd, jlong length,
-        jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed, jfloat volume, jlong fadeInUs, jlong fadeOutUs) {
-    return E(p)->addAudioClip(fd, length, startUs, durUs, trimStartUs, speed, volume, fadeInUs, fadeOutUs)
+Java_com_example_engine_NativeExportNative_nativeAddAudioClip(JNIEnv* env, jclass, jlong p, jint fd, jlong length,
+        jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed, jfloat volume, jlong fadeInUs, jlong fadeOutUs,
+        jlongArray duckRelUs, jfloatArray duckGains) {
+    std::vector<int64_t> rel;
+    std::vector<float> gains;
+    if (duckRelUs && duckGains) {
+        const jsize n = std::min(env->GetArrayLength(duckRelUs), env->GetArrayLength(duckGains));
+        if (n > 0) {
+            rel.resize((size_t)n);
+            gains.resize((size_t)n);
+            env->GetLongArrayRegion(duckRelUs, 0, n, rel.data());
+            env->GetFloatArrayRegion(duckGains, 0, n, gains.data());
+        }
+    }
+    return E(p)->addAudioClip(fd, length, startUs, durUs, trimStartUs, speed, volume, fadeInUs, fadeOutUs,
+                              rel, gains)
                ? JNI_TRUE : JNI_FALSE;
 }
 extern "C" JNIEXPORT jboolean JNICALL

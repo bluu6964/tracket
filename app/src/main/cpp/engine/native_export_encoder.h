@@ -27,8 +27,11 @@ public:
 
     // ---- audio (optional, call before the first frame) ----
     // `fd` is dup()ed. length <= 0 = until the end of the file.
+    // duckRelUs / duckGains (build 194): the clip's duck curve on its own clock (microseconds
+    // from its start + the gain there), same length; empty = no ducking.
     bool addAudioClip(int fd, int64_t length, int64_t startUs, int64_t durUs, int64_t trimStartUs,
-                      double speed, float volume, int64_t fadeInUs, int64_t fadeOutUs);
+                      double speed, float volume, int64_t fadeInUs, int64_t fadeOutUs,
+                      const std::vector<int64_t>& duckRelUs, const std::vector<float>& duckGains);
     bool startAudio(int64_t totalDurationUs, int bitrate);
     bool pumpAudio(int64_t upToUs);
 

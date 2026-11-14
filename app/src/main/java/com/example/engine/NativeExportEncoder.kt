@@ -17,7 +17,8 @@ private object NativeExportNative {
     @JvmStatic external fun nativeError(session: Long): String
     @JvmStatic external fun nativeAddAudioClip(session: Long, fd: Int, length: Long, startUs: Long, durUs: Long,
                                                trimStartUs: Long, speed: Double, volume: Float,
-                                               fadeInUs: Long, fadeOutUs: Long): Boolean
+                                               fadeInUs: Long, fadeOutUs: Long,
+                                               duckRelUs: LongArray?, duckGains: FloatArray?): Boolean
     @JvmStatic external fun nativeStartAudio(session: Long, totalUs: Long, bitrate: Int): Boolean
     @JvmStatic external fun nativePumpAudio(session: Long, upToUs: Long): Boolean
     @JvmStatic external fun nativeProfNs(id: Int): Long
@@ -52,15 +53,18 @@ class NativeExportEncoder private constructor(private var session: Long) : Close
      * One sound of the timeline (an audio layer or the sound of a video layer). Call for every clip
      * BEFORE [startAudio]. The native side duplicates [fd], so the caller may close it right away.
      * Times are on the project timeline / in the source file; fades use the clip's own clock.
+     * [duckRelUs] / [duckGains] (build 194): the clip's duck curve on its own clock (microseconds
+     * from its start + the gain there), same length; null = no ducking.
      */
     fun addAudioClip(
         fd: Int, length: Long, startMs: Long, durationMs: Long, trimStartMs: Long,
-        speed: Float, volume: Float, fadeInMs: Long, fadeOutMs: Long
+        speed: Float, volume: Float, fadeInMs: Long, fadeOutMs: Long,
+        duckRelUs: LongArray? = null, duckGains: FloatArray? = null
     ): Boolean {
         check(session != 0L) { "Encoder is closed" }
         return NativeExportNative.nativeAddAudioClip(
             session, fd, length, startMs * 1000L, durationMs * 1000L, trimStartMs * 1000L,
-            speed.toDouble(), volume, fadeInMs * 1000L, fadeOutMs * 1000L
+            speed.toDouble(), volume, fadeInMs * 1000L, fadeOutMs * 1000L, duckRelUs, duckGains
         )
     }
 

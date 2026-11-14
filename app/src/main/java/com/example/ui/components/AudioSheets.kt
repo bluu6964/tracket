@@ -287,3 +287,115 @@ fun AudioSpeedSheet(
         }
     }
 }
+
+/**
+ * Ducking of one audio layer (build 194): while the chosen trigger layer is loud, this
+ * layer's volume is lowered by up to the amount and let back up in the gaps. The settings
+ * live on this layer; the gain itself is computed live from the trigger's sound (see
+ * [com.example.model.Ducking]) — nothing is baked. Changes are applied live.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AudioDuckingSheet(
+    clip: TimelineClip,
+    triggers: List<TimelineClip>,
+    onChange: (enabled: Boolean, triggerId: String?, amountDb: Float, smoothness: Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val enabled = clip.duckEnabled
+    val triggerId = clip.duckTriggerId
+    val amountDb = clip.duckAmountDb
+    val smoothness = clip.duckSmoothness
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(bottom = 28.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Ducking", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { onChange(it, triggerId, amountDb, smoothness) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = NeonCyan)
+                )
+            }
+            Text(
+                "Lower this layer's volume automatically while another layer is loud, " +
+                    "and let it back up in the gaps.",
+                color = TextSecondary, fontSize = 13.sp
+            )
+            if (triggers.isEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "No other layer with sound yet. Add a voice or music layer first, " +
+                        "then pick it here as the trigger.",
+                    color = TextSecondary, fontSize = 14.sp
+                )
+            } else if (enabled) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Text("Duck under", color = TextSecondary, fontSize = 14.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                triggers.forEach { trigger ->
+                    val selected = trigger.id == triggerId
+                    Text(
+                        text = trigger.name,
+                        color = if (selected) TextPrimary else TextSecondary,
+                        fontSize = 15.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .bouncyClickable { onChange(true, trigger.id, amountDb, smoothness) }
+                            .padding(vertical = 8.dp)
+                    )
+                }
+                if (triggerId != null && triggers.none { it.id == triggerId }) {
+                    Text(
+                        "The trigger layer was removed — pick another layer above.",
+                        color = TextSecondary, fontSize = 13.sp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Amount", color = TextSecondary, fontSize = 14.sp)
+                    Text(
+                        "−${amountDb.roundToInt()} dB",
+                        color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+                Slider(
+                    value = amountDb.coerceIn(0f, com.example.model.Ducking.MAX_AMOUNT_DB),
+                    onValueChange = { onChange(true, triggerId, it, smoothness) },
+                    valueRange = 0f..com.example.model.Ducking.MAX_AMOUNT_DB,
+                    colors = sliderColors()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Smoothness", color = TextSecondary, fontSize = 14.sp)
+                    Text(
+                        "${(smoothness * 100f).roundToInt()}%",
+                        color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+                Slider(
+                    value = smoothness.coerceIn(0f, 1f),
+                    onValueChange = { onChange(true, triggerId, amountDb, it) },
+                    valueRange = 0f..1f,
+                    colors = sliderColors()
+                )
+            }
+        }
+    }
+}

@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,14 +34,34 @@ fun AudioClipBody(
     width: Dp,
     waveform: FloatArray?,
     visibleFromMs: Long,
-    visibleToMs: Long
+    visibleToMs: Long,
+    isSelected: Boolean = false
 ) {
+    // Build 187: a selected audio bar runs its own indigo into its lighter shade along
+    // the bar (the gradient reference), like every other selected clip.
+    val base = Color(0xFF4B4BC8)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF4B4BC8))
+            .background(
+                if (isSelected) Brush.horizontalGradient(
+                    listOf(base, androidx.compose.ui.graphics.lerp(base, Color.White, 0.45f))
+                ) else androidx.compose.ui.graphics.SolidColor(base)
+            )
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
+            // Build 187: diagonal stripes UNDER the waveform (the striped reference) —
+            // darker stripes of the bar's own indigo leaning like ////, so the white
+            // waveform bars stay on top and legible at the slim bar height.
+            val stripe = androidx.compose.ui.graphics.lerp(base, Color.Black, 0.20f)
+            val stripeW = 3.dp.toPx()
+            val stripePeriod = 7.dp.toPx()
+            val lean = size.height * 0.5f
+            var sx = -size.height
+            while (sx < size.width + size.height) {
+                drawLine(stripe, Offset(sx, size.height), Offset(sx + lean, 0f), strokeWidth = stripeW)
+                sx += stripePeriod
+            }
             val barStep = 3.dp.toPx()
             val barWidth = 1.5.dp.toPx()
             val pxPerMs = TIMELINE_PX_PER_MS.dp.toPx()

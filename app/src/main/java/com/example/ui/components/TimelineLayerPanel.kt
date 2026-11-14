@@ -25,6 +25,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -151,7 +152,6 @@ import com.example.ui.theme.TimelineBlack
 import com.example.ui.theme.LanePillDark
 import com.example.ui.theme.LaneEyeTint
 import com.example.ui.theme.LaneThumbWhite
-import com.example.ui.theme.ShapeBarTop
 import com.example.ui.theme.ShapeBarMid
 import com.example.ui.theme.ShapeBarBottom
 import com.example.ui.util.enterPop
@@ -360,7 +360,7 @@ fun TimelineLayerPanel(
         // right after the speech was done. Lanes outside the window are plain spacers of the same
         // height, so the scroll length and every position stay exactly the same.
         val laneHeights = remember(tracks) {
-            tracks.map { t -> t.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 32.dp }
+            tracks.map { t -> t.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 26.dp }
         }
         val laneTopsPx = remember(laneHeights, dpToPx) {
             val tops = FloatArray(laneHeights.size + 1)
@@ -502,7 +502,7 @@ fun TimelineLayerPanel(
             ) {
                 tracks.forEachIndexed { laneIndex, track ->
                     val clip = track.clips.firstOrNull()
-                    val rowH = clip?.let { laneHeightFor(it.type) } ?: 32.dp
+                    val rowH = clip?.let { laneHeightFor(it.type) } ?: 26.dp
                     if (laneIndex !in laneWindow) {
                         Spacer(Modifier.height(rowH))
                         return@forEachIndexed
@@ -875,7 +875,9 @@ fun TimelineTrackRow(
     columnShiftPx: () -> Float = { 0f }
 ) {
     // Alight Motion: one layer per line → fixed row height by layer type.
-    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 32.dp
+    val trackHeight = track.clips.maxOfOrNull { laneHeightFor(it.type) } ?: 26.dp
+    // Build 187: the capsule bar's height — the row minus the inset, centred in the row.
+    val barHeight = trackHeight - LaneBarInset
     val density = LocalDensity.current
     val pxPerDp = density.density
     // How many vertical pixels ≈ one lane step for reorder.
@@ -923,6 +925,18 @@ fun TimelineTrackRow(
         ,
         contentAlignment = Alignment.CenterStart
     ) {
+        // Build 187: the lane's dark TRACK groove, running the lane's full timeline width
+        // behind the clips (Sarowar's reference bars sit on a black track). A Chain lane
+        // keeps its own band instead — no groove under it.
+        if (track.clips.none { it.type == LayerType.CHAIN }) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxWidth()
+                    .height(barHeight)
+                    .background(LaneTrackColor, RoundedCornerShape(percent = 50))
+            )
+        }
         // One clip per lane, except a Chain lane: the chain bar first (behind), its layers on top of it.
         val laneClips = if (track.clips.size > 1) track.clips.sortedBy { if (it.type == LayerType.CHAIN) 0 else 1 } else track.clips
         laneClips.forEach { clip ->
@@ -936,13 +950,21 @@ fun TimelineTrackRow(
                         IntOffset(
                             x = if (clip.type == LayerType.CHAIN) 0
                             else (clip.startMs * pxPerMs * pxPerDp + handlePx + if (dragging) dragOffsetX else 0f).roundToInt(),
-                            y = 0
+                            // Build 187: the capsule bar is centred in its (taller) row; a Chain keeps the full row.
+                            y = if (clip.type == LayerType.CHAIN) 0
+                            else (LaneBarInset.value / 2f * pxPerDp).roundToInt()
                         )
                     }
                     // The lane column scrolls with the timeline; a Chain undoes that, so it stays fixed on the screen.
                     .then(
                         if (clip.type == LayerType.CHAIN) Modifier.graphicsLayer { translationX = -columnShiftPx() }
                         else Modifier
+                    )
+                    // Build 187: the touch box is the BAR (barHeight), not the whole row —
+                    // the drag/trim gestures themselves are unchanged. A Chain keeps the row.
+                    .then(
+                        if (clip.type == LayerType.CHAIN) Modifier
+                        else Modifier.height(barHeight)
                     )
                     .pointerInput(clip.id, laneIndex, laneCount, pxPerMs) {
                         detectDragGesturesAfterLongPress(
@@ -998,7 +1020,9 @@ fun TimelineTrackRow(
                     visibleFromMs = visibleFromMs,
                     visibleToMs = visibleToMs,
                     waveform = clip.uri?.let { waveforms[it] },
-                    pxPerMs = pxPerMs
+                    pxPerMs = pxPerMs,
+                    // Build 187: the badge number = the lane's order in the displayed stack.
+                    layerNumber = laneIndex + 1
                 )
             }
 
@@ -1086,15 +1110,30 @@ private fun TrimHandle(
     }
 }
 
+// Build 187 (Sarowar's layer redesign): row heights cut by roughly a quarter so more
+// lanes fit the panel (the capsule bar inside is LaneBarInset shorter still). Old -> new:
+// VIDEO/AUDIO 40 -> 30, SHAPE/CHAIN/OVERLAY/TEXT 38 -> 28, GROUP 36 -> 27, else 34 -> 26.
+// A third was NOT taken: the left rail's 25 dp thumbnail and the eye hit box set the floor
+// (the slimmest row, 26 dp, still holds both), and trim handles keep the full row height.
 internal fun laneHeightFor(type: LayerType): Dp = when (type) {
-    LayerType.VIDEO -> 40.dp
-    LayerType.AUDIO -> 40.dp
-    LayerType.SHAPE -> 38.dp
-    LayerType.CHAIN -> 38.dp
-    LayerType.OVERLAY, LayerType.TEXT -> 38.dp
-    LayerType.GROUP -> 36.dp
-    else -> 34.dp
+    LayerType.VIDEO -> 30.dp
+    LayerType.AUDIO -> 30.dp
+    LayerType.SHAPE -> 28.dp
+    LayerType.CHAIN -> 28.dp
+    LayerType.OVERLAY, LayerType.TEXT -> 28.dp
+    LayerType.GROUP -> 27.dp
+    else -> 26.dp
 }
+
+/** Build 187: the capsule bar is this much shorter than its lane row (centred in it). */
+private val LaneBarInset = 4.dp
+/** Build 187: the lane's dark track groove. The panel is pure black (AmBaseDeep), so the
+ *  reference's black track becomes a near-black groove — the same track-vs-page contrast. */
+private val LaneTrackColor = Color(0xFF161616)
+/** Build 187: the Controller's settled teal marker colour (same as CanvasArea's). */
+private val ControllerTeal = Color(0xFF00B8A9)
+/** Build 187: the audio bar's own colour (AudioClipBody's fill). */
+private val AudioBarColor = Color(0xFF4B4BC8)
 
 @Composable
 fun TimelineClipItem(
@@ -1106,7 +1145,10 @@ fun TimelineClipItem(
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4,
     waveform: FloatArray? = null,
-    pxPerMs: Float = TIMELINE_PX_PER_MS
+    pxPerMs: Float = TIMELINE_PX_PER_MS,
+    /** Build 187: the layer's number in the displayed stack, drawn in the bar's end badge.
+     *  Null = no badge (the Transform strip's lone row is not part of the stack display). */
+    layerNumber: Int? = null
 ) {
     val selectScale by animateFloatAsState(
         targetValue = 1f, // no grow/pop on touch or select: layers stay perfectly still while scrolling
@@ -1119,6 +1161,11 @@ fun TimelineClipItem(
 
     // A Chain is a faint grey band fixed on the screen, edge to edge: no start, no end, no corners, no grip.
     val isChain = clip.type == LayerType.CHAIN
+    // Build 187 (Sarowar's reference design): the clip is a slim CAPSULE bar on the lane's
+    // dark track. The outer box is the bar's layout box — deliberately UNCLIPPED, so the
+    // number badge can straddle the bar's right end like the references; the capsule
+    // itself (clipped, clickable) is the inner box. A Chain keeps its rectangle band.
+    val barShape = if (isChain) RectangleShape else RoundedCornerShape(percent = 50)
     Box(
         modifier = Modifier.width(width)
             .fillMaxHeight()
@@ -1127,12 +1174,17 @@ fun TimelineClipItem(
                 scaleY = selectScale
                 alpha = if (clip.isVisible) 1f else 0.35f
             }
-            .clip(if (isChain) androidx.compose.ui.graphics.RectangleShape else RoundedCornerShape(8.dp))
+    ) {
+      Box(
+        modifier = Modifier.fillMaxSize()
+            .clip(barShape)
             .bouncyClickable(pressedScale = 1f, onClick = onClick)
-            // Selected (single or multi-select): cyan->violet gradient edge (redesign language).
+            // Selected (single or multi-select): a white edge (amCyanVioletBrush has
+            // resolved to solid white since the B/W pass — the build-183 bright-vs-dim
+            // law). The Controller draws its own teal selected state, so it is exempt.
             .then(
-                if ((isSelected || isMultiSelected) && !isChain) {
-                    Modifier.border(1.5.dp, amCyanVioletBrush(), RoundedCornerShape(8.dp))
+                if ((isSelected || isMultiSelected) && !isChain && clip.type != LayerType.CONTROLLER) {
+                    Modifier.border(1.5.dp, amCyanVioletBrush(), barShape)
                 } else {
                     Modifier
                 }
@@ -1181,14 +1233,17 @@ fun TimelineClipItem(
                         width = width,
                         waveform = waveform,
                         visibleFromMs = visibleFromMs,
-                        visibleToMs = visibleToMs
+                        visibleToMs = visibleToMs,
+                        isSelected = isSelected
                     )
                 } else {
-                    // Old demo audio layer (no file): keep the placeholder bars.
+                    // Old demo audio layer (no file): the placeholder bars, on the audio
+                    // colour with the build-187 diagonal stripes like a real audio bar.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(AmPanel)
+                            .background(AudioBarColor)
+                            .audioStripes()
                     ) {
                         Row(
                             modifier = Modifier
@@ -1223,7 +1278,7 @@ fun TimelineClipItem(
                 }
             }
 
-            LayerType.SHAPE -> StripedBar(ShapeBarMid, clip.name, top = ShapeBarTop, bottom = ShapeBarBottom, subtle = true)
+            LayerType.SHAPE -> CapsuleBar(ShapeBarMid, clip.name, isSelected)
             // Chain: a see-through grey band with dashed edges (a little clearer while it is selected or checked).
             // It looks like a rail the layers sit on, not like a layer.
             LayerType.CHAIN -> {
@@ -1243,15 +1298,39 @@ fun TimelineClipItem(
                         }
                 )
             }
-            LayerType.TEXT -> StripedBar(
+            LayerType.TEXT -> CapsuleBar(
                 GoldClip,
-                clip.text?.takeIf { it.isNotBlank() } ?: clip.name
+                clip.text?.takeIf { it.isNotBlank() } ?: clip.name,
+                isSelected
             )
-            LayerType.OVERLAY, LayerType.STICKER -> StripedBar(Color(0xFFF5A44B), clip.name)
-            // Real Group: a green bar with its name (its layers are in the lanes below it, with a green edge).
-            LayerType.GROUP -> StripedBar(Color(0xFF3F8F43), clip.name)
+            LayerType.OVERLAY, LayerType.STICKER -> CapsuleBar(Color(0xFFF5A44B), clip.name, isSelected)
+            // Real Group: its settled green identity, carried inside the capsule language
+            // (its layers below keep their green start edge, and the rail thumb stays green).
+            LayerType.GROUP -> CapsuleBar(Color(0xFF3F8F43), clip.name, isSelected)
+            // Controller (build 187): Sarowar ordered a DIFFERENT design from every other
+            // layer — a HOLLOW teal outline in its settled marker colour (0xFF00B8A9, the
+            // CanvasArea marker), transparent fill, teal label and badge. Instantly
+            // distinct from every filled bar; its fan-out semantics are untouched.
+            LayerType.CONTROLLER -> ControllerBar(clip.name, isSelected || isMultiSelected)
+            // Null / Camera: invisible utility layers — a quiet dark hollow bar (grey
+            // outline, dim label), deliberately NOT the Controller's teal design.
+            LayerType.NULL, LayerType.CAMERA -> QuietBar(clip.name, isSelected)
 
-            else -> StripedBar(Color(0xFFF5A44B), clip.name)
+            else -> CapsuleBar(Color(0xFFF5A44B), clip.name, isSelected)
+        }
+        // Build 187: a selected VIDEO bar gets the gradient treatment as a lightening
+        // wash over its frames (a video bar's "colour" is its frames): brightest at the
+        // left, running out along the bar — the gradient reference mapped onto media.
+        if (isSelected && clip.type == LayerType.VIDEO) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(
+                        0.0f to Color.White.copy(alpha = 0.30f),
+                        0.65f to Color.Transparent,
+                        1.0f to Color.Transparent
+                    )
+                )
+            )
         }
         // Video / photo / audio lanes show a picture strip or waveform, so the layer name goes on a small chip.
         if ((clip.type == LayerType.VIDEO || clip.type == LayerType.AUDIO) && clip.name.isNotBlank()) {
@@ -1312,77 +1391,105 @@ fun TimelineClipItem(
                 }
             }
         }
-        // Grip (three lines) at the right end, like a drag handle.
-        if (!isChain) Grip(modifier = Modifier.align(Alignment.CenterEnd).padding(end = 11.5.dp))
-    }
-}
-
-@Composable
-private fun Grip(modifier: Modifier = Modifier) {
-    androidx.compose.foundation.layout.Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(3.2.dp)
-    ) {
-        repeat(3) {
-            Box(
-                Modifier
-                    .width(14.dp)
-                    .height(2.4.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(2.dp))
+        // Build 187: the old three-line Grip at the bar's right end is gone — the number
+        // badge (below) now marks the bar's end, exactly as in the references. The drag
+        // itself is unchanged (long-press drag anywhere on the bar).
+      } // end capsule bar
+        // Build 187: the white circle BADGE at the bar's right end, dark bold number =
+        // the layer's number in the displayed stack. Part of the bar rendering, NOT a
+        // button: it carries no pointer input, so taps/drags pass through to the bar.
+        // Normally it STRADDLES the bar/track boundary like the references; it clamps
+        // fully inside the bar when the clip is SELECTED (the right trim handle sits
+        // exactly at the bar's end and must stay clear) or too short to straddle safely
+        // (width < 56 dp — badge + label + trim clearance no longer fit the straddle).
+        if (!isChain && layerNumber != null) {
+            LayerBadge(
+                clip = clip,
+                number = layerNumber,
+                inside = isSelected || width < 56.dp,
+                modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
     }
 }
 
-
 /**
- * Layer body: soft top-to-bottom gradient, light top edge, faint vertical stripes and a label.
- * Drawn once into a display list; scrolling only moves it.
+ * Build 187 — the bar-end badge: a white circle (92% of the bar height, like the
+ * references) with a thin ring in the clip's own colour and the layer's number in dark
+ * bold. The Controller's badge is teal-tinted, the Null/Camera badge is dark grey —
+ * each matches its bar's design family. [inside] = clamped fully inside the bar;
+ * otherwise the badge straddles the bar's right end (its centre on the boundary).
  */
 @Composable
-private fun StripedBar(
+private fun LayerBadge(
+    clip: TimelineClip,
+    number: Int,
+    inside: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val (fill, ring, ink) = badgeStyleFor(clip.type)
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxHeight(0.92f)
+            .aspectRatio(1f)
+    ) {
+        // Captured here: inside the badge's own Box the BoxWithConstraints receiver is
+        // shadowed, so maxHeight would not resolve there (build 187's one compile error).
+        val badgeH = maxHeight
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .offset(x = if (inside) (-3).dp else badgeH * 0.46f)
+                .background(fill, CircleShape)
+                .border(1.5.dp, ring, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = number.toString(),
+                color = ink,
+                fontSize = (badgeH.value * if (number >= 100) 0.30f else 0.42f).sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/** Badge colours per design family: (fill, ring, number ink). */
+private fun badgeStyleFor(type: LayerType): Triple<Color, Color, Color> = when (type) {
+    LayerType.CONTROLLER -> Triple(Color(0xFFCCF2EE), ControllerTeal, Color(0xFF00574F))
+    LayerType.NULL, LayerType.CAMERA ->
+        Triple(Color(0xFF262626), Color.White.copy(alpha = 0.25f), Color(0xFFBDBDBD))
+    LayerType.VIDEO -> Triple(Color.White, Color(0xFF27384C), Color(0xFF141414))
+    LayerType.AUDIO -> Triple(Color.White, AudioBarColor, Color(0xFF141414))
+    LayerType.TEXT -> Triple(Color.White, GoldClipDeep, Color(0xFF141414))
+    LayerType.SHAPE -> Triple(Color.White, ShapeBarBottom, Color(0xFF141414))
+    LayerType.GROUP -> Triple(Color.White, Color(0xFF3F8F43), Color(0xFF141414))
+    else -> Triple(Color.White, Color(0xFFF5A44B), Color(0xFF141414))
+}
+
+
+/**
+ * Build 187 — a clip's capsule body in Sarowar's reference design: a FLAT clip-type
+ * colour (the vertical gradient, glossy sheen and rim of the old bar are gone) and the
+ * layer name in dark bold. A SELECTED clip runs its own colour into its lighter shade
+ * along the bar's length (the gradient reference) — that gradient is the clip's
+ * content-colour treatment per his reference, not chrome, so the build-183 boxless /
+ * B-W chrome law is untouched everywhere else.
+ */
+@Composable
+private fun CapsuleBar(
     color: Color,
     label: String? = null,
-    top: Color? = null,
-    bottom: Color? = null,
-    subtle: Boolean = false
+    selected: Boolean = false
 ) {
-    val rim = RoundedCornerShape(8.dp)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
-                Brush.verticalGradient(
-                    listOf(
-                        top ?: lerpColor(color, Color.White, 0.22f),
-                        color,
-                        bottom ?: lerpColor(color, Color.Black, 0.14f)
-                    )
-                )
-            )
-            .drawBehind {
-                // diagonal glossy sheen
-                drawRect(
-                    Brush.linearGradient(
-                        colorStops = arrayOf(
-                            0.00f to Color.Transparent,
-                            0.30f to Color.White.copy(alpha = 0.00f),
-                            0.45f to Color.White.copy(alpha = if (subtle) 0.12f else 0.26f),
-                            0.60f to Color.White.copy(alpha = 0.00f),
-                            1.00f to Color.Transparent
-                        ),
-                        start = Offset(0f, size.height * 2f),
-                        end = Offset(size.width.coerceAtLeast(size.height * 4f), -size.height)
-                    )
-                )
-            }
-            .border(
-                if (subtle) 0.75.dp else 1.2.dp,
-                Brush.verticalGradient(
-                    if (subtle) listOf(Color.White.copy(alpha = 0.40f), Color.White.copy(alpha = 0.06f))
-                    else listOf(Color.White.copy(alpha = 0.85f), Color.White.copy(alpha = 0.25f))
-                ),
-                rim
+                if (selected) Brush.horizontalGradient(
+                    listOf(color, lerpColor(color, Color.White, 0.45f))
+                ) else androidx.compose.ui.graphics.SolidColor(color)
             ),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -1390,13 +1497,93 @@ private fun StripedBar(
             Text(
                 text = label,
                 color = Color(0xFF111111),
-                fontSize = 15.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 14.dp, end = 34.dp)
+                modifier = Modifier.padding(start = 12.dp, end = 34.dp)
             )
         }
+    }
+}
+
+/**
+ * Build 187 — the Controller's DIFFERENT bar (Sarowar's explicit order): a HOLLOW
+ * outline in its settled teal marker family — transparent fill, teal border, teal
+ * label — so it can never be mistaken for a filled content bar. Selected: the border
+ * thickens and a faint teal wash fills the hollow. Rendering only; the settled
+ * fan-out semantics (build 155) are untouched.
+ */
+@Composable
+private fun ControllerBar(label: String?, selected: Boolean) {
+    val shape = RoundedCornerShape(percent = 50)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .then(if (selected) Modifier.background(ControllerTeal.copy(alpha = 0.14f), shape) else Modifier)
+            .border(if (selected) 2.dp else 1.5.dp, ControllerTeal, shape),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (!label.isNullOrBlank()) {
+            Text(
+                text = label,
+                color = ControllerTeal,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 34.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Build 187 — the Null / Camera bar: visually quiet (dark hollow, grey outline, dim
+ * label) — these layers are invisible utility, so the bar stays near-silent, and it is
+ * deliberately NOT the Controller's teal design.
+ */
+@Composable
+private fun QuietBar(label: String?, selected: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .border(
+                1.dp,
+                Color.White.copy(alpha = if (selected) 0.65f else 0.28f),
+                RoundedCornerShape(percent = 50)
+            ),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (!label.isNullOrBlank()) {
+            Text(
+                text = label,
+                color = AmTextDim,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 34.dp)
+            )
+        }
+    }
+}
+
+/**
+ * Build 187 — diagonal stripes over an audio bar, per the striped reference: darker
+ * stripes of the bar's own colour leaning like //// (top end shifted right by half the
+ * bar height, the reference's ~63°), drawn BEHIND the content, so the white waveform
+ * stays on top and legible — the audio reading (indigo + white wave) is unmistakable.
+ */
+private fun Modifier.audioStripes(base: Color = AudioBarColor): Modifier = drawBehind {
+    val stripe = lerpColor(base, Color.Black, 0.20f)
+    val w = 3.dp.toPx()
+    val period = 7.dp.toPx()
+    val lean = size.height * 0.5f
+    var x = -size.height
+    while (x < size.width + size.height) {
+        drawLine(stripe, Offset(x, size.height), Offset(x + lean, 0f), strokeWidth = w)
+        x += period
     }
 }
 

@@ -1110,7 +1110,7 @@ fun TimelineTrackRow(
             if (isSelected && !isDragging && !clip.isLocked && clip.type == LayerType.AUDIO) {
                 val barLeftPx = clip.startMs * pxPerMs * pxPerDp + handlePx
                 val barPx = clipWidth.value * pxPerDp
-                val knobHalfPx = 12f * pxPerDp
+                val knobHalfPx = 16f * pxPerDp   // half the 32 dp hit box (build 201: was 24 dp box / 12)
                 val knobTopPx = (LaneBarInset.value / 2f) * pxPerDp - knobHalfPx
                 FadeHandle(
                     isLeft = true,
@@ -1201,7 +1201,8 @@ private fun TrimHandle(
  * A fade knob (build 199, A9): a small white disc with a dark triangle pointing along the
  * fade's growth direction, sitting on the audio bar's top corner where the drawn fade ends.
  * Drag = the TrimHandle pattern (whole-ms steps through [onFadeDelta], one undo step opened
- * by [onBegin]); the 24 dp box is the touch target, the disc itself is 16 dp.
+ * by [onBegin]); the 32 dp box is the touch target (build 201, audit B-8: was 24 dp),
+ * the disc itself is 16 dp.
  */
 @Composable
 private fun FadeHandle(
@@ -1215,7 +1216,7 @@ private fun FadeHandle(
     val latestOnFade by rememberUpdatedState(onFadeDelta)
     Box(
         modifier = modifier
-            .size(24.dp)
+            .size(32.dp)
             .pointerInput(pxPerMs, pxPerDp) {
                 var acc = 0f
                 detectHorizontalDragGestures(

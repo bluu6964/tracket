@@ -68,6 +68,8 @@ import com.example.model.ProjectSnapshot
 import com.example.model.ProjectMarkers
 import com.example.model.TimelineMarker
 import com.example.model.HistoryStack
+import com.example.model.SoloLaw
+import com.example.model.SoloState
 import com.example.model.ExportRange
 import com.example.model.WaveformCache
 import com.example.model.deepCopyLayer
@@ -124,8 +126,13 @@ class VideoEditorViewModel : ViewModel() {
     // Undo / Redo history stacks — bounded since build 199 (audit #2 item O1): HistoryStack
     // caps each at 60 entries, evicting the oldest, so a long session cannot pin an unbounded
     // number of full track states.
-    private val undoStack = HistoryStack<List<TimelineTrack>>()
-    private val redoStack = HistoryStack<List<TimelineTrack>>()
+    // Build 201 (audit S-5): an entry is tracks + the solo session that belongs
+    // to them (see model/SoloState) — the two travel together, so undo/redo can
+    // no longer strand a solo whose restore set was forgotten.
+    private data class HistoryEntry(val tracks: List<TimelineTrack>, val solo: SoloState?)
+    private val undoStack = HistoryStack<HistoryEntry>()
+    private val redoStack = HistoryStack<HistoryEntry>()
+    private fun currentEntry() = HistoryEntry(_tracks.value, soloState)
 
     private val _canUndo = MutableStateFlow(false)
     val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
@@ -500,7 +507,7 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     private fun pushHistory() {
-        undoStack.push(_tracks.value)
+        undoStack.push(currentEntry())
         redoStack.clear()
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = false
@@ -508,25 +515,27 @@ class VideoEditorViewModel : ViewModel() {
 
     fun undo() {
         if (undoStack.isNotEmpty()) {
-            redoStack.push(_tracks.value)
+            redoStack.push(currentEntry())
             val previous = undoStack.pop() ?: return
-            _tracks.value = previous
+            _tracks.value = previous.tracks
+            // Build 201 (S-5): the session of the restored state comes back
+            // with it (validated — a session whose layer is gone is dropped).
+            setSolo(previous.solo.takeIf { SoloLaw.isValidFor(it, previous.tracks) })
             recomputeTotal()
             _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = true
-            forgetSolo()
         }
     }
 
     fun redo() {
         if (redoStack.isNotEmpty()) {
-            undoStack.push(_tracks.value)
+            undoStack.push(currentEntry())
             val next = redoStack.pop() ?: return
-            _tracks.value = next
+            _tracks.value = next.tracks
+            setSolo(next.solo.takeIf { SoloLaw.isValidFor(it, next.tracks) })
             recomputeTotal()
             _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = redoStack.isNotEmpty()
-            forgetSolo()
         }
     }
 
@@ -1005,55 +1014,54 @@ class VideoEditorViewModel : ViewModel() {
 
     // ---- Solo (A6): hide/show is a stored per-layer field restored by undo, so solo is
     // modelled the same way — soloing rewrites the OTHER layers' visible/muted flags in one
-    // undo step and remembers what they were; un-soloing restores them. The remembered flags
-    // are only valid for the timeline state they were taken from, so undo/redo and project
-    // loads forget them (an un-solo after history travel simply turns the marker off).
-    private var preSoloState: Map<String, Pair<Boolean, Boolean>>? = null
+    // undo step and remembers what they were; un-soloing restores them.
+    // Build 201 (audit S-5): the remembered flags are a model value now
+    // (SoloState, pure math in SoloLaw). The session rides the undo history
+    // AND the project snapshot, so undo/redo/load restore tracks and session
+    // together — until 200 they forgot the memory while the marker and the
+    // rewritten flags survived, stranding the solo with no way back.
+    private var soloState: SoloState? = null
     private val _soloClipId = MutableStateFlow<String?>(null)
     val soloClipId: StateFlow<String?> = _soloClipId.asStateFlow()
 
-    private fun forgetSolo() {
-        _soloClipId.value = null
-        preSoloState = null
+    private fun setSolo(state: SoloState?) {
+        soloState = state
+        _soloClipId.value = state?.clipId
     }
 
+    private fun forgetSolo() = setSolo(null)
+
     private fun restoreSoloState() {
-        val saved = preSoloState ?: return
-        _tracks.value = _tracks.value.map { lane ->
-            lane.copy(clips = lane.clips.map { c ->
-                val s = saved[c.id] ?: return@map c
-                c.copy(isVisible = s.first, isMuted = s.second)
-            })
-        }
+        val saved = soloState ?: return
+        _tracks.value = SoloLaw.restored(_tracks.value, saved)
     }
 
     fun toggleSolo(clipId: String) {
-        if (_soloClipId.value == clipId) {
-            // Un-solo: restore the remembered flags, one undo step.
+        if (soloState?.clipId == clipId) {
+            // Un-solo: restore the remembered flags, one undo step. The push
+            // captures the soloed tracks WITH their session, so undoing the
+            // un-solo brings the whole solo back, session included.
             pushHistory()
             restoreSoloState()
             forgetSolo()
             return
         }
         // Re-soloing a different layer first restores the old solo's flags inside the same
-        // single undo step.
-        if (_soloClipId.value != null) restoreSoloState()
+        // single undo step (the restore happens before the push, so the pushed
+        // state is the restored, un-soloed one — as before).
+        if (soloState != null) {
+            restoreSoloState()
+            forgetSolo()
+        }
         val all = _tracks.value.flatMap { it.clips }
         if (all.none { it.id == clipId }) {
             forgetSolo()
             return
         }
-        preSoloState = all.associate { it.id to (it.isVisible to it.isMuted) }
+        val session = SoloLaw.capture(_tracks.value, clipId)
         pushHistory()
-        _tracks.value = _tracks.value.map { lane ->
-            lane.copy(clips = lane.clips.map { c ->
-                when {
-                    c.id == clipId -> if (c.isVisible) c else c.copy(isVisible = true)
-                    else -> c.copy(isVisible = false, isMuted = true)
-                }
-            })
-        }
-        _soloClipId.value = clipId
+        _tracks.value = SoloLaw.soloed(_tracks.value, clipId)
+        setSolo(session)
     }
 
     // ---- Copy / paste a whole layer (A7): a second clipboard beside the keyframe/effects
@@ -2691,7 +2699,8 @@ class VideoEditorViewModel : ViewModel() {
         beatMarksMs = _beatMarks.value,
         markers = _markers.value,
         exportInMs = _exportInMs.value,
-        exportOutMs = _exportOutMs.value
+        exportOutMs = _exportOutMs.value,
+        solo = soloState
     )
 
     /** Replaces everything with a saved project. Undo history and selection start empty. */
@@ -2710,11 +2719,14 @@ class VideoEditorViewModel : ViewModel() {
         _isMasterMuted.value = s.isMasterMuted
         _beatMarks.value = s.beatMarksMs.filter { it >= 0L }.distinct().sorted()
         _markers.value = ProjectMarkers.normalize(s.markers)
-        // Build 199 (A10/A6): the export range rides the snapshot; a loaded project starts
-        // un-soloed (the remembered pre-solo flags belong to the previous project).
+        // Build 199 (A10): the export range rides the snapshot.
         _exportInMs.value = s.exportInMs
         _exportOutMs.value = s.exportOutMs
-        forgetSolo()
+        // Build 201 (S-5): the solo session rides the snapshot too — a project
+        // saved mid-solo reopens soloed AND un-soloable (its restore set came
+        // with it). A session whose layer is not in this project is dropped;
+        // pre-201 files have no session and start un-soloed, as before.
+        setSolo(s.solo.takeIf { SoloLaw.isValidFor(it, s.tracks) })
         _tracks.value = s.tracks
         _currentPlayheadMs.value = 0L
         recomputeTotal()

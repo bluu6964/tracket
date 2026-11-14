@@ -19,7 +19,8 @@ private object NativeExportNative {
                                                trimStartUs: Long, speed: Double, volume: Float,
                                                fadeInUs: Long, fadeOutUs: Long,
                                                duckRelUs: LongArray?, duckGains: FloatArray?,
-                                               noiseProfile: FloatArray?, nrStrength: Float): Boolean
+                                               noiseProfile: FloatArray?, nrStrength: Float,
+                                               speedTable: FloatArray?): Boolean
     @JvmStatic external fun nativeStartAudio(session: Long, totalUs: Long, bitrate: Int): Boolean
     @JvmStatic external fun nativePumpAudio(session: Long, upToUs: Long): Boolean
     @JvmStatic external fun nativeProfNs(id: Int): Long
@@ -58,18 +59,21 @@ class NativeExportEncoder private constructor(private var session: Long) : Close
      * from its start + the gain there), same length; null = no ducking.
      * [noiseProfile] / [nrStrength] (build 195): the clip's per-bin noise profile
      * (com.example.model.NoiseReduction.BINS magnitudes) + gate strength; null / 0 = ungated.
+     * [speedTable] (build 201, S-1): the clip's per-block SPEED-keyframe table
+     * (com.example.model.SpeedRamp); null = constant [speed].
      */
     fun addAudioClip(
         fd: Int, length: Long, startMs: Long, durationMs: Long, trimStartMs: Long,
         speed: Float, volume: Float, fadeInMs: Long, fadeOutMs: Long,
         duckRelUs: LongArray? = null, duckGains: FloatArray? = null,
-        noiseProfile: FloatArray? = null, nrStrength: Float = 0f
+        noiseProfile: FloatArray? = null, nrStrength: Float = 0f,
+        speedTable: FloatArray? = null
     ): Boolean {
         check(session != 0L) { "Encoder is closed" }
         return NativeExportNative.nativeAddAudioClip(
             session, fd, length, startMs * 1000L, durationMs * 1000L, trimStartMs * 1000L,
             speed.toDouble(), volume, fadeInMs * 1000L, fadeOutMs * 1000L, duckRelUs, duckGains,
-            noiseProfile, nrStrength
+            noiseProfile, nrStrength, speedTable
         )
     }
 

@@ -33,7 +33,14 @@ data class ProjectSnapshot(
      * [markers], so project files written before build 199 load with no range.
      */
     val exportInMs: Long? = null,
-    val exportOutMs: Long? = null
+    val exportOutMs: Long? = null,
+    /**
+     * The active solo session (build 201, audit S-5; see [SoloState]): which
+     * layer is soloed plus the flags every layer had before it, so a project
+     * saved mid-solo reopens still soloed AND still un-soloable. Additive
+     * exactly like [exportInMs] — old files load with no session.
+     */
+    val solo: SoloState? = null
 ) {
     companion object {
         const val CURRENT_VERSION = 1

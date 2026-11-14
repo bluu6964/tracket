@@ -45,12 +45,24 @@ private val IconColor = Color.White
 /**
  * Bar shown at the bottom of the timeline while several layers are selected.
  * First row: left group depends on the playhead ([mode]); right group aligns the checked
- * layers IN TIME. Second row (build 188): canvas SPATIAL align / distribute of the checked
- * layers (see [com.example.model.SpatialAlign]) — bare tiles like the rest of the bar;
- * the two distribute tiles dim out below 3 checked layers (they need three to space).
- * Third row (build 192): shape BOOLEAN ops (see [com.example.model.ShapeBoolean]) —
- * composed ONLY when [showBooleanRow] (exactly two eligible shape layers checked);
- * Subtract reads first-checked minus second-checked.
+ * layers IN TIME. Second row (build 188): canvas SPATIAL align / canvas-centre of the
+ * checked layers (see [com.example.model.SpatialAlign]) — bare tiles like the rest of
+ * the bar. Third row: distribute (dims below 3 checked layers — it needs three to
+ * space), Chain, Group, and the labelled All / Delete tiles. Fourth row (build 192):
+ * shape BOOLEAN ops (see [com.example.model.ShapeBoolean]) — composed ONLY when
+ * [showBooleanRow] (exactly two eligible shape layers checked); Subtract reads
+ * first-checked minus second-checked.
+ *
+ * RE-BUDGETED in build 201 (audit B-5, HIGH): the bar's content width is
+ * 320 dp (360 − 2×8 outer − 2×12 inner padding) and builds 188–199 had grown
+ * row 1 to 418 dp and row 2 to 356 dp — the tiles overflowed the bar and
+ * clipped. The regroup above (no tile shrunk, no action dropped) fits every
+ * row, SPLIT mode (the widest) included:
+ *   row 1: mode group 136 (SPLIT 3×44+2×2) + time-align 114 (3×34+2×6) = 250
+ *   row 2: 8 spatial tiles × 34 + 7×2 = 286
+ *   row 3: distribute 70 + chain 34 + group 34 + 2×2 gaps = 142 left,
+ *          All 38 + Delete 38 + 6 = 82 right → 224 across
+ *   row 4 (boolean): 4 × 58 spaced evenly = 232
  */
 @Composable
 fun MultiSelectBar(
@@ -108,13 +120,9 @@ fun MultiSelectBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                MiniTile(label = "Delete", labelColor = AmDanger, onClick = onDeleteChecked) { drawTrashGlyph() }
-                MiniTile(label = "All", labelColor = Color.White.copy(alpha = 0.75f), onClick = onSelectAll) { drawSelectAllGlyph() }
                 AlignTile(MultiAction.ALIGN_START, onAction) { drawBars(BarsKind.LEFT) }
                 AlignTile(MultiAction.SEQUENCE, onAction) { drawBars(BarsKind.STAIR) }
                 AlignTile(MultiAction.ALIGN_END, onAction) { drawBars(BarsKind.RIGHT) }
-                AlignTile(MultiAction.CHAIN, onAction) { drawChainIcon() }
-                AlignTile(MultiAction.GROUP, onAction) { drawGroupIcon() }
             }
         }
         Row(
@@ -137,12 +145,31 @@ fun MultiSelectBar(
                 SpatialTile(SpatialAction.CANVAS_CENTER_H, onSpatialAction) { drawCanvasCentreGlyph(horizontal = true) }
                 SpatialTile(SpatialAction.CANVAS_CENTER_V, onSpatialAction) { drawCanvasCentreGlyph(horizontal = false) }
             }
+        }
+        // Third row (build 201 regroup): distribute + Chain / Group + the
+        // labelled All / Delete tiles — the groups that overflowed rows 1–2.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(38.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 SpatialTile(SpatialAction.DISTRIBUTE_H, onSpatialAction, enabled = selectedCount >= 3) { drawDistributeGlyph(horizontal = true) }
                 SpatialTile(SpatialAction.DISTRIBUTE_V, onSpatialAction, enabled = selectedCount >= 3) { drawDistributeGlyph(horizontal = false) }
+                AlignTile(MultiAction.CHAIN, onAction) { drawChainIcon() }
+                AlignTile(MultiAction.GROUP, onAction) { drawGroupIcon() }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                MiniTile(label = "All", labelColor = Color.White.copy(alpha = 0.75f), onClick = onSelectAll) { drawSelectAllGlyph() }
+                MiniTile(label = "Delete", labelColor = AmDanger, onClick = onDeleteChecked) { drawTrashGlyph() }
             }
         }
         if (showBooleanRow) {
@@ -191,9 +218,10 @@ private fun BooleanTile(
 }
 
 /**
- * A labelled mini-tile of the first row (build 199): Delete (A11) and Select-all (A4) —
- * actions whose glyph alone would be ambiguous get their name under the glyph, in the
- * bar's bare language. Delete carries the destructive red of the selected-layer bar.
+ * A labelled mini-tile of the third row (build 199; moved in the build-201
+ * regroup): Delete (A11) and Select-all (A4) — actions whose glyph alone would
+ * be ambiguous get their name under the glyph, in the bar's bare language.
+ * Delete carries the destructive red of the selected-layer bar.
  */
 @Composable
 private fun MiniTile(

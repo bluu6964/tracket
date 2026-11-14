@@ -255,6 +255,107 @@ int main() {
         CHECK(renderWith(noProfile) == plain, "nr without profile render must be identical");
         printf("nr off ok\n");
     }
+    // 11) speed ramp (build 201, audit S-1): a per-block speed table through the
+    // production-shaped factory. The source's k-th second is a sine at
+    // 300+80k Hz, so the heard frequency names the source second the ramp has
+    // reached — the probes pin WHERE the ramp is mid-layer, and the constant
+    // average-speed path (the pre-201 behaviour) lands in different seconds at
+    // 1.5 / 2.5 / 3.5 / 4.5 s and fails them. Table: blocks [0,282) at 0.5,
+    // [282,563) at 2.0 — 563 output blocks (288256 frames), integral 703
+    // blocks (359936 source frames), average 703/563.
+    {
+        struct ChirpSrc : FrameSource {
+            double ph = 0; int64_t pos = 0, total;
+            explicit ChirpSrc(int64_t frames) : total(frames) {}
+            int read(float* d, int n) override {
+                int k = (int)std::min<int64_t>(n, total - pos);
+                for (int i = 0; i < k; ++i) {
+                    const int64_t t = pos + i;
+                    ph += 2 * M_PI * (300.0 + 80.0 * (double)(t / kAudioRate)) / kAudioRate;
+                    const float v = 0.5f * std::sin(ph);
+                    d[2*i] = d[2*i+1] = v;
+                }
+                pos += k; return k;
+            }
+        };
+        std::vector<float> table(563);
+        for (int i = 0; i < 563; ++i) table[(size_t)i] = i < 282 ? 0.5f : 2.0f;
+        const double avg = 703.0 / 563.0;
+        auto factory = [](int64_t srcFrames) {
+            return [srcFrames](const AudioClipSpec& x) -> std::unique_ptr<FrameSource> {
+                std::unique_ptr<ChirpSrc> chirp(new ChirpSrc(srcFrames));
+                // Mirror AudioFileSource::open: the stream starts at the
+                // spec's trim offset, phase-continuous (skip by reading).
+                int64_t skip = x.trimStartUs * kAudioRate / 1000000LL;
+                std::vector<float> sink(8192 * 2);
+                while (skip > 0) skip -= chirp->read(sink.data(), (int)std::min<int64_t>(8192, skip));
+                std::unique_ptr<FrameSource> src = std::move(chirp);
+                if (!x.speedTable.empty() || std::fabs(x.speed - 1.0) > 0.001) {
+                    std::unique_ptr<TimeStretcher> ts(new TimeStretcher(std::move(src), x.speed));
+                    if (!x.speedTable.empty()) ts->setSpeedTable(x.speedTable);
+                    src = std::move(ts);
+                }
+                return src;
+            };
+        };
+        // The integral itself, pinned exactly.
+        CHECK(speedAdvanceFrames({}, 2.0, 1000) == 2000, "advance const");
+        CHECK(speedAdvanceFrames(table, avg, 563 * 512) == 359936, "advance full %lld", (long long)speedAdvanceFrames(table, avg, 563 * 512));
+        CHECK(speedAdvanceFrames(table, avg, 102400) == 51200, "advance slow span");
+        CHECK(speedAdvanceFrames(table, avg, 204800) == 193024, "advance into fast span %lld", (long long)speedAdvanceFrames(table, avg, 204800));
+        CHECK(speedAdvanceFrames(table, avg, 768) == 384, "advance partial block");
+        CHECK(speedAdvanceFrames({2.0f}, 1.0, 1536) == 3072, "advance holds last entry");
+        // Full-layer render from 0: probes name the source second.
+        AudioClipSpec s; s.startFrame = 0; s.durFrames = s.fullDurFrames = 563 * 512;
+        s.speed = avg; s.speedTable = table; s.volume = 1.f;
+        AudioMixer m(factory(359936 + 8192), s.durFrames);
+        m.addClip(s); std::vector<int16_t> out;
+        m.render(s.durFrames, [&](const int16_t* p, int n, int64_t) { out.insert(out.end(), p, p + n * 2); return true; });
+        CHECK(out.size() == (size_t)s.durFrames * 2, "ramp len %zu", out.size());
+        auto probe = [&](double tSec) {
+            const size_t c = (size_t)(tSec * kAudioRate);
+            return zeroCrossHz(out, c - 9600, c + 9600);
+        };
+        CHECK(std::fabs(probe(0.5) - 300) < 30, "ramp@0.5 %.1f", probe(0.5));
+        CHECK(std::fabs(probe(1.5) - 300) < 30, "ramp@1.5 %.1f (constant speed would be 380)", probe(1.5));
+        CHECK(std::fabs(probe(2.5) - 380) < 30, "ramp@2.5 %.1f (constant would be 540)", probe(2.5));
+        CHECK(std::fabs(probe(3.5) - 460) < 30, "ramp@3.5 %.1f (constant would be 620)", probe(3.5));
+        CHECK(std::fabs(probe(4.5) - 620) < 30, "ramp@4.5 %.1f (constant would be 700)", probe(4.5));
+        CHECK(std::fabs(probe(5.5) - 780) < 30, "ramp@5.5 %.1f", probe(5.5));
+        printf("ramp ok: 1.5s=%.0f 2.5s=%.0f 3.5s=%.0f 4.5s=%.0f\\n", probe(1.5), probe(2.5), probe(3.5), probe(4.5));
+        // Mid-layer starts: open() must spend the SAME integral and slice the
+        // table — seek into the slow span (block 200) and the fast span
+        // (block 400); the first heard second names the sliced position.
+        for (int blk : {200, 400}) {
+            AudioMixer m2(factory(359936 + 8192), s.durFrames);
+            m2.addClip(s);
+            m2.seek(blk * 512);
+            std::vector<int16_t> o2;
+            m2.render(s.durFrames, [&](const int16_t* p, int n, int64_t) { o2.insert(o2.end(), p, p + n * 2); return true; });
+            const double hz = zeroCrossHz(o2, 2400, 21600);   // +0.25 s in
+            const double want = blk == 200 ? 380 : 620;
+            CHECK(std::fabs(hz - want) < 30, "ramp seek block %d: %.1f want %.0f", blk, hz, want);
+            printf("ramp seek %d ok: %.0f Hz\\n", blk, hz);
+        }
+        // Landing: a stretcher fed exactly the table's integral of source must
+        // produce the layer's length back (within WSOLA edge effects).
+        TimeStretcher ts(std::unique_ptr<FrameSource>(new ChirpSrc(359936)), avg);
+        ts.setSpeedTable(table);
+        std::vector<float> buf(512 * 2); int64_t produced = 0; int got;
+        while ((got = ts.read(buf.data(), 512)) > 0) produced += got;
+        CHECK(std::fabs((double)produced - 563 * 512) <= 2048, "ramp landing %lld", (long long)produced);
+        printf("ramp landing ok: %lld frames (want %d)\\n", (long long)produced, 563 * 512);
+        // A constant table must be bit-identical to the constant-speed path.
+        auto runConst = [&](bool useTable) {
+            TimeStretcher t2(std::unique_ptr<FrameSource>(new Sine(440, kAudioRate * 4)), 2.0);
+            if (useTable) t2.setSpeedTable(std::vector<float>(300, 2.0f));
+            std::vector<float> b(512 * 2), all; int g;
+            while ((g = t2.read(b.data(), 512)) > 0) all.insert(all.end(), b.begin(), b.begin() + (size_t)g * 2);
+            return all;
+        };
+        CHECK(runConst(true) == runConst(false), "constant table != constant speed path");
+        printf("ramp const-table identical ok\\n");
+    }
     printf(fails ? "FAILED\n" : "ALL OK\n");
     return fails ? 1 : 0;
 }

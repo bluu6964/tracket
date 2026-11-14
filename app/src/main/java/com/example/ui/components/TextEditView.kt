@@ -322,6 +322,14 @@ private fun FontsTab(clip: TimelineClip, onUpdate: ((TimelineClip) -> TimelineCl
         }
         Spacer(Modifier.height(12.dp))
 
+        // Build 201 (audit S-6): imported fonts live in this app's private
+        // storage on THIS device — say so where the user adds them.
+        Text(
+            text = "Fonts you add are stored on this device only — they don't travel with the project file.",
+            color = TextSecondary,
+            fontSize = 11.sp
+        )
+
         Spacer(Modifier.height(4.dp))
         Column(
             modifier = Modifier

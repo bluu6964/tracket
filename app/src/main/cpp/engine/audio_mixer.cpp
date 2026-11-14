@@ -39,8 +39,24 @@ void AudioMixer::open(Clip& c, int64_t from) {
     c.opened = true;
     AudioClipSpec s = c.spec;
     if (from > s.startFrame) {
-        // Already running at `from`: start that far into the file (the source time runs `speed` times faster).
-        s.trimStartUs += (int64_t)((double)(from - s.startFrame) * 1e6 / (double)kAudioRate * s.speed);
+        // Already running at `from`: start that far into the file. Constant
+        // speed: the source time runs `speed` times faster. Build 201 (S-1):
+        // with a speed table the offset is the ramp's integral over the
+        // skipped span (speedAdvanceFrames — the same sum the stretcher
+        // spends), and the table is block-sliced so the stretcher's block 0
+        // is the layer's block `drop`; a start past the table's end leaves a
+        // constant-speed tail at the last entry, the evaluator's hold law.
+        const int64_t rel = from - s.startFrame;
+        s.trimStartUs += (int64_t)((double)speedAdvanceFrames(s.speedTable, s.speed, rel) * 1e6 / (double)kAudioRate);
+        if (!s.speedTable.empty()) {
+            const int64_t drop = rel / kSpeedBlockFrames;
+            if (drop >= (int64_t)s.speedTable.size()) {
+                s.speed = s.speedTable.back();
+                s.speedTable.clear();
+            } else if (drop > 0) {
+                s.speedTable.erase(s.speedTable.begin(), s.speedTable.begin() + (size_t)drop);
+            }
+        }
     }
     c.src = factory_ ? factory_(s) : nullptr;
     if (!c.src) c.failed = true;   // no sound in this file: skip the clip

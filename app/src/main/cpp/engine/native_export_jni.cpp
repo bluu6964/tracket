@@ -48,7 +48,8 @@ Java_com_example_engine_NativeExportNative_nativeError(JNIEnv* env, jclass, jlon
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_engine_NativeExportNative_nativeAddAudioClip(JNIEnv* env, jclass, jlong p, jint fd, jlong length,
         jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed, jfloat volume, jlong fadeInUs, jlong fadeOutUs,
-        jlongArray duckRelUs, jfloatArray duckGains, jfloatArray noiseProfile, jfloat nrStrength) {
+        jlongArray duckRelUs, jfloatArray duckGains, jfloatArray noiseProfile, jfloat nrStrength,
+        jfloatArray speedTable) {
     std::vector<int64_t> rel;
     std::vector<float> gains;
     if (duckRelUs && duckGains) {
@@ -72,8 +73,17 @@ Java_com_example_engine_NativeExportNative_nativeAddAudioClip(JNIEnv* env, jclas
             strength = nrStrength;
         }
     }
+    // Speed ramp (build 201, S-1): the layer's per-block SPEED table; null = constant speed.
+    std::vector<float> table;
+    if (speedTable) {
+        const jsize n = env->GetArrayLength(speedTable);
+        if (n > 0) {
+            table.resize((size_t)n);
+            env->GetFloatArrayRegion(speedTable, 0, n, table.data());
+        }
+    }
     return E(p)->addAudioClip(fd, length, startUs, durUs, trimStartUs, speed, volume, fadeInUs, fadeOutUs,
-                              rel, gains, profile, strength)
+                              rel, gains, profile, strength, table)
                ? JNI_TRUE : JNI_FALSE;
 }
 extern "C" JNIEXPORT jboolean JNICALL

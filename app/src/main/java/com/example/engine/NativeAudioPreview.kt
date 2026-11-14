@@ -23,7 +23,7 @@ internal object AudioPreviewNative {
     @JvmStatic external fun nativeAddClip(
         p: Long, fd: Int, length: Long, startUs: Long, durUs: Long, trimStartUs: Long, speed: Double,
         volume: Float, fadeInUs: Long, fadeOutUs: Long, duckRelUs: LongArray?, duckGains: FloatArray?,
-        noiseProfile: FloatArray?, nrStrength: Float
+        noiseProfile: FloatArray?, nrStrength: Float, speedTable: FloatArray?
     ): Boolean
 
     @JvmStatic external fun nativeStart(p: Long, positionUs: Long): Boolean
@@ -44,7 +44,10 @@ internal object AudioPreviewNative {
  *    decoders take a few hundred ms to open; the engine drops the part that is already late, so it lines up).
  *  - paused / scrubbing: silent (like the Media3 preview was).
  *
- * Speed keyframes: like the export, a layer with a speed ramp is played at its average speed.
+ * Speed keyframes (build 201, audit S-1): a layer with a speed ramp hands the
+ * mixer a per-block table ([com.example.model.SpeedRamp.tableFor]) and the
+ * sound follows the ramp block by block, exactly like the export; the table's
+ * hash is part of the sound signature, so editing a ramp restarts the sound.
  *
  * Ducking (build 194): a ducked layer's gain curve is decoded from its trigger off the sync
  * path and cached by the exact fields it depends on ([DuckCurve.Key]); until the curve lands
@@ -172,7 +175,8 @@ internal class NativeAudioPreview(context: Context) {
         val sig: List<Any?> = picks.mapIndexed { index, it ->
             val c = it.clip
             listOf(c.id, c.uri, c.startMs, c.durationMs, c.trimStartMs, c.exportSpeed, it.volume, it.fadeInMs, it.fadeOutMs,
-                duckCurves[index]?.version, nrProfiles[index]?.contentHashCode(), if (nrProfiles[index] != null) c.nrStrength else 0f)
+                duckCurves[index]?.version, nrProfiles[index]?.contentHashCode(), if (nrProfiles[index] != null) c.nrStrength else 0f,
+                com.example.model.SpeedRamp.tableFor(c)?.contentHashCode())
         }
         if (picks.isEmpty()) {
             if (running) stop()
@@ -226,7 +230,8 @@ internal class NativeAudioPreview(context: Context) {
                                     p, it.fd, it.statSize, c.startMs * 1000L, c.durationMs * 1000L, c.trimStartMs * 1000L,
                                     c.exportSpeed.toDouble(), a.volume, a.fadeInMs * 1000L, a.fadeOutMs * 1000L,
                                     duck?.relUs, duck?.gains,
-                                    profile, if (profile != null) c.nrStrength else 0f
+                                    profile, if (profile != null) c.nrStrength else 0f,
+                                    com.example.model.SpeedRamp.tableFor(c)
                                 )) added++
                         }
                     }

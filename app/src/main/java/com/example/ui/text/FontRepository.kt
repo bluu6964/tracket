@@ -73,7 +73,22 @@ object FontRepository {
 
     private fun slug(name: String) = name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
 
+    /** Where a downloaded Google Font goes (Google serves TTF). */
     private fun fileFor(context: Context, name: String) = File(dir(context), "${slug(name)}.ttf")
+
+    // Font file extensions the store recognises (build 201, audit S-6: until
+    // 200 EVERY stored font was named .ttf — an imported .otf kept .otf bytes
+    // under a .ttf name).
+    private val FONT_EXTS = listOf("ttf", "otf", "ttc", "otc")
+
+    /** The stored file of font [name] under ANY real extension, or null. */
+    private fun storedFile(context: Context, name: String): File? {
+        val base = slug(name)
+        val d = dir(context)
+        return FONT_EXTS.firstNotNullOfOrNull { ext ->
+            File(d, "$base.$ext").takeIf { it.exists() && it.length() > 0 }
+        }
+    }
 
     private fun builtIn(name: String): FontFamily? = when (name) {
         "Roboto", "System", "" -> FontFamily.Default
@@ -87,8 +102,8 @@ object FontRepository {
     fun resolveNow(context: Context, name: String): FontFamily? {
         builtIn(name)?.let { return it }
         families[name]?.let { return it }
-        val f = fileFor(context, name)
-        if (f.exists() && f.length() > 0) {
+        val f = storedFile(context, name)
+        if (f != null) {
             return runCatching { FontFamily(Font(f, FontWeight.Normal)) }
                 .getOrNull()?.also { families[name] = it }
         }
@@ -101,8 +116,7 @@ object FontRepository {
      */
     fun fileOrNull(context: Context, name: String): File? {
         if (builtIn(name) != null) return null
-        val f = fileFor(context, name)
-        return if (f.exists() && f.length() > 0) f else null
+        return storedFile(context, name)
     }
 
     fun needsDownload(context: Context, name: String): Boolean =
@@ -146,16 +160,34 @@ object FontRepository {
             .getString(KEY_USER_FONTS, "").orEmpty()
             .split('\n').filter { it.isNotBlank() }
 
-    /** Copies a picked .ttf/.otf into app storage and remembers it. Returns the font's name. */
+    /** Copies a picked font file into app storage and remembers it. Returns the font's name. */
     suspend fun importUserFont(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
         runCatching {
             val display = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
                 val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (c.moveToFirst() && i >= 0) c.getString(i) else null
             } ?: "My font"
-            val name = display.substringBeforeLast('.').replace('_', ' ').replace('-', ' ').trim()
+            val baseName = display.substringBeforeLast('.').replace('_', ' ').replace('-', ' ').trim()
                 .ifBlank { "My font" }
-            val target = fileFor(context, name)
+            // Build 201 (S-6): keep the font's REAL extension — from the file
+            // name, else the content type, else ttf.
+            val ext = display.substringAfterLast('.', "").lowercase().takeIf { it in FONT_EXTS }
+                ?: when (context.contentResolver.getType(uri)?.lowercase()) {
+                    "font/otf", "application/x-font-otf" -> "otf"
+                    "font/collection", "application/x-font-ttc" -> "ttc"
+                    else -> "ttf"
+                }
+            // De-duplicate instead of silently overwriting (S-6): a name that
+            // is already registered, or whose slug already has a stored file
+            // (e.g. a downloaded Google font of the same name), gets the next
+            // free "Name 2", "Name 3", ... — both fonts stay usable.
+            val registered = userFonts(context)
+            var name = baseName
+            var n = 2
+            while (name in registered || storedFile(context, name) != null) {
+                name = "$baseName ${n++}"
+            }
+            val target = File(dir(context), "${slug(name)}.$ext")
             context.contentResolver.openInputStream(uri)!!.use { input ->
                 target.outputStream().use { input.copyTo(it) }
             }
@@ -168,7 +200,7 @@ object FontRepository {
             }
             families.remove(name)
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val list = (userFonts(context) + name).distinct()
+            val list = (registered + name).distinct()
             prefs.edit().putString(KEY_USER_FONTS, list.joinToString("\n")).apply()
             name
         }.getOrNull()

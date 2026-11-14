@@ -1358,7 +1358,10 @@ fun VideoEditorScreen(
         if (video.type != LayerType.VIDEO || video.isImage || video.uri == null) return@startRv
         if (trackRunning) return@startRv
         if (video.cutoutDir != null || video.faceBlurDir != null || video.cornerPin != null || video.planarRemove != null) {
-            scope.launch { snackbarHostState.showSnackbar("Reverse the video first, then use Cutout / Face AI / Remove") }
+            // Build 201 (audit S-2): the old text instructed the OPPOSITE of
+            // the remedy — reversing is what is blocked here; the fix is to
+            // remove the existing effect first, then reverse.
+            scope.launch { snackbarHostState.showSnackbar("Remove the Cutout / Face AI / Remove / Pin effect from this layer first, then reverse") }
             return@startRv
         }
         if (!com.example.engine.DecoderPool.isAvailable) {
@@ -2471,11 +2474,15 @@ fun VideoEditorScreen(
             // Onion skin (build 190): while the ghosts are on, the settings row under
             // the play controls takes its height from the canvas; the sections below
             // keep their places.
-            val onionRowH = if (onionSkin.enabled) 36.dp else 0.dp
+            val onionRowH = if (onionSkin.enabled) 40.dp else 0.dp   // 40 since build 201 (the row's steppers grew to 40 dp targets)
             // Scopes (build 196): the same discipline — while the panel is open its
             // height comes out of the canvas too, so nothing below moves.
             val scopesPanelH = if (scopesOn) ScopesPanelHeight else 0.dp
-            val canvasH = (totalHeight * (9f / 18f) - onionRowH - scopesPanelH).coerceAtLeast(260.dp)
+            // Play-controls utility row (build 201, audit B-1): the bar is two
+            // rows now — transport + a 40 dp utility row — and, like the onion
+            // row and the scopes panel, its height comes out of the canvas.
+            val playUtilityRowH = 40.dp
+            val canvasH = (totalHeight * (9f / 18f) - onionRowH - scopesPanelH - playUtilityRowH).coerceAtLeast(260.dp)
             val playControlsH = (totalHeight * (1f / 18f)).coerceAtLeast(44.dp)
             val timescaleH = (totalHeight * (1f / 30f)).coerceAtLeast(24.dp)
             val layerPanelH = (totalHeight * (5f / 18f)).coerceAtLeast(160.dp)
@@ -2484,7 +2491,7 @@ fun VideoEditorScreen(
             // Alight-style editor panels (Transform / Color / Blending): the play-controls card stays
             // exactly where it is. The panel starts right under it, at the timescale, so the selected
             // layer's strip takes the first layer row and the other layers are hidden behind the panel.
-            val panelTop = headerH + canvasH + playControlsH
+            val panelTop = headerH + canvasH + playControlsH + playUtilityRowH
             val panelH = (totalHeight - panelTop).coerceAtLeast(200.dp)
 
             // The selected layer, drawn by the real timeline panel (identical look) as the first row.
@@ -3182,7 +3189,17 @@ fun VideoEditorScreen(
                                         snackbarHostState.showSnackbar("Layer pasted")
                                     }
                                 }
-                            }) else null
+                            }) else null,
+                            // Used-tool state (build 201, audit S-7): the same
+                            // union the visual panel below receives, so Lock /
+                            // Solo / Label read white-when-on here too.
+                            usedTools = tracks.flatMap { it.clips }.firstOrNull { it.id == targetClipId }
+                                ?.let { c ->
+                                    com.example.model.UsedTools.usedToolsOf(c) +
+                                        (if (c.isLocked) setOf("lock") else emptySet()) +
+                                        (if (soloClipId == c.id) setOf("solo") else emptySet()) +
+                                        (if (c.color != com.example.model.defaultClipColor(c.type)) setOf("label") else emptySet())
+                                } ?: emptySet()
                         ) else ClipEditToolsPanel(
                             height = toolbarH,
                             // Null / 3D Camera: no picture, so no Effects / Animations / Color / Crop / Blend; only what moves them.
@@ -4314,7 +4331,9 @@ fun VideoEditorScreen(
                     Row(
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .offset(x = 10.dp, y = panelTop - playControlsH - 54.dp)
+                            // 54 dp above the bar's top; the bar grew by the 40 dp
+                            // utility row in build 201, hence -94 (= -54 - 40).
+                            .offset(x = 10.dp, y = panelTop - playControlsH - 94.dp)
                             .zIndex(29f)
                             .enterPop(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)

@@ -148,7 +148,7 @@ fun TimescaleSection(
                                 val pxPerMsPx = pxPerMsNow.dp.toPx()
                                 if (list.isEmpty() || pxPerMsPx <= 0f) return null
                                 val ms = playheadMs() + ((pos.x - size.width / 2f) / pxPerMsPx).toLong()
-                                val tolMs = (16.dp.toPx() / pxPerMsPx).toLong().coerceAtLeast(1L)
+                                val tolMs = (20.dp.toPx() / pxPerMsPx).toLong().coerceAtLeast(1L)   // ±20 dp catch (build 201: was ±16)
                                 return ProjectMarkers.nearest(list, ms, tolMs)
                             }
                             detectTapGestures(

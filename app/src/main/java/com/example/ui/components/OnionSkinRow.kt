@@ -50,7 +50,9 @@ fun OnionSkinRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(36.dp)
+            // 40 dp (build 201): the row grew with its steppers (28 -> 40 dp
+            // targets); the screen's onionRowH matches this height.
+            .height(40.dp)
             .background(AmBase)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -121,7 +123,8 @@ private fun StepperButton(
 ) {
     Box(
         modifier = Modifier
-            .size(28.dp)
+            // 40 dp target (build 201, audit B-3: the steppers were 28 dp).
+            .size(40.dp)
             .semantics { contentDescription = description }
             .bouncyClickable(enabled = enabled, onClick = onClick)
             .testTag(tag),

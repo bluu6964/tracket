@@ -618,7 +618,12 @@ fun CropView(
                 onPlayPauseClick = onTogglePlay,
                 onNextClick = chrome.onNext,
                 onUndoClick = onUndo,
-                onRedoClick = onRedo
+                onRedoClick = onRedo,
+                // Build 201 (audit S-3): the crop surface wires none of the
+                // editor-only controls — they are OMITTED here, not rendered
+                // inert (until 200 they showed, and the snap magnet even
+                // painted white/"on" while connected to nothing).
+                showEditorControls = false
             )
             TimescaleSection(
                 height = chrome.timescaleH,

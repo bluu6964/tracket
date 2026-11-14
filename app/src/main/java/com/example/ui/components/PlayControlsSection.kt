@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,12 +44,27 @@ import com.example.ui.util.bouncyClickable
 private val IconWhite = Color(0xFFF2F2F2)
 
 /**
- * Top control bar (positions in dp from the original design reference, in the settled
- * B/W language):
- *   [undo] [redo] [Full]            [ play ]            [frame] [grid] [beat mark +]
- * All glyphs are drawn here (no stock icons) so stroke weight and proportions match.
- * The play button is a flat grey disc with a white glyph. Same controls, same order,
- * same actions as before the restyle.
+ * Top control bar, in the settled B/W language. All glyphs are drawn here (no
+ * stock icons) so stroke weight and proportions match.
+ *
+ * REBUILT in build 201 (audit B-1, CRITICAL): until 200 the bar aligned three
+ * groups (Start / Centre / End) inside ONE Box and they OVERLAPPED —
+ * ~546 dp of controls in a 360 dp bar, the defect Sarowar photographed
+ * (neighbouring buttons' glyphs showed through each other and the IN/OUT
+ * labels read as garbled). The bar is now TWO rows whose widths provably fit
+ * 360 dp (and the centre play button can never collide):
+ *   transport row ([height]): [undo 44][redo 44][resolution 44] · centred
+ *     [play 44] · [fullscreen 44][grid 44][snap 40] — left cluster ends at
+ *     142.5 dp, play spans 158–202 dp, right cluster starts at 228 dp.
+ *   utility row (40 dp, editor only): [IN 44][OUT 48][beat 40][marker 40]
+ *     [onion 40][scopes 40] + 4 dp gaps + 10.5 dp start padding = ~283 dp.
+ * Every touch target is ≥ 40 dp in both dimensions. IN/OUT are plain text
+ * (Sarowar's correction: white when set, grey when unset, no glyphs).
+ * Behaviour of every control is unchanged.
+ *
+ * [showEditorControls] false = a chrome-only host (CropView, audit S-3): the
+ * editor-only controls (IN/OUT, beat mark, marker, onion, scopes, grid, snap)
+ * are OMITTED entirely — never rendered inert, never showing a false state.
  *
  * [onPreviousClick] / [onNextClick] are kept so the callers do not change; the reference design has no
  * previous / next buttons.
@@ -88,116 +104,145 @@ fun PlayControlsSection(
     exportInSet: Boolean = false,
     exportOutSet: Boolean = false,
     onExportInClick: () -> Unit = {},
-    onExportOutClick: () -> Unit = {}
+    onExportOutClick: () -> Unit = {},
+    /** Editor-only controls (build 201): false for chrome-only hosts (CropView) — they are omitted, not inert. */
+    showEditorControls: Boolean = true
 ) {
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(height)
             .background(AmBase)
     ) {
-        // ── Left: undo · redo · Full ───────────────────────────────────
-        Row(
+        // ── Transport row: undo · redo · resolution | play | fullscreen · grid · snap ──
+        Box(
             modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 10.5.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxWidth()
+                .height(height)
         ) {
-            IconButton44(enabled = canUndo, onClick = onUndoClick, tag = "undo_button", description = "Undo") {
-                UndoGlyph(if (canUndo) IconWhite else IconDisabled, mirrored = false)
-            }
-            IconButton44(enabled = canRedo, onClick = onRedoClick, tag = "redo_button", description = "Redo") {
-                UndoGlyph(if (canRedo) IconWhite else IconDisabled, mirrored = true)
-            }
-            Box(
+            Row(
                 modifier = Modifier
-                    .size(44.dp)
-                    .semantics { contentDescription = "Preview resolution" }
-                    .bouncyClickable(onClick = onResolutionClick)
-                    .testTag("preview_resolution_button"),
-                contentAlignment = Alignment.Center
+                    .align(Alignment.CenterStart)
+                    .padding(start = 10.5.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // BARE (boxless order, build 183): the resolution label with no chip surface.
+                IconButton44(enabled = canUndo, onClick = onUndoClick, tag = "undo_button", description = "Undo") {
+                    UndoGlyph(if (canUndo) IconWhite else IconDisabled, mirrored = false)
+                }
+                IconButton44(enabled = canRedo, onClick = onRedoClick, tag = "redo_button", description = "Redo") {
+                    UndoGlyph(if (canRedo) IconWhite else IconDisabled, mirrored = true)
+                }
                 Box(
                     modifier = Modifier
-                        .width(26.dp)
-                        .height(17.5.dp),
+                        .size(44.dp)
+                        .semantics { contentDescription = "Preview resolution" }
+                        .bouncyClickable(onClick = onResolutionClick)
+                        .testTag("preview_resolution_button"),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = resolutionLabel,
-                        color = TextPrimary,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1
-                    )
+                    // BARE (boxless order, build 183): the resolution label with no chip surface.
+                    Box(
+                        modifier = Modifier
+                            .width(26.dp)
+                            .height(17.5.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = resolutionLabel,
+                            color = TextPrimary,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            // ── Centre: play / pause — BARE white glyph (boxless order, build 183;
+            // the 44 dp target stays). It spans 158–202 dp at 360 dp wide; the
+            // side clusters end at 142.5 / start at 228 — no overlap possible. ──
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(44.dp)
+                    .semantics { contentDescription = if (isPlaying) "Pause" else "Play" }
+                    .bouncyClickable(pressedScale = 0.88f, onClick = onPlayPauseClick)
+                    .testTag("play_pause_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                PlayGlyph(isPlaying)
+            }
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                IconButton44(enabled = true, onClick = onFullScreenClick, tag = "fullscreen_button", description = "Full Screen") {
+                    FrameGlyph()
+                }
+                if (showEditorControls) {
+                    IconButton44(enabled = true, onClick = onGridClick, tag = "grid_button", description = "Canvas") {
+                        GridGlyph()
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(width = 40.dp, height = 44.dp)
+                            .semantics { contentDescription = "Snap" }
+                            .bouncyClickable(onClick = onSnapClick)
+                            .testTag("snap_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        MagnetGlyph(snapOn)
+                    }
                 }
             }
         }
 
-        // ── Centre: play / pause — BARE white glyph (boxless order, build 183; the
-        // flat grey disc it sat on is gone, the 44 dp target stays) ──
-        Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(44.dp)
-                .semantics { contentDescription = if (isPlaying) "Pause" else "Play" }
-                .bouncyClickable(pressedScale = 0.88f, onClick = onPlayPauseClick)
-                .testTag("play_pause_button"),
-            contentAlignment = Alignment.Center
-        ) {
-            PlayGlyph(isPlaying)
-        }
-
-        // ── Right: frame · grid · add layer ────────────────────────────
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            RangePointButton(label = "IN", isSet = exportInSet, onClick = onExportInClick, tag = "export_in_button", description = "Export range in point")
-            RangePointButton(label = "OUT", isSet = exportOutSet, onClick = onExportOutClick, tag = "export_out_button", description = "Export range out point")
-            IconButton44(enabled = true, onClick = onFullScreenClick, tag = "fullscreen_button", description = "Full Screen") {
-                FrameGlyph()
-            }
-            IconButton44(enabled = true, onClick = onGridClick, tag = "grid_button", description = "Canvas") {
-                GridGlyph()
-            }
-            IconButton44(enabled = true, onClick = onBeatMarkClick, tag = "beat_mark_button", description = "Beat mark") {
-                BeatMarkGlyph()
-            }
-            IconButton44(enabled = true, onClick = onMarkerClick, tag = "marker_button", description = "Marker") {
-                MarkerGlyph()
-            }
-            IconButton44(enabled = true, onClick = onOnionSkinClick, tag = "onion_skin_button", description = "Onion skin") {
-                OnionGlyph(onionSkinOn)
-            }
-            IconButton44(enabled = true, onClick = onScopesClick, tag = "scopes_button", description = "Scopes") {
-                ScopesGlyph(scopesOn)
-            }
-            Box(
+        // ── Utility row (build 201): the editor-only controls that used to
+        // crush the transport row — IN/OUT range points, beat mark, named
+        // marker, onion skin, scopes. 44+48+40+40+40+40 + 5×4 gaps + 10.5
+        // start padding ≈ 283 dp ≤ 360. ──
+        if (showEditorControls) {
+            Row(
                 modifier = Modifier
-                    .size(width = 32.dp, height = 44.dp)
-                    .semantics { contentDescription = "Snap" }
-                    .bouncyClickable(onClick = onSnapClick)
-                    .testTag("snap_button"),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .padding(horizontal = 10.5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                MagnetGlyph(snapOn)
+                RangePointButton(label = "IN", width = 44.dp, isSet = exportInSet, onClick = onExportInClick, tag = "export_in_button", description = "Export range in point")
+                RangePointButton(label = "OUT", width = 48.dp, isSet = exportOutSet, onClick = onExportOutClick, tag = "export_out_button", description = "Export range out point")
+                IconButton40(enabled = true, onClick = onBeatMarkClick, tag = "beat_mark_button", description = "Beat mark") {
+                    BeatMarkGlyph()
+                }
+                IconButton40(enabled = true, onClick = onMarkerClick, tag = "marker_button", description = "Marker") {
+                    MarkerGlyph()
+                }
+                IconButton40(enabled = true, onClick = onOnionSkinClick, tag = "onion_skin_button", description = "Onion skin") {
+                    OnionGlyph(onionSkinOn)
+                }
+                IconButton40(enabled = true, onClick = onScopesClick, tag = "scopes_button", description = "Scopes") {
+                    ScopesGlyph(scopesOn)
+                }
             }
         }
     }
 }
 
-/** A compact IN/OUT range-point button (build 199, A10): bare text, white when the point is set. */
+/**
+ * An IN/OUT range-point button (build 199, A10; rebuilt build 201): PLAIN
+ * TEXT only — Sarowar's explicit correction, no arrow glyphs — white when the
+ * point is set, grey when unset, on a ≥ 40 dp target.
+ */
 @Composable
-private fun RangePointButton(label: String, isSet: Boolean, onClick: () -> Unit, tag: String, description: String) {
+private fun RangePointButton(label: String, width: Dp, isSet: Boolean, onClick: () -> Unit, tag: String, description: String) {
     Box(
         modifier = Modifier
-            .size(width = 30.dp, height = 44.dp)
+            .size(width = width, height = 40.dp)
             .semantics { contentDescription = description }
             .bouncyClickable(onClick = onClick)
             .testTag(tag),
@@ -206,11 +251,32 @@ private fun RangePointButton(label: String, isSet: Boolean, onClick: () -> Unit,
         Text(
             text = label,
             color = if (isSet) IconWhite else IconDisabled,
-            fontSize = 9.5.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.ExtraBold,
             textAlign = TextAlign.Center,
             maxLines = 1
         )
+    }
+}
+
+/** The utility row's 40 dp bare icon button (build 201) — GlassIconButton's 40 dp sibling. */
+@Composable
+private fun IconButton40(
+    enabled: Boolean,
+    onClick: () -> Unit,
+    tag: String,
+    description: String,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .semantics { contentDescription = description }
+            .bouncyClickable(enabled = enabled, onClick = onClick)
+            .testTag(tag),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
     }
 }
 

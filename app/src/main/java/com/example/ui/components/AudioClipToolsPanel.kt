@@ -49,9 +49,9 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.TrendingDown
 import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
-import com.example.ui.theme.TextPrimary
 import com.example.ui.util.bouncyClickable
 
 /** Tools shown while an AUDIO layer is selected: Split, Volume, Fade, Delete, Speed, Reverse, Duplicate. */
@@ -83,7 +83,15 @@ fun AudioClipToolsPanel(
     /** Copy the WHOLE layer (build 199, A7). */
     onCopyLayer: (() -> Unit)? = null,
     /** Paste the layer clipboard as a new layer (build 199, A7). Only set while it holds a layer. */
-    onPasteLayer: (() -> Unit)? = null
+    onPasteLayer: (() -> Unit)? = null,
+    /**
+     * Used-tool state (build 201, audit S-7): the SAME set the visual clip
+     * panel gets — a tool in the set reads white + bold, the rest dim,
+     * exactly ClipEditToolsPanel's language (build 166). Until 200 this panel
+     * rendered every tool identically, so a locked / soloed / labelled audio
+     * layer showed its state nowhere.
+     */
+    usedTools: Set<String> = emptySet()
 ) {
     val tools = listOf(
         ClipToolItem("volume", "Volume", Icons.AutoMirrored.Filled.VolumeUp),
@@ -175,6 +183,9 @@ fun AudioClipToolsPanel(
                         .testTag("audio_tool_${tool.id}"),
                     contentAlignment = Alignment.Center
                 ) {
+                    // Used-tool state (build 201, S-7): white + bold when the
+                    // tool is in the used set — ClipEditToolsPanel's language.
+                    val used = tool.id in usedTools
                     Column(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -183,15 +194,15 @@ fun AudioClipToolsPanel(
                     Icon(
                         imageVector = tool.icon,
                         contentDescription = tool.label,
-                        tint = IconActive,
+                        tint = if (used) Color.White else AmTextDim,
                         modifier = Modifier.size(23.dp)
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
                         text = tool.label,
-                        color = TextPrimary,
+                        color = if (used) Color.White else AmTextDim,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Normal,
+                        fontWeight = if (used) FontWeight.Bold else FontWeight.Normal,
                         maxLines = 1
                     )
                     }

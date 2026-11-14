@@ -31,10 +31,13 @@ public:
     // from its start + the gain there), same length; empty = no ducking.
     // noiseProfile / nrStrength (build 195): the clip's per-bin noise profile (kNoiseBins
     // magnitudes, noise_gate.h) + gate strength; empty / 0 = the source passes ungated.
+    // speedTable (build 201, S-1): the layer's per-block SPEED-keyframe table
+    // (audio_dsp.h); empty = constant speed.
     bool addAudioClip(int fd, int64_t length, int64_t startUs, int64_t durUs, int64_t trimStartUs,
                       double speed, float volume, int64_t fadeInUs, int64_t fadeOutUs,
                       const std::vector<int64_t>& duckRelUs, const std::vector<float>& duckGains,
-                      const std::vector<float>& noiseProfile, float nrStrength);
+                      const std::vector<float>& noiseProfile, float nrStrength,
+                      const std::vector<float>& speedTable = {});
     bool startAudio(int64_t totalDurationUs, int bitrate);
     bool pumpAudio(int64_t upToUs);
 

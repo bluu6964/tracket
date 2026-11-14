@@ -1,7 +1,8 @@
 // After Motion native engine - timeline audio mixer. Pure C++ (testable on a computer).
 //
 // Mixes any number of clips (audio layers + the sound of video layers) onto the project timeline:
-// start offset, trim, constant speed (pitch preserved), volume, fade in / out and ducking
+// start offset, trim, speed (pitch preserved; constant or a per-block ramp table, build 201),
+// volume, fade in / out and ducking
 // (build 194: a per-clip gain curve computed from another layer's loudness) - the same rules
 // as the Media3 exporter (VideoExporter.buildAudioSequence + GainFadeAudioProcessor).
 #pragma once
@@ -22,6 +23,12 @@ struct AudioClipSpec {
     int64_t fullDurFrames = 0;    // length of the whole layer on the timeline (fade-out clock)
     int64_t trimStartUs = 0;      // where in the source file the layer starts
     double speed = 1.0;
+    // Build 201 (audit S-1): per-block speed table (audio_dsp.h's
+    // kSpeedBlockFrames / speedAdvanceFrames) for layers with SPEED keyframes;
+    // empty = the constant `speed` path, unchanged. The source factories hand
+    // it to the TimeStretcher; open() spends the same table on its start
+    // offset so a mid-layer start consumes exactly the ramp's integral.
+    std::vector<float> speedTable;
     float volume = 1.0f;
     int64_t fadeInFrames = 0;
     int64_t fadeOutFrames = 0;

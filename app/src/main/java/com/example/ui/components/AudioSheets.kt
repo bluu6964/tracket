@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.EditorSurface
 import com.example.ui.theme.EditorSurfaceVariant
-import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.util.bouncyClickable
@@ -49,9 +48,13 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
+// Settled B/W tokens (build 201, audit cosmetic note: the sheets named the
+// legacy NeonCyan alias — same white value, wrong name — for thumbs, readouts
+// and switch tracks; they now use the tokens every other sheet uses).
 private fun sliderColors() = SliderDefaults.colors(
-    thumbColor = NeonCyan,
-    activeTrackColor = NeonCyan
+    thumbColor = Color.White,
+    activeTrackColor = Color.White,
+    inactiveTrackColor = Color(0xFF3A3A3A)
 )
 
 /** Volume of one layer (audio or video), 0..200 %, plus a mute switch. Changes are applied live. */
@@ -79,7 +82,7 @@ fun AudioVolumeSheet(
                 Text("Volume", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text(
                     if (muted) "Muted" else "${(volume * 100f).roundToInt()}%",
-                    color = NeonCyan, fontSize = 16.sp, fontWeight = FontWeight.Bold
+                    color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold
                 )
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -104,7 +107,7 @@ fun AudioVolumeSheet(
                     Switch(
                         checked = muted,
                         onCheckedChange = onMutedChange,
-                        colors = SwitchDefaults.colors(checkedTrackColor = NeonCyan)
+                        colors = SwitchDefaults.colors(checkedTrackColor = Color.White)
                     )
                 }
             }
@@ -138,7 +141,7 @@ fun AudioFadeSheet(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("Fade in", color = TextSecondary, fontSize = 14.sp)
-                Text(String.format(Locale.US, "%.1fs", fadeInMs / 1000f), color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(String.format(Locale.US, "%.1fs", fadeInMs / 1000f), color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
             Slider(
                 value = fadeInMs.toFloat().coerceIn(0f, maxFade),
@@ -153,7 +156,7 @@ fun AudioFadeSheet(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("Fade out", color = TextSecondary, fontSize = 14.sp)
-                Text(String.format(Locale.US, "%.1fs", fadeOutMs / 1000f), color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(String.format(Locale.US, "%.1fs", fadeOutMs / 1000f), color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
             Slider(
                 value = fadeOutMs.toFloat().coerceIn(0f, maxFade),
@@ -322,7 +325,7 @@ fun AudioDuckingSheet(
                 Switch(
                     checked = enabled,
                     onCheckedChange = { onChange(it, triggerId, amountDb, smoothness) },
-                    colors = SwitchDefaults.colors(checkedTrackColor = NeonCyan)
+                    colors = SwitchDefaults.colors(checkedTrackColor = Color.White)
                 )
             }
             Text(
@@ -370,7 +373,7 @@ fun AudioDuckingSheet(
                     Text("Amount", color = TextSecondary, fontSize = 14.sp)
                     Text(
                         "−${amountDb.roundToInt()} dB",
-                        color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                        color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold
                     )
                 }
                 Slider(
@@ -386,7 +389,7 @@ fun AudioDuckingSheet(
                     Text("Smoothness", color = TextSecondary, fontSize = 14.sp)
                     Text(
                         "${(smoothness * 100f).roundToInt()}%",
-                        color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                        color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold
                     )
                 }
                 Slider(
@@ -432,7 +435,7 @@ fun AudioNoiseSheet(
                 Switch(
                     checked = enabled,
                     onCheckedChange = { onChange(it, strength) },
-                    colors = SwitchDefaults.colors(checkedTrackColor = NeonCyan)
+                    colors = SwitchDefaults.colors(checkedTrackColor = Color.White)
                 )
             }
             Text(
@@ -449,7 +452,7 @@ fun AudioNoiseSheet(
                     Text("Strength", color = TextSecondary, fontSize = 14.sp)
                     Text(
                         "${(strength * 100f).roundToInt()}%",
-                        color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                        color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold
                     )
                 }
                 Slider(

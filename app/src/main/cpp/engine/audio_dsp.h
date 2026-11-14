@@ -14,6 +14,35 @@ namespace am {
 
 constexpr int kAudioRate = 48000;
 
+// Build 201 (audit S-1): one speed-table entry covers this many OUTPUT frames
+// of a TimeStretcher — it is exactly the stretcher's hop, so entry i drives
+// produce() call i. The Kotlin side (model/SpeedRamp) samples a layer's SPEED
+// keyframes once per block; preview and export share this table.
+constexpr int kSpeedBlockFrames = 512;
+
+// Source frames a clip consumes over `relFrames` of its own output when its
+// speed comes from `table` (one entry per kSpeedBlockFrames output frames),
+// holding the table's last entry past its end — the stretcher's own law — and
+// falling back to `constSpeed` only when the table is empty. This integral is
+// the ONE both the mixer's start-offset math (AudioMixer::open) and the
+// stretcher's per-block advance must agree on — a ramped layer's end lands
+// on time only if they do.
+inline int64_t speedAdvanceFrames(const std::vector<float>& table, double constSpeed, int64_t relFrames) {
+    if (relFrames <= 0) return 0;
+    if (table.empty()) return (int64_t)std::llround((double)relFrames * constSpeed);
+    double acc = 0;
+    int64_t done = 0;
+    size_t i = 0;
+    while (done < relFrames) {
+        const int64_t n = std::min<int64_t>(kSpeedBlockFrames, relFrames - done);
+        const double sp = (double)table[std::min(i, table.size() - 1)];
+        acc += (double)n * sp;
+        done += n;
+        i++;
+    }
+    return (int64_t)std::llround(acc);
+}
+
 // Sequential source of stereo frames.
 class FrameSource {
 public:
@@ -35,6 +64,13 @@ public:
         tail_.assign((size_t)kHop * 2, 0.f);
     }
 
+    // Build 201 (audit S-1): per-block speed table — model/SpeedRamp's sampling
+    // of the layer's SPEED keyframes, one entry per produce() (kHop ==
+    // kSpeedBlockFrames output frames). Entry i sets the source advance out of
+    // block i; past the table's end the last entry holds (the keyframe
+    // evaluator's own law). Empty = the constant speed_ path, unchanged.
+    void setSpeedTable(std::vector<float> table) { speedTable_ = std::move(table); }
+
     int read(float* dst, int frames) override {
         int done = 0;
         while (done < frames) {
@@ -52,6 +88,7 @@ public:
 
 private:
     static constexpr int kHop = 512;       // output frames per step
+    static_assert(kHop == kSpeedBlockFrames, "one speed-table entry per stretcher hop");
     static constexpr int kBlock = 1024;    // analysis window = 2 hops
     static constexpr int kTol = 256;       // search range for the best matching position
 
@@ -107,7 +144,13 @@ private:
         }
         prevStart_ = start;
         first_ = false;
-        pos_ += kHop * speed_;
+        double step = speed_;
+        if (!speedTable_.empty()) {
+            const size_t bi = (size_t)std::min<int64_t>(blockIdx_, (int64_t)speedTable_.size() - 1);
+            step = std::min(4.0, std::max(0.1, (double)speedTable_[bi]));
+        }
+        blockIdx_++;
+        pos_ += kHop * step;
         trim(std::min<int64_t>(prevStart_ + kHop, (int64_t)std::llround(pos_) - kTol) - 8);
         return true;
     }
@@ -136,6 +179,8 @@ private:
 
     std::unique_ptr<FrameSource> src_;
     double speed_;
+    std::vector<float> speedTable_;
+    int64_t blockIdx_ = 0;
     std::vector<float> win_, tail_, in_, outBuf_;
     size_t outPos_ = 0;
     int64_t inBase_ = 0, prevStart_ = 0;

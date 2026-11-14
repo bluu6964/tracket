@@ -220,7 +220,7 @@ JNIEXPORT void JNICALL Java_com_example_engine_AudioPreviewNative_nativeClearCli
 JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeAddClip(
     JNIEnv* env, jclass, jlong p, jint fd, jlong length, jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed,
     jfloat volume, jlong fadeInUs, jlong fadeOutUs, jlongArray duckRelUs, jfloatArray duckGains,
-    jfloatArray noiseProfile, jfloat nrStrength) {
+    jfloatArray noiseProfile, jfloat nrStrength, jfloatArray speedTable) {
     Handle* h = reinterpret_cast<Handle*>(p);
     std::lock_guard<std::mutex> lock(h->mu);
     const int copy = dup(fd);
@@ -259,6 +259,13 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeAddC
             s.nrStrength = nrStrength;
         }
     }
+    if (speedTable) {   // build 201 (S-1): the layer's SPEED-keyframe table
+        const jsize n = env->GetArrayLength(speedTable);
+        if (n > 0) {
+            s.speedTable.assign((size_t)n, 1.f);
+            env->GetFloatArrayRegion(speedTable, 0, n, s.speedTable.data());
+        }
+    }
     h->fds.push_back(copy);
     h->lens.push_back(length);
     h->clips.push_back(s);
@@ -289,7 +296,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeStar
         // exactly like the export's factory — the profile was estimated on this stream.
         if (src && !s.noiseProfile.empty() && s.nrStrength > 0.f)
             src.reset(new NoiseGateSource(std::move(src), s.noiseProfile, s.nrStrength));
-        if (src && std::fabs(s.speed - 1.0) > 0.001) src.reset(new TimeStretcher(std::move(src), s.speed));
+        // Speed (build 201, S-1): a SPEED-keyframed layer carries a per-block
+        // table and is stretched block by block; the wrap test includes the
+        // table because a ramp's average can be exactly 1.0.
+        if (src && (!s.speedTable.empty() || std::fabs(s.speed - 1.0) > 0.001)) {
+            std::unique_ptr<TimeStretcher> ts(new TimeStretcher(std::move(src), s.speed));
+            if (!s.speedTable.empty()) ts->setSpeedTable(s.speedTable);
+            src = std::move(ts);
+        }
         return src;
     }, h->clips, h->startFrame));
     if (h->feeder->finished()) {      // nothing left to play after this position

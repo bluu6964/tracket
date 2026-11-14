@@ -448,9 +448,12 @@ fun TimelineClip.sourceOffsetMs(relMs: Long): Long {
 }
 
 /**
- * Constant speed the export uses for a layer. Without speed keyframes it is [TimelineClip.speed].
- * With keyframes the export keeps the exact length and the exact start / end in the source, but
- * uses the average speed over the layer (Media3 can only change speed by a constant).
+ * Constant speed of a layer. Without speed keyframes it is [TimelineClip.speed].
+ * With keyframes this is the AVERAGE speed over the layer — since build 201
+ * (audit S-1) it is only the mixer's fallback beside the per-block table
+ * ([SpeedRamp.tableFor]) the sound actually follows; before 201 the sound
+ * played at this average while the picture followed the ramp, and the two
+ * drifted apart mid-layer.
  */
 val TimelineClip.exportSpeed: Float
     get() {

@@ -131,7 +131,8 @@ bool NativeExportEncoder::addAudioClip(int fd, int64_t length, int64_t startUs, 
                                        int64_t fadeInUs, int64_t fadeOutUs,
                                        const std::vector<int64_t>& duckRelUs,
                                        const std::vector<float>& duckGains,
-                                       const std::vector<float>& noiseProfile, float nrStrength) {
+                                       const std::vector<float>& noiseProfile, float nrStrength,
+                                       const std::vector<float>& speedTable) {
     if (hasAudio_) { error_ = "Add audio clips before startAudio()"; return false; }
     const int copy = dup(fd);
     if (copy < 0) { error_ = "Could not duplicate audio file descriptor"; return false; }
@@ -155,6 +156,7 @@ bool NativeExportEncoder::addAudioClip(int fd, int64_t length, int64_t startUs, 
     }
     spec.noiseProfile = noiseProfile;
     spec.nrStrength = nrStrength;
+    spec.speedTable = speedTable;
     audioFiles_.push_back({copy, length});
     pendingClips_.push_back(spec);
     return true;
@@ -171,8 +173,12 @@ bool NativeExportEncoder::startAudio(int64_t totalDurationUs, int bitrate) {
         // exactly like the preview's factory — the profile was estimated on this stream.
         if (src && !spec.noiseProfile.empty() && spec.nrStrength > 0.f)
             src.reset(new NoiseGateSource(std::move(src), spec.noiseProfile, spec.nrStrength));
-        if (src && std::fabs(spec.speed - 1.0) > 0.001)
-            src.reset(new TimeStretcher(std::move(src), spec.speed));
+        // Speed (build 201, S-1): same table law as the preview's factory.
+        if (src && (!spec.speedTable.empty() || std::fabs(spec.speed - 1.0) > 0.001)) {
+            std::unique_ptr<TimeStretcher> ts(new TimeStretcher(std::move(src), spec.speed));
+            if (!spec.speedTable.empty()) ts->setSpeedTable(spec.speedTable);
+            src = std::move(ts);
+        }
         return src;
     }, totalAudioFrames_));
     for (AudioClipSpec spec : pendingClips_) {

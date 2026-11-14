@@ -50,7 +50,7 @@ object FaceSwapBuilder {
     class NoFace(message: String) : RuntimeException(message)
 
     private val IDENTITY = floatArrayOf(1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f)
-    private const val MARKER = "AI-edited: face swap (After Motion)"
+    private const val MARKER = "AI-edited: face swap (MaxCut)"
 
     suspend fun render(
         context: Context,

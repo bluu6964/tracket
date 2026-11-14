@@ -2277,7 +2277,7 @@ fun VideoEditorScreen(
                     onBackClick = { showProjects = true },
                     onAspectRatioClick = { showAspectRatioSheet = true },
                     onSaveFrameClick = {
-                        // current canvas frame -> PNG in Pictures/After Motion
+                        // current canvas frame -> PNG in Pictures/MaxCut
                         nativePreview.captureFrame { bmp ->
                             if (bmp == null) {
                                 scope.launch { snackbarHostState.showSnackbar("Could not read the frame") }
@@ -2288,7 +2288,7 @@ fun VideoEditorScreen(
                                     }
                                     snackbarHostState.currentSnackbarData?.dismiss()
                                     snackbarHostState.showSnackbar(
-                                        if (uri != null) "Frame saved (Pictures/After Motion)" else "Could not save the frame"
+                                        if (uri != null) "Frame saved (Pictures/MaxCut)" else "Could not save the frame"
                                     )
                                 }
                             }
@@ -4390,7 +4390,7 @@ fun VideoEditorScreen(
                         viewModel.finishExport()
                         exportedUri = uri
                         exportDone = true
-                        scope.launch { snackbarHostState.showSnackbar("Saved to Movies/After Motion") }
+                        scope.launch { snackbarHostState.showSnackbar("Saved to Movies/MaxCut") }
                     },
                     onError = { msg ->
                         viewModel.setExporting(false)

@@ -442,7 +442,7 @@ fun ExportModalDialog(
                         Text("Export Complete!", color = Color.White, fontSize = 30.sp,
                             fontWeight = FontWeight.Black, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Saved to Movies/After Motion", color = Color.White.copy(alpha = 0.7f),
+                        Text("Saved to Movies/MaxCut", color = Color.White.copy(alpha = 0.7f),
                             fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         Spacer(modifier = Modifier.height(24.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -701,7 +701,7 @@ private fun ExportChip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 
 /**
- * Logo badge: white wavy seal with a ring of text and "AM" in the middle, plus a big faint
+ * Logo badge: white wavy seal with a ring of text and "M" in the middle, plus a big faint
  * ring of text around it. Both rings turn slowly (opposite directions).
  */
 @Composable
@@ -728,7 +728,7 @@ private fun ExportBadge(modifier: Modifier = Modifier) {
             // Big faint outer ring text
             val outerR = minOf(size.width * 0.46f, size.height * 0.5f)
             drawRingText(
-                text = "AFTER MOTION • PROFESSIONAL VIDEO EDITOR • ",
+                text = "MAXCUT • PROFESSIONAL VIDEO EDITOR • ",
                 cx = cx, cy = cy, radius = outerR, textSizePx = outerR * 0.26f,
                 color = Color.White.copy(alpha = 0.13f), bold = true, rotationDeg = outerRot
             )
@@ -749,18 +749,18 @@ private fun ExportBadge(modifier: Modifier = Modifier) {
 
             // Small ring text inside the seal
             drawRingText(
-                text = "PROFESSIONAL VIDEO EDITOR • AFTER MOTION • ",
+                text = "PROFESSIONAL VIDEO EDITOR • MAXCUT • ",
                 cx = cx, cy = cy, radius = badgeR * 0.80f, textSizePx = badgeR * 0.115f,
                 color = Color.White, bold = true, rotationDeg = innerRot
             )
 
-            // Logo blob (white with black outline) — "AM" is written on it
+            // Logo blob (white with black outline) — "M" is written on it
             val blobR = badgeR * 0.40f
             drawCircle(Color.White, radius = blobR, center = Offset(cx, cy))
             drawCircle(Color.Black, radius = blobR, center = Offset(cx, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(width = badgeR * 0.03f))
         }
         Text(
-            text = "AM", color = Color.Black, fontSize = 26.sp,
+            text = "M", color = Color.Black, fontSize = 30.sp,
             fontWeight = FontWeight.Black, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
         )
     }

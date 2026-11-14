@@ -177,7 +177,7 @@ object ProjectArchive {
             }
             val m = manifest
             val text = projectText
-            require(m != null && m.format == FORMAT && text != null) { "This is not an After Motion project file" }
+            require(m != null && m.format == FORMAT && text != null) { "This is not a MaxCut project file" }
             require(m.formatVersion <= FORMAT_VERSION) { "This project was made by a newer version of the app" }
 
             val missing = LinkedHashSet<String>()

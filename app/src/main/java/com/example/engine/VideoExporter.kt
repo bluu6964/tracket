@@ -14,7 +14,7 @@ import java.io.File
 
 /**
  * Export entry point. The C++ engine ([NativeProjectExporter]) renders every project to an
- * H.264/AAC MP4, then the file is saved to Movies/After Motion. There is no Media3 / Transformer
+ * H.264/AAC MP4, then the file is saved to Movies/MaxCut. There is no Media3 / Transformer
  * path any more: if the native export cannot run or fails, [onError] gets the reason.
  *
  * Export is allowed when at least one layer of any type exists. Must be used from the main thread.
@@ -64,12 +64,12 @@ class VideoExporter(private val context: Context) {
     }
 
     private fun saveToMovies(file: File): Uri {
-        val name = "AfterMotion_${System.currentTimeMillis()}.mp4"
+        val name = "MaxCut_${System.currentTimeMillis()}.mp4"
         if (Build.VERSION.SDK_INT >= 29) {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/After Motion")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/MaxCut")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             val resolver = context.contentResolver

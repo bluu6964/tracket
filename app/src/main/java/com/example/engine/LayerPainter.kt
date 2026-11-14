@@ -138,6 +138,12 @@ internal class LayerPainter(
 
     /** C++ text engine + the bitmap [canvas] draws on; both null = text is drawn with the Canvas only. */
     var nativeText: NativeTextPainter? = null
+    /**
+     * Text-on-path (build 191): the attached path of a text layer as a frame-space polyline
+     * (x,y pairs, frame px) at a project time, or null — the Canvas twin of
+     * [NativeTextPainter.pathPoints], set by the exporter beside it (see TextPathGeometry).
+     */
+    var pathPoints: ((TimelineClip, Long) -> FloatArray?)? = null
     /** C++ shape / sticker engine; draws into [nativeTarget] too. */
     var nativeShape: NativeShapePainter? = null
     var nativeTarget: android.graphics.Bitmap? = null
@@ -398,6 +404,71 @@ internal class LayerPainter(
                 (Math.cos(rad) * dist).toFloat(), (Math.sin(rad) * dist).toFloat(),
                 Color.argb(a, Color.red(base), Color.green(base), Color.blue(base))
             )
+        }
+
+        // Text-on-path (build 191): the Canvas twin of the C++ engine's path mode — the same
+        // frame-space polyline (TextPathGeometry) and the same law (model/TextOnPath):
+        // glyphs follow the curve by arc length from the start-offset fraction, paragraphs
+        // run on continuously, and drawTextOnPath clips whatever runs past the path's end.
+        // Per-paragraph offsets accumulate from Paint-measured advances (the engine uses
+        // its shaped cluster advances — equal to shaping accuracy; this fallback only runs
+        // when the C++ engine cannot draw the layer). The background box, underline /
+        // strike, crop and the drawing.progress outline trim do not compose, exactly as
+        // in the engine (an attached draw-on text draws filled here).
+        val pathPts = if (clip.textPathLayerId != null) {
+            pathPoints?.invoke(clip, if (timeMs >= 0L) timeMs else clip.startMs)?.takeIf { it.size >= 4 }
+        } else null
+        if (pathPts != null) {
+            val pairs = (0 until pathPts.size / 2).map { pathPts[it * 2] to pathPts[it * 2 + 1] }
+            val table = com.example.model.TextOnPath.arcTable(pairs)
+            if (table.total > 0f) {
+                val outline = Path()
+                outline.moveTo(pairs[0].first, pairs[0].second)
+                for (i in 1 until pairs.size) outline.lineTo(pairs[i].first, pairs[i].second)
+                var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+                var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+                for (p in pairs) {
+                    minX = minOf(minX, p.first); maxX = maxOf(maxX, p.first)
+                    minY = minOf(minY, p.second); maxY = maxOf(maxY, p.second)
+                }
+                // Fill source over the path's bounding box, like the engine's block.
+                when (clip.fillMode) {
+                    com.example.model.FILL_NONE -> tp.color = android.graphics.Color.TRANSPARENT
+                    com.example.model.FILL_GRADIENT ->
+                        tp.shader = com.example.engine.buildGradientShader(clip, maxX - minX, maxY - minY, minX, minY)
+                    com.example.model.FILL_IMAGE -> {
+                        val uri = clip.fillImageUri
+                        val bmp = uri?.let { com.example.engine.FillImages.loadSync(it) }
+                        if (bmp != null) {
+                            tp.shader = com.example.engine.buildImageShader(
+                                bmp, uri, clip.fillImageMode,
+                                (maxX - minX).toInt().coerceAtLeast(1), (maxY - minY).toInt().coerceAtLeast(1),
+                                minX, minY
+                            )
+                        } else tp.color = android.graphics.Color.TRANSPARENT
+                    }
+                }
+                val paras = content.split('\n')
+                fun drawPass(paint: TextPaint) {
+                    var hOff = clip.textPathStart.coerceIn(0f, 1f) * table.total
+                    for (para in paras) {
+                        if (para.isNotEmpty()) canvas.drawTextOnPath(para, outline, hOff, 0f, paint)
+                        hOff += paint.measureText(para)
+                    }
+                }
+                if (clip.textStrokeThickness > 0f) {
+                    val strokePaint = TextPaint(tp).apply {
+                        clearShadowLayer()
+                        style = Paint.Style.STROKE
+                        strokeJoin = Paint.Join.ROUND
+                        strokeWidth = fontPx * clip.textStrokeThickness / 100f * 0.4f
+                        color = argb(clip.textStrokeColor, fallback = 0xFF000000)
+                    }
+                    drawPass(strokePaint)
+                }
+                drawPass(tp)
+                return
+            }
         }
 
         // Same conversion as the native painter (see textLayoutBoxWidth): an authored wrap width is an

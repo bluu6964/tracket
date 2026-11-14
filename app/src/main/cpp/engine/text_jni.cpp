@@ -55,9 +55,12 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeEmojiAvailab
 //        7 recolour (0 / 1) - the recolour ARGB is the 7th entry of cA (when cA has 7), see Request::animOn;
 //        8 textprogress on (0 / 1), 9 progress start, 10 progress end, see Request::progressOn;
 //        11 drawing progress on (0 / 1), 12 draw start, 13 draw end, 14 outline width px, see Request::drawOn.
+// pathA (build 191, null = no text-on-path): the attached path's polyline as x,y pairs in
+// frame pixels (already evaluated + mapped by Kotlin); pathStart = the start offset as a
+// fraction of the path's total length, see Request::pathOn.
 JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeDraw(
     JNIEnv* env, jclass, jobject bitmap, jstring text, jstring fontPath, jstring family, jfloatArray pA, jintArray cA,
-    jobject fillBitmap, jbyteArray levelsA, jbyteArray paraRtlA, jfloatArray animA) {
+    jobject fillBitmap, jbyteArray levelsA, jbyteArray paraRtlA, jfloatArray animA, jfloatArray pathA, jfloat pathStart) {
     if (!bitmap || !pA || !cA || env->GetArrayLength(pA) < 37 || env->GetArrayLength(cA) < 6) return JNI_FALSE;
     float p[37];
     jint c[7] = {0, 0, 0, 0, 0, 0, (jint)0xFF00FF00};
@@ -112,6 +115,15 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_TextNative_nativeDraw(
         if (a[0] > 0.5f) {
             r.drawOn = true;
             r.drawStart = a[1]; r.drawEnd = a[2]; r.drawStrokeW = a[3];
+        }
+    }
+    if (pathA) {
+        const jsize n = env->GetArrayLength(pathA);
+        if (n >= 4) {
+            r.pathPts.resize((size_t)n);
+            env->GetFloatArrayRegion(pathA, 0, n, r.pathPts.data());
+            r.pathOn = true;
+            r.pathStartFrac = pathStart;
         }
     }
     r.fillArgb = (uint32_t)c[0]; r.strokeArgb = (uint32_t)c[1]; r.shadowArgb = (uint32_t)c[2]; r.bgArgb = (uint32_t)c[3];

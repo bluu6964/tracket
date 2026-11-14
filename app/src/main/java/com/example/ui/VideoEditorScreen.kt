@@ -82,6 +82,7 @@ import com.example.model.LayerType
 import com.example.model.at
 import com.example.model.depthFactor
 import com.example.model.isBehindCamera
+import com.example.model.isPathBearing
 import com.example.model.hasBlending
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.ui.components.AudioClipToolsPanel
@@ -3175,6 +3176,7 @@ fun VideoEditorScreen(
                     }
                     TextEditSheet(
                         clip = editingText,
+                        pathLayers = tracks.flatMap { it.clips }.filter { it.isPathBearing && it.id != editingText.id },
                         onUpdate = { change -> viewModel.updateClip(editingText.id, change) },
                         onEyedropper = { cb -> eyedropperCallback = cb },
                         modifier = Modifier.fillMaxWidth(),

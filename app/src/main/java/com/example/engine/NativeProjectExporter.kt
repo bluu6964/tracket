@@ -372,6 +372,19 @@ class NativeProjectExporter(private val context: Context) {
                         com.example.ui.text.FontRepository.fileOrNull(context, name)?.absolutePath
                     })
                 }
+                // Text-on-path (build 191): one resolver for both text routes (the C++
+                // painter and the Canvas fallback in LayerPainter), reading this export's
+                // scene + rig + camera — the same numbers the shape painters draw with.
+                if (painter != null) {
+                    val expK = if (previewW > 0f) w / previewW else 1f
+                    val pathResolver: (TimelineClip, Long) -> FloatArray? = { tc, t ->
+                        TextPathGeometry.framePoints(
+                            all, rig, tc, t, w, h, expK, PreviewFrameRef.density
+                        ) { c -> cam.affects(c) }
+                    }
+                    painter.pathPoints = pathResolver
+                    painter.nativeText?.pathPoints = pathResolver
+                }
                 // Shape / sticker layers: C++ shape engine (no FreeType / HarfBuzz needed), Canvas as fallback.
                 if (painter != null && ShapeNative.isAvailable) painter.nativeShape = NativeShapePainter()
                 val clearPaint = android.graphics.Paint().apply {

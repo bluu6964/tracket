@@ -773,9 +773,134 @@ static void testDrawOn() {
     CHECK(std::labs(h1 + h2 - full) < full / 8);
 }
 
+// The text-on-path walk (text_layout.h): the same numbers the Kotlin model
+// (model/TextOnPath.kt / TextOnPathTest) pins — arc length, the joint rule, the clamps.
+static void testPathWalk() {
+    const float pts[] = {0, 0, 100, 0, 100, 50};
+    PathWalk w(pts, 3);
+    CHECK(std::fabs(w.total() - 150.f) < 1e-4f);
+    PathPoint p = w.at(0);
+    CHECK(p.x == 0 && p.y == 0 && std::fabs(p.angleDeg) < 1e-4f);
+    p = w.at(50);
+    CHECK(std::fabs(p.x - 50.f) < 1e-4f && std::fabs(p.angleDeg) < 1e-4f);
+    p = w.at(100);  // exactly on the corner: the OUTGOING segment's tangent
+    CHECK(std::fabs(p.x - 100.f) < 1e-4f && p.y == 0 && std::fabs(p.angleDeg - 90.f) < 1e-4f);
+    p = w.at(125);
+    CHECK(std::fabs(p.x - 100.f) < 1e-4f && std::fabs(p.y - 25.f) < 1e-4f && std::fabs(p.angleDeg - 90.f) < 1e-4f);
+    p = w.at(-10);  // clamped onto the start
+    CHECK(p.x == 0 && p.y == 0);
+    p = w.at(10000);  // clamped onto the end, last segment's tangent
+    CHECK(std::fabs(p.x - 100.f) < 1e-4f && std::fabs(p.y - 50.f) < 1e-4f && std::fabs(p.angleDeg - 90.f) < 1e-4f);
+    // duplicates carry no arc
+    const float dup[] = {0, 0, 0, 0, 50, 0, 50, 0};
+    PathWalk dw(dup, 4);
+    CHECK(std::fabs(dw.total() - 50.f) < 1e-4f);
+    // diagonal: 45 degrees, midpoint on the line
+    const float diag[] = {0, 0, 10, 10};
+    PathWalk gw(diag, 2);
+    p = gw.at(gw.total() / 2);
+    CHECK(std::fabs(p.x - 5.f) < 1e-3f && std::fabs(p.y - 5.f) < 1e-3f && std::fabs(p.angleDeg - 45.f) < 1e-3f);
+    // degenerate walks place nothing
+    PathWalk empty;
+    CHECK(empty.total() == 0.f);
+    const float one[] = {7, 9};
+    PathWalk single(one, 1);
+    CHECK(single.total() == 0.f);
+}
+
+// Text-on-path drawing (build 191): glyphs follow the polyline by arc length, rotated
+// to its tangent; text past the end is clipped; the start offset is a length fraction.
+static void testTextOnPath() {
+    const char* latin = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    const char* bangla = "/usr/share/fonts/truetype/freefont/FreeSans.ttf";
+    if (!fileExists(latin)) { std::printf("skip text-on-path tests (no %s)\n", latin); return; }
+    setMatcherForTest([&](const std::string&, int, bool, const uint16_t*, uint32_t, MatchResult& out) {
+        out.path = fileExists(bangla) ? bangla : latin; out.runLen = 1; out.weight = 400; return true;
+    });
+    const int W = 600, H = 400;
+    std::vector<uint8_t> bmp((size_t)W * H * 4, 0);
+    auto baseReq = [&]() {
+        Request r;
+        r.fontPath = latin; r.fontPx = 60; r.maxTextW = 500; r.pathOn = true;
+        return r;
+    };
+    int x0, x1, y0, y1;
+    // horizontal path at y = 200: the glyphs sit ON the line (ink above it, none far away)
+    {
+        Request r = baseReq(); r.text = "Hello";
+        r.pathPts = {50, 200, 550, 200};
+        Stats st;
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(draw(bmp.data(), W, H, W * 4, r, &st));
+        const int n = firstOpaqueCols(bmp, W, H, &x0, &x1, &y0, &y1);
+        CHECK(n > 300);
+        CHECK(x0 >= 45 && x0 < 80);            // starts at the path's start
+        CHECK(y1 <= 202 && y0 > 200 - 60);     // baseline on the path, caps above it
+        CHECK(std::fabs(st.boxW - 500.f) < 1.f && st.boxH == 0.f);  // the box is the path's bounds
+    }
+    // reversed path: the same word runs right-to-left, upside down, from the right end
+    {
+        Request r = baseReq(); r.text = "L";
+        r.pathPts = {550, 200, 50, 200};
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(draw(bmp.data(), W, H, W * 4, r));
+        firstOpaqueCols(bmp, W, H, &x0, &x1, &y0, &y1);
+        CHECK(x0 > 450);                        // the L sits at the path's start = the right end
+        CHECK(y0 >= 198);                       // upside down: its ink hangs BELOW the line
+    }
+    // downward path: a vertical strip of text; the glyphs' "up" points +x (right of the line)
+    {
+        Request r = baseReq(); r.text = "HH";
+        r.pathPts = {300, 40, 300, 360};
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(draw(bmp.data(), W, H, W * 4, r));
+        firstOpaqueCols(bmp, W, H, &x0, &x1, &y0, &y1);
+        CHECK((y1 - y0) > (x1 - x0));           // tall, not wide
+        CHECK(x0 >= 295 && x1 < 300 + 65);      // on and right of the line
+        CHECK(y0 >= 35 && y0 < 60);             // starts at the path's start
+    }
+    // upward path: the glyphs' "up" flips to -x (left of the line) — the rotation sign pin
+    {
+        Request r = baseReq(); r.text = "HH";
+        r.pathPts = {300, 360, 300, 40};
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(draw(bmp.data(), W, H, W * 4, r));
+        firstOpaqueCols(bmp, W, H, &x0, &x1, &y0, &y1);
+        CHECK(x1 <= 305 && x0 > 300 - 65);      // on and LEFT of the line
+    }
+    // over-length: a long text on a 100px path is clipped at the path's end
+    {
+        Request r = baseReq(); r.text = "Hello World Hello";
+        r.pathPts = {50, 200, 150, 200};
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(draw(bmp.data(), W, H, W * 4, r));
+        firstOpaqueCols(bmp, W, H, &x0, &x1, &y0, &y1);
+        CHECK(x1 < 210);  // only the glyph straddling the end may overhang, by less than its width
+    }
+    // start offset 0.5 of a 500 path: nothing in the first half
+    {
+        Request r = baseReq(); r.text = "HH";
+        r.pathPts = {50, 200, 550, 200};
+        r.pathStartFrac = 0.5f;
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(draw(bmp.data(), W, H, W * 4, r));
+        firstOpaqueCols(bmp, W, H, &x0, &x1, &y0, &y1);
+        CHECK(x0 >= 290);
+    }
+    // a path with no length draws nothing and reports failure (the caller falls back)
+    {
+        Request r = baseReq(); r.text = "HH";
+        r.pathPts = {100, 100, 100, 100};
+        std::fill(bmp.begin(), bmp.end(), 0);
+        CHECK(!draw(bmp.data(), W, H, W * 4, r));
+    }
+}
+
 int main() {
     testOutlineTrim();
     testLayout();
+    testPathWalk();
+    testTextOnPath();
     testBlit();
     testEngine();
     testDrawOn();

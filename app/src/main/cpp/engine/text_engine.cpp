@@ -393,7 +393,9 @@ void halveImage(Image& im) {
 }
 
 // Draws the picture of glyph [gid] with its origin (pen, baseline) at (x, y) into [dst], for text of [px] pixels.
-bool drawColorGlyph(Face& f, uint32_t gid, float px, float x, float y, Image& dst) {
+// [rot] (text-on-path) turns the picture around the pen origin by that many radians (screen
+// space, y down — the same convention as rasterGlyph's rotation).
+bool drawColorGlyph(Face& f, uint32_t gid, float px, float x, float y, Image& dst, float rot = 0.f) {
     const ColorGlyph* g = colorGlyph(f, gid, px);
     if (!g) return false;
     const float s0 = px / (float)g->ppem;
@@ -401,11 +403,15 @@ bool drawColorGlyph(Face& f, uint32_t gid, float px, float x, float y, Image& ds
     src.w = g->w; src.h = g->h; src.px = g->px;
     float sc = s0;
     while (sc < 0.5f && src.w > 2 && src.h > 2) { halveImage(src); sc *= 2.f; }
+    const float cr = std::cos(rot), sr = std::sin(rot);
+    const float offx = (float)g->bx * s0, offy = -(float)g->by * s0;
     BlitParams bp;
-    bp.srcToDst.a = sc;
-    bp.srcToDst.d = sc;
-    bp.srcToDst.e = x + (float)g->bx * s0;
-    bp.srcToDst.f = y - (float)g->by * s0;
+    bp.srcToDst.a = sc * cr;
+    bp.srcToDst.b = sc * sr;
+    bp.srcToDst.c = -sc * sr;
+    bp.srcToDst.d = sc * cr;
+    bp.srcToDst.e = x + cr * offx - sr * offy;
+    bp.srcToDst.f = y + sr * offx + cr * offy;
     bp.clampEdges = true;
     blit(dst.px.data(), dst.w, dst.h, dst.w * 4, src, bp);
     return true;
@@ -783,11 +789,19 @@ bool blitGlyph(FT_Glyph g, float x, float y, std::vector<uint8_t>& mask, int mw,
 }
 
 // Draws one glyph into an A8 mask (fill, or - with a stroker - the outline ring).
+// [rot] (text-on-path) turns the glyph around its pen origin by that many radians in
+// SCREEN space (y down): FreeType's matrix works in glyph space (y up), where the same
+// turn is xx = cos, xy = sin, yx = -sin, yy = cos; the italic shear is applied first, in
+// glyph space, exactly as the unrotated matrix did (rot = 0 reproduces it bit for bit).
 bool rasterGlyph(Face& f, uint32_t gid, float px, bool bold, bool shear, FT_Stroker stroker, float x, float y,
-                 std::vector<uint8_t>& mask, int mw, int mh, float gain = 1.f) {
+                 std::vector<uint8_t>& mask, int mw, int mh, float gain = 1.f, float rot = 0.f) {
     setSize(f, px);
+    const float cr = std::cos(rot), sr = std::sin(rot), sh = shear ? 0.25f : 0.f;
     FT_Matrix mat;
-    mat.xx = 0x10000; mat.xy = shear ? 0x4000 : 0; mat.yx = 0; mat.yy = 0x10000;
+    mat.xx = (FT_Fixed)std::lround(cr * 65536.f);
+    mat.xy = (FT_Fixed)std::lround((sh * cr + sr) * 65536.f);
+    mat.yx = (FT_Fixed)std::lround(-sr * 65536.f);
+    mat.yy = (FT_Fixed)std::lround((cr - sh * sr) * 65536.f);
     FT_Set_Transform(f.ft, &mat, nullptr);
     if (FT_Load_Glyph(f.ft, gid, FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP) != 0) return false;
     FT_GlyphSlot slot = f.ft->glyph;
@@ -1172,37 +1186,55 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
         clusterCount += (int)pcl[pi].size();
     }
 
+    // ---- text-on-path (build 191): the walk over the caller's frame-space polyline. In
+    // path mode there are no lines: the glyphs are placed along the walk in the dedicated
+    // loop below, the picture is the whole frame, and the "box" reported for the layer is
+    // the path's own bounding box.
+    const bool pathMode = rq.pathOn && rq.pathPts.size() >= 4;
+    PathWalk walk;
+    if (pathMode) {
+        walk = PathWalk(rq.pathPts);
+        if (walk.total() <= 0.f) return fail("text-on-path: the path has no length");
+    }
+
     // ---- lines
     std::vector<LineRec> lines;
-    int pAsc = 0, pDesc = 0;
-    fontMetrics(*primary, px, pAsc, pDesc);
-    for (size_t pi = 0; pi < paras.size(); ++pi) {
-        std::vector<Item> items;
-        items.reserve(pcl[pi].size());
-        for (const Cluster& c : pcl[pi]) { Item it; it.adv = c.adv; it.space = c.space; items.push_back(it); }
-        for (const LineSpan& sp : breakLines(items, rq.maxTextW)) {
-            LineRec l;
-            l.para = (int)pi; l.first = sp.first; l.last = sp.last; l.width = sp.width;
-            l.asc = pAsc; l.desc = pDesc;
-            for (int k = sp.first; k < sp.last; ++k) {
-                int a = 0, d = 0;
-                fontMetrics(*fonts[pcl[pi][k].font], px, a, d);
-                l.asc = std::min(l.asc, a);
-                l.desc = std::max(l.desc, d);
-            }
-            lines.push_back(l);
-        }
-    }
     float layoutH = 0.f, tightW = 1.f;
-    for (LineRec& l : lines) {
-        const int extra = extraSpacing(l.asc, l.desc, rq.lineMult);
-        l.top = layoutH;
-        l.base = layoutH - l.asc;
-        layoutH += (float)(l.desc - l.asc + extra);
-        tightW = std::max(tightW, l.width);
+    float boxW = 0.f, boxH = 0.f;
+    if (pathMode) {
+        boxW = walk.maxX() - walk.minX();
+        boxH = walk.maxY() - walk.minY();
+    } else {
+        int pAsc = 0, pDesc = 0;
+        fontMetrics(*primary, px, pAsc, pDesc);
+        for (size_t pi = 0; pi < paras.size(); ++pi) {
+            std::vector<Item> items;
+            items.reserve(pcl[pi].size());
+            for (const Cluster& c : pcl[pi]) { Item it; it.adv = c.adv; it.space = c.space; items.push_back(it); }
+            for (const LineSpan& sp : breakLines(items, rq.maxTextW)) {
+                LineRec l;
+                l.para = (int)pi; l.first = sp.first; l.last = sp.last; l.width = sp.width;
+                l.asc = pAsc; l.desc = pDesc;
+                for (int k = sp.first; k < sp.last; ++k) {
+                    int a = 0, d = 0;
+                    fontMetrics(*fonts[pcl[pi][k].font], px, a, d);
+                    l.asc = std::min(l.asc, a);
+                    l.desc = std::max(l.desc, d);
+                }
+                lines.push_back(l);
+            }
+        }
+        for (LineRec& l : lines) {
+            const int extra = extraSpacing(l.asc, l.desc, rq.lineMult);
+            l.top = layoutH;
+            l.base = layoutH - l.asc;
+            layoutH += (float)(l.desc - l.asc + extra);
+            tightW = std::max(tightW, l.width);
+        }
+        tightW = std::min(tightW, rq.maxTextW);
+        boxW = tightW + 2.f * rq.padH;
+        boxH = layoutH + 2.f * rq.padV;
     }
-    tightW = std::min(tightW, rq.maxTextW);
-    const float boxW = tightW + 2.f * rq.padH, boxH = layoutH + 2.f * rq.padV;
 
     // ---- raster size (the layer scale is applied when drawing glyphs, so text stays sharp)
     const float shadowSigma = rq.shadowOn ? (0.57735f * std::max(0.f, rq.shadowBlur) + 0.5f) : 0.f;
@@ -1232,10 +1264,23 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
         ix0 = (int)std::floor(p0x); iy0 = (int)std::floor(p0y);
         subX = p0x - ix0; subY = p0y - iy0;
     }
-    const int imgW = (int)std::ceil(boxWs + subX) + 2 * M + 1, imgH = (int)std::ceil(boxHs + subY) + 2 * M + 1;
+    int imgW = (int)std::ceil(boxWs + subX) + 2 * M + 1, imgH = (int)std::ceil(boxHs + subY) + 2 * M + 1;
     Image img;
     img.alloc(imgW, imgH);
-    const float ox = M + subX, oy = M + subY;  // box origin inside the picture
+    float ox = M + subX, oy = M + subY;  // box origin inside the picture
+    if (pathMode) {
+        // The picture IS the frame: glyphs are rasterised at their frame positions
+        // (at px * scale, so they stay as sharp as the layer's scale makes them) and
+        // the blit at the end is the identity. rs is the plain layer scale here — the
+        // 14M-picture cap above must not shrink the glyphs, there is no compensating
+        // stretch in an identity blit.
+        rs = std::max(0.01f, rq.scale);
+        imgW = dstW;
+        imgH = dstH;
+        img.alloc(imgW, imgH);
+        ox = 0.f;
+        oy = 0.f;
+    }
 
     // ---- masks
     std::vector<uint8_t> fillMask, strokeMask, drawMask;
@@ -1259,9 +1304,16 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
     if (rq.animOn) {
         for (size_t pi = 0; pi < pcl.size(); ++pi) unitOf[pi].assign(pcl[pi].size(), -1);
         if (rq.animComponent == 2) {
-            for (size_t li = 0; li < lines.size(); ++li)
-                for (int k = lines[li].first; k < lines[li].last; ++k) unitOf[(size_t)lines[li].para][(size_t)k] = (int)li;
-            unitCount = (int)lines.size();
+            if (pathMode) {
+                // No lines on a path: a paragraph is the "line" unit.
+                for (size_t pi = 0; pi < pcl.size(); ++pi)
+                    for (size_t k = 0; k < pcl[pi].size(); ++k) unitOf[pi][k] = (int)pi;
+                unitCount = (int)pcl.size();
+            } else {
+                for (size_t li = 0; li < lines.size(); ++li)
+                    for (int k = lines[li].first; k < lines[li].last; ++k) unitOf[(size_t)lines[li].para][(size_t)k] = (int)li;
+                unitCount = (int)lines.size();
+            }
         } else {
             int cur = -1;
             for (size_t pi = 0; pi < pcl.size(); ++pi) {
@@ -1314,7 +1366,7 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
     // contribute nothing. The window is order-free, like the animators' ranges.
     std::vector<float> glyphOff, glyphLen;
     double drawS = 0, drawE = 0;  // the trim window in raster px over the concatenated lengths
-    if (rq.drawOn) {
+    if (rq.drawOn && !pathMode) {  // drawing.progress does not compose with a path (see text_engine.h): ignored there
         glyphOff.assign(glyphs.size(), 0.f);
         glyphLen.assign(glyphs.size(), 0.f);
         double total = 0;
@@ -1432,12 +1484,72 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
             }
         }
     }
+    // ---- text-on-path: the glyphs along the walk (the line loop above ran over zero
+    // lines). Same per-unit / per-cluster rules as the line loop (animator arrival, the
+    // textprogress window); the pen advances in VISUAL order, paragraph after paragraph,
+    // and a glyph is drawn iff its origin's arc distance is inside the path — text
+    // longer than the path is clipped at its end (see TextOnPath).
+    if (pathMode) {
+        const float totalLen = walk.total();
+        float pen = std::min(1.f, std::max(0.f, rq.pathStartFrac)) * totalLen;
+        std::vector<int> order;
+        for (size_t pi = 0; pi < pcl.size(); ++pi) {
+            const std::vector<Cluster>& cl = pcl[pi];
+            visualOrder(cl, 0, (int)cl.size(), order);
+            for (int k : order) {
+                const Cluster& c = cl[k];
+                const bool shown = clusterShown(progressing ? clusterOrd[pi][(size_t)k] : -1);
+                float unitMove = 0.f, unitAlpha = 1.f;
+                if (animating) {
+                    const int u = unitOf[pi][(size_t)k];
+                    if (u >= 0) {
+                        const float arr = arrived(u);
+                        unitMove = 1.f - arr;
+                        unitAlpha = rq.animAlpha + (1.f - rq.animAlpha) * arr;
+                    }
+                }
+                const float mvx = rq.animDx * unitMove * rs, mvy = rq.animDy * unitMove * rs;
+                if (shown && pen < totalLen) {
+                    for (int g = c.g0; g < c.g0 + c.gn; ++g) {
+                        const GlyphRec& gr = glyphs[(size_t)g];
+                        const float dGlyph = pen + gr.x * rs;
+                        if (dGlyph >= totalLen) continue;  // clipped at the path's end
+                        const PathPoint pp = walk.at(dGlyph);
+                        const float rad = pp.angleDeg * 3.14159265358979f / 180.f;
+                        const float co = std::cos(rad), si = std::sin(rad);
+                        // The glyph's own offset (gr.y, down from the baseline) turns with the tangent.
+                        const float x = pp.x - si * gr.y * rs + mvx;
+                        const float y = pp.y + co * gr.y * rs + mvy;
+                        Face& f = *fonts[gr.font];
+                        const bool bold = rq.weight >= 600 && f.weight < 600;
+                        const bool shear = rq.italic && !f.italic;
+                        if (animating && !(f.color || f.colrEmoji)) {
+                            const float tint = tintMask.empty() ? 0.f : unitMove;
+                            const float gFill = unitAlpha * (1.f - tint), gTint = unitAlpha * tint;
+                            if (wantFill && gFill > 0.002f && rasterGlyph(f, gr.gid, px * rs, bold, shear, nullptr, x, y, fillMask, imgW, imgH, gFill, rad)) ++glyphDrawn;
+                            if (!tintMask.empty() && gTint > 0.002f) rasterGlyph(f, gr.gid, px * rs, bold, shear, nullptr, x, y, tintMask, imgW, imgH, gTint, rad);
+                            if (stroker && unitAlpha > 0.002f) rasterGlyph(f, gr.gid, px * rs, bold, shear, stroker, x, y, strokeMask, imgW, imgH, unitAlpha, rad);
+                            continue;
+                        }
+                        if (f.color || f.colrEmoji) {
+                            if (!haveColor) { colorImg.alloc(imgW, imgH); haveColor = true; }
+                            if (drawColorGlyph(f, gr.gid, px * rs, x, y, colorImg, rad)) ++colorDrawn;
+                            continue;
+                        }
+                        if (wantFill && rasterGlyph(f, gr.gid, px * rs, bold, shear, nullptr, x, y, fillMask, imgW, imgH, 1.f, rad)) ++glyphDrawn;
+                        if (stroker) rasterGlyph(f, gr.gid, px * rs, bold, shear, stroker, x, y, strokeMask, imgW, imgH, 1.f, rad);
+                    }
+                }
+                pen += c.adv * rs;
+            }
+        }
+    }
     if (stroker) FT_Stroker_Done(stroker);
     if (drawStroker) FT_Stroker_Done(drawStroker);
     FT_Set_Transform(primary->ft, nullptr, nullptr);
 
     // ---- compose: background, outline, shadow, fill (same order as the Canvas version)
-    if (rq.bgOn && argbA(rq.bgArgb) > 0)
+    if (rq.bgOn && !pathMode && argbA(rq.bgArgb) > 0)  // no background box on a path (see text_engine.h)
         drawRoundRect(img, ox, oy, ox + boxWs, oy + boxHs, rq.bgCornerFrac * std::min(boxWs, boxHs), rq.bgArgb);
     if (wantStroke) compositeMask(img, strokeMask, rq.strokeArgb);
     if (rq.shadowOn && (wantFill || haveColor || rq.drawOn) && argbA(rq.shadowArgb) > 0) {
@@ -1462,6 +1574,11 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
     if (wantFill) {
         if (rq.fillKind == 0) {
             compositeMask(img, fillMask, rq.fillArgb);
+        } else if (pathMode) {
+            // The gradient / picture block on a path is the path's own bounding box.
+            const float bw = walk.maxX() - walk.minX(), bh = walk.maxY() - walk.minY();
+            if (bw > 0.5f && bh > 0.5f) compositeFill(img, fillMask, rq, walk.minX(), walk.minY(), 1.f, bw, bh);
+            else compositeMask(img, fillMask, rq.fillArgb);
         } else {
             compositeFill(img, fillMask, rq, ox + (rq.padH + dxBlock) * rs, oy + rq.padV * rs, rs, rq.maxTextW, layoutH);
         }
@@ -1480,6 +1597,18 @@ bool draw(uint8_t* dst, int dstW, int dstH, int dstStride, const Request& rq, St
     }
 
     // ---- blit
+    if (pathMode) {
+        // The picture is already the frame: identity placement, the layer opacity only.
+        BlitParams bp;
+        bp.alpha = rq.alpha;
+        blit(dst, dstW, dstH, dstStride, img, bp);
+        if (st) {
+            st->clusters = clusterCount; st->glyphs = (int)glyphs.size(); st->lines = (int)pcl.size();
+            st->fonts = (int)fonts.size(); st->colorGlyphs = colorDrawn; st->boxW = boxW; st->boxH = boxH;
+            st->imgW = imgW; st->imgH = imgH;
+        }
+        return true;
+    }
     BlitParams bp;
     bp.alpha = rq.alpha;
     bp.clipL = ox + rq.crop[0] * boxWs; bp.clipT = oy + rq.crop[1] * boxHs;

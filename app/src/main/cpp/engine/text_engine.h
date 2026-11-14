@@ -100,6 +100,31 @@ struct Request {
     bool drawOn = false;
     float drawStart = 0.f, drawEnd = 1.f;
     float drawStrokeW = 0.f;
+
+    // Text-on-path (build 191; the layout law is model/TextOnPath.kt, the walk is PathWalk in
+    // text_layout.h): the text is laid along a polyline instead of into lines. [pathPts] are
+    // x,y pairs in FRAME pixels — the caller (Kotlin) has already evaluated the path layer at
+    // this frame and mapped its outline into frame space, so the path's own animation is
+    // already in the points. Glyphs are placed by arc length: cluster advances (which include
+    // letterSpacing) times [scale] give frame distances; the first glyph's origin sits at
+    // [pathStartFrac] x the total length; a glyph whose origin's distance reaches the total
+    // is not drawn (text longer than the path is clipped at its end). Each glyph's baseline
+    // origin sits ON the path, rotated by the tangent there. Paragraphs run on continuously
+    // (no jump at a paragraph break); for the texttransform animator a paragraph counts as
+    // one "line" unit.
+    // In path mode the layer's own placement fields (cx, cy, rotationDeg, flips) do NOT move
+    // the text — the path is the placement; [scale] still sets the glyph size. What composes:
+    // fill (solid / gradient / picture — the gradient's block is the path's bounding box),
+    // the stroke ring, the shadow, the texttransform animator (its offsets apply in frame
+    // space), the textprogress window, colour glyphs (rotated like the rest). What does NOT
+    // compose and is ignored: the background box, underline / strike (they are line-span
+    // rectangles; a curve has no line spans), crop (it is a fraction of the layout box, and
+    // there is no box), wrap / alignment / line height (a single run along the path), and
+    // drawing.progress (an outline trim along the GLYPH outlines cannot also follow the
+    // path in this build — Kotlin does not hand it over for an attached layer).
+    bool pathOn = false;
+    std::vector<float> pathPts;
+    float pathStartFrac = 0.f;
 };
 
 /** What a system font match returns (Android AFontMatcher). */

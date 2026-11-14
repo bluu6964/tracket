@@ -211,6 +211,18 @@ data class TimelineClip(
      * Alight layer keeps its `wrapWidth` (in scene pixels) here so its lines break where Alight's did.
      */
     val textWrapFrac: Float = 0f,
+    /**
+     * Text-on-path (build 191): the id of a PATH-bearing shape layer ([isPathBearing]) in the
+     * same project whose outline this text follows; null = not attached (the text then lays out
+     * in lines exactly as before — an unattached layer renders byte-identically to before).
+     * The attachment is a REFERENCE, not a copy: the path is evaluated at the playhead on every
+     * frame, so the text rides the path layer's own animation, and hiding the path layer does
+     * not detach the text (only deleting it does — a dangling id reads as unattached
+     * everywhere). See [TextOnPath] for the layout law.
+     */
+    val textPathLayerId: String? = null,
+    /** Text-on-path: where the text starts on the path, as a fraction (0..1) of the path's total length. */
+    val textPathStart: Float = 0f,
     /** Text outline thickness, 0..100 (0 = no outline). */
     val textStrokeThickness: Float = 0f,
     val textStrokeColor: Long = 0xFF000000,

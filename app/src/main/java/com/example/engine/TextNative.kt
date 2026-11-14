@@ -28,10 +28,12 @@ internal object TextNative {
     /**
      * p = 37 floats (+ 2 that the engine fills: the layout box, see [NativeTextPainter.lastBoxW]), c = 6 ARGB ints (+ the text animator colour as the 7th); see text_jni.cpp. [anim] = 15 floats of the text animators (null = none): a texttransform group, a textprogress group and a drawing.progress group, each with its own on flag. Draws onto an ARGB_8888 bitmap, false = not drawn.
      * [fillBitmap]: the picture of a picture fill (ARGB_8888), or null.
+     * [pathPts] (build 191): the attached path's polyline as x,y pairs in frame pixels (null = not on a path); [pathStart] = the start offset as a fraction of the path's total length.
      */
     @JvmStatic external fun nativeDraw(
         bitmap: Bitmap, text: String, fontPath: String?, family: String?, p: FloatArray, c: IntArray,
-        fillBitmap: Bitmap?, levels: ByteArray?, paraRtl: ByteArray?, anim: FloatArray?
+        fillBitmap: Bitmap?, levels: ByteArray?, paraRtl: ByteArray?, anim: FloatArray?,
+        pathPts: FloatArray?, pathStart: Float
     ): Boolean
 
     /** True when the library is loaded AND was built with FreeType + HarfBuzz. */
@@ -60,6 +62,15 @@ internal class NativeTextPainter(
     /** Picture of a picture fill: the export waits for it ([FillImages.loadSync]), the preview must not ([FillImages.peek]). */
     private val fillImage: (String) -> Bitmap? = { FillImages.loadSync(it) }
 ) {
+
+    /**
+     * Text-on-path (build 191): the attached path of a text layer as a frame-space polyline
+     * (x,y pairs in frame pixels), evaluated at the given project time — or null when the
+     * layer is not attached / the path cannot be resolved this frame (the text then lays
+     * out in lines as usual). The engines own the scene + parent rig, so they set this;
+     * see [TextPathGeometry.framePoints].
+     */
+    var pathPoints: ((clip: TimelineClip, timeMs: Long) -> FloatArray?)? = null
 
     private val p = FloatArray(39)
     private val c = IntArray(7)
@@ -170,15 +181,28 @@ internal class NativeTextPainter(
             else -> "sans-serif"
         }
         val path = fontFile(clip.fontFamily)
+        // Text-on-path (build 191): the attached path's frame-space polyline for this frame.
+        // The path is evaluated even outside the path layer's own time window (its geometry
+        // persists — see TextPathGeometry); an unknown time reads the path at the text
+        // layer's own start.
+        val pathPts = if (clip.textPathLayerId != null) {
+            pathPoints?.invoke(clip, if (timeMs >= 0L) timeMs else clip.startMs)
+                ?.takeIf { it.size >= 4 }
+        } else null
+        val onPath = pathPts != null
         // Imported text animators (Alight texttransform + textprogress) and the drawing.progress
         // outline trim: the animators need the time of this frame (-1 = unknown = not animated; the
         // trim then falls back to the clip's stored window, like the shape trim in ShapeNative).
         // Each group carries its own on flag (anim[0] / anim[8] / anim[11]).
+        // On a path the drawing.progress group is NOT handed over: its outline trim cannot
+        // compose with the path layout (the filled text follows the path instead — see
+        // text_engine.h); the two animator groups compose and are sent as usual.
+        val drawOn = clip.strokeTrimText && !onPath
         var animArr: FloatArray? = null
-        if ((timeMs >= 0L && clip.textAnimators.isNotEmpty()) || clip.strokeTrimText) {
+        if ((timeMs >= 0L && clip.textAnimators.isNotEmpty()) || drawOn) {
             val tr = if (timeMs >= 0L && clip.textAnimators.isNotEmpty()) TextAnimEval.evaluate(clip, timeMs, fontPx) else null
             val pr = if (timeMs >= 0L && clip.textAnimators.isNotEmpty()) TextProgressEval.evaluate(clip, timeMs) else null
-            if (tr != null || pr != null || clip.strokeTrimText) {
+            if (tr != null || pr != null || drawOn) {
                 anim.fill(0f)
                 if (tr != null) {
                     anim[0] = 1f; anim[1] = tr.component.toFloat(); anim[2] = tr.start; anim[3] = tr.end
@@ -188,7 +212,7 @@ internal class NativeTextPainter(
                 if (pr != null) {
                     anim[8] = 1f; anim[9] = pr.start; anim[10] = pr.end
                 }
-                if (clip.strokeTrimText) {
+                if (drawOn) {
                     val (ts, te) = textTrimAt(clip, timeMs)
                     anim[11] = 1f; anim[12] = ts; anim[13] = te
                     anim[14] = drawOnStrokeWidthPx(clip, fontPx)
@@ -198,7 +222,10 @@ internal class NativeTextPainter(
         }
         return try {
             val bidi = bidiLevelsOf(content)
-            val ok = TextNative.nativeDraw(bmp, content, path, family, p, c, fillBmp, bidi?.first, bidi?.second, animArr)
+            val ok = TextNative.nativeDraw(
+                bmp, content, path, family, p, c, fillBmp, bidi?.first, bidi?.second, animArr,
+                pathPts, clip.textPathStart
+            )
             if (ok) { lastBoxW = p[37]; lastBoxH = p[38] }
             ok
         } catch (_: Throwable) {

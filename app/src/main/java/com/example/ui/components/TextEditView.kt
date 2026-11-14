@@ -78,12 +78,13 @@ enum class TextTab(val title: String) {
     STROKE("Stroke"),
     SHADOW("Shadow"),
     BACKGROUND("Background"),
-    SPACING("Spacing")
+    SPACING("Spacing"),
+    PATH("Path")
 }
 
 /**
  * Bottom panel of "Text edit": text box, tab chips (Fonts / Style / Stroke / Shadow / Background /
- * Spacing) and the controls of the active tab. Every change is applied to the layer at once, so the
+ * Spacing / Path) and the controls of the active tab. Every change is applied to the layer at once, so the
  * canvas above shows it live.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -93,7 +94,9 @@ fun TextEditSheet(
     onUpdate: ((TimelineClip) -> TimelineClip) -> Unit,
     onEyedropper: ((Long) -> Unit) -> Unit,
     fullHeight: Dp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** PATH-bearing shape layers of the project the text can attach to (build 191). */
+    pathLayers: List<TimelineClip> = emptyList()
 ) {
     var activeTab by remember { mutableStateOf(TextTab.FONTS) }
     var text by remember(clip.id) { mutableStateOf(clip.text.orEmpty()) }
@@ -181,6 +184,7 @@ fun TextEditSheet(
                     TextTab.SHADOW -> TabColumn { ShadowTab(clip, onUpdate, onEyedropper) }
                     TextTab.BACKGROUND -> TabColumn { BackgroundTab(clip, onUpdate, onEyedropper) }
                     TextTab.SPACING -> TabColumn { SpacingTab(clip, onUpdate) }
+                    TextTab.PATH -> TabColumn { PathTab(clip, pathLayers, onUpdate) }
                 }
             }
         }
@@ -573,5 +577,74 @@ private fun AlignButton(icon: ImageVector, on: Boolean, modifier: Modifier, onCl
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, null, tint = if (on) Color(0xFF1C1D20) else Color.White, modifier = Modifier.size(26.dp))
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Path (text-on-path, build 191)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Attach this text to a PATH shape layer (Pen / freehand / imported path): the glyphs then
+ * follow that layer's outline, evaluated live — move or animate the path layer and the text
+ * rides it. The text follows the path even when the path layer is hidden; hiding is not
+ * detaching. While attached, the Start slider moves the text along the path (a share of
+ * the path's whole length); text longer than the path is cut at the path's end.
+ */
+@Composable
+private fun PathTab(
+    clip: TimelineClip,
+    pathLayers: List<TimelineClip>,
+    onUpdate: ((TimelineClip) -> TimelineClip) -> Unit
+) {
+    val attachedId = clip.textPathLayerId
+    val attached = pathLayers.firstOrNull { it.id == attachedId }
+    when {
+        attached != null -> {
+            Row(modifier = Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Layer", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Medium,
+                    modifier = Modifier.width(112.dp))
+                Text(attached.name, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+            TextRulerSlider("Start offset", clip.textPathStart * 100f,
+                { v -> onUpdate { it.copy(textPathStart = v / 100f) } }, min = 0f, max = 100f)
+            PathActionRow("Detach from path") { onUpdate { it.copy(textPathLayerId = null) } }
+        }
+        attachedId != null -> {
+            Text("The path layer this text was attached to is gone.",
+                color = TextSecondary, fontSize = 15.sp)
+            Spacer(Modifier.height(8.dp))
+            PathActionRow("Detach") { onUpdate { it.copy(textPathLayerId = null) } }
+        }
+        pathLayers.isEmpty() -> {
+            Text("No path layer in this project yet. Draw one with the Pen tool first, then attach this text to it here.",
+                color = TextSecondary, fontSize = 15.sp)
+        }
+        else -> {
+            Text("Attach to a path layer — the text will follow its outline:",
+                color = TextSecondary, fontSize = 15.sp)
+            Spacer(Modifier.height(8.dp))
+            pathLayers.forEach { layer ->
+                PathActionRow(layer.name) { onUpdate { it.copy(textPathLayerId = layer.id) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PathActionRow(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clip(RectangleShape)
+            .background(ChipBg)
+            .bouncyClickable(pressedScale = 0.97f, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium,
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }

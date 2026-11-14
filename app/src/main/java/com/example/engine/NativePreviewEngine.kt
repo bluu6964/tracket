@@ -127,8 +127,24 @@ class NativePreviewEngine(context: Context) {
         NativeTextPainter(
             { name -> com.example.ui.text.FontRepository.fileOrNull(appCtx, name)?.absolutePath },
             { uri -> FillImages.peek(uri) }  // never blocks: starts the load and returns null until it is ready
-        )
+        ).also { painter ->
+            // Text-on-path (build 191): the resolver reads the scene of the frame being
+            // drawn (set in drawTextLayers, which owns the rig + camera of that frame).
+            painter.pathPoints = { tc, t ->
+                val rig = pathSceneRig
+                if (rig == null) null
+                else TextPathGeometry.framePoints(
+                    pathSceneClips, rig, tc, t, outW, outH,
+                    PreviewFrameRef.widthPx.let { if (it > 0f) outW / it else 1f },
+                    appCtx.resources.displayMetrics.density
+                ) { c -> pathSceneCam?.affects(c) == true }
+            }
+        }
     }
+    /** Text-on-path scene of the frame being drawn (build 191): clips + rig + camera, set per drawTextLayers call. */
+    private var pathSceneClips: List<TimelineClip> = emptyList()
+    private var pathSceneRig: ParentRig? = null
+    private var pathSceneCam: CameraRig? = null
     private val shapePainter by lazy { NativeShapePainter { uri -> FillImages.peek(uri) } }  // never blocks, like the text painter
     private var fillRetryPosted = false
     private val frameCallback = Choreographer.FrameCallback {
@@ -875,6 +891,10 @@ class NativePreviewEngine(context: Context) {
         // A layer with effects always gets its own picture, so the effects touch only that layer (text / shape / sticker).
         val rig = parentRig()
         val cam = CameraRig(liveTracks, rig)  // 3D camera: layers under a camera lane are placed by it (own upright picture)
+        // Text-on-path (build 191): the text painter's resolver reads this frame's scene.
+        pathSceneClips = liveTracks.flatMap { it.clips }
+        pathSceneRig = rig
+        pathSceneCam = cam
         // Stacking key of a text / shape / sticker layer: its distance from the camera when one looks at it, else its own Z.
         fun overlayKey(c: TimelineClip): Float = cam.stackKey(c, t) ?: c.transformZ
         class Slot(val clips: MutableList<TimelineClip>, val blendId: Int, val pose: Boolean, val fx: Boolean, val masked: Boolean = false, val mediaFill: Boolean = false, val ownMask: Boolean = false)

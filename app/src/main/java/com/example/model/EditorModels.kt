@@ -472,6 +472,13 @@ data class TimelineTrack(
     val clips: List<TimelineClip> = emptyList()
 )
 
+/** The export formats the export dialog offers (the [ExportSettings.format] values). */
+object ExportFormats {
+    const val MP4 = "MP4 (H.264)"
+    const val GIF = "GIF"
+    const val PNG_SEQUENCE = "PNG sequence"
+}
+
 @Serializable
 data class ExportSettings(
     val resolution: String = "1080p FHD",
@@ -479,9 +486,11 @@ data class ExportSettings(
     val quality: String = "High (Recommended)",
     /** Custom video bitrate in kbps (500..50000); 0 = automatic from [quality]. */
     val customBitrateKbps: Int = 0,
-    val format: String = "MP4 (H.264)",
+    val format: String = ExportFormats.MP4,
     /** Canvas / background colour (ARGB). Used behind the layers of the export. */
-    val canvasColor: Long = 0xFF000000
+    val canvasColor: Long = 0xFF000000,
+    /** Frame rate of a GIF export (5..30, see GifExport); the MP4 rate stays [frameRate]. */
+    val gifFrameRate: Int = GifExport.DEFAULT_FPS
 )
 
 /** Result of reading a picked file: what the importer hands to the ViewModel. */

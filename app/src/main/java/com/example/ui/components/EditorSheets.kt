@@ -381,7 +381,12 @@ fun ExportModalDialog(
     quality: String = "High (Recommended)",
     onQualityChange: (String) -> Unit = {},
     bitrateKbps: Int = 0,
-    onBitrateChange: (Int) -> Unit = {}
+    onBitrateChange: (Int) -> Unit = {},
+    format: String = com.example.model.ExportFormats.MP4,
+    onFormatChange: (String) -> Unit = {},
+    gifFrameRate: Int = com.example.model.GifExport.DEFAULT_FPS,
+    onGifFrameRateChange: (Int) -> Unit = {},
+    savedToLabel: String = "Saved to Movies/MaxCut"
 ) {
     // Time the current export started (reset every time a new export begins).
     var startedAt by remember { mutableStateOf(0L) }
@@ -421,10 +426,14 @@ fun ExportModalDialog(
                         frameRate = frameRate,
                         quality = quality,
                         bitrateKbps = bitrateKbps,
+                        format = format,
+                        gifFrameRate = gifFrameRate,
                         onResolutionChange = onResolutionChange,
                         onFrameRateChange = onFrameRateChange,
                         onQualityChange = onQualityChange,
                         onBitrateChange = onBitrateChange,
+                        onFormatChange = onFormatChange,
+                        onGifFrameRateChange = onGifFrameRateChange,
                         onStartExport = onStartExport
                     )
                 } else {
@@ -441,7 +450,7 @@ fun ExportModalDialog(
                         Text("Export Complete!", color = Color.White, fontSize = 30.sp,
                             fontWeight = FontWeight.Black, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Saved to Movies/MaxCut", color = Color.White.copy(alpha = 0.7f),
+                        Text(savedToLabel, color = Color.White.copy(alpha = 0.7f),
                             fontSize = 14.sp, fontWeight = FontWeight.Medium)
                         Spacer(modifier = Modifier.height(24.dp))
                         // BARE actions (boxless order, build 183): text buttons, no filled boxes.
@@ -545,13 +554,19 @@ private fun ColumnScope.ExportSettingsPage(
     frameRate: Int,
     quality: String,
     bitrateKbps: Int,
+    format: String,
+    gifFrameRate: Int,
     onResolutionChange: (String) -> Unit,
     onFrameRateChange: (Int) -> Unit,
     onQualityChange: (String) -> Unit,
     onBitrateChange: (Int) -> Unit,
+    onFormatChange: (String) -> Unit,
+    onGifFrameRateChange: (Int) -> Unit,
     onStartExport: () -> Unit
 ) {
     val resValue = exportResolutionValue(resolutionLabel)
+    val isGif = format == com.example.model.ExportFormats.GIF
+    val isMp4 = format == com.example.model.ExportFormats.MP4
     Column(
         modifier = Modifier
             .weight(1f)
@@ -565,6 +580,28 @@ private fun ColumnScope.ExportSettingsPage(
             "Export settings", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(top = 4.dp)
         )
+
+        ExportCard(
+            "Format",
+            when (format) {
+                com.example.model.ExportFormats.GIF -> "GIF"
+                com.example.model.ExportFormats.PNG_SEQUENCE -> "PNG"
+                else -> "MP4"
+            },
+            when (format) {
+                com.example.model.ExportFormats.GIF -> "Animated GIF, no sound, up to 720p"
+                com.example.model.ExportFormats.PNG_SEQUENCE -> "One PNG per frame, no sound"
+                else -> "H.264 video with sound"
+            }
+        ) {
+            ExportChipRow {
+                ExportChip("MP4", isMp4) { onFormatChange(com.example.model.ExportFormats.MP4) }
+                ExportChip("GIF", isGif) { onFormatChange(com.example.model.ExportFormats.GIF) }
+                ExportChip("PNG sequence", format == com.example.model.ExportFormats.PNG_SEQUENCE) {
+                    onFormatChange(com.example.model.ExportFormats.PNG_SEQUENCE)
+                }
+            }
+        }
 
         ExportCard("Resolution", "${resValue}p", "180p – 1080p") {
             ExportSlider(
@@ -581,21 +618,36 @@ private fun ColumnScope.ExportSettingsPage(
             }
         }
 
-        ExportCard("Frame rate", "$frameRate fps", "24 – 60 fps") {
-            ExportSlider(
-                value = frameRate.toFloat(),
-                range = ExportMinFps.toFloat()..ExportMaxFps.toFloat(),
-                tag = "export_fps_slider"
-            ) { onFrameRateChange(it.toInt().coerceIn(ExportMinFps, ExportMaxFps)) }
-            ExportChipRow {
-                ExportFpsPresets.forEach { f ->
-                    ExportChip("$f", f == frameRate) { onFrameRateChange(f) }
+        if (isGif) {
+            ExportCard("Frame rate", "$gifFrameRate fps", "5 – 30 fps · lower = smaller file") {
+                ExportSlider(
+                    value = gifFrameRate.toFloat(),
+                    range = com.example.model.GifExport.MIN_FPS.toFloat()..com.example.model.GifExport.MAX_FPS.toFloat(),
+                    tag = "export_gif_fps_slider"
+                ) { onGifFrameRateChange(it.toInt().coerceIn(com.example.model.GifExport.MIN_FPS, com.example.model.GifExport.MAX_FPS)) }
+                ExportChipRow {
+                    listOf(10, 12, 15, 20, 24, 30).forEach { f ->
+                        ExportChip("$f", f == gifFrameRate) { onGifFrameRateChange(f) }
+                    }
+                }
+            }
+        } else {
+            ExportCard("Frame rate", "$frameRate fps", "24 – 60 fps") {
+                ExportSlider(
+                    value = frameRate.toFloat(),
+                    range = ExportMinFps.toFloat()..ExportMaxFps.toFloat(),
+                    tag = "export_fps_slider"
+                ) { onFrameRateChange(it.toInt().coerceIn(ExportMinFps, ExportMaxFps)) }
+                ExportChipRow {
+                    ExportFpsPresets.forEach { f ->
+                        ExportChip("$f", f == frameRate) { onFrameRateChange(f) }
+                    }
                 }
             }
         }
 
         val custom = bitrateKbps > 0
-        ExportCard(
+        if (isMp4) ExportCard(
             "Quality",
             if (custom) "%.1f Mbps".format(bitrateKbps / 1000f) else quality.substringBefore(' '),
             if (custom) "Custom bitrate" else "Automatic bitrate"

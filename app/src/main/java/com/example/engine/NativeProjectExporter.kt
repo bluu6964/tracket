@@ -18,6 +18,9 @@ import com.example.model.AspectRatio
 import com.example.model.BlendKind
 import com.example.model.BlendModes
 import com.example.model.ExportSettings
+import com.example.model.GifExport
+import com.example.model.GifQuantizer
+import com.example.model.GifWriter
 import com.example.model.GroupOps
 import com.example.model.LayerType
 import com.example.model.TimelineClip
@@ -52,6 +55,13 @@ import kotlin.math.roundToInt
  * It is the only export path (the old Media3 exporter was removed in v159). If something fails
  * (e.g. a mask the C++ decoder cannot read), [VideoExporter.start] reports the error to the user.
  */
+/**
+ * A still-image export target (build 189): the same rendered frames as the MP4 path,
+ * read back from the renderer instead of going through the H.264 encoder — an
+ * animated GIF, or one PNG per frame. Neither carries sound.
+ */
+enum class RasterFormat { GIF, PNG_SEQUENCE }
+
 class NativeProjectExporter(private val context: Context) {
 
     companion object {
@@ -96,7 +106,12 @@ class NativeProjectExporter(private val context: Context) {
     private val cancelled = AtomicBoolean(false)
     private var worker: Thread? = null
 
-    /** Callbacks run on the main thread. [save] moves the finished file to the gallery. */
+    /**
+     * Callbacks run on the main thread. [save] moves the finished file to the gallery.
+     * [rasterFormat] != null exports stills instead of an MP4 (build 189): for
+     * [RasterFormat.GIF] [save] receives the .gif file; for [RasterFormat.PNG_SEQUENCE]
+     * it receives a DIRECTORY holding frame_0001.png, frame_0002.png, ...
+     */
     fun start(
         tracks: List<TimelineTrack>,
         aspectRatio: AspectRatio,
@@ -104,22 +119,31 @@ class NativeProjectExporter(private val context: Context) {
         save: (File) -> Uri,
         onProgress: (Float) -> Unit,
         onDone: (Uri) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        rasterFormat: RasterFormat? = null
     ) {
         cancelled.set(false)
         val t = Thread({
-            val out = File(context.cacheDir, "tracket_native_${System.currentTimeMillis()}.mp4")
+            val stamp = System.currentTimeMillis()
+            val out = when (rasterFormat) {
+                RasterFormat.GIF -> File(context.cacheDir, "tracket_native_$stamp.gif")
+                RasterFormat.PNG_SEQUENCE -> File(context.cacheDir, "tracket_frames_$stamp")
+                null -> File(context.cacheDir, "tracket_native_$stamp.mp4")
+            }
+            fun deleteOut() {
+                if (out.isDirectory) out.deleteRecursively() else out.delete()
+            }
             try {
-                runExport(tracks, aspectRatio, settings, out) { p ->
+                runExport(tracks, aspectRatio, settings, out, rasterFormat) { p ->
                     if (!cancelled.get()) main.post { onProgress(p) }
                 }
-                if (cancelled.get()) { out.delete(); return@Thread }
+                if (cancelled.get()) { deleteOut(); return@Thread }
                 val uri = save(out)
                 if (!cancelled.get()) main.post { onDone(uri) }
             } catch (_: CancellationException) {
-                out.delete()
+                deleteOut()
             } catch (t: Throwable) {
-                out.delete()
+                deleteOut()
                 Log.w(TAG, "native export failed", t)
                 if (!cancelled.get()) main.post { onError(t.message ?: t.javaClass.simpleName) }
             }
@@ -168,6 +192,7 @@ class NativeProjectExporter(private val context: Context) {
         aspectRatio: AspectRatio,
         settings: ExportSettings,
         outputFile: File,
+        rasterFormat: RasterFormat?,
         onProgress: (Float) -> Unit
     ) {
         if (!DecoderPool.isAvailable) error("Native engine library is not available.")
@@ -177,28 +202,50 @@ class NativeProjectExporter(private val context: Context) {
             .filter { it.type == LayerType.VIDEO && it.uri != null && it.isVisible }
         val durationMs = (if (visuals.isNotEmpty()) visuals.maxOf { it.endMs } else all.maxOf { it.endMs })
             .coerceAtLeast(100L)
-        val (w, h) = outputSize(settings.resolution, aspectRatio)
-        val fps = settings.frameRate.coerceIn(24, 60)
+        val isGif = rasterFormat == RasterFormat.GIF
+        val isPng = rasterFormat == RasterFormat.PNG_SEQUENCE
+        val raster = rasterFormat != null
+        // GIF frames are capped to a phone-sane size (GifExport.MAX_SIDE); the PNG
+        // sequence keeps the full chosen resolution, like the MP4.
+        val (fullW, fullH) = outputSize(settings.resolution, aspectRatio)
+        val (w, h) = if (isGif) GifExport.gifSize(fullW, fullH) else fullW to fullH
+        val fps = if (isGif) settings.gifFrameRate.coerceIn(GifExport.MIN_FPS, GifExport.MAX_FPS)
+            else settings.frameRate.coerceIn(24, 60)
         // Frame count, bitrate and the sound clips are decided in C++ (export_plan.cpp, tested on a PC).
         val bitrate = ExportPlanNative.bitrate(w, h, fps, settings.customBitrateKbps, settings.quality)
         val totalFrames = ExportPlanNative.totalFrames(durationMs, fps)
+        if (isGif && totalFrames > GifExport.MAX_FRAMES) {
+            error("This project is too long for a GIF ($totalFrames frames at $fps fps; the limit is " +
+                "${GifExport.MAX_FRAMES}). Shorten the project, lower the GIF frame rate, or export an MP4.")
+        }
         val canvas = settings.canvasColor.toInt()
         val bgA = ((canvas ushr 24) and 0xff) / 255f
         val bgR = ((canvas ushr 16) and 0xff) / 255f
         val bgG = ((canvas ushr 8) and 0xff) / 255f
         val bgB = (canvas and 0xff) / 255f
         outputFile.parentFile?.mkdirs()
-        if (outputFile.exists()) outputFile.delete()
+        if (!isPng && outputFile.exists()) outputFile.delete()
 
         GlThread("am-native-export").use { gl ->
             gl.call {
                 val renderer = NativeRenderer.create() ?: error("Native GLES renderer is unavailable on this device.")
                 val pool = DecoderPool(maxHardware = PoolSizing.hw(visuals), maxSoftware = 3)
-                val encoder = NativeExportEncoder.create()
-                if (encoder == null) {
+                // Raster exports render offscreen and read the pixels back; the MP4
+                // path hands the renderer to the H.264 surface encoder instead.
+                val encoder = if (raster) null else NativeExportEncoder.create()
+                if (!raster && encoder == null) {
                     pool.close(); renderer.close()
                     error("Native export requires Android 8.0 (API 26) or newer and the native engine.")
                 }
+                if (raster) {
+                    require(renderer.setOffscreen(w, h)) { "Could not create the image render target." }
+                }
+                // The GIF writer itself opens at the encoder.start point below (inside
+                // the try), so a failure there takes the same cleanup path as the MP4's.
+                var gifOut: java.io.BufferedOutputStream? = null
+                var gifWriter: GifWriter? = null
+                if (isPng) outputFile.mkdirs()
+                val rgbaBuf = if (raster) ByteArray(w * h * 4) else null
                 val videos = HashMap<String, VideoLayerSource>()
                 // Video fills of shapes (build 104), keyed by the shape's id; opened with the picture
                 // sources below, closed with them. A fill that cannot be opened is NOT an error (unlike
@@ -379,13 +426,25 @@ class NativeProjectExporter(private val context: Context) {
                         else Log.w(TAG, "video fill of '${c.name}' could not be opened; its poster frame is used")
                     }
 
-                    require(encoder.start(renderer, outputFile.absolutePath, w, h, fps, bitrate)) {
-                        encoder.errorMessage().ifBlank { "Could not start native H.264 export." }
-                    }
-                    val hasAudio = addAudio(encoder, tracks, durationMs)
-                    if (hasAudio) {
-                        require(encoder.startAudio(durationMs)) {
-                            encoder.errorMessage().ifBlank { "Could not start native AAC encoder." }
+                    // Raster exports have no encoder and no sound: the renderer is
+                    // already set offscreen and each frame is read back in the loop.
+                    val hasAudio: Boolean
+                    if (encoder != null) {
+                        require(encoder.start(renderer, outputFile.absolutePath, w, h, fps, bitrate)) {
+                            encoder.errorMessage().ifBlank { "Could not start native H.264 export." }
+                        }
+                        val ha = addAudio(encoder, tracks, durationMs)
+                        if (ha) {
+                            require(encoder.startAudio(durationMs)) {
+                                encoder.errorMessage().ifBlank { "Could not start native AAC encoder." }
+                            }
+                        }
+                        hasAudio = ha
+                    } else {
+                        hasAudio = false
+                        if (isGif) {
+                            gifOut = java.io.BufferedOutputStream(java.io.FileOutputStream(outputFile))
+                            gifWriter = GifWriter(gifOut, w, h)
                         }
                     }
 
@@ -401,8 +460,8 @@ class NativeProjectExporter(private val context: Context) {
                     // [2] draw is queued, encoder submit + video drain, [3] audio. Shown after the export.
                     val prof = LongArray(4)
                     val tStart = System.nanoTime()
-                    val audioDec0 = encoder.profNs(0)
-                    val audioEnc0 = encoder.profNs(1)
+                    val audioDec0 = if (encoder != null) encoder.profNs(0) else 0L
+                    val audioEnc0 = if (encoder != null) encoder.profNs(1) else 0L
                     // The mask layers cutting a layer of one level (a Group or a picture layer, Alight
                     // style), evaluated at [timeMs] like every layer — empty when no mask sits on it,
                     // or none of its masks is there then (outside a mask layer's own span there is no
@@ -1111,25 +1170,47 @@ class NativeProjectExporter(private val context: Context) {
                         prof[1] += System.nanoTime() - tO0
                         val ptsNs = frame.toLong() * 1_000_000_000L / fps
                         val tS0 = System.nanoTime()
-                        require(encoder.submitFrame(ptsNs)) {
-                            encoder.errorMessage().ifBlank { "Native encoder failed on frame $frame." }
-                        }
-                        prof[2] += System.nanoTime() - tS0
-                        if (hasAudio) {
-                            // Keep the sound a little ahead of the picture so the muxer can interleave.
-                            val tA0 = System.nanoTime()
-                            require(encoder.pumpAudio(ptsNs / 1000L + 250_000L)) {
-                                encoder.errorMessage().ifBlank { "Native audio export failed." }
+                        if (encoder != null) {
+                            require(encoder.submitFrame(ptsNs)) {
+                                encoder.errorMessage().ifBlank { "Native encoder failed on frame $frame." }
                             }
-                            prof[3] += System.nanoTime() - tA0
+                            prof[2] += System.nanoTime() - tS0
+                            if (hasAudio) {
+                                // Keep the sound a little ahead of the picture so the muxer can interleave.
+                                val tA0 = System.nanoTime()
+                                require(encoder.pumpAudio(ptsNs / 1000L + 250_000L)) {
+                                    encoder.errorMessage().ifBlank { "Native audio export failed." }
+                                }
+                                prof[3] += System.nanoTime() - tA0
+                            }
+                        } else {
+                            // Raster frame: the same composed picture, read back instead
+                            // of encoded — quantized into the GIF, or written as a PNG.
+                            val buf = rgbaBuf!!
+                            require(renderer.readPixels(0, 0, w, h, buf)) {
+                                "Could not read rendered frame $frame."
+                            }
+                            renderer.endFrame()
+                            if (isGif) {
+                                val q = GifQuantizer.quantize(buf, w, h, bottomUp = true)
+                                gifWriter!!.addFrame(q.indices, q.palette, GifExport.delayCs(fps))
+                            } else {
+                                writePngFrame(outputFile, frame, GifExport.rgbaBottomUpToArgb(buf, w, h), w, h)
+                            }
+                            prof[2] += System.nanoTime() - tS0
                         }
                         if (frame % max(1, fps / 2) == 0 || frame == totalFrames - 1) {
                             onProgress(((frame + 1).toFloat() / totalFrames).coerceAtMost(0.99f))
                         }
                     }
                     val tF0 = System.nanoTime()
-                    require(encoder.finish()) {
-                        encoder.errorMessage().ifBlank { "Could not finalize native MP4." }
+                    if (encoder != null) {
+                        require(encoder.finish()) {
+                            encoder.errorMessage().ifBlank { "Could not finalize native MP4." }
+                        }
+                    } else if (isGif) {
+                        gifWriter!!.finish()
+                        gifOut!!.close()
                     }
                     val tFin = System.nanoTime() - tF0
                     run {
@@ -1144,22 +1225,24 @@ class NativeProjectExporter(private val context: Context) {
                         val line1 = "Total ${sec(System.nanoTime() - tStart)}s | decode ${sec(prof[0])} | overlay ${sec(prof[1])}"
                         val line2 = "encode ${sec(prof[2])} | audio ${sec(prof[3])} | finish ${sec(tFin)}" +
                             (if (ps != null) " | ev ${ps.evictions} fb ${ps.fallbacks} err ${ps.errors}" else "")
-                        val aDec = encoder.profNs(0) - audioDec0
-                        val aEnc = encoder.profNs(1) - audioEnc0
+                        val aDec = if (encoder != null) encoder.profNs(0) - audioDec0 else 0L
+                        val aEnc = if (encoder != null) encoder.profNs(1) - audioEnc0 else 0L
                         val line3 = "audio: decode ${sec(aDec)} | encode ${sec(aEnc)} | rest ${sec((prof[3] - aDec - aEnc).coerceAtLeast(0L))}"
                         Log.i(TAG, line3)
-                        main.post {
-                            runCatching {
-                                android.widget.Toast.makeText(context, line1, android.widget.Toast.LENGTH_LONG).show()
-                                android.widget.Toast.makeText(context, line2, android.widget.Toast.LENGTH_LONG).show()
-                                android.widget.Toast.makeText(context, line3, android.widget.Toast.LENGTH_LONG).show()
+                        if (encoder != null) {
+                            main.post {
+                                runCatching {
+                                    android.widget.Toast.makeText(context, line1, android.widget.Toast.LENGTH_LONG).show()
+                                    android.widget.Toast.makeText(context, line2, android.widget.Toast.LENGTH_LONG).show()
+                                    android.widget.Toast.makeText(context, line3, android.widget.Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     }
                     onProgress(1f)
                 } catch (t: Throwable) {
-                    encoder.cancel()
-                    outputFile.delete()
+                    encoder?.cancel()
+                    if (outputFile.isDirectory) outputFile.deleteRecursively() else outputFile.delete()
                     if (t is CancellationException) throw t
                     // Details for the error message (shown in the export error).
                     val st = runCatching { pool.stats() }.getOrNull()
@@ -1190,11 +1273,27 @@ class NativeProjectExporter(private val context: Context) {
                         }
                     }
                     maskScratchBmp?.recycle()
-                    encoder.close()
+                    runCatching { gifOut?.close() }
+                    encoder?.close()
                     pool.close()
                     renderer.close()
                 }
             }
+        }
+    }
+
+    /** One frame of a PNG-sequence export: frame_0001.png, frame_0002.png, ... inside [dir]. */
+    private fun writePngFrame(dir: File, index: Int, argb: IntArray, w: Int, h: Int) {
+        val bmp = Bitmap.createBitmap(argb, w, h, Bitmap.Config.ARGB_8888)
+        try {
+            val name = "frame_%04d.png".format(index + 1)
+            File(dir, name).outputStream().use { o ->
+                check(bmp.compress(Bitmap.CompressFormat.PNG, 100, o)) {
+                    "Could not write PNG frame ${index + 1}."
+                }
+            }
+        } finally {
+            bmp.recycle()
         }
     }
 

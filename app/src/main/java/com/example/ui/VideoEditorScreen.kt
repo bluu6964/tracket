@@ -2083,6 +2083,9 @@ fun VideoEditorScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var exportDone by remember { mutableStateOf(false) }
     var exportedUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    // The format of the export that is running / just finished (drives the saved-to
+    // label and the share mime type; the settings page is unreachable mid-export).
+    var lastExportFormat by remember { mutableStateOf(com.example.model.ExportFormats.MP4) }
     var timelinePxPerMs by remember { mutableFloatStateOf(TIMELINE_PX_PER_MS) }
     var showFullscreenPlayer by remember { mutableStateOf(false) }
     var showAudioVolumeSheet by remember { mutableStateOf(false) }
@@ -4527,9 +4530,19 @@ fun VideoEditorScreen(
             onQualityChange = { viewModel.setExportQuality(it) },
             bitrateKbps = exportSettings.customBitrateKbps,
             onBitrateChange = { viewModel.setExportBitrate(it) },
+            format = exportSettings.format,
+            onFormatChange = { viewModel.setExportFormat(it) },
+            gifFrameRate = exportSettings.gifFrameRate,
+            onGifFrameRateChange = { viewModel.setGifFrameRate(it) },
+            savedToLabel = when (lastExportFormat) {
+                com.example.model.ExportFormats.GIF -> "Saved to Pictures/MaxCut"
+                com.example.model.ExportFormats.PNG_SEQUENCE -> "Saved to Pictures/MaxCut (PNG frames)"
+                else -> "Saved to Movies/MaxCut"
+            },
             onStartExport = {
                 exportDone = false
                 exportedUri = null
+                lastExportFormat = exportSettings.format
                 viewModel.pause()
                 viewModel.setExporting(true)
                 exporter.start(
@@ -4543,7 +4556,12 @@ fun VideoEditorScreen(
                         viewModel.finishExport()
                         exportedUri = uri
                         exportDone = true
-                        scope.launch { snackbarHostState.showSnackbar("Saved to Movies/MaxCut") }
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (lastExportFormat == com.example.model.ExportFormats.MP4) "Saved to Movies/MaxCut"
+                                else "Saved to Pictures/MaxCut"
+                            )
+                        }
                     },
                     onError = { msg ->
                         viewModel.setExporting(false)
@@ -4570,11 +4588,15 @@ fun VideoEditorScreen(
             onShare = {
                 exportedUri?.let { u ->
                     val send = Intent(Intent.ACTION_SEND).apply {
-                        type = "video/mp4"
+                        type = when (lastExportFormat) {
+                            com.example.model.ExportFormats.GIF -> "image/gif"
+                            com.example.model.ExportFormats.PNG_SEQUENCE -> "image/png"
+                            else -> "video/mp4"
+                        }
                         putExtra(Intent.EXTRA_STREAM, u)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
-                    context.startActivity(Intent.createChooser(send, "Share video").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    context.startActivity(Intent.createChooser(send, "Share").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
             }
         )

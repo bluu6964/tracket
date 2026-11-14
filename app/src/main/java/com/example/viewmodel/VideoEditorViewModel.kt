@@ -389,6 +389,18 @@ class VideoEditorViewModel : ViewModel() {
         _exportSettings.value = _exportSettings.value.copy(frameRate = fps.coerceIn(24, 60))
     }
 
+    /** Export format: one of [com.example.model.ExportFormats] (MP4 / GIF / PNG sequence). */
+    fun setExportFormat(format: String) {
+        _exportSettings.value = _exportSettings.value.copy(format = format)
+    }
+
+    /** GIF export frame rate, limited to [com.example.model.GifExport.MIN_FPS]..[com.example.model.GifExport.MAX_FPS]. */
+    fun setGifFrameRate(fps: Int) {
+        _exportSettings.value = _exportSettings.value.copy(
+            gifFrameRate = fps.coerceIn(com.example.model.GifExport.MIN_FPS, com.example.model.GifExport.MAX_FPS)
+        )
+    }
+
     fun setAspectRatio(ratio: AspectRatio) {
         _selectedAspectRatio.value = ratio
     }

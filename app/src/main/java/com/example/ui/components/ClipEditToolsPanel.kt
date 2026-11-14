@@ -109,6 +109,8 @@ fun ClipEditToolsPanel(
     onMasks: (() -> Unit)? = null,
     /** Only set for text layers: adds an "Edit" tool that opens Text edit. */
     onEditText: (() -> Unit)? = null,
+    /** Only set for shape layers (build 173): adds an "Edit shape" tool that opens the shape editor. */
+    onEditShape: (() -> Unit)? = null,
     /** Parent: pick a Null object this layer follows. */
     onParent: (() -> Unit)? = null,
     /** Only set for a real Group layer: takes the layers out of the group again. */
@@ -136,6 +138,7 @@ fun ClipEditToolsPanel(
 ) {
     val allTools = (if (onEditGroup != null) listOf(ClipToolItem("edit_group", "Edit group", Icons.Default.FolderOpen))
     else emptyList()) + (if (onEditText != null) listOf(ClipToolItem("edit_text", "Edit", Icons.Default.Edit))
+    else emptyList()) + (if (onEditShape != null) listOf(ClipToolItem("edit_shape", "Edit shape", Icons.Default.Edit))
     else emptyList()) + listOf(
         ClipToolItem("effects", "Effects", Icons.Default.AutoAwesome),
         ClipToolItem("animations", "Animations", Icons.Default.Animation),
@@ -231,6 +234,7 @@ fun ClipEditToolsPanel(
                             onClick = {
                                 when (tool.id) {
                                     "edit_text" -> onEditText?.invoke()
+                                    "edit_shape" -> onEditShape?.invoke()
                                     "effects" -> onEffects()
                                     "animations" -> onAnimations()
                                     "color" -> onColor()

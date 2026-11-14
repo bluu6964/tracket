@@ -40,7 +40,18 @@ enum class AnimProp(val isColor: Boolean = false) {
      * other keyframed property, and the native preview evaluates it with the model's own sampler
      * (see NativeRenderAt, the pie / arc precedent).
      */
-    SHAPE_CORNER_RADIUS
+    SHAPE_CORNER_RADIUS,
+
+    /**
+     * A gradient fill's geometry (Alight `gradientoverlay2` angle / scale, build 173):
+     * a = the gradient angle in degrees, b = the scale. The painters read the end points
+     * through [TimelineClip.at] like every other keyframed property; the centre is recovered
+     * from the stored points (see [GradGeometry]), so the animation pivots around the
+     * gradient's own centre. The native preview evaluates it with the model's own sampler
+     * (see NativeRenderAt, the corner-radius precedent). Importer-only: no editor writes
+     * this property (the gradient handles edit the stored end points directly).
+     */
+    GRAD_GEOMETRY
 }
 
 /** ARGB colour -> (A,R) and (G,B) packed as two exact floats (each < 65536). */
@@ -247,6 +258,7 @@ fun TimelineClip.propValues(p: AnimProp): Pair<Float, Float> = when (p) {
     AnimProp.SPEED -> speed to 0f
     AnimProp.STROKE_TRIM -> strokeTrimStart to strokeTrimEnd
     AnimProp.SHAPE_CORNER_RADIUS -> shapeCornerRadius to 0f
+    AnimProp.GRAD_GEOMETRY -> GradGeometry.angleScale(gradType, gradX1, gradY1, gradX2, gradY2)
 }
 
 fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when (p) {
@@ -271,6 +283,11 @@ fun TimelineClip.withProp(p: AnimProp, a: Float, b: Float): TimelineClip = when 
     AnimProp.SPEED -> copy(speed = a.coerceIn(MIN_SPEED, MAX_SPEED))
     AnimProp.STROKE_TRIM -> copy(strokeTrimStart = a.coerceIn(0f, 1f), strokeTrimEnd = b.coerceIn(0f, 1f))
     AnimProp.SHAPE_CORNER_RADIUS -> copy(shapeCornerRadius = a)
+    AnimProp.GRAD_GEOMETRY -> {
+        val (cx, cy) = GradGeometry.center(gradType, gradX1, gradY1, gradX2, gradY2)
+        val pts = GradGeometry.endpoints(gradType, cx, cy, a, b)
+        copy(gradX1 = pts[0], gradY1 = pts[1], gradX2 = pts[2], gradY2 = pts[3])
+    }
 }
 
 /** True for an imported `.pie` wedge: its outline is rebuilt per frame from its angle tracks. */

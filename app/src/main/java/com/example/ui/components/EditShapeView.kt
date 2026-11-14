@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.model.AspectRatio
 import com.example.model.TimelineClip
+import com.example.model.at
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -134,35 +135,84 @@ fun EditShapeView(
         trimStart: Float,
         trimEnd: Float
     ) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Editing an existing shape (build 173 — null = adding a new one): the sheet is prefilled
+     * from it, the shape-type picker stays hidden (the type is fixed), and the header button
+     * saves instead of adding. The fill colour is prefilled from the layer as it looks at
+     * the playhead; every other field from the stored layer, so saving a keyframed layer
+     * without touching a value writes no keyframe (see commitKeyframed).
+     */
+    initialClip: TimelineClip? = null,
+    /**
+     * The shape's corner radius is keyframed (build 173): the slider stays hidden and the
+     * sheet says so, with a chip that replaces the animation by a static radius frozen at
+     * the playhead — the build-86 text-reveal decision, same class.
+     */
+    keyframedCornerRadius: Boolean = false,
+    /** Replaces the keyframed radius by a static one frozen at the playhead. */
+    onUseStaticRadius: (() -> Unit)? = null,
+    /** Right button of the header: "Add" when adding, "Save" when editing. */
+    saveLabel: String = "Add"
 ) {
-    // Shape Parameters State
-    var selectedShapeType by remember { mutableStateOf(ShapeType.CIRCLE) }
+    // Shape Parameters State — prefilled from the edited layer, or the add defaults.
+    // The fill colour comes from the layer as it looks at the playhead (what the canvas
+    // shows); the corner radius from the stored layer, so a keyframed radius that the
+    // hidden slider cannot touch also cannot leak into a save.
+    val editing = initialClip != null
+    val atPlayhead = initialClip?.at(currentPlayheadMs)
+    var selectedShapeType by remember(initialClip?.id) {
+        mutableStateOf(initialClip?.let { shapeTypeOf(it.shapePattern) } ?: ShapeType.CIRCLE)
+    }
     var activeTab by remember { mutableStateOf(ShapeEditTab.SHAPE) }
 
-    var widthPercent by remember { mutableFloatStateOf(100f) }
-    var heightPercent by remember { mutableFloatStateOf(100f) }
+    var widthPercent by remember(initialClip?.id) {
+        mutableFloatStateOf(initialClip?.let { it.shapeScaleX * 100f } ?: 100f)
+    }
+    var heightPercent by remember(initialClip?.id) {
+        mutableFloatStateOf(initialClip?.let { it.shapeScaleY * 100f } ?: 100f)
+    }
     var featherPercent by remember { mutableFloatStateOf(0.0f) }
 
-    var fillColor by remember { mutableStateOf(Color.White) }
-    var fillOpacity by remember { mutableFloatStateOf(100f) }
+    var fillColor by remember(initialClip?.id) {
+        mutableStateOf(atPlayhead?.let { Color(it.textColor) } ?: Color.White)
+    }
+    var fillOpacity by remember(initialClip?.id) {
+        mutableFloatStateOf(atPlayhead?.let { ((it.textColor shr 24) and 0xFF) / 255f * 100f } ?: 100f)
+    }
 
-    var strokeWidth by remember { mutableFloatStateOf(0f) }
-    var strokeColor by remember { mutableStateOf(Color.White) }
+    var strokeWidth by remember(initialClip?.id) {
+        mutableFloatStateOf(initialClip?.strokeWidth ?: 0f)
+    }
+    var strokeColor by remember(initialClip?.id) {
+        mutableStateOf(initialClip?.let { Color(it.strokeColor) } ?: Color.White)
+    }
 
     // New fields from the Alight import (builds 80–81): corner radius for the rounded rect shapes
     // (the preview's built-in corners: 12 dp wide rect, 20 dp rounded square) and the stroke trim
     // window (draw-on). The trim sliders only show while a stroke exists.
-    var cornerRadiusDp by remember { mutableFloatStateOf(12f) }
-    var trimStartPercent by remember { mutableFloatStateOf(0f) }
-    var trimEndPercent by remember { mutableFloatStateOf(100f) }
+    var cornerRadiusDp by remember(initialClip?.id) {
+        mutableFloatStateOf(
+            initialClip?.let { if (it.shapeCornerRadius >= 0f) it.shapeCornerRadius else 12f } ?: 12f
+        )
+    }
+    var trimStartPercent by remember(initialClip?.id) {
+        mutableFloatStateOf(initialClip?.let { it.strokeTrimStart * 100f } ?: 0f)
+    }
+    var trimEndPercent by remember(initialClip?.id) {
+        mutableFloatStateOf(initialClip?.let { it.strokeTrimEnd * 100f } ?: 100f)
+    }
 
     var shadowBlur by remember { mutableFloatStateOf(0f) }
     var glowIntensity by remember { mutableFloatStateOf(0f) }
 
     // Canvas Interactive Shape Transformation
-    var shapeOffsetX by remember { mutableFloatStateOf(0f) }
-    var shapeOffsetY by remember { mutableFloatStateOf(0f) }
+    var shapeOffsetX by remember(initialClip?.id) {
+        mutableFloatStateOf(initialClip?.shapeOffsetX ?: 0f)
+    }
+    var shapeOffsetY by remember(initialClip?.id) {
+        mutableFloatStateOf(initialClip?.shapeOffsetY ?: 0f)
+    }
 
     Column(
         modifier = modifier
@@ -229,7 +279,7 @@ fun EditShapeView(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Add",
+                    text = saveLabel,
                     color = EditorBackground,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
@@ -681,7 +731,9 @@ fun EditShapeView(
             // Tab Contents
             when (activeTab) {
                 ShapeEditTab.SHAPE -> {
-                    // Shape selection row: Label "Shape" + Row of shape cards (matching screenshot)
+                    // Shape selection row: Label "Shape" + Row of shape cards (matching screenshot).
+                    // Editing an existing shape the type is fixed, so the picker stays hidden.
+                    if (!editing) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -739,6 +791,7 @@ fun EditShapeView(
                             }
                         }
                     }
+                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -780,16 +833,32 @@ fun EditShapeView(
                     // the renderers ignore it for SQUARE, CIRCLE and the rest, so it stays hidden there.
                     if (selectedShapeType == ShapeType.WIDE_ROUNDED_RECT || selectedShapeType == ShapeType.ROUNDED_SQUARE) {
                         Spacer(modifier = Modifier.height(6.dp))
-                        RulerDialSlider(
-                            label = "Corner radius",
-                            value = cornerRadiusDp,
-                            onValueChange = { cornerRadiusDp = it },
-                            min = 0f,
-                            max = 65f,
-                            unit = "dp",
-                            isPercentage = false,
-                            step = 1f
-                        )
+                        if (keyframedCornerRadius) {
+                            // Animated corner radius (build 173): the slider would silently mislead —
+                            // the value changes over time — so it stays hidden, like the build-86
+                            // text-reveal sliders, until an explicit tap freezes it at the playhead.
+                            Text(
+                                "Animated corner radius — the radius is keyframed in Alight Motion, so it changes over time.",
+                                color = TextSecondary, fontSize = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ShapeEditChip(label = "Use static radius", onClick = {
+                                cornerRadiusDp = initialClip?.at(currentPlayheadMs)?.shapeCornerRadius
+                                    ?: cornerRadiusDp
+                                onUseStaticRadius?.invoke()
+                            })
+                        } else {
+                            RulerDialSlider(
+                                label = "Corner radius",
+                                value = cornerRadiusDp,
+                                onValueChange = { cornerRadiusDp = it },
+                                min = 0f,
+                                max = 65f,
+                                unit = "dp",
+                                isPercentage = false,
+                                step = 1f
+                            )
+                        }
                     }
                 }
 
@@ -917,7 +986,7 @@ fun EditShapeView(
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = NeonCyan)
             ) {
                 Text(
-                    text = "Add Shape to Timeline",
+                    text = if (editing) "Save Shape" else "Add Shape to Timeline",
                     color = EditorBackground,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
@@ -926,5 +995,45 @@ fun EditShapeView(
 
             Spacer(modifier = Modifier.height(14.dp))
         }
+    }
+}
+
+/**
+ * The editor's shape type for a stored [TimelineClip.shapePattern] (build 173, edit
+ * prefill): the importer's normalised names ("RECT" / "CIRCLE" / "ROUNDED_RECT") and the
+ * app's own enum names. Anything else (PATH shapes, groups of paths) falls back to
+ * SQUARE — the picker is hidden while editing, so the type only decides which sliders
+ * the sheet shows, and the saved pattern is never rewritten.
+ */
+private fun shapeTypeOf(pattern: String?): ShapeType = when (pattern?.uppercase()) {
+    "CIRCLE" -> ShapeType.CIRCLE
+    "RECT", "SQUARE" -> ShapeType.SQUARE
+    "ROUNDED_RECT", "ROUNDED_SQUARE" -> ShapeType.ROUNDED_SQUARE
+    "WIDE_ROUNDED_RECT" -> ShapeType.WIDE_ROUNDED_RECT
+    "OVAL" -> ShapeType.OVAL
+    "PENTAGON" -> ShapeType.PENTAGON
+    "STAR" -> ShapeType.STAR
+    else -> ShapeType.SQUARE
+}
+
+/** The build-86 text-reveal sheet chip, local to the shape editor (same look). */
+@Composable
+private fun ShapeEditChip(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(ChipBg)
+            .bouncyClickable(pressedScale = 0.9f, onClick = onClick)
+            .padding(horizontal = 22.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            color = Color.White,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
     }
 }

@@ -2075,6 +2075,8 @@ fun VideoEditorScreen(
     var showStickerSheet by remember { mutableStateOf(false) }
     var showStickerSpeedSheet by remember { mutableStateOf(false) }
     var showEditShapeMode by remember { mutableStateOf(false) }
+    // Editing an existing shape (build 173): the id of the shape the shape editor is open for (null = adding).
+    var editShapeClipId by remember { mutableStateOf<String?>(null) }
     var showClipEffectsSheet by remember { mutableStateOf(false) }
     // Masks panel: open flag, selected mask, selected pen point, and the points of a pen path being drawn (null = not drawing).
     var showClipMasksSheet by remember { mutableStateOf(false) }
@@ -2841,6 +2843,15 @@ fun VideoEditorScreen(
                                 {
                                     viewModel.beginTextEdit()
                                     editingTextId = targetClipId
+                                }
+                            } else null,
+                            onEditShape = if (tracks.flatMap { it.clips }
+                                    .any { it.id == targetClipId && it.type == LayerType.SHAPE }
+                            ) {
+                                {
+                                    // One undo step for the whole editing session (chip + save).
+                                    viewModel.beginAdjust()
+                                    editShapeClipId = targetClipId
                                 }
                             } else null,
                             onParent = if (tracks.flatMap { it.clips }.any { it.id == targetClipId && it.type == LayerType.GROUP }) null
@@ -4267,9 +4278,14 @@ fun VideoEditorScreen(
         )
     }
 
-    if (showEditShapeMode) {
+    // Shape editor (build 173): the same sheet adds a new shape (showEditShapeMode, the old
+    // add flow) and edits the selected shape (editShapeClipId). In edit mode the sheet is
+    // prefilled from the layer; saving writes the edited fields back onto it (the pattern
+    // stays: the type picker is hidden while editing).
+    val editShapeClip = editShapeClipId?.let { id -> tracks.flatMap { it.clips }.find { it.id == id } }
+    if (showEditShapeMode || editShapeClip != null) {
         androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showEditShapeMode = false },
+            onDismissRequest = { showEditShapeMode = false; editShapeClipId = null },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
         ) {
             com.example.ui.components.EditShapeView(
@@ -4281,13 +4297,8 @@ fun VideoEditorScreen(
                 nativePreview = nativePreview,
                 onTogglePlay = { viewModel.togglePlayPause() },
                 onSeekTo = { viewModel.seekTo(it) },
-                onDismiss = { showEditShapeMode = false },
+                onDismiss = { showEditShapeMode = false; editShapeClipId = null },
                 onSaveShape = { shapeType, w, h, color, feather, offX, offY, strokeW, strokeCol, cornerRadiusDp, trimStart, trimEnd ->
-                    val clipDuration = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
-                        minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
-                    } else {
-                        4000L
-                    }
                     val a = (color.alpha * 255).toInt().coerceIn(0, 255)
                     val r = (color.red * 255).toInt().coerceIn(0, 255)
                     val g = (color.green * 255).toInt().coerceIn(0, 255)
@@ -4302,28 +4313,77 @@ fun VideoEditorScreen(
                     val strokeArgb = ((strA and 0xFF) shl 24) or ((strR and 0xFF) shl 16) or ((strG and 0xFF) shl 8) or (strB and 0xFF)
                     val strokeColorLong = strokeArgb.toLong() and 0xFFFFFFFFL
 
-                    viewModel.addClip(
-                        type = LayerType.SHAPE,
-                        name = "${shapeType.label} Shape",
-                        durationMs = clipDuration,
-                        shapePattern = shapeType.name,
-                        textColor = colorLong,
-                        shapeOffsetX = offX,
-                        shapeOffsetY = offY,
-                        shapeScaleX = w / 100f,
-                        shapeScaleY = h / 100f,
-                        strokeWidth = strokeW,
-                        strokeColor = strokeColorLong,
-                        // Only the rounded rect shapes read a corner radius (see EditShapeView);
-                        // the other shapes keep the model's "not set" (-1) default.
-                        shapeCornerRadius = if (shapeType == com.example.ui.components.ShapeType.WIDE_ROUNDED_RECT ||
-                            shapeType == com.example.ui.components.ShapeType.ROUNDED_SQUARE
-                        ) cornerRadiusDp else -1f,
-                        strokeTrimStart = trimStart,
-                        strokeTrimEnd = trimEnd
-                    )
+                    val editing = editShapeClip
+                    if (editing != null) {
+                        // Saving an edit writes the sheet's fields onto the layer; a field the
+                        // sheet prefilled from the stored layer and the user did not touch
+                        // compares equal, so commitKeyframed writes no keyframe for it.
+                        viewModel.updateClip(editing.id) {
+                            it.copy(
+                                textColor = colorLong,
+                                shapeOffsetX = offX,
+                                shapeOffsetY = offY,
+                                shapeScaleX = w / 100f,
+                                shapeScaleY = h / 100f,
+                                strokeWidth = strokeW,
+                                strokeColor = strokeColorLong,
+                                shapeCornerRadius = if (shapeType == com.example.ui.components.ShapeType.WIDE_ROUNDED_RECT ||
+                                    shapeType == com.example.ui.components.ShapeType.ROUNDED_SQUARE
+                                ) cornerRadiusDp else it.shapeCornerRadius,
+                                strokeTrimStart = trimStart,
+                                strokeTrimEnd = trimEnd
+                            )
+                        }
+                        editShapeClipId = null
+                    } else {
+                        val clipDuration = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
+                            minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
+                        } else {
+                            4000L
+                        }
+
+                        viewModel.addClip(
+                            type = LayerType.SHAPE,
+                            name = "${shapeType.label} Shape",
+                            durationMs = clipDuration,
+                            shapePattern = shapeType.name,
+                            textColor = colorLong,
+                            shapeOffsetX = offX,
+                            shapeOffsetY = offY,
+                            shapeScaleX = w / 100f,
+                            shapeScaleY = h / 100f,
+                            strokeWidth = strokeW,
+                            strokeColor = strokeColorLong,
+                            // Only the rounded rect shapes read a corner radius (see EditShapeView);
+                            // the other shapes keep the model's "not set" (-1) default.
+                            shapeCornerRadius = if (shapeType == com.example.ui.components.ShapeType.WIDE_ROUNDED_RECT ||
+                                shapeType == com.example.ui.components.ShapeType.ROUNDED_SQUARE
+                            ) cornerRadiusDp else -1f,
+                            strokeTrimStart = trimStart,
+                            strokeTrimEnd = trimEnd
+                        )
+                    }
                 },
-                modifier = Modifier.fillMaxSize().enterPop()
+                modifier = Modifier.fillMaxSize().enterPop(),
+                initialClip = editShapeClip,
+                keyframedCornerRadius = editShapeClip?.let {
+                    com.example.model.ShapeEditValues.isCornerRadiusKeyframed(it)
+                } ?: false,
+                onUseStaticRadius = editShapeClip?.let { clip ->
+                    {
+                        // Freeze the radius at the playhead and drop the keys: the slider
+                        // reappears with the frozen value (the sheet sets its own state too).
+                        viewModel.updateClip(clip.id) {
+                            it.copy(
+                                keyframes = it.keyframes - com.example.model.AnimProp.SHAPE_CORNER_RADIUS,
+                                shapeCornerRadius = com.example.model.ShapeEditValues.staticCornerRadiusAt(
+                                    it, playheadState.value
+                                )
+                            )
+                        }
+                    }
+                },
+                saveLabel = if (editShapeClip != null) "Save" else "Add"
             )
         }
     }

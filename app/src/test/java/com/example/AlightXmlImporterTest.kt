@@ -1490,6 +1490,74 @@ $layers
     }
 
     @Test
+    fun gradientOverlayFillKeyframedAngleRidesGeometryKeys() {
+        // Verbatim omniframe-evergreen text layer ("NEZUKO"): linear gradient, angle
+        // keyframed 0 -> 112.5, scale static 1. The angle rides GRAD_GEOMETRY keys (a = angle,
+        // b = scale) instead of taking the first value with a warning; the base points are
+        // the angle-0 geometry and at() rotates them around the centre.
+        val xml = scene(
+            """<text id="1" label="NEZUKO" startTime="0" endTime="2000" fillType="color" size="48" font="googlefonts?name=Roboto&amp;weight=700" wrapWidth="900" align="center">
+  <transform><location value="540,960,0" /><scale value="2,2" /></transform>
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#ff427d42" /><property name="color2" type="color" value="#ffffffff" /><property name="angle" type="float"><kf t="0" v="0" /><kf t="1" v="112.5" /></property><property name="scale" type="float" value="1" /><property name="alpha" type="float" value="0.75" /><property name="gradType" type="int" value="0" /><property name="blendMode" type="int" value="0" /></effect>
+  <content>NEZUKO</content></text>""", 1000, 1000
+        )
+        val r = AlightXmlImporter.parse(xml, 1000f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(com.example.model.FILL_GRADIENT, c.fillMode)
+        assertEquals(com.example.model.GRAD_LINEAR, c.gradType)
+        assertTrue(r.warnings.none { it.contains("keyframed angle") })
+        val keys = c.keyframes[com.example.model.AnimProp.GRAD_GEOMETRY].orEmpty()
+        assertEquals(2, keys.size)
+        assertEquals(0L, keys[0].timeMs)
+        assertEquals(0f, keys[0].a, 0.001f)
+        assertEquals(1f, keys[0].b, 0.001f)
+        assertEquals(2000L, keys[1].timeMs)
+        assertEquals(112.5f, keys[1].a, 0.001f)
+        assertEquals(1f, keys[1].b, 0.001f)
+        // Base points = angle 0; mid-layer the gradient has turned 56.25.
+        assertEquals(0.5f, c.gradX1, 0.001f)
+        assertEquals(1f, c.gradY1, 0.001f)
+        val mid = c.at(1000)
+        assertEquals(0.0843f, mid.gradX1, 0.002f)
+        assertEquals(0.7778f, mid.gradY1, 0.002f)
+        assertEquals(0.9157f, mid.gradX2, 0.002f)
+        assertEquals(0.2222f, mid.gradY2, 0.002f)
+    }
+
+    @Test
+    fun gradientOverlayFillKeyframedScaleRidesGeometryKeys() {
+        // Verbatim shake-rcf-10mar2 shape: radial gradient, angle static 160, offset (24, 0),
+        // scale keyframed 0.13 -> 1.91, alpha keyframed too. The scale rides GRAD_GEOMETRY
+        // keys; the keyframed alpha is still reported (its own warning stays).
+        val xml = scene(
+            """<shape id="1" label="Shape" startTime="0" endTime="1000" fillType="color" s=".rect">
+  <transform><location value="500,500,0" /><scale value="10,10" /></transform>
+  <fillColor value="#ff000000" />
+  <effect id="com.alightcreative.gradientoverlay2" locallyApplied="true"><property name="color1" type="color" value="#00000000" /><property name="color2" type="color" value="#ff000000" /><property name="angle" type="float" value="160" /><property name="offset" type="vec2" value="24,0" /><property name="scale" type="float"><kf t="0.008795" v="0.13" /><kf t="0.243451" v="1.91" /></property><property name="alpha" type="float"><kf t="0.219952" v="0" /><kf t="0.019231" v="0.731" /></property><property name="gradType" type="int" value="1" /><property name="blendMode" type="int" value="0" /></effect>
+  <property name="size" type="vec2" value="218.057541,287.310822" /></shape>""", 1000, 1000
+        )
+        val r = AlightXmlImporter.parse(xml, 1000f)
+        val c = r.snapshot.tracks.flatMap { it.clips }[0]
+        assertEquals(com.example.model.GRAD_RADIAL, c.gradType)
+        assertTrue(r.warnings.none { it.contains("keyframed scale") })
+        assertTrue(r.warnings.any { it.contains("its alpha is not supported") })
+        val keys = c.keyframes[com.example.model.AnimProp.GRAD_GEOMETRY].orEmpty()
+        assertEquals(2, keys.size)
+        assertEquals(9L, keys[0].timeMs)
+        assertEquals(160f, keys[0].a, 0.001f)
+        assertEquals(0.13f, keys[0].b, 0.001f)
+        assertEquals(243L, keys[1].timeMs)
+        assertEquals(160f, keys[1].a, 0.001f)
+        assertEquals(1.91f, keys[1].b, 0.001f)
+        // Base points: centre (0.548, 0.5), radius 0.13/2; at the last key the radius is 1.91/2.
+        assertEquals(0.548f, c.gradX1, 0.001f)
+        assertEquals(0.5f, c.gradY1, 0.001f)
+        assertEquals(0.613f, c.gradX2, 0.001f)
+        assertEquals(0.5f, c.gradY2, 0.001f)
+        assertEquals(1.503f, c.at(243).gradX2, 0.002f)
+    }
+
+    @Test
     fun textSpacingMapsToLetterSpacingAndLineHeight() {
         val xml = scene(
             """<text id="1" label="A" startTime="0" endTime="1000" size="30" font="googlefonts?name=Roboto&amp;weight=400">

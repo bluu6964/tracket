@@ -1,6 +1,7 @@
 package com.example.engine
 
 import com.example.model.AnimProp
+import com.example.model.GradGeometry
 import com.example.model.TimelineClip
 import com.example.model.arcSegmentsAt
 import com.example.model.hasArc
@@ -45,18 +46,26 @@ internal object NativeRenderAt {
 
     /** Does the same as [renderAt]; [trackMs] = project time of the video picture really on screen. */
     fun renderAt(c: TimelineClip, timeMs: Long, trackMs: Long = timeMs): TimelineClip {
-        val base = renderAtKeyframed(c, timeMs, trackMs)
-        // A `.pie` wedge's outline is parametric (the native anim has no slot for its angle
-        // tracks): rebuild it from the evaluated angles with the model's own builder, so the
-        // preview here and the export (which goes through the model's renderAt) agree.
-        // An `.arc`'s outline is parametric the same way.
-        // A shape's keyframed corner radius is parametric the same way (the native anim has
-        // no slot for it either): evaluate it with the model's own sampler (build 172).
-        return if (c.hasPie) base.copy(pathSegments = c.pieSegmentsAt(timeMs - c.startMs))
-        else if (c.hasArc) base.copy(pathSegments = c.arcSegmentsAt(timeMs - c.startMs))
-        else if (!c.keyframes[AnimProp.SHAPE_CORNER_RADIUS].isNullOrEmpty())
-            base.copy(shapeCornerRadius = c.keyframes[AnimProp.SHAPE_CORNER_RADIUS]!!.valueAt(timeMs - c.startMs).first)
-        else base
+        var base = renderAtKeyframed(c, timeMs, trackMs)
+        // Parametric properties the native anim has no slot for — each rebuilt from the
+        // evaluated values with the model's own sampler (a `.pie` wedge's outline, an
+        // `.arc`'s outline, a shape's keyframed corner radius (build 172), a gradient
+        // fill's keyframed angle / scale (build 173)) — applied cumulatively, so a layer
+        // carrying several of them gets all of them, and the preview here and the export
+        // (which goes through the model's renderAt) agree.
+        if (c.hasPie) base = base.copy(pathSegments = c.pieSegmentsAt(timeMs - c.startMs))
+        if (c.hasArc) base = base.copy(pathSegments = c.arcSegmentsAt(timeMs - c.startMs))
+        val crKeys = c.keyframes[AnimProp.SHAPE_CORNER_RADIUS]
+        if (!crKeys.isNullOrEmpty())
+            base = base.copy(shapeCornerRadius = crKeys.valueAt(timeMs - c.startMs).first)
+        val ggKeys = c.keyframes[AnimProp.GRAD_GEOMETRY]
+        if (!ggKeys.isNullOrEmpty()) {
+            val (a, b) = ggKeys.valueAt(timeMs - c.startMs)
+            val (cx, cy) = GradGeometry.center(c.gradType, c.gradX1, c.gradY1, c.gradX2, c.gradY2)
+            val pts = GradGeometry.endpoints(c.gradType, cx, cy, a, b)
+            base = base.copy(gradX1 = pts[0], gradY1 = pts[1], gradX2 = pts[2], gradY2 = pts[3])
+        }
+        return base
     }
 
     private fun renderAtKeyframed(c: TimelineClip, timeMs: Long, trackMs: Long = timeMs): TimelineClip {

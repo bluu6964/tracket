@@ -28,4 +28,18 @@ object ShapeEditValues {
         val e = end.coerceIn(s, 1f)
         return s to e
     }
+
+    /**
+     * True when the shape's corner radius is keyframed (build 173): the shape editor's slider
+     * must not silently mislead — the build-86 text-reveal decision, same class: while the
+     * radius is animated the slider stays hidden and the sheet says so, with a chip that
+     * replaces the animation by a static radius frozen at the playhead (see
+     * [staticCornerRadiusAt]).
+     */
+    fun isCornerRadiusKeyframed(clip: TimelineClip): Boolean =
+        clip.keyframes[AnimProp.SHAPE_CORNER_RADIUS].orEmpty().isNotEmpty()
+
+    /** The corner radius as it looks at [playheadMs]: the value a "Use static radius" freeze keeps. */
+    fun staticCornerRadiusAt(clip: TimelineClip, playheadMs: Long): Float =
+        clip.at(playheadMs).shapeCornerRadius
 }

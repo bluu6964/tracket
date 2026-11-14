@@ -17,6 +17,7 @@ import com.example.model.FILL_NONE
 import com.example.model.FILL_SOLID
 import com.example.model.GRAD_LINEAR
 import com.example.model.GRAD_RADIAL
+import com.example.model.GradGeometry
 import com.example.model.GRAD_SWEEP
 import com.example.model.IMG_FILL
 import com.example.model.IMG_FIT
@@ -3124,8 +3125,10 @@ object AlightXmlImporter {
      * twice the centre distance / scale; a sweep's t runs clockwise (screen) from the (-cos a, -sin a)
      * ray. What the app's model cannot say is reported: the effect's own alpha and a non-normal blend
      * mode (in Alight the gradient composites OVER the layer's fill; the app's gradient REPLACES it),
-     * keyframed geometry, and the sweep's wrap (AM jumps from colour 2 back to colour 1, the app's
-     * sweep blends back).
+     * a keyframed offset, and the sweep's wrap (AM jumps from colour 2 back to colour 1, the app's
+     * sweep blends back). A keyframed angle / scale rides [AnimProp.GRAD_GEOMETRY] (build 173):
+     * the union of the two tracks' key times, sampled with each key carrying its owner's easing
+     * (the wipe precedent), so the fill rotates / grows exactly like the group op's tails.
      * On a GROUP the fill mapping has nowhere to land (a group has no fill), so the effect becomes
      * the native Gradient Overlay (Alight) op instead of a skip (build 172 — see
      * [applyGradientOverlayGroup]).
@@ -3165,8 +3168,10 @@ object AlightXmlImporter {
                 clip = if (first) clip.copy(gradColor1 = c) else clip.copy(gradColor2 = c)
             }
         }
-        val angle = props["angle"]?.firstValue(w, "gradientoverlay", "angle") ?: 0f
-        val scale = props["scale"]?.firstValue(w, "gradientoverlay", "scale") ?: 1f
+        val angleT = props["angle"]
+        val scaleT = props["scale"]
+        val angle0 = angleT?.scalarAt(0f) ?: 0f
+        val scale0 = scaleT?.scalarAt(0f) ?: 1f
         val offT = props["offset"]
         if (offT != null && offT.keys.size >= 2) {
             w += "Effect gradientoverlay: keyframed offset is not supported yet: the first value is used"
@@ -3174,25 +3179,30 @@ object AlightXmlImporter {
         val off = offT?.first() ?: emptyList()
         val cx = 0.5f + (off.getOrNull(0) ?: 0f) / 500f
         val cy = 0.5f + (off.getOrNull(1) ?: 0f) / 500f
-        val rad = Math.toRadians(angle.toDouble())
-        val half = 0.5f * scale
-        clip = when (gradType) {
-            GRAD_RADIAL -> clip.copy(gradX1 = cx, gradY1 = cy, gradX2 = cx + half, gradY2 = cy)
-            GRAD_SWEEP -> {
-                w += "Effect gradientoverlay: its sweep wraps from colour 2 back to colour 1; the app's sweep blends back instead"
-                clip.copy(
-                    gradX1 = cx, gradY1 = cy,
-                    gradX2 = cx - cos(rad).toFloat() * half, gradY2 = cy - sin(rad).toFloat() * half
-                )
-            }
-            else -> {
-                val dx = sin(rad).toFloat()
-                val dy = -cos(rad).toFloat()
-                clip.copy(
-                    gradX1 = cx - dx * half, gradY1 = cy - dy * half,
-                    gradX2 = cx + dx * half, gradY2 = cy + dy * half
-                )
-            }
+        val pts = GradGeometry.endpoints(gradType, cx, cy, angle0, scale0)
+        clip = clip.copy(gradX1 = pts[0], gradY1 = pts[1], gradX2 = pts[2], gradY2 = pts[3])
+        if (gradType == GRAD_SWEEP) {
+            w += "Effect gradientoverlay: its sweep wraps from colour 2 back to colour 1; the app's sweep blends back instead"
+        }
+        // Keyframed angle / scale (build 173): ride GRAD_GEOMETRY keys — the union of the two
+        // tracks' key times, each sampled linearly with the easing of the key it ends at
+        // (the wipe precedent) — so the fill rotates / grows per frame through TimelineClip.at.
+        // A static track contributes its constant at every key time; with neither keyframed
+        // there are no keys and the base points above are the whole story. The sampling stays
+        // in NORMALISED time: a key time rounded to ms and sampled back would drift off its
+        // own key's exact value (shake-rcf's 0.008795 -> 9 ms reads 0.1316, not 0.13).
+        val angleKeys = angleT?.keys.orEmpty()
+        val scaleKeys = scaleT?.keys.orEmpty()
+        if (angleKeys.size >= 2 || scaleKeys.size >= 2) {
+            val norms = ((angleKeys + scaleKeys).map { it.t.coerceIn(0f, 1f) }).distinct().sorted()
+            val keys = norms.mapIndexed { i, n ->
+                val t = (n * durMs).roundToLong()
+                val next = norms.getOrNull(i + 1)?.let { (it * durMs).roundToLong() }
+                val e = if (next == null) Easing.LINEAR
+                else angleT?.easingAtMs(next, durMs) ?: scaleT?.easingAtMs(next, durMs) ?: Easing.LINEAR
+                Keyframe(t, angleT?.scalarAt(n) ?: angle0, scaleT?.scalarAt(n) ?: scale0, e)
+            }.distinctBy { it.timeMs }
+            clip = clip.copy(keyframes = clip.keyframes + (AnimProp.GRAD_GEOMETRY to keys))
         }
         props["alpha"]?.let { aT ->
             if (aT.keys.size >= 2 || abs(aT.scalarAt(0f) - 1f) > 1e-4f) {

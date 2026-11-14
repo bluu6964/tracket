@@ -26,7 +26,14 @@ data class ProjectSnapshot(
      * ProjectStore's Json runs with ignoreUnknownKeys, so a file written by build 188+
      * still opens in an older app version (the key is simply skipped there).
      */
-    val markers: List<TimelineMarker> = emptyList()
+    val markers: List<TimelineMarker> = emptyList(),
+    /**
+     * Export range in/out points (build 199, A10): project-saved like the markers above;
+     * null = unset (exports render the whole project). Additive with defaults exactly like
+     * [markers], so project files written before build 199 load with no range.
+     */
+    val exportInMs: Long? = null,
+    val exportOutMs: Long? = null
 ) {
     companion object {
         const val CURRENT_VERSION = 1

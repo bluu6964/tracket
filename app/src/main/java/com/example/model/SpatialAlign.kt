@@ -22,11 +22,13 @@ data class AlignRect(
     val height: Float get() = bottom - top
 }
 
-/** The spatial actions of the multi-select bar (build 188): six aligns + two distributes. */
+/** The spatial actions of the multi-select bar (build 188: six aligns + two distributes; build 199: two canvas-centre actions). */
 enum class SpatialAction {
     ALIGN_LEFT, ALIGN_CENTER_H, ALIGN_RIGHT,
     ALIGN_TOP, ALIGN_CENTER_V, ALIGN_BOTTOM,
-    DISTRIBUTE_H, DISTRIBUTE_V
+    DISTRIBUTE_H, DISTRIBUTE_V,
+    /** Build 199 (A8): centre on the FRAME, not the selection — see [SpatialAlign.canvasDeltas]. */
+    CANVAS_CENTER_H, CANVAS_CENTER_V
 }
 
 /**
@@ -54,6 +56,9 @@ object SpatialAlign {
      * shared bounding box and fling every other selected layer with it.
      */
     fun deltas(rects: List<AlignRect>, action: SpatialAction): Map<String, Pair<Float, Float>> {
+        // The canvas actions are frame-relative and need the frame size — they are served by
+        // canvasDeltas below; deltas() has no frame and refuses them (build 199, A8).
+        if (action == SpatialAction.CANVAS_CENTER_H || action == SpatialAction.CANVAS_CENTER_V) return emptyMap()
         val finite = rects.filter {
             it.left.isFinite() && it.top.isFinite() && it.right.isFinite() && it.bottom.isFinite()
         }
@@ -61,6 +66,33 @@ object SpatialAlign {
             SpatialAction.DISTRIBUTE_H, SpatialAction.DISTRIBUTE_V -> distributeDeltas(finite, horizontal = action == SpatialAction.DISTRIBUTE_H)
             else -> alignDeltas(finite, action)
         }
+    }
+
+    /**
+     * Canvas-relative centring (build 199, A8): the delta that puts each rect's centre on the
+     * FRAME's centre line (horizontal centre for CANVAS_CENTER_H, vertical for
+     * CANVAS_CENTER_V), in canvas pixels, against a frame of [frameW] x [frameH]. Unlike the
+     * selection-relative aligns this works for a SINGLE layer too — centring one layer in the
+     * frame is the common case. Non-finite rects drop out (the build-198 law); a degenerate
+     * frame or a non-canvas action yields no deltas.
+     */
+    fun canvasDeltas(
+        rects: List<AlignRect>,
+        frameW: Float,
+        frameH: Float,
+        action: SpatialAction
+    ): Map<String, Pair<Float, Float>> {
+        if (action != SpatialAction.CANVAS_CENTER_H && action != SpatialAction.CANVAS_CENTER_V) return emptyMap()
+        if (!frameW.isFinite() || !frameH.isFinite() || frameW <= 0f || frameH <= 0f) return emptyMap()
+        val horizontal = action == SpatialAction.CANVAS_CENTER_H
+        val target = if (horizontal) frameW / 2f else frameH / 2f
+        val out = LinkedHashMap<String, Pair<Float, Float>>()
+        for (r in rects) {
+            if (!r.left.isFinite() || !r.top.isFinite() || !r.right.isFinite() || !r.bottom.isFinite()) continue
+            val d = target - if (horizontal) r.cx else r.cy
+            if (abs(d) > EPS) out[r.id] = if (horizontal) d to 0f else 0f to d
+        }
+        return out
     }
 
     /** Align needs at least 2 rects. */

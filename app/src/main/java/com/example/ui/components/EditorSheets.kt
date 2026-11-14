@@ -386,7 +386,11 @@ fun ExportModalDialog(
     onFormatChange: (String) -> Unit = {},
     gifFrameRate: Int = com.example.model.GifExport.DEFAULT_FPS,
     onGifFrameRateChange: (Int) -> Unit = {},
-    savedToLabel: String = "Saved to Movies/MaxCut"
+    savedToLabel: String = "Saved to Movies/MaxCut",
+    /** Export range (build 199, A10): the set range as text ("0:12 – 0:20"), or null = whole project. */
+    rangeLabel: String? = null,
+    /** Clears the export range from inside the dialog. */
+    onClearRange: (() -> Unit)? = null
 ) {
     // Time the current export started (reset every time a new export begins).
     var startedAt by remember { mutableStateOf(0L) }
@@ -434,7 +438,9 @@ fun ExportModalDialog(
                         onBitrateChange = onBitrateChange,
                         onFormatChange = onFormatChange,
                         onGifFrameRateChange = onGifFrameRateChange,
-                        onStartExport = onStartExport
+                        onStartExport = onStartExport,
+                        rangeLabel = rangeLabel,
+                        onClearRange = onClearRange
                     )
                 } else {
                 Spacer(modifier = Modifier.weight(1f))
@@ -562,7 +568,9 @@ private fun ColumnScope.ExportSettingsPage(
     onBitrateChange: (Int) -> Unit,
     onFormatChange: (String) -> Unit,
     onGifFrameRateChange: (Int) -> Unit,
-    onStartExport: () -> Unit
+    onStartExport: () -> Unit,
+    rangeLabel: String? = null,
+    onClearRange: (() -> Unit)? = null
 ) {
     val resValue = exportResolutionValue(resolutionLabel)
     val isGif = format == com.example.model.ExportFormats.GIF
@@ -599,6 +607,16 @@ private fun ColumnScope.ExportSettingsPage(
                 ExportChip("GIF", isGif) { onFormatChange(com.example.model.ExportFormats.GIF) }
                 ExportChip("PNG sequence", format == com.example.model.ExportFormats.PNG_SEQUENCE) {
                     onFormatChange(com.example.model.ExportFormats.PNG_SEQUENCE)
+                }
+            }
+        }
+
+        // Build 199 (A10): the export range, when set on the ruler — only this window is
+        // exported. Clearing here returns to exporting the whole project.
+        if (rangeLabel != null) {
+            ExportCard("Range", rangeLabel, "Only this part of the project is exported") {
+                ExportChipRow {
+                    ExportChip("Clear range", false) { onClearRange?.invoke() }
                 }
             }
         }

@@ -177,6 +177,12 @@ fun VideoEditorScreen(
     val markers by viewModel.markers.collectAsState()
     val onionSkin by viewModel.onionSkin.collectAsState()
     val scopesOn by viewModel.scopesOn.collectAsState()
+    // Build 199: snap switch (A3), export range points (A10), layer clipboard (A7), solo (A6).
+    val snapEnabled by viewModel.snapEnabled.collectAsState()
+    val exportInMs by viewModel.exportInMs.collectAsState()
+    val exportOutMs by viewModel.exportOutMs.collectAsState()
+    val hasLayerClipboard by viewModel.hasLayerClipboard.collectAsState()
+    val soloClipId by viewModel.soloClipId.collectAsState()
     // Video scopes (build 196): the latest ScopeStats of the composed preview
     // frame at the playhead; null while no frame has been read (the panel then
     // shows its honest empty state). Filled by the refresh effect below.
@@ -303,6 +309,16 @@ fun VideoEditorScreen(
     // drawn by CanvasArea next to its own drag guides; cleared on pad release / panel close.
     var transformSnapGuideX by remember { mutableStateOf<Float?>(null) }
     var transformSnapGuideY by remember { mutableStateOf<Float?>(null) }
+
+    // Build 199 (A3): the snap switch is persisted in the editor preferences (the app's
+    // SharedPreferences mechanism, like face_ai / captions above); load it once into the
+    // view-model, whose StateFlow the canvas + transform pad consult.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.setSnapEnabled(
+            context.getSharedPreferences("editor", android.content.Context.MODE_PRIVATE)
+                .getBoolean("snap_enabled", true)
+        )
+    }
 
     // ---- Face AI (MediaPipe Face Landmarker): blur that follows the face / eyes / nose / lips ----
     var faceProgress by remember { androidx.compose.runtime.mutableStateOf<Float?>(null) }
@@ -1482,6 +1498,8 @@ fun VideoEditorScreen(
     }
 
     var renameTargetId by remember { mutableStateOf<String?>(null) }
+    // Build 199 (A2): the layer whose colour-label picker is open.
+    var labelTargetId by remember { mutableStateOf<String?>(null) }
     /** "Save as Template" (Templates v2): the Group layer waiting for its template name. */
     var saveTemplateGroupId by remember { mutableStateOf<String?>(null) }
     /** The person's own template library (filesDir/templates, next to the projects). */
@@ -2692,6 +2710,7 @@ fun VideoEditorScreen(
                 CanvasArea(
                     nativePreview = nativePreview,
                     selectionHidden = showClipMasksSheet || showDrawMode || showPenMode || editPointsClipId != null,
+                    snapEnabled = snapEnabled,
                     height = canvasH,
                     aspectRatio = selectedAspectRatio,
                     playheadMs = playheadProvider,
@@ -2755,6 +2774,20 @@ fun VideoEditorScreen(
                     onOnionSkinClick = { viewModel.setOnionSkinEnabled(!onionSkin.enabled) },
                     scopesOn = scopesOn,
                     onScopesClick = { viewModel.setScopesOn(!scopesOn) },
+                    // Build 199: snap toggle (A3, persisted in the editor preferences) and
+                    // the export range IN/OUT points (A10 — set at the playhead, tap again
+                    // at the same spot to clear).
+                    snapOn = snapEnabled,
+                    onSnapClick = {
+                        val next = !snapEnabled
+                        viewModel.setSnapEnabled(next)
+                        context.getSharedPreferences("editor", android.content.Context.MODE_PRIVATE)
+                            .edit().putBoolean("snap_enabled", next).apply()
+                    },
+                    exportInSet = exportInMs != null,
+                    exportOutSet = exportOutMs != null,
+                    onExportInClick = { viewModel.toggleExportInAtPlayhead() },
+                    onExportOutClick = { viewModel.toggleExportOutAtPlayhead() },
                     onPreviousClick = { viewModel.jumpPrevious() },
                     onPlayPauseClick = { viewModel.togglePlayPause() },
                     onNextClick = { viewModel.jumpNext() },
@@ -2787,7 +2820,9 @@ fun VideoEditorScreen(
                     beatMarksMs = beatMarks,
                     markers = markers,
                     onMarkerTap = { m -> viewModel.seekTo(m.timeMs) },
-                    onMarkerLongPress = { m -> markerEditTarget = m }
+                    onMarkerLongPress = { m -> markerEditTarget = m },
+                    exportInMs = exportInMs,
+                    exportOutMs = exportOutMs
                 )
 
                 // 5. Layer Panel (5/18 of screen). Inside a group (Edit Group) a green bar on top leads back out.
@@ -2809,6 +2844,25 @@ fun VideoEditorScreen(
                     onLongPressLane = { id -> viewModel.enterMultiSelect(id) },
                     onToggleMulti = { id -> viewModel.toggleMultiSelect(id) },
                     onMultiAction = { viewModel.applyMultiAction(it) },
+                    // Build 199: the multi-select bar's Delete tile (A11 — one undo step,
+                    // locked layers skipped and reported) and All tile (A4), plus the audio
+                    // fade handles' funnel (A9 — the same setClipFades the Fade sheet uses).
+                    onDeleteCheckedLayers = {
+                        val r = viewModel.deleteMultiSelected()
+                        if (r != null) {
+                            val msg = buildString {
+                                append("Deleted ${r.first} layer")
+                                if (r.first != 1) append("s")
+                                if (r.second > 0) append(" · ${r.second} locked skipped")
+                            }
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(msg)
+                            }
+                        }
+                    },
+                    onSelectAllLayers = { viewModel.selectAllLayers() },
+                    onSetClipFades = { id, fi, fo -> viewModel.setClipFades(id, fi, fo) },
                     // Canvas spatial align / distribute (build 188): the build-176/184
                     // pattern run from the screen — the checked layers are rendered at the
                     // playhead and measured through the SAME snapRectOf (cropped bounds
@@ -2833,7 +2887,15 @@ fun VideoEditorScreen(
                                 com.example.ui.components.snapRectOf(rc, fw, fh, previewDensity, canvasTextSizes, forDragged = true)
                                     ?.let { r -> com.example.model.AlignRect(rc.id, r.left, r.top, r.right, r.bottom) }
                             }
-                            val deltasPx = com.example.model.SpatialAlign.deltas(rects, action)
+                            // Build 199 (A8): the canvas-centre actions read against the
+                            // FRAME (canvasDeltas); every other action is selection-relative.
+                            val deltasPx = if (action == com.example.model.SpatialAction.CANVAS_CENTER_H ||
+                                action == com.example.model.SpatialAction.CANVAS_CENTER_V
+                            ) {
+                                com.example.model.SpatialAlign.canvasDeltas(rects, fw, fh, action)
+                            } else {
+                                com.example.model.SpatialAlign.deltas(rects, action)
+                            }
                             if (deltasPx.isNotEmpty()) {
                                 val stored = HashMap<String, Pair<Float, Float>>()
                                 for ((id, d) in deltasPx) {
@@ -3075,7 +3137,26 @@ fun VideoEditorScreen(
                                 showAudioNoiseSheet = true
                             },
                             onCaptions = { requestCaptions(targetClipId) },
-                            onRename = { renameTargetId = targetClipId }
+                            onRename = { renameTargetId = targetClipId },
+                            // Build 199: layer actions for audio layers too (A1/A6/A2/A7).
+                            onLockLayer = { viewModel.toggleClipLocked(targetClipId) },
+                            onSoloLayer = { viewModel.toggleSolo(targetClipId) },
+                            onLabelColor = { labelTargetId = targetClipId },
+                            onCopyLayer = {
+                                val ok = viewModel.copySelectedLayer()
+                                scope.launch {
+                                    snackbarHostState.currentSnackbarData?.dismiss()
+                                    snackbarHostState.showSnackbar(if (ok) "Layer copied" else "This layer cannot be copied")
+                                }
+                            },
+                            onPasteLayer = if (hasLayerClipboard) ({
+                                if (viewModel.pasteLayer()) {
+                                    scope.launch {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        snackbarHostState.showSnackbar("Layer pasted")
+                                    }
+                                }
+                            }) else null
                         ) else ClipEditToolsPanel(
                             height = toolbarH,
                             // Null / 3D Camera: no picture, so no Effects / Animations / Color / Crop / Blend; only what moves them.
@@ -3401,10 +3482,53 @@ fun VideoEditorScreen(
                                     }
                                 }
                             } else null,
+                            // Build 199 layer actions: lock (A1), solo (A6), colour label
+                            // (A2), clear keyframes (A5 — only while the layer has any),
+                            // copy / paste whole layer (A7).
+                            onLockLayer = { viewModel.toggleClipLocked(targetClipId) },
+                            onSoloLayer = { viewModel.toggleSolo(targetClipId) },
+                            onLabelColor = { labelTargetId = targetClipId },
+                            onClearKeyframes = if (tracks.flatMap { it.clips }.any {
+                                    it.id == targetClipId && it.keyframes.values.any { kfs -> kfs.isNotEmpty() }
+                                }
+                            ) {
+                                {
+                                    if (viewModel.clearAllKeyframes(targetClipId)) {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        scope.launch { snackbarHostState.showSnackbar("Keyframes cleared") }
+                                    }
+                                }
+                            } else null,
+                            onCopyLayer = {
+                                val ok = viewModel.copySelectedLayer()
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        if (ok) "Layer copied" else "Groups and chains cannot be copied — use Duplicate"
+                                    )
+                                }
+                            },
+                            onPasteLayer = if (hasLayerClipboard) {
+                                {
+                                    if (viewModel.pasteLayer()) {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        scope.launch { snackbarHostState.showSnackbar("Layer pasted") }
+                                    }
+                                }
+                            } else null,
                             // Used-tool state (build 166, item 5): the tools already applied
                             // to this layer read white, the rest grey (UsedTools' rule).
+                            // Build 199 unions the new tools' states in here (UsedTools
+                            // itself is harness-pinned and stays untouched): locked reads
+                            // white, the solo tool reads white on the soloed layer, and the
+                            // label tool reads white on a non-default label colour.
                             usedTools = tracks.flatMap { it.clips }.firstOrNull { it.id == targetClipId }
-                                ?.let { com.example.model.UsedTools.usedToolsOf(it) } ?: emptySet()
+                                ?.let { c ->
+                                    com.example.model.UsedTools.usedToolsOf(c) +
+                                        (if (c.isLocked) setOf("lock") else emptySet()) +
+                                        (if (soloClipId == c.id) setOf("solo") else emptySet()) +
+                                        (if (c.color != com.example.model.defaultClipColor(c.type)) setOf("label") else emptySet())
+                                } ?: emptySet()
                         )
                     } else {
                         BottomToolbar(
@@ -3773,6 +3897,11 @@ fun VideoEditorScreen(
                         onEasingChange = { prop, kfTime, easing ->
                             selectedClip?.id?.let { viewModel.setKeyframeEasing(it, prop, kfTime, easing) }
                         },
+                        // Build 199 (A5): the curve editor's delete affordance deletes the
+                        // segment-start keyframe (Controller fan-out rides the VM call).
+                        onDeleteKeyframe = { prop, kfTime ->
+                            selectedClip?.id?.let { viewModel.deleteKeyframe(it, prop, kfTime) }
+                        },
                         layerRow = selectedClip?.id?.let { id -> @Composable { layerRow(id) } },
                         // Magnetic snap for the PositionPad (build 184 — Sarowar's report:
                         // build 176 snapped canvas finger-drags but not Transform moves).
@@ -3784,6 +3913,11 @@ fun VideoEditorScreen(
                         // written via commitKeyframed (lands as the playhead keyframe) and
                         // a Controller's fan-out derives from the snapped delta.
                         positionSnapper = { sx, sy ->
+                            // Build 199 (A3): snap off — the raw proposal passes through
+                            // (TransformView treats a null snapper result as raw + clears
+                            // the guides; returning a no-delta PositionSnap is equivalent
+                            // here because this lambda's null case is the no-target one).
+                            if (!snapEnabled) com.example.ui.components.PositionSnap(sx, sy, null, null) else {
                             val target = selectedClip
                             val fw = previewFrameWidthPx
                             if (target == null || fw <= 1f) null else {
@@ -3820,6 +3954,7 @@ fun VideoEditorScreen(
                                         )
                                     }
                                 }
+                            }
                             }
                         },
                         onSnapGuides = { gx, gy ->
@@ -4568,6 +4703,33 @@ fun VideoEditorScreen(
         )
     }
 
+    // Layer colour label (build 199, A2): pick the timeline label colour of one layer.
+    labelTargetId?.let { lid ->
+        val target = tracks.flatMap { it.clips }.firstOrNull { it.id == lid }
+        if (target != null) {
+            com.example.ui.components.LayerLabelDialog(
+                currentColor = target.color,
+                defaultColor = com.example.model.defaultClipColor(target.type),
+                onPick = { color ->
+                    viewModel.setClipColor(lid, color)
+                    labelTargetId = null
+                },
+                onDismiss = { labelTargetId = null }
+            )
+        }
+    }
+
+    // Build 199 (O2): the Projects dialog's missing-media scan, computed ONCE per dialog
+    // open (remember keyed on the open flag) instead of inline in the dialog's parameters,
+    // where it re-ran a full snapshot + collect on every recomposition.
+    val missingMediaScan = remember(showProjects) {
+        if (showProjects) {
+            com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority)
+        } else {
+            emptyList()
+        }
+    }
+
     if (showProjects) {
         com.example.ui.components.ProjectsDialog(
             projects = projectList,
@@ -4622,9 +4784,13 @@ fun VideoEditorScreen(
                 }
             },
             onImport = { importProjectLauncher.launch(arrayOf("*/*")) },
-            missingMediaCount = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority).size,
+            // Build 199 (audit #2 item O2): the missing-media scan used to run inline
+            // here — a full collect() over a fresh snapshot on EVERY recomposition of
+            // the screen while the dialog was open. It now runs once per dialog open
+            // (missingMediaScan above the dialog) and both params read that one result.
+            missingMediaCount = missingMediaScan.size,
             onFixMissingMedia = {
-                missingMediaItems = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority)
+                missingMediaItems = missingMediaScan
                 showProjects = false
                 showMissingMedia = true
             },
@@ -4890,6 +5056,11 @@ fun VideoEditorScreen(
                 com.example.model.ExportFormats.PNG_SEQUENCE -> "Saved to Pictures/MaxCut (PNG frames)"
                 else -> "Saved to Movies/MaxCut"
             },
+            // Build 199 (A10): the export range, when the ruler points form one.
+            rangeLabel = viewModel.exportRange()?.let { r ->
+                "${com.example.ui.components.formatClock(r.inMs)} – ${com.example.ui.components.formatClock(r.outMs)}"
+            },
+            onClearRange = { viewModel.clearExportRange() },
             onStartExport = {
                 exportDone = false
                 exportedUri = null
@@ -4920,7 +5091,10 @@ fun VideoEditorScreen(
                         showExportDialog = false
                         com.example.ui.buddy.BuddyBrain.react(com.example.ui.buddy.BuddyEvent.EXPORT_FAIL)
                         scope.launch { snackbarHostState.showSnackbar("Export failed: $msg") }
-                    }
+                    },
+                    // Build 199 (A10): the range is read at tap time, so what exports is
+                    // exactly the range the dialog showed.
+                    range = viewModel.exportRange()
                 )
             },
             onCancel = {

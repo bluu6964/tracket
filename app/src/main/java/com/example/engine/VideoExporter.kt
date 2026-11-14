@@ -9,8 +9,10 @@ import android.provider.MediaStore
 import android.util.Log
 import com.example.model.AspectRatio
 import com.example.model.ExportFormats
+import com.example.model.ExportRange
 import com.example.model.ExportSettings
 import com.example.model.TimelineTrack
+import com.example.model.windowTracksForRange
 import java.io.File
 
 /**
@@ -35,12 +37,18 @@ class VideoExporter(private val context: Context) {
         previewDensity: Float = 1f,
         onProgress: (Float) -> Unit,
         onDone: (Uri) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        // Build 199 (A10): when set, only this window of the project is exported — the tracks
+        // are windowed + re-based once here (model.windowTracksForRange), so MP4, GIF and the
+        // PNG sequence all honour the range through the one path, and the GIF frame cap then
+        // applies to the ranged length. Null = the whole project, exactly as before.
+        range: ExportRange? = null
     ) {
         // LayerPainter (text / shape / sticker) scales preview units to the export size with these.
         PreviewFrameRef.widthPx = previewFrameWidthPx
         PreviewFrameRef.density = previewDensity
-        val reason = NativeProjectExporter.unsupportedReason(tracks)
+        val effectiveTracks = if (range != null) windowTracksForRange(tracks, range) else tracks
+        val reason = NativeProjectExporter.unsupportedReason(effectiveTracks)
         if (reason != null) {
             Log.w("VideoExporter", "export refused: $reason")
             onError("Cannot export: $reason")
@@ -55,7 +63,7 @@ class VideoExporter(private val context: Context) {
         val native = NativeProjectExporter(context)
         nativeExporter = native
         native.start(
-            tracks, aspectRatio, settings,
+            effectiveTracks, aspectRatio, settings,
             save = { file ->
                 when (raster) {
                     RasterFormat.GIF -> saveGifToPictures(file)

@@ -50,6 +50,11 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ClearAll
+import androidx.compose.material.icons.filled.FileCopy
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material3.Icon
@@ -137,6 +142,18 @@ fun ClipEditToolsPanel(
     onPasteEffects: (() -> Unit)? = null,
     /** Video layers: freeze frame (holds the picture at the playhead). */
     onFreeze: (() -> Unit)? = null,
+    /** Lock / unlock this layer (build 199, A1): a locked layer cannot be grabbed or trimmed. */
+    onLockLayer: (() -> Unit)? = null,
+    /** Solo this layer (build 199, A6): hides + mutes every other layer until tapped again. Used-state = this layer is the solo. */
+    onSoloLayer: (() -> Unit)? = null,
+    /** Colour label picker for this layer (build 199, A2). Used-state = a non-default label colour. */
+    onLabelColor: (() -> Unit)? = null,
+    /** Clear ALL keyframes of this layer (build 199, A5). Only set while the layer has keyframes. */
+    onClearKeyframes: (() -> Unit)? = null,
+    /** Copy the WHOLE layer to the layer clipboard (build 199, A7). */
+    onCopyLayer: (() -> Unit)? = null,
+    /** Paste the layer clipboard as a new layer (build 199, A7). Only set while the clipboard holds a layer. */
+    onPasteLayer: (() -> Unit)? = null,
     /**
      * Tools already USED on this layer (build 166, item 5 — the rule is
      * [com.example.model.UsedTools.usedToolsOf]): a used tool reads WHITE (white icon,
@@ -180,6 +197,12 @@ fun ClipEditToolsPanel(
     else emptyList()) + (if (onSaveTemplate != null) listOf(ClipToolItem("save_template", "Save as Template", Icons.Default.Save))
     else emptyList()) + (if (onFreeze != null) listOf(ClipToolItem("freeze", "Freeze", Icons.Default.Image))
     else emptyList()) + (if (onRename != null) listOf(ClipToolItem("rename", "Rename", Icons.Default.Edit))
+    else emptyList()) + (if (onLockLayer != null) listOf(ClipToolItem("lock", "Lock", Icons.Default.Lock))
+    else emptyList()) + (if (onSoloLayer != null) listOf(ClipToolItem("solo", "Solo", Icons.Default.Visibility))
+    else emptyList()) + (if (onLabelColor != null) listOf(ClipToolItem("label", "Label", Icons.Default.Label))
+    else emptyList()) + (if (onClearKeyframes != null) listOf(ClipToolItem("clear_keyframes", "Clear keys", Icons.Default.ClearAll))
+    else emptyList()) + (if (onCopyLayer != null) listOf(ClipToolItem("copy_layer", "Copy layer", Icons.Default.FileCopy))
+    else emptyList()) + (if (onPasteLayer != null) listOf(ClipToolItem("paste_layer", "Paste layer", Icons.Default.ContentPaste))
     else emptyList())
     val tools = if (onlyTools == null) allTools else allTools.filter { it.id in onlyTools }
     val toolsListState = rememberLazyListState()
@@ -280,6 +303,12 @@ fun ClipEditToolsPanel(
                                     "edit_group" -> onEditGroup?.invoke()
                                     "freeze" -> onFreeze?.invoke()
                                     "rename" -> onRename?.invoke()
+                                    "lock" -> onLockLayer?.invoke()
+                                    "solo" -> onSoloLayer?.invoke()
+                                    "label" -> onLabelColor?.invoke()
+                                    "clear_keyframes" -> onClearKeyframes?.invoke()
+                                    "copy_layer" -> onCopyLayer?.invoke()
+                                    "paste_layer" -> onPasteLayer?.invoke()
                                 }
                             }
                         )

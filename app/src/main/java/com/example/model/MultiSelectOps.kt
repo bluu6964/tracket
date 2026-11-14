@@ -215,4 +215,49 @@ object MultiSelectOps {
         for (part in rightHalves) result = LaneLayout.place(result, part)
         return result
     }
+
+    /** The outcome of [deleteChecked]: the new lanes plus the counts the caller reports. */
+    data class DeleteCheckedResult(
+        val tracks: List<TimelineTrack>,
+        /** Layers actually removed (checked layers + their cascaded chain members / group descendants). */
+        val deletedCount: Int,
+        /** Layers inside the deletion set that were LOCKED and therefore spared (build 199, A1/A11). */
+        val skippedLockedCount: Int
+    )
+
+    /**
+     * Delete every checked layer at once (build 199, A11 — Sarowar's add-on: "multiple layer
+     * একসাথে select করে delete"). The deletion set follows the single-layer delete's cascades
+     * exactly: a checked Chain takes its chain members with it, a checked Group takes its
+     * descendants; links pointing at a deleted layer (parent / controller / duck triggers)
+     * are left dangling, which every consumer already treats as "no link" — the same orphan
+     * convention the single delete relies on. LOCKED layers are never deleted: a locked layer
+     * inside the set (checked itself, or reached through a cascade) is spared and counted in
+     * [DeleteCheckedResult.skippedLockedCount] so the caller can say so. Returns null when no
+     * checked layer exists; a result with deletedCount 0 means everything checked was locked
+     * (the caller reports the skips and pushes no undo step).
+     */
+    fun deleteChecked(tracks: List<TimelineTrack>, ids: Set<String>): DeleteCheckedResult? {
+        if (ids.isEmpty()) return null
+        val all = tracks.flatMap { it.clips }
+        val checked = all.filter { it.id in ids }
+        if (checked.isEmpty()) return null
+        val gone = HashSet<String>()
+        for (c in checked) {
+            gone += c.id
+            if (c.type == LayerType.CHAIN) {
+                gone += all.filter { it.chainId == c.id }.map { it.id }
+            }
+            if (c.type == LayerType.GROUP) {
+                gone += GroupOps.descendantsOf(tracks, c.id).map { it.id }
+            }
+        }
+        val spared = all.filter { it.id in gone && it.isLocked }
+        gone.removeAll(spared.map { it.id }.toSet())
+        if (gone.isEmpty()) return DeleteCheckedResult(tracks, 0, spared.size)
+        val out = LaneLayout.normalize(
+            tracks.map { lane -> lane.copy(clips = lane.clips.filter { it.id !in gone }) }
+        )
+        return DeleteCheckedResult(out, gone.size, spared.size)
+    }
 }

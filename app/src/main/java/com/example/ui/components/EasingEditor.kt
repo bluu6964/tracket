@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.model.Easing
 import com.example.ui.util.bouncyClickable
 import kotlin.math.hypot
@@ -64,7 +65,14 @@ fun EasingEditor(
     /** false = only the curve graph (the caller shows its own ready-made curves). */
     showPresets: Boolean = true,
     /** Label of the vertical axis. */
-    valueLabel: String = "Transform"
+    valueLabel: String = "Transform",
+    /**
+     * Delete-keyframe affordance (build 199, A5): when the host edits a real keyframe
+     * segment, this shows a small "Delete keyframe" action over the graph — it deletes the
+     * segment's START key (the key this editor's curve belongs to). Hosts that edit a value
+     * without a single owning key leave it null and the editor is exactly as before.
+     */
+    onDeleteKeyframe: (() -> Unit)? = null
 ) {
     val curEasing by rememberUpdatedState(easing)
     val begin by rememberUpdatedState(onBegin)
@@ -75,10 +83,14 @@ fun EasingEditor(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // ---- Curve graph ----
-        Canvas(
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
+        ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
                 .padding(vertical = 4.dp)
                 .pointerInput(Unit) {
                     val padL = 26.dp.toPx()
@@ -182,6 +194,20 @@ fun EasingEditor(
                 cv.nativeCanvas.drawText(valueLabel, 12.dp.toPx(), top + h / 2f + 5.dp.toPx(), paint)
                 cv.nativeCanvas.restore()
             }
+        }
+        if (onDeleteKeyframe != null) {
+            androidx.compose.material3.Text(
+                text = "Delete keyframe",
+                color = com.example.ui.theme.AmDanger,
+                fontSize = 11.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 30.dp, top = 8.dp)
+                    .bouncyClickable { onDeleteKeyframe() }
+                    .testTag("easing_delete_keyframe")
+            )
+        }
         }
 
         // ---- Ready-made curves ----

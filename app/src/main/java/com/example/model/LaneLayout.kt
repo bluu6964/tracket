@@ -46,7 +46,41 @@ object LaneLayout {
      * Exception: a lane with a Chain layer keeps the chain and every layer whose chainId is the chain's id (they sit side
      * by side in that one lane); a layer with a stale chainId becomes a normal layer.
      */
+    /**
+     * True when [tracks] already satisfies the lane invariant [normalize] restores (build 199,
+     * audit #2 item O3): no empty lanes, clips in start order, a plain lane holding exactly one
+     * unchained clip, a chain lane holding exactly the chain clip followed by its members in
+     * start order. An O(n) read-only check — when it passes, [normalize] returns its input
+     * unchanged instead of rebuilding (and re-placing overflow through) the whole list, which
+     * is what split/delete/duplicate paid 2–3× per action before build 199.
+     */
+    fun isNormalized(tracks: List<TimelineTrack>): Boolean {
+        for (lane in tracks) {
+            if (lane.clips.isEmpty()) return false
+            val sorted = lane.clips.sortedBy { it.startMs }
+            if (sorted != lane.clips) return false
+            val chain = sorted.firstOrNull { it.type == LayerType.CHAIN }
+            if (chain == null) {
+                if (sorted.size != 1) return false
+                if (sorted[0].chainId != null) return false
+            } else {
+                // normalize's chain lane is exactly [chain] + its members in start order; any
+                // further clip in the lane would be overflow and break the identity.
+                val expected = listOf(chain) + sorted.filter { it.id != chain.id && it.chainId == chain.id }
+                if (expected.size != sorted.size) return false
+                if (lane.clips != expected) return false
+            }
+        }
+        return true
+    }
+
     fun normalize(tracks: List<TimelineTrack>): List<TimelineTrack> {
+        // Fast path (build 199, O3): already-normal input is returned as the SAME list, so the
+        // repeated normalize calls inside one action (split/delete/duplicate pre- and
+        // post-normalized) collapse to the first one's work. [isNormalized] mirrors the body
+        // below condition for condition; the harness pins both the identity and that every
+        // normalize output satisfies isNormalized.
+        if (isNormalized(tracks)) return tracks
         val singles = mutableListOf<TimelineTrack>()
         val overflow = mutableListOf<TimelineClip>()
 

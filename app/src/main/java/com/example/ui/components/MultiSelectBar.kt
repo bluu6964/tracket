@@ -36,6 +36,7 @@ import com.example.model.MultiAction
 import com.example.model.MultiBarMode
 import com.example.model.ShapeBooleanOp
 import com.example.model.SpatialAction
+import com.example.ui.theme.AmDanger
 import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
 
@@ -63,7 +64,11 @@ fun MultiSelectBar(
     /** Show the boolean row (exactly two eligible shape layers are checked). */
     showBooleanRow: Boolean = false,
     /** A boolean tile of the third row. */
-    onBooleanAction: (ShapeBooleanOp) -> Unit = {}
+    onBooleanAction: (ShapeBooleanOp) -> Unit = {},
+    /** Delete tile (build 199, A11): deletes ALL checked layers at once (one undo step; locked layers are skipped). */
+    onDeleteChecked: () -> Unit = {},
+    /** Select-all tile (build 199, A4): checks every layer of the current scope. */
+    onSelectAll: () -> Unit = {}
 ) {
     Column(
         modifier = modifier
@@ -103,6 +108,8 @@ fun MultiSelectBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                MiniTile(label = "Delete", labelColor = AmDanger, onClick = onDeleteChecked) { drawTrashGlyph() }
+                MiniTile(label = "All", labelColor = Color.White.copy(alpha = 0.75f), onClick = onSelectAll) { drawSelectAllGlyph() }
                 AlignTile(MultiAction.ALIGN_START, onAction) { drawBars(BarsKind.LEFT) }
                 AlignTile(MultiAction.SEQUENCE, onAction) { drawBars(BarsKind.STAIR) }
                 AlignTile(MultiAction.ALIGN_END, onAction) { drawBars(BarsKind.RIGHT) }
@@ -127,6 +134,8 @@ fun MultiSelectBar(
                 SpatialTile(SpatialAction.ALIGN_TOP, onSpatialAction) { drawAlignGlyph(AlignGlyph.TOP) }
                 SpatialTile(SpatialAction.ALIGN_CENTER_V, onSpatialAction) { drawAlignGlyph(AlignGlyph.CENTER_V) }
                 SpatialTile(SpatialAction.ALIGN_BOTTOM, onSpatialAction) { drawAlignGlyph(AlignGlyph.BOTTOM) }
+                SpatialTile(SpatialAction.CANVAS_CENTER_H, onSpatialAction) { drawCanvasCentreGlyph(horizontal = true) }
+                SpatialTile(SpatialAction.CANVAS_CENTER_V, onSpatialAction) { drawCanvasCentreGlyph(horizontal = false) }
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -174,6 +183,36 @@ private fun BooleanTile(
         Text(
             op.displayName,
             color = Color.White.copy(alpha = 0.75f),
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1
+        )
+    }
+}
+
+/**
+ * A labelled mini-tile of the first row (build 199): Delete (A11) and Select-all (A4) —
+ * actions whose glyph alone would be ambiguous get their name under the glyph, in the
+ * bar's bare language. Delete carries the destructive red of the selected-layer bar.
+ */
+@Composable
+private fun MiniTile(
+    label: String,
+    labelColor: Color,
+    onClick: () -> Unit,
+    draw: DrawScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(38.dp)
+            .bouncyClickable { onClick() }
+            .padding(vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Canvas(modifier = Modifier.size(width = 24.dp, height = 20.dp)) { draw() }
+        Text(
+            label,
+            color = labelColor,
             fontSize = 8.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1
@@ -343,6 +382,72 @@ private fun DrawScope.drawMoveIcon(atStart: Boolean) {
 }
 
 private enum class AlignGlyph { LEFT, CENTER_H, RIGHT, TOP, CENTER_V, BOTTOM }
+
+/** Trash can in the destructive red (build 199, A11): lid, handle and slatted body. */
+private fun DrawScope.drawTrashGlyph() {
+    val w = size.width
+    val h = size.height
+    val sw = 1.7.dp.toPx()
+    val c = AmDanger
+    // Lid + handle.
+    drawLine(c, Offset(w * 0.14f, h * 0.2f), Offset(w * 0.86f, h * 0.2f), sw, StrokeCap.Round)
+    drawLine(c, Offset(w * 0.4f, h * 0.2f), Offset(w * 0.4f, h * 0.1f), sw, StrokeCap.Round)
+    drawLine(c, Offset(w * 0.6f, h * 0.2f), Offset(w * 0.6f, h * 0.1f), sw, StrokeCap.Round)
+    drawLine(c, Offset(w * 0.4f, h * 0.1f), Offset(w * 0.6f, h * 0.1f), sw, StrokeCap.Round)
+    // Body: slightly tapered can.
+    val body = Path().apply {
+        moveTo(w * 0.24f, h * 0.32f)
+        lineTo(w * 0.3f, h * 0.9f)
+        lineTo(w * 0.7f, h * 0.9f)
+        lineTo(w * 0.76f, h * 0.32f)
+    }
+    drawPath(body, c, style = Stroke(width = sw, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+    drawLine(c, Offset(w * 0.44f, h * 0.45f), Offset(w * 0.46f, h * 0.78f), sw, StrokeCap.Round)
+    drawLine(c, Offset(w * 0.56f, h * 0.45f), Offset(w * 0.54f, h * 0.78f), sw, StrokeCap.Round)
+}
+
+/** Dashed selection square with a check (build 199, A4): select all layers. */
+private fun DrawScope.drawSelectAllGlyph() {
+    val w = size.width
+    val h = size.height
+    val sw = 1.6.dp.toPx()
+    drawRoundRect(
+        color = IconColor,
+        topLeft = Offset(sw, sw),
+        size = Size(w - 2 * sw, h - 2 * sw),
+        cornerRadius = CornerRadius(2.dp.toPx()),
+        style = Stroke(width = sw, pathEffect = dashed())
+    )
+    val tick = Path().apply {
+        moveTo(w * 0.3f, h * 0.52f)
+        lineTo(w * 0.45f, h * 0.68f)
+        lineTo(w * 0.72f, h * 0.34f)
+    }
+    drawPath(tick, IconColor, style = Stroke(width = sw, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+}
+
+/**
+ * Canvas-centre glyphs (build 199, A8): a FRAME outline (not a selection guide) with one
+ * bar centred in it — vertical bar for centre-H, horizontal bar for centre-V.
+ */
+private fun DrawScope.drawCanvasCentreGlyph(horizontal: Boolean) {
+    val w = size.width
+    val h = size.height
+    val sw = 1.6.dp.toPx()
+    drawRoundRect(
+        color = IconColor,
+        topLeft = Offset(sw, sw),
+        size = Size(w - 2 * sw, h - 2 * sw),
+        cornerRadius = CornerRadius(2.dp.toPx()),
+        style = Stroke(width = sw)
+    )
+    val cr = CornerRadius(1.5.dp.toPx())
+    if (horizontal) {
+        drawRoundRect(IconColor, Offset(w / 2f - w * 0.07f, h * 0.24f), Size(w * 0.14f, h * 0.52f), cr)
+    } else {
+        drawRoundRect(IconColor, Offset(w * 0.24f, h / 2f - h * 0.1f), Size(w * 0.52f, h * 0.2f), cr)
+    }
+}
 
 /**
  * Spatial align glyphs: a thin guide line (the edge / centre everything moves to) with

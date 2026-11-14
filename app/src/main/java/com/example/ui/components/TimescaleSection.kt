@@ -83,7 +83,10 @@ fun TimescaleSection(
     /** Tap on a marker flag: jump the playhead to it. */
     onMarkerTap: ((TimelineMarker) -> Unit)? = null,
     /** Long-press on a marker flag: rename / delete it. */
-    onMarkerLongPress: ((TimelineMarker) -> Unit)? = null
+    onMarkerLongPress: ((TimelineMarker) -> Unit)? = null,
+    /** Export range points (build 199, A10): when both are set, the ranged span is banded on the ruler. */
+    exportInMs: Long? = null,
+    exportOutMs: Long? = null
 ) {
     val markersNow by rememberUpdatedState(markers)
     val markerTapNow by rememberUpdatedState(onMarkerTap)
@@ -197,6 +200,30 @@ fun TimescaleSection(
                     )
                 }
                 t += step
+            }
+
+            // Export range (build 199, A10): a translucent white band over the ranged span
+            // with a white edge line at each point — white because gold is the markers' and
+            // cyan the beat marks' colour in this ruler's language.
+            if (exportInMs != null && exportOutMs != null && exportOutMs > exportInMs) {
+                val xIn = centerPx + (exportInMs - currentMs) * pxPerMsPx
+                val xOut = centerPx + (exportOutMs - currentMs) * pxPerMsPx
+                val bandL = maxOf(xIn, areaStart)
+                val bandR = minOf(xOut, areaEnd)
+                if (bandR > bandL) {
+                    drawRect(
+                        color = Color.White.copy(alpha = 0.13f),
+                        topLeft = Offset(bandL, 0f),
+                        size = Size(bandR - bandL, size.height)
+                    )
+                }
+                val edgeW = 1.6.dp.toPx()
+                if (xIn >= areaStart && xIn <= areaEnd) {
+                    drawLine(Color.White, Offset(xIn, 0f), Offset(xIn, size.height), edgeW)
+                }
+                if (xOut >= areaStart && xOut <= areaEnd) {
+                    drawLine(Color.White, Offset(xOut, 0f), Offset(xOut, size.height), edgeW)
+                }
             }
 
             // Beat marks: cyan, taller than the bars, so they stand out on the ruler.

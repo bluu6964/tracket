@@ -67,8 +67,16 @@ import com.example.model.TimelineTrack
 import com.example.model.ProjectSnapshot
 import com.example.model.ProjectMarkers
 import com.example.model.TimelineMarker
+import com.example.model.HistoryStack
+import com.example.model.ExportRange
+import com.example.model.WaveformCache
+import com.example.model.deepCopyLayer
+import com.example.model.forPastedLayer
+import com.example.model.defaultClipColor
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,9 +121,11 @@ class VideoEditorViewModel : ViewModel() {
         recomputeTotal()
     }
 
-    // Undo / Redo history stacks
-    private val undoStack = mutableListOf<List<TimelineTrack>>()
-    private val redoStack = mutableListOf<List<TimelineTrack>>()
+    // Undo / Redo history stacks — bounded since build 199 (audit #2 item O1): HistoryStack
+    // caps each at 60 entries, evicting the oldest, so a long session cannot pin an unbounded
+    // number of full track states.
+    private val undoStack = HistoryStack<List<TimelineTrack>>()
+    private val redoStack = HistoryStack<List<TimelineTrack>>()
 
     private val _canUndo = MutableStateFlow(false)
     val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
@@ -490,7 +500,7 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     private fun pushHistory() {
-        undoStack.add(_tracks.value)
+        undoStack.push(_tracks.value)
         redoStack.clear()
         _canUndo.value = undoStack.isNotEmpty()
         _canRedo.value = false
@@ -498,23 +508,25 @@ class VideoEditorViewModel : ViewModel() {
 
     fun undo() {
         if (undoStack.isNotEmpty()) {
-            redoStack.add(_tracks.value)
-            val previous = undoStack.removeAt(undoStack.lastIndex)
+            redoStack.push(_tracks.value)
+            val previous = undoStack.pop() ?: return
             _tracks.value = previous
             recomputeTotal()
             _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = true
+            forgetSolo()
         }
     }
 
     fun redo() {
         if (redoStack.isNotEmpty()) {
-            undoStack.add(_tracks.value)
-            val next = redoStack.removeAt(redoStack.lastIndex)
+            undoStack.push(_tracks.value)
+            val next = redoStack.pop() ?: return
             _tracks.value = next
             recomputeTotal()
             _canUndo.value = undoStack.isNotEmpty()
             _canRedo.value = redoStack.isNotEmpty()
+            forgetSolo()
         }
     }
 
@@ -905,14 +917,228 @@ class VideoEditorViewModel : ViewModel() {
         return true
     }
 
-    fun setClipColor(color: Long) {
-        val clipId = _selectedClipId.value ?: return
+    /**
+     * Sets one layer's timeline label colour (build 199, A2 — this setter existed since the
+     * colour system was built but had no caller; the label picker is its first). Takes the
+     * layer id explicitly: the picker captures its target when it opens.
+     */
+    fun setClipColor(clipId: String, color: Long) {
+        if (clipNow(clipId) == null) return
         pushHistory()
         _tracks.value = _tracks.value.map { track ->
             track.copy(clips = track.clips.map { clip ->
                 if (clip.id == clipId) clip.copy(color = color) else clip
             })
         }
+    }
+
+    // ================= Build 199: Tools Audit #2 additions =================
+
+    /**
+     * Lock / unlock one layer (A1). The enforcement already existed — a locked layer cannot be
+     * grabbed on the canvas (CanvasArea) and shows no trim handles (TimelineLayerPanel); this
+     * toggle is the missing writer of [TimelineClip.isLocked]. One undo step, like hide/mute.
+     * Locking is a per-layer guard, not an edit, so it does NOT fan out through a Controller.
+     */
+    fun toggleClipLocked(clipId: String) {
+        val c = clipNow(clipId) ?: return
+        pushHistory()
+        _tracks.value = _tracks.value.map { track ->
+            track.copy(clips = track.clips.map { if (it.id == clipId) it.copy(isLocked = !c.isLocked) else it })
+        }
+    }
+
+    // ---- Snap on/off (A3). The screen loads/persists this in the editor preferences; the
+    // view-model holds the live value the canvas + transform pad consult.
+    private val _snapEnabled = MutableStateFlow(true)
+    val snapEnabled: StateFlow<Boolean> = _snapEnabled.asStateFlow()
+
+    fun setSnapEnabled(on: Boolean) {
+        _snapEnabled.value = on
+    }
+
+    /** Select ALL layers of the current scope into the multi-select set (A4). */
+    fun selectAllLayers() {
+        val shown = GroupOps.scopeTracks(_tracks.value, _editingGroupId.value)
+        val ids = shown.flatMap { it.clips }.map { it.id }.toSet()
+        if (ids.isEmpty()) return
+        _selectedClipId.value = null
+        _multiSelectIds.value = ids
+    }
+
+    /**
+     * Removes every keyframe of one layer in one undo step (A5). Returns false (and pushes no
+     * history) when the layer holds no keyframes.
+     */
+    fun clearAllKeyframes(clipId: String): Boolean {
+        val c = clipNow(clipId) ?: return false
+        if (c.keyframes.values.all { it.isEmpty() }) return false
+        pushHistory()
+        updateClipRaw(clipId) { it.copy(keyframes = emptyMap()) }
+        return true
+    }
+
+    /**
+     * Deletes ONE keyframe (A5's curve-editor affordance): the key of [prop] at exactly
+     * [keyframeTimeMs] (layer-relative). One undo step; on a Controller the deletion mirrors
+     * to the connected layers by absolute time, the same fan-out rule as [setKeyframeEasing].
+     */
+    fun deleteKeyframe(clipId: String, prop: AnimProp, keyframeTimeMs: Long) {
+        val target = clipNow(clipId) ?: return
+        val idx = target.keyframes[prop].orEmpty().indexOfFirst { it.timeMs == keyframeTimeMs }
+        if (idx < 0) return
+        pushHistory()
+        updateClipRaw(clipId) { it.withoutKeyframe(prop, idx) }
+        if (target.type == LayerType.CONTROLLER) {
+            // Mirrored exactly like setKeyframeEasing: the connected layer's key at the same
+            // ABSOLUTE time is deleted.
+            val absoluteMs = target.startMs + keyframeTimeMs
+            val all = _tracks.value.flatMap { it.clips }
+            for (c in ControllerFanOut.connected(all, target.id)) {
+                updateClipRaw(c.id) { lc ->
+                    val li = lc.keyframes[prop].orEmpty().indexOfFirst { it.timeMs == absoluteMs - lc.startMs }
+                    if (li < 0) lc else lc.withoutKeyframe(prop, li)
+                }
+            }
+        }
+    }
+
+    // ---- Solo (A6): hide/show is a stored per-layer field restored by undo, so solo is
+    // modelled the same way — soloing rewrites the OTHER layers' visible/muted flags in one
+    // undo step and remembers what they were; un-soloing restores them. The remembered flags
+    // are only valid for the timeline state they were taken from, so undo/redo and project
+    // loads forget them (an un-solo after history travel simply turns the marker off).
+    private var preSoloState: Map<String, Pair<Boolean, Boolean>>? = null
+    private val _soloClipId = MutableStateFlow<String?>(null)
+    val soloClipId: StateFlow<String?> = _soloClipId.asStateFlow()
+
+    private fun forgetSolo() {
+        _soloClipId.value = null
+        preSoloState = null
+    }
+
+    private fun restoreSoloState() {
+        val saved = preSoloState ?: return
+        _tracks.value = _tracks.value.map { lane ->
+            lane.copy(clips = lane.clips.map { c ->
+                val s = saved[c.id] ?: return@map c
+                c.copy(isVisible = s.first, isMuted = s.second)
+            })
+        }
+    }
+
+    fun toggleSolo(clipId: String) {
+        if (_soloClipId.value == clipId) {
+            // Un-solo: restore the remembered flags, one undo step.
+            pushHistory()
+            restoreSoloState()
+            forgetSolo()
+            return
+        }
+        // Re-soloing a different layer first restores the old solo's flags inside the same
+        // single undo step.
+        if (_soloClipId.value != null) restoreSoloState()
+        val all = _tracks.value.flatMap { it.clips }
+        if (all.none { it.id == clipId }) {
+            forgetSolo()
+            return
+        }
+        preSoloState = all.associate { it.id to (it.isVisible to it.isMuted) }
+        pushHistory()
+        _tracks.value = _tracks.value.map { lane ->
+            lane.copy(clips = lane.clips.map { c ->
+                when {
+                    c.id == clipId -> if (c.isVisible) c else c.copy(isVisible = true)
+                    else -> c.copy(isVisible = false, isMuted = true)
+                }
+            })
+        }
+        _soloClipId.value = clipId
+    }
+
+    // ---- Copy / paste a whole layer (A7): a second clipboard beside the keyframe/effects
+    // ones, holding a deep copy (ClipClipboard.deepCopyLayer). Paste follows the duplicate
+    // conventions: " (Copy)" name, placed right after the copied layer's end, one undo step.
+    private var layerClipboard: TimelineClip? = null
+    private val _hasLayerClipboard = MutableStateFlow(false)
+    val hasLayerClipboard: StateFlow<Boolean> = _hasLayerClipboard.asStateFlow()
+
+    /** Copies the selected layer. Groups and Chains refuse (Duplicate handles them structurally). */
+    fun copySelectedLayer(): Boolean {
+        val clip = _selectedClipId.value?.let { clipNow(it) } ?: return false
+        if (clip.type == LayerType.GROUP || clip.type == LayerType.CHAIN) return false
+        layerClipboard = clip.deepCopyLayer()
+        _hasLayerClipboard.value = true
+        return true
+    }
+
+    fun pasteLayer(): Boolean {
+        val copied = layerClipboard ?: return false
+        val pasted = copied.forPastedLayer(UUID.randomUUID().toString(), copied.endMs + 200)
+            .copy(name = copied.name + " (Copy)")
+        pushHistory()
+        _tracks.value = placeNewLayer(_tracks.value, pasted, pasted.chainId)
+        setSelected(pasted.id)
+        recomputeTotal()
+        return true
+    }
+
+    // ---- Export range (A10): in/out points, project-saved via the snapshot (the markers'
+    // additive-field family). Toggling a point at the playhead sets it; toggling again where
+    // it already sits clears it. Setting one point inside/behind the other clears the other —
+    // the stored pair is normalized by ExportRange.of wherever it is used.
+    private val _exportInMs = MutableStateFlow<Long?>(null)
+    val exportInMs: StateFlow<Long?> = _exportInMs.asStateFlow()
+    private val _exportOutMs = MutableStateFlow<Long?>(null)
+    val exportOutMs: StateFlow<Long?> = _exportOutMs.asStateFlow()
+
+    fun toggleExportInAtPlayhead() {
+        val t = _currentPlayheadMs.value
+        if (_exportInMs.value == t) {
+            _exportInMs.value = null
+            return
+        }
+        _exportInMs.value = t
+        val o = _exportOutMs.value
+        if (o != null && o - t < ExportRange.MIN_LENGTH_MS) _exportOutMs.value = null
+    }
+
+    fun toggleExportOutAtPlayhead() {
+        val t = _currentPlayheadMs.value
+        if (_exportOutMs.value == t) {
+            _exportOutMs.value = null
+            return
+        }
+        _exportOutMs.value = t
+        val i = _exportInMs.value
+        if (i != null && t - i < ExportRange.MIN_LENGTH_MS) _exportInMs.value = null
+    }
+
+    fun clearExportRange() {
+        _exportInMs.value = null
+        _exportOutMs.value = null
+    }
+
+    /** The usable export range right now, or null = export the whole project. */
+    fun exportRange(): ExportRange? =
+        ExportRange.of(_exportInMs.value, _exportOutMs.value, _totalDurationMs.value)
+
+    /**
+     * Deletes every multi-selected layer at once (A11) — ONE undo step for the whole set.
+     * The deletion set + locked-skip rule are pure ([MultiSelectOps.deleteChecked]); returns
+     * (deleted, lockedSkipped) for the caller's feedback, or null when nothing was checked.
+     */
+    fun deleteMultiSelected(): Pair<Int, Int>? {
+        val ids = _multiSelectIds.value
+        if (ids.isEmpty()) return null
+        val res = MultiSelectOps.deleteChecked(_tracks.value, ids) ?: return null
+        if (res.deletedCount > 0) {
+            pushHistory()
+            _tracks.value = res.tracks
+            recomputeTotal()
+        }
+        exitMultiSelect()
+        return res.deletedCount to res.skippedLockedCount
     }
 
     /**
@@ -1969,19 +2195,7 @@ class VideoEditorViewModel : ViewModel() {
             ShapeEditValues.coerceCornerRadiusDp(shapeCornerRadius)
         } else -1f
 
-        val color = when (type) {
-            LayerType.VIDEO -> 0xFF2A4365
-            LayerType.AUDIO -> 0xFF1B4332
-            LayerType.SHAPE -> 0xFFFF3377
-            LayerType.OVERLAY -> 0xFF4A154B
-            LayerType.TEXT -> 0xFF3992CE
-            LayerType.STICKER -> 0xFF4A2511
-            LayerType.NULL -> 0xFFE8A33D
-            LayerType.CAMERA -> 0xFF8E6BF2
-            LayerType.CHAIN -> 0xFF9AA0A8
-            LayerType.GROUP -> 0xFF5BB85D
-            LayerType.CONTROLLER -> 0xFF00B8A9
-        }
+        val color = defaultClipColor(type)
 
         val newClip = TimelineClip(
             id = UUID.randomUUID().toString(),
@@ -2185,8 +2399,44 @@ class VideoEditorViewModel : ViewModel() {
     fun requestWaveform(context: Context, uri: String, durationMs: Long) {
         if (!waveformRequested.add(uri)) return
         viewModelScope.launch {
-            val peaks = AudioWaveform.compute(context, uri, durationMs) ?: FloatArray(0)
+            // Build 199 (audit #2 item O4): the peaks are cached on disk, keyed by the media
+            // identity (uri + duration + byte size), so a relaunch does not re-decode every
+            // audio file and video soundtrack. A cache miss or a corrupt/stale blob simply
+            // falls through to the decode, whose result is then stored for next time.
+            val peaks = withContext(Dispatchers.IO) { cachedWaveform(context, uri, durationMs) }
+                ?: (AudioWaveform.compute(context, uri, durationMs) ?: FloatArray(0)).also { computed ->
+                    if (computed.isNotEmpty()) {
+                        viewModelScope.launch(Dispatchers.IO) { storeWaveform(context, uri, durationMs, computed) }
+                    }
+                }
             _waveforms.value = _waveforms.value + (uri to peaks)
+        }
+    }
+
+    /** The media's byte size — part of the waveform cache identity (build 199, O4); -1 when the provider won't say. */
+    private fun mediaSizeBytes(context: Context, uri: String): Long =
+        runCatching {
+            context.contentResolver.openFileDescriptor(android.net.Uri.parse(uri), "r")?.use { it.statSize }
+        }.getOrNull() ?: -1L
+
+    private fun waveformCacheFile(context: Context, uri: String, durationMs: Long, sizeBytes: Long): java.io.File =
+        java.io.File(java.io.File(context.cacheDir, "waveforms"), WaveformCache.keyFor(uri, durationMs, sizeBytes) + ".bin")
+
+    /** Peaks from the disk cache, or null on any miss (no file, stale identity, corrupt blob — see [WaveformCache]). */
+    private fun cachedWaveform(context: Context, uri: String, durationMs: Long): FloatArray? {
+        val size = mediaSizeBytes(context, uri)
+        return runCatching {
+            val f = waveformCacheFile(context, uri, durationMs, size)
+            if (f.isFile) WaveformCache.decode(f.readBytes(), durationMs, size) else null
+        }.getOrNull()
+    }
+
+    private fun storeWaveform(context: Context, uri: String, durationMs: Long, peaks: FloatArray) {
+        runCatching {
+            val size = mediaSizeBytes(context, uri)
+            val f = waveformCacheFile(context, uri, durationMs, size)
+            f.parentFile?.mkdirs()
+            f.writeBytes(WaveformCache.encode(peaks, durationMs, size))
         }
     }
 
@@ -2229,7 +2479,7 @@ class VideoEditorViewModel : ViewModel() {
             cursor += duration
         }
         if (lastId == null) {
-            undoStack.removeAt(undoStack.lastIndex)
+            undoStack.pop()
             _canUndo.value = undoStack.isNotEmpty()
             return
         }
@@ -2439,7 +2689,9 @@ class VideoEditorViewModel : ViewModel() {
         isMasterMuted = _isMasterMuted.value,
         playheadMs = _currentPlayheadMs.value,
         beatMarksMs = _beatMarks.value,
-        markers = _markers.value
+        markers = _markers.value,
+        exportInMs = _exportInMs.value,
+        exportOutMs = _exportOutMs.value
     )
 
     /** Replaces everything with a saved project. Undo history and selection start empty. */
@@ -2458,6 +2710,11 @@ class VideoEditorViewModel : ViewModel() {
         _isMasterMuted.value = s.isMasterMuted
         _beatMarks.value = s.beatMarksMs.filter { it >= 0L }.distinct().sorted()
         _markers.value = ProjectMarkers.normalize(s.markers)
+        // Build 199 (A10/A6): the export range rides the snapshot; a loaded project starts
+        // un-soloed (the remembered pre-solo flags belong to the previous project).
+        _exportInMs.value = s.exportInMs
+        _exportOutMs.value = s.exportOutMs
+        forgetSolo()
         _tracks.value = s.tracks
         _currentPlayheadMs.value = 0L
         recomputeTotal()

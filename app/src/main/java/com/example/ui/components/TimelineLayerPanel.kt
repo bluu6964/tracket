@@ -210,6 +210,12 @@ fun TimelineLayerPanel(
     onSpatialAction: (com.example.model.SpatialAction) -> Unit = {},
     /** A shape boolean tile of the multi-select bar (build 192). */
     onBooleanAction: (com.example.model.ShapeBooleanOp) -> Unit = {},
+    /** Multi-select bar Delete tile (build 199, A11): delete every checked layer at once. */
+    onDeleteCheckedLayers: () -> Unit = {},
+    /** Multi-select bar All tile (build 199, A4): check every layer of the current scope. */
+    onSelectAllLayers: () -> Unit = {},
+    /** Audio fade handles (build 199, A9): a fade drag writes the layer's fade pair through this. */
+    onSetClipFades: (clipId: String, fadeInMs: Long, fadeOutMs: Long) -> Unit = { _, _, _ -> },
     /** Quick actions (split/delete/…) + master speaker at the bottom-left. Off for the one-row editor strip. */
     showQuickActions: Boolean = true,
     /** Selected-layer bar (top panel): flip / replace. Replace is hidden when null. */
@@ -484,6 +490,7 @@ fun TimelineLayerPanel(
                             onBeginClipTimeDrag = onBeginClipTimeDrag,
                             onReorderLane = onReorderLane,
                             onTrimClipEdge = onTrimClipEdge,
+                            onSetClipFades = onSetClipFades,
                             pxPerMs = pxPerMs,
                             visibleFromMs = visibleFromMs,
                             visibleToMs = visibleToMs,
@@ -587,6 +594,8 @@ fun TimelineLayerPanel(
                 onAction = onMultiAction,
                 onSpatialAction = onSpatialAction,
                 onBooleanAction = onBooleanAction,
+                onDeleteChecked = onDeleteCheckedLayers,
+                onSelectAll = onSelectAllLayers,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .enterPop(fromBottom = true)
@@ -682,6 +691,8 @@ private fun MultiBarHost(
     onAction: (MultiAction) -> Unit,
     onSpatialAction: (com.example.model.SpatialAction) -> Unit = {},
     onBooleanAction: (com.example.model.ShapeBooleanOp) -> Unit = {},
+    onDeleteChecked: () -> Unit = {},
+    onSelectAll: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val mode by remember(tracks, multiSelectIds) {
@@ -714,6 +725,8 @@ private fun MultiBarHost(
         onSpatialAction = onSpatialAction,
         showBooleanRow = booleanReady,
         onBooleanAction = onBooleanAction,
+        onDeleteChecked = onDeleteChecked,
+        onSelectAll = onSelectAll,
         modifier = modifier
     )
 }
@@ -896,6 +909,8 @@ fun TimelineTrackRow(
     onBeginClipTimeDrag: () -> Unit = {},
     onReorderLane: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> },
     onTrimClipEdge: (clipId: String, isLeft: Boolean, deltaMs: Long) -> Unit = { _, _, _ -> },
+    /** Audio fade handles (build 199, A9): a fade drag writes the layer's fade pair through this. */
+    onSetClipFades: (clipId: String, fadeInMs: Long, fadeOutMs: Long) -> Unit = { _, _, _ -> },
     pxPerMs: Float = TIMELINE_PX_PER_MS,
     visibleFromMs: Long = Long.MIN_VALUE / 4,
     visibleToMs: Long = Long.MAX_VALUE / 4,
@@ -1086,6 +1101,44 @@ fun TimelineTrackRow(
                     onTrim = { d -> onTrimClipEdge(clip.id, false, d) }
                 )
             }
+
+            // Build 199 (A9): draggable fade knobs on a selected AUDIO layer. The waveform
+            // already draws the fades (AudioClipBody shapes it by fadeAt); these knobs at the
+            // bar's top corners are where the drawn fade ends. A drag writes through the same
+            // setClipFades funnel as the Fade sheet's sliders (live value during the drag,
+            // coerced there); onBeginClipTimeDrag opens the drag's single undo step.
+            if (isSelected && !isDragging && !clip.isLocked && clip.type == LayerType.AUDIO) {
+                val barLeftPx = clip.startMs * pxPerMs * pxPerDp + handlePx
+                val barPx = clipWidth.value * pxPerDp
+                val knobHalfPx = 12f * pxPerDp
+                val knobTopPx = (LaneBarInset.value / 2f) * pxPerDp - knobHalfPx
+                FadeHandle(
+                    isLeft = true,
+                    modifier = Modifier.offset {
+                        IntOffset(
+                            (barLeftPx + clip.fadeInMs * pxPerMs * pxPerDp - knobHalfPx).roundToInt(),
+                            knobTopPx.roundToInt()
+                        )
+                    },
+                    pxPerMs = pxPerMs,
+                    pxPerDp = pxPerDp,
+                    onBegin = onBeginClipTimeDrag,
+                    onFadeDelta = { d -> onSetClipFades(clip.id, clip.fadeInMs + d, clip.fadeOutMs) }
+                )
+                FadeHandle(
+                    isLeft = false,
+                    modifier = Modifier.offset {
+                        IntOffset(
+                            (barLeftPx + barPx - clip.fadeOutMs * pxPerMs * pxPerDp - knobHalfPx).roundToInt(),
+                            knobTopPx.roundToInt()
+                        )
+                    },
+                    pxPerMs = pxPerMs,
+                    pxPerDp = pxPerDp,
+                    onBegin = onBeginClipTimeDrag,
+                    onFadeDelta = { d -> onSetClipFades(clip.id, clip.fadeInMs, clip.fadeOutMs - d) }
+                )
+            }
         }
     }
 }
@@ -1141,6 +1194,65 @@ private fun TrimHandle(
             tint = Color.White,
             modifier = Modifier.size(26.dp)
         )
+    }
+}
+
+/**
+ * A fade knob (build 199, A9): a small white disc with a dark triangle pointing along the
+ * fade's growth direction, sitting on the audio bar's top corner where the drawn fade ends.
+ * Drag = the TrimHandle pattern (whole-ms steps through [onFadeDelta], one undo step opened
+ * by [onBegin]); the 24 dp box is the touch target, the disc itself is 16 dp.
+ */
+@Composable
+private fun FadeHandle(
+    isLeft: Boolean,
+    modifier: Modifier,
+    pxPerMs: Float,
+    pxPerDp: Float,
+    onBegin: () -> Unit,
+    onFadeDelta: (Long) -> Unit
+) {
+    val latestOnFade by rememberUpdatedState(onFadeDelta)
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .pointerInput(pxPerMs, pxPerDp) {
+                var acc = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { acc = 0f; onBegin() },
+                    onDragEnd = { acc = 0f },
+                    onDragCancel = { acc = 0f },
+                    onHorizontalDrag = { change, dx ->
+                        change.consume()
+                        acc += dx / pxPerDp / pxPerMs
+                        val whole = acc.toLong()
+                        if (whole != 0L) {
+                            acc -= whole
+                            latestOnFade(whole)
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(16.dp)) {
+            drawCircle(Color.White)
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val tri = Path().apply {
+                if (isLeft) {
+                    moveTo(cx - size.width * 0.14f, cy - size.height * 0.2f)
+                    lineTo(cx + size.width * 0.18f, cy)
+                    lineTo(cx - size.width * 0.14f, cy + size.height * 0.2f)
+                } else {
+                    moveTo(cx + size.width * 0.14f, cy - size.height * 0.2f)
+                    lineTo(cx - size.width * 0.18f, cy)
+                    lineTo(cx + size.width * 0.14f, cy + size.height * 0.2f)
+                }
+                close()
+            }
+            drawPath(tri, Color(0xFF111111))
+        }
     }
 }
 

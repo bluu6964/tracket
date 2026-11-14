@@ -80,7 +80,15 @@ fun PlayControlsSection(
     onOnionSkinClick: () -> Unit = {},
     /** Histogram-bars icon beside the onion toggle (build 196): toggles the video-scopes panel. */
     scopesOn: Boolean = false,
-    onScopesClick: () -> Unit = {}
+    onScopesClick: () -> Unit = {},
+    /** Magnet toggle (build 199, A3): canvas + transform-pad snapping on/off. White = on. */
+    snapOn: Boolean = true,
+    onSnapClick: () -> Unit = {},
+    /** Export range points (build 199, A10): IN/OUT set the range point at the playhead (tap again to clear). White = set. */
+    exportInSet: Boolean = false,
+    exportOutSet: Boolean = false,
+    onExportInClick: () -> Unit = {},
+    onExportOutClick: () -> Unit = {}
 ) {
     Box(
         modifier = modifier
@@ -150,6 +158,8 @@ fun PlayControlsSection(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(0.dp)
         ) {
+            RangePointButton(label = "IN", isSet = exportInSet, onClick = onExportInClick, tag = "export_in_button", description = "Export range in point")
+            RangePointButton(label = "OUT", isSet = exportOutSet, onClick = onExportOutClick, tag = "export_out_button", description = "Export range out point")
             IconButton44(enabled = true, onClick = onFullScreenClick, tag = "fullscreen_button", description = "Full Screen") {
                 FrameGlyph()
             }
@@ -168,7 +178,39 @@ fun PlayControlsSection(
             IconButton44(enabled = true, onClick = onScopesClick, tag = "scopes_button", description = "Scopes") {
                 ScopesGlyph(scopesOn)
             }
+            Box(
+                modifier = Modifier
+                    .size(width = 32.dp, height = 44.dp)
+                    .semantics { contentDescription = "Snap" }
+                    .bouncyClickable(onClick = onSnapClick)
+                    .testTag("snap_button"),
+                contentAlignment = Alignment.Center
+            ) {
+                MagnetGlyph(snapOn)
+            }
         }
+    }
+}
+
+/** A compact IN/OUT range-point button (build 199, A10): bare text, white when the point is set. */
+@Composable
+private fun RangePointButton(label: String, isSet: Boolean, onClick: () -> Unit, tag: String, description: String) {
+    Box(
+        modifier = Modifier
+            .size(width = 30.dp, height = 44.dp)
+            .semantics { contentDescription = description }
+            .bouncyClickable(onClick = onClick)
+            .testTag(tag),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = if (isSet) IconWhite else IconDisabled,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.ExtraBold,
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
     }
 }
 
@@ -336,6 +378,26 @@ private fun ScopesGlyph(on: Boolean) {
         for ((x, top) in bars) {
             drawLine(c, Offset(x * u, base), Offset(x * u, (24f - top) * u), 2.6f * u, StrokeCap.Round)
         }
+    }
+}
+
+/** U-magnet (build 199, A3): the snap toggle. White = snapping on, grey = off. */
+@Composable
+private fun MagnetGlyph(on: Boolean) {
+    Canvas(Modifier.size(24.dp)) {
+        val u = size.width / 24f
+        val c = if (on) Color(0xFFF2F2F2) else IconDisabled
+        val body = Path().apply {
+            moveTo(6.6f * u, 4.5f * u)
+            lineTo(6.6f * u, 12.5f * u)
+            cubicTo(6.6f * u, 17.2f * u, 9.4f * u, 19.6f * u, 12f * u, 19.6f * u)
+            cubicTo(14.6f * u, 19.6f * u, 17.4f * u, 17.2f * u, 17.4f * u, 12.5f * u)
+            lineTo(17.4f * u, 4.5f * u)
+        }
+        drawPath(body, c, style = Stroke(width = 2.6f * u, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        // Pole caps: the two short bars across the magnet's feet.
+        drawLine(c, Offset(4.6f * u, 4.5f * u), Offset(8.6f * u, 4.5f * u), 2.6f * u, StrokeCap.Round)
+        drawLine(c, Offset(15.4f * u, 4.5f * u), Offset(19.4f * u, 4.5f * u), 2.6f * u, StrokeCap.Round)
     }
 }
 

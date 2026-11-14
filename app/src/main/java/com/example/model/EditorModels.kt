@@ -152,6 +152,25 @@ enum class LayerType(val displayName: String) {
     CONTROLLER("Controller")
 }
 
+/**
+ * The colour a layer of [type] is created with — the timeline label colour system's default
+ * (build 199, A2: extracted from the view-model's add-layer code so the colour-label picker can
+ * offer "back to default" and the panel's used-state check can compare against the same value).
+ */
+fun defaultClipColor(type: LayerType): Long = when (type) {
+    LayerType.VIDEO -> 0xFF2A4365
+    LayerType.AUDIO -> 0xFF1B4332
+    LayerType.SHAPE -> 0xFFFF3377
+    LayerType.OVERLAY -> 0xFF4A154B
+    LayerType.TEXT -> 0xFF3992CE
+    LayerType.STICKER -> 0xFF4A2511
+    LayerType.NULL -> 0xFFE8A33D
+    LayerType.CAMERA -> 0xFF8E6BF2
+    LayerType.CHAIN -> 0xFF9AA0A8
+    LayerType.GROUP -> 0xFF5BB85D
+    LayerType.CONTROLLER -> 0xFF00B8A9
+}
+
 @Serializable
 enum class PreviewResolution(val label: String, val detail: String) {
     FULL("1080p", "High Quality Preview"),

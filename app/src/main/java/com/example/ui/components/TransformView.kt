@@ -171,6 +171,8 @@ fun TransformView(
     /** Easing editor: a change is about to start (one undo step) / the curve of the segment that starts at the keyframe time changed. */
     onEasingBegin: () -> Unit = {},
     onEasingChange: (AnimProp, Long, Easing) -> Unit = { _, _, _ -> },
+    /** Easing editor's delete affordance (build 199, A5): delete the segment-start keyframe of a property. */
+    onDeleteKeyframe: (AnimProp, Long) -> Unit = { _, _ -> },
     /**
      * Magnetic snap for the PositionPad ONLY (build 184 — the canvas drag had it since
      * build 176, the Transform panel did not): given the pad's proposed stored X / Y,
@@ -389,7 +391,8 @@ fun TransformView(
                         progress = ((relMs - segStart.timeMs).toFloat() /
                             (segEnd.timeMs - segStart.timeMs).coerceAtLeast(1L)).coerceIn(0f, 1f),
                         onBegin = onEasingBegin,
-                        onChange = { e -> onEasingChange(curProp, segStart.timeMs, e) }
+                        onChange = { e -> onEasingChange(curProp, segStart.timeMs, e) },
+                        onDeleteKeyframe = { onDeleteKeyframe(curProp, segStart.timeMs) }
                     )
                 }
             } else AnimatedContent(

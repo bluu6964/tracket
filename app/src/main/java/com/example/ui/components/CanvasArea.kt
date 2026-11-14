@@ -137,6 +137,8 @@ fun CanvasArea(
     nativePreview: com.example.engine.NativePreviewEngine? = null,
     /** True while an on-canvas editor (Masks) is open: the transform box of the selected layer is hidden. */
     selectionHidden: Boolean = false,
+    /** Build 199 (A3): the editor's snap switch — off, canvas drags write the raw position and no snap guides show. */
+    snapEnabled: Boolean = true,
     /**
      * Measured text-layer boxes, shared with the caller (build 184): the Transform panel's
      * snapper reads the same measurements this area's own snap uses. Null = this area keeps
@@ -255,12 +257,14 @@ fun CanvasArea(
                 var snapGuideY by remember { mutableStateOf<Float?>(null) }
                 val snapTracksNow by mediaRememberUpdatedState(tracks)
                 val snapSizesNow by mediaRememberUpdatedState(textSizes)
+                val snapEnabledNow by mediaRememberUpdatedState(snapEnabled)
                 val clearSnapGuides: () -> Unit = { snapGuideX = null; snapGuideY = null }
                 val snappedMove: (String, Float, Float) -> Unit = { id, sx, sy ->
                     var outX = sx
                     var outY = sy
                     var gx: Float? = null
                     var gy: Float? = null
+                    if (snapEnabledNow) {
                     val t = playheadMs()
                     val clipsNow = snapTracksNow.asReversed().flatMap { it.clips }
                         .filter { it.isVisible && !it.isMask && it.isActiveAt(t) && !it.isBehindCamera }
@@ -280,6 +284,7 @@ fun CanvasArea(
                             gx = res.guideX
                             gy = res.guideY
                         }
+                    }
                     }
                     snapGuideX = gx
                     snapGuideY = gy

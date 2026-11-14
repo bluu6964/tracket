@@ -20,6 +20,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.FileCopy
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -68,7 +73,17 @@ fun AudioClipToolsPanel(
     /** Noise reduction: this layer's steady background noise is gated down (build 195). */
     onNoiseReduction: (() -> Unit)? = null,
     /** Rename the layer. */
-    onRename: (() -> Unit)? = null
+    onRename: (() -> Unit)? = null,
+    /** Lock / unlock this layer (build 199, A1). */
+    onLockLayer: (() -> Unit)? = null,
+    /** Solo this layer (build 199, A6). */
+    onSoloLayer: (() -> Unit)? = null,
+    /** Colour label picker for this layer (build 199, A2). */
+    onLabelColor: (() -> Unit)? = null,
+    /** Copy the WHOLE layer (build 199, A7). */
+    onCopyLayer: (() -> Unit)? = null,
+    /** Paste the layer clipboard as a new layer (build 199, A7). Only set while it holds a layer. */
+    onPasteLayer: (() -> Unit)? = null
 ) {
     val tools = listOf(
         ClipToolItem("volume", "Volume", Icons.AutoMirrored.Filled.VolumeUp),
@@ -80,6 +95,11 @@ fun AudioClipToolsPanel(
     else emptyList()) + (if (onNoiseReduction != null) listOf(ClipToolItem("noise", "Noise", Icons.Default.GraphicEq))
     else emptyList()) + (if (onCaptions != null) listOf(ClipToolItem("captions", "Captions", Icons.Default.ClosedCaption))
     else emptyList()) + (if (onRename != null) listOf(ClipToolItem("rename", "Rename", Icons.Default.Edit))
+    else emptyList()) + (if (onLockLayer != null) listOf(ClipToolItem("lock", "Lock", Icons.Default.Lock))
+    else emptyList()) + (if (onSoloLayer != null) listOf(ClipToolItem("solo", "Solo", Icons.Default.Visibility))
+    else emptyList()) + (if (onLabelColor != null) listOf(ClipToolItem("label", "Label", Icons.Default.Label))
+    else emptyList()) + (if (onCopyLayer != null) listOf(ClipToolItem("copy_layer", "Copy layer", Icons.Default.FileCopy))
+    else emptyList()) + (if (onPasteLayer != null) listOf(ClipToolItem("paste_layer", "Paste layer", Icons.Default.ContentPaste))
     else emptyList())
 
     Row(
@@ -144,6 +164,11 @@ fun AudioClipToolsPanel(
                                     "noise" -> onNoiseReduction?.invoke()
                                     "captions" -> onCaptions?.invoke()
                                     "rename" -> onRename?.invoke()
+                                    "lock" -> onLockLayer?.invoke()
+                                    "solo" -> onSoloLayer?.invoke()
+                                    "label" -> onLabelColor?.invoke()
+                                    "copy_layer" -> onCopyLayer?.invoke()
+                                    "paste_layer" -> onPasteLayer?.invoke()
                                 }
                             }
                         )

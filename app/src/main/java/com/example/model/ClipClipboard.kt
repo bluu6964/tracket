@@ -54,3 +54,43 @@ fun List<ClipFx>.copyEffects(): List<ClipFx> = map { it.copy(values = it.values.
 /** The same stack with a fresh id per effect, so a pasted stack never shares an effect id with its source layer. */
 fun List<ClipFx>.withFreshEffectIds(): List<ClipFx> =
     map { it.copy(id = UUID.randomUUID().toString(), values = it.values.toList()) }
+
+/**
+ * A deep copy of a whole layer for the layer clipboard (build 199, A7). Every collection the
+ * layer owns is copied element-wise — keyframes, masks (states, points, keys), path segments,
+ * pie/arc key lists, text animators — so editing the clipboard copy can never reach back into
+ * the source layer, and vice versa. Effect ids are KEPT (the clipboard law: the stored copy
+ * keeps ids, a paste re-ids — see [forPastedLayer]). Array-holding attachments
+ * ([TimelineClip.trackFollow], corner-pin / planar-remove trackers, mask motion tracks) are
+ * shared by reference, exactly as the layer duplicate treats them: their arrays are never
+ * mutated in place anywhere in the editor.
+ */
+fun TimelineClip.deepCopyLayer(): TimelineClip = copy(
+    keyframes = keyframes.deepCopyKeyframes(),
+    effects = effects.copyEffects(),
+    masks = masks.map { m ->
+        m.copy(
+            state = m.state.copy(),
+            points = m.points.map { it.copy() },
+            keys = m.keys.map { k -> k.copy(state = k.state.copy()) }
+        )
+    },
+    pathSegments = pathSegments.map { it.copy(pts = it.pts.toList()) },
+    pieStartKeys = pieStartKeys.map { it.copy() },
+    pieEndKeys = pieEndKeys.map { it.copy() },
+    arcStartKeys = arcStartKeys.map { it.copy() },
+    arcEndKeys = arcEndKeys.map { it.copy() },
+    textAnimators = textAnimators.map { ta ->
+        ta.copy(props = ta.props.mapValues { (_, v) -> v.copy(value = v.value.toList(), keys = v.keys.map { it.copy() }) })
+    }
+)
+
+/**
+ * The clipboard layer made paste-ready (build 199, A7): the stored copy is deep-copied AGAIN
+ * (so one copied layer can be pasted any number of times without two pastes sharing mutable
+ * state), given a fresh layer id and fresh effect ids, and placed at [newStartMs].
+ */
+fun TimelineClip.forPastedLayer(newId: String, newStartMs: Long): TimelineClip {
+    val deep = deepCopyLayer()
+    return deep.copy(id = newId, startMs = newStartMs, effects = deep.effects.withFreshEffectIds())
+}

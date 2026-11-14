@@ -82,7 +82,9 @@ import androidx.compose.ui.unit.sp
 import com.example.model.AspectRatio
 import com.example.model.CanvasSnap
 import com.example.model.CropVisibleBox
+import com.example.model.CropVisibleRect
 import com.example.model.cropVisibleBox
+import com.example.model.cropVisibleRect
 import com.example.model.LayerType
 import com.example.model.SnapRect
 import com.example.model.at
@@ -396,34 +398,60 @@ fun CanvasArea(
                                 cameraDistance = 12f * density
                             }
                             .size(baseSize)
-                            .pointerInput(clip.id) {
-                                var currentDragX = 0f
-                                var currentDragY = 0f
-                                detectDragGestures(
-                                    onDragStart = {
-                                        currentDragX = latestShape.transformX
-                                        currentDragY = latestShape.transformY
-                                    },
-                                    onDragEnd = { clearSnapGuides() },
-                                    onDragCancel = { clearSnapGuides() },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        // The finger moves in the layer's own space (scaled, rotated and
-                                        // maybe flipped): turn it back into canvas pixels.
-                                        val l = latestShape
-                                        val rad = Math.toRadians(l.rotationDeg.toDouble())
-                                        val c = Math.cos(rad).toFloat()
-                                        val sn = Math.sin(rad).toFloat()
-                                        val sc = (l.scalePercent / 100f).coerceAtLeast(0.01f) // stored moves are before the depth factor
-                                        val sx = sc * (if (l.isFlippedH) -1f else 1f)
-                                        val sy = sc * (if (l.isFlippedV) -1f else 1f)
-                                        currentDragX += dragAmount.x * sx * c - dragAmount.y * sy * sn
-                                        currentDragY += dragAmount.x * sx * sn + dragAmount.y * sy * c
-                                        snappedMove(l.id, currentDragX, currentDragY)
-                                    }
-                                )
-                            }
                     ) {
+                        // Build 186: the touch box hugs the VISIBLE part of the layer. Crop clips a
+                        // shape's own box in place (build 182), so the drag lives on an inner box
+                        // covering only the cropped window (model/CropBounds.cropVisibleRect — the
+                        // same law the selection frame follows): a drag starting on the cropped-away
+                        // part never reaches this box and falls through to whatever is beneath, as
+                        // if that part were not there. Null / Group / Controller have no cropped
+                        // picture, so their touch box stays the whole box, exactly as before. The
+                        // drag deltas are translation-invariant, so moving the handler onto the
+                        // offset inner box changes nothing once a drag has started inside it.
+                        val boxPx = with(frameDensity) { baseSize.toPx() }
+                        val touchRect = if (clip.type == LayerType.SHAPE) {
+                            clip.cropVisibleRect(boxPx, boxPx) ?: CropVisibleRect(0f, 0f, boxPx, boxPx)
+                        } else {
+                            CropVisibleRect(0f, 0f, boxPx, boxPx)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .offset(
+                                    x = with(frameDensity) { touchRect.left.toDp() },
+                                    y = with(frameDensity) { touchRect.top.toDp() }
+                                )
+                                .size(
+                                    with(frameDensity) { touchRect.width.toDp() },
+                                    with(frameDensity) { touchRect.height.toDp() }
+                                )
+                                .pointerInput(clip.id) {
+                                    var currentDragX = 0f
+                                    var currentDragY = 0f
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            currentDragX = latestShape.transformX
+                                            currentDragY = latestShape.transformY
+                                        },
+                                        onDragEnd = { clearSnapGuides() },
+                                        onDragCancel = { clearSnapGuides() },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            // The finger moves in the layer's own space (scaled, rotated and
+                                            // maybe flipped): turn it back into canvas pixels.
+                                            val l = latestShape
+                                            val rad = Math.toRadians(l.rotationDeg.toDouble())
+                                            val c = Math.cos(rad).toFloat()
+                                            val sn = Math.sin(rad).toFloat()
+                                            val sc = (l.scalePercent / 100f).coerceAtLeast(0.01f) // stored moves are before the depth factor
+                                            val sx = sc * (if (l.isFlippedH) -1f else 1f)
+                                            val sy = sc * (if (l.isFlippedV) -1f else 1f)
+                                            currentDragX += dragAmount.x * sx * c - dragAmount.y * sy * sn
+                                            currentDragY += dragAmount.x * sx * sn + dragAmount.y * sy * c
+                                            snappedMove(l.id, currentDragX, currentDragY)
+                                        }
+                                    )
+                                }
+                        )
                         // The shape picture is drawn by the C++ engine (NativePreviewEngine); this box only takes the touch.
                         // Helper layers have no picture: a GROUP shows this editing marker (dashed box + cross),
                         // never exported. A Null / Controller shows NOTHING while unselected (build 155 —

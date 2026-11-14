@@ -44,3 +44,44 @@ fun TimelineClip.cropVisibleBox(boxW: Float, boxH: Float): CropVisibleBox? {
     if (w <= 0f || h <= 0f) return null
     return CropVisibleBox(w, h, (l + cW / 2f - 0.5f) * boxW, (t + cH / 2f - 0.5f) * boxH)
 }
+
+/**
+ * The visible part of a layer's box as a sub-rectangle in box-local coordinates
+ * (origin at the box's top-left corner, the box's own units) — the same window
+ * [cropVisibleBox] bounds, re-expressed for the Compose touch boxes (build 186):
+ * the shape drag box in CanvasArea and TextLayerOnCanvas's layout box clip their
+ * hit-testing to this rect, so a touch on the cropped-away part of the stored
+ * box does not grab the layer and falls through to whatever is beneath.
+ * [contains] is the canonical statement of that rule.
+ */
+data class CropVisibleRect(
+    val left: Float,
+    val top: Float,
+    val width: Float,
+    val height: Float
+) {
+    val right: Float get() = left + width
+    val bottom: Float get() = top + height
+
+    /** Half-open, like every layout hit test: the left / top edges are in, the right / bottom out. */
+    fun contains(x: Float, y: Float): Boolean =
+        x >= left && x < right && y >= top && y < bottom
+}
+
+/**
+ * The visible part of this layer's [boxW] x [boxH] box after crop, as a
+ * box-local rect (see [CropVisibleRect]), or null exactly when [cropVisibleBox]
+ * has nothing to bound. No crop returns the whole box at (0, 0).
+ */
+fun TimelineClip.cropVisibleRect(boxW: Float, boxH: Float): CropVisibleRect? {
+    val v = cropVisibleBox(boxW, boxH) ?: return null
+    // cropVisibleBox already clamps the window inside the box; this second clamp only
+    // absorbs float dust in the centre-offset arithmetic, so the rect is exactly
+    // contained in the box (never a hair outside it) at the anchors.
+    return CropVisibleRect(
+        left = ((boxW - v.width) / 2f + v.offX).coerceIn(0f, boxW - v.width),
+        top = ((boxH - v.height) / 2f + v.offY).coerceIn(0f, boxH - v.height),
+        width = v.width,
+        height = v.height
+    )
+}

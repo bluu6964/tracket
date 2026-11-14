@@ -38,7 +38,7 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
- * The vector drawing tool (build 166, item 1): the canvas overlay that captures one
+ * The freehand drawing tool (build 166, item 1): the canvas overlay that captures one
  * freehand stroke. Points are reported in frame fractions (0..1) — the input of
  * [com.example.model.VectorDraw.build], which turns the finished stroke into a PATH
  * shape layer. A new touch starts a new stroke (the previous one is replaced); the
@@ -136,7 +136,7 @@ fun DrawVectorPanel(
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Text(
-            "Draw on the picture — one stroke becomes a vector layer you can move, colour and effect like any shape.",
+            "Draw on the picture — one stroke becomes a path layer you can move, colour and effect like any shape.",
             color = AmTextDim, fontSize = 12.sp
         )
         Spacer(Modifier.height(10.dp))

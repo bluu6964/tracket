@@ -3,8 +3,10 @@ package com.example.model
 import kotlin.math.hypot
 
 /**
- * The vector drawing tool (build 166 — Sarowar's directive 2026-11-13 ~20:22, item 1):
- * a freehand stroke drawn on the canvas becomes a real PATH shape layer
+ * The freehand drawing tool (build 166 — Sarowar's directive 2026-11-13 ~20:22, item 1;
+ * named FREEHAND, not vector, since his correction of 2026-11-14: vector drawing is the
+ * point-based Pen tool, [PenPath]): a freehand stroke drawn on the canvas becomes a real
+ * PATH shape layer
  * ([TimelineClip.shapePattern] == "PATH" + [TimelineClip.pathSegments]) — the same
  * storage the Alight importer writes for a `<path>` shape, so the layer renders through
  * the exact same painters in preview and export and stays editable with the existing
@@ -90,7 +92,22 @@ object VectorDraw {
         }
         if (close) raw += PathSeg(PATH_OP_CLOSE)
 
-        // Normalise onto the bounding box (the importer's normalisePathSegs, same law).
+        return normalize(raw, canvasW, canvasH, density)
+    }
+
+    /**
+     * Normalises raw segments drawn in uniform space (u = x * aspect, v = y) onto their
+     * bounding box and works out the layer placement — the law the importer's
+     * normalisePathSegs writes and both painters replay. Shared by the freehand stroke
+     * (above) and the point-based Pen tool ([PenPath.build]), so a path layer's storage
+     * means the same thing however it was drawn. Null when the outline has no extent.
+     */
+    fun normalize(
+        raw: List<PathSeg>,
+        canvasW: Float, canvasH: Float, density: Float
+    ): DrawnPath? {
+        if (canvasW <= 0f || canvasH <= 0f) return null
+        val aspect = canvasW / canvasH
         val flat = flattenPathSegments(raw)
         if (flat.isEmpty()) return null
         var minX = Float.POSITIVE_INFINITY

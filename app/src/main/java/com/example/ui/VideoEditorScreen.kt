@@ -65,6 +65,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -2086,12 +2087,22 @@ fun VideoEditorScreen(
     var maskSelPoint by remember { mutableStateOf(-1) }
     var maskPenPoints by remember { mutableStateOf<List<Pair<Float, Float>>?>(null) }
     var showClipAnimationsSheet by remember { mutableStateOf(false) }
-    // Vector drawing (build 166): draw mode, the stroke being drawn (frame fractions), its options.
+    // Freehand drawing (build 166): draw mode, the stroke being drawn (frame fractions), its options.
     var showDrawMode by remember { mutableStateOf(false) }
     var drawPoints by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
     var drawSmooth by remember { mutableStateOf(true) }
     var drawClosed by remember { mutableStateOf(false) }
     var drawWidth by remember { mutableFloatStateOf(6f) }
+    // Point-based Pen (build 177): pen mode, the anchors placed so far (frame fractions), closed flag.
+    var showPenMode by remember { mutableStateOf(false) }
+    var penAnchors by remember { mutableStateOf<List<com.example.model.PathAnchor>>(emptyList()) }
+    var penClosed by remember { mutableStateOf(false) }
+    var penWidth by remember { mutableFloatStateOf(6f) }
+    // Node editing (build 177): the PATH layer being edited, its working anchors (stored units), the selected anchor.
+    var editPointsClipId by remember { mutableStateOf<String?>(null) }
+    var editPath by remember { mutableStateOf<com.example.model.EditablePath?>(null) }
+    var editSelSub by remember { mutableIntStateOf(-1) }
+    var editSelIdx by remember { mutableIntStateOf(-1) }
     var animPreviewJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showClipReplaceSheet by remember { mutableStateOf(false) }
     var showClipBlendSheet by remember { mutableStateOf(false) }
@@ -2356,8 +2367,76 @@ fun VideoEditorScreen(
                 val maskEditClip = if (showClipMasksSheet) tracks.flatMap { it.clips }.firstOrNull {
                     it.id == selectedClipId && it.type == LayerType.VIDEO
                 } else null
+                // Node editing (build 177): the PATH layer whose points are being edited on the canvas.
+                val editPointsClip = if (editPointsClipId != null) tracks.flatMap { it.clips }.firstOrNull {
+                    it.id == editPointsClipId && it.shapePattern == "PATH"
+                } else null
                 val canvasOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? =
-                    if (showDrawMode) {
+                    if (showPenMode) {
+                        {
+                            com.example.ui.components.PenToolOverlay(
+                                anchors = penAnchors,
+                                closed = penClosed,
+                                strokeWidthDp = penWidth,
+                                onTap = { x, y -> penAnchors = com.example.model.PenPath.tap(penAnchors, x, y) },
+                                onPull = { x, y -> penAnchors = com.example.model.PenPath.pull(penAnchors, x, y) },
+                                onRelease = { pulled ->
+                                    if (!pulled) penAnchors = com.example.model.PenPath.releaseTap(penAnchors)
+                                },
+                                onCloseTap = { penClosed = true }
+                            )
+                        }
+                    } else if (editPointsClip != null && editPath != null) {
+                        {
+                            val t = playheadState.value
+                            com.example.ui.components.NodeEditOverlay(
+                                clip = com.example.engine.NativeRenderAt.renderAt(editPointsClip, t, t),
+                                path = editPath!!,
+                                selectedSub = editSelSub,
+                                selectedIdx = editSelIdx,
+                                onSelect = { s, i -> editSelSub = s; editSelIdx = i },
+                                onDeselect = { editSelSub = -1; editSelIdx = -1 },
+                                onGestureStart = { viewModel.beginAdjust() },
+                                onMoveAnchor = { s, i, x, y ->
+                                    // Read the state fresh: during a fast drag a captured
+                                    // copy would be one event stale and drift the handles.
+                                    val cur = editPath
+                                    if (cur != null) {
+                                        val np = com.example.model.PathEdit.moveAnchor(cur, s, i, x, y)
+                                        editPath = np
+                                        viewModel.setClipPathSegments(
+                                            editPointsClip.id, com.example.model.PathEdit.toSegments(np)
+                                        )
+                                    }
+                                },
+                                onMoveHandle = { s, i, out, x, y ->
+                                    val cur = editPath
+                                    if (cur != null) {
+                                        val np = com.example.model.PathEdit.moveHandle(cur, s, i, out, x, y)
+                                        editPath = np
+                                        viewModel.setClipPathSegments(
+                                            editPointsClip.id, com.example.model.PathEdit.toSegments(np)
+                                        )
+                                    }
+                                },
+                                onAddPoint = { s, segIdx, tt ->
+                                    val cur = editPath
+                                    if (cur != null) {
+                                        viewModel.beginAdjust()
+                                        val (np, newIdx) = com.example.model.PathEdit.splitSegment(cur, s, segIdx, tt)
+                                        if (newIdx >= 0) {
+                                            editPath = np
+                                            editSelSub = s
+                                            editSelIdx = newIdx
+                                            viewModel.setClipPathSegments(
+                                                editPointsClip.id, com.example.model.PathEdit.toSegments(np)
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    } else if (showDrawMode) {
                         {
                             com.example.ui.components.DrawVectorOverlay(
                                 points = drawPoints,
@@ -2391,7 +2470,7 @@ fun VideoEditorScreen(
                     } else trackOverlay
                 CanvasArea(
                     nativePreview = nativePreview,
-                    selectionHidden = showClipMasksSheet || showDrawMode,
+                    selectionHidden = showClipMasksSheet || showDrawMode || showPenMode || editPointsClipId != null,
                     height = canvasH,
                     aspectRatio = selectedAspectRatio,
                     playheadMs = playheadProvider,
@@ -2854,6 +2933,29 @@ fun VideoEditorScreen(
                                     // One undo step for the whole editing session (chip + save).
                                     viewModel.beginAdjust()
                                     editShapeClipId = targetClipId
+                                }
+                            } else null,
+                            onEditPoints = if (tracks.flatMap { it.clips }
+                                    .any {
+                                        it.id == targetClipId && it.type == LayerType.SHAPE &&
+                                            it.shapePattern == "PATH" && it.pathSegments.isNotEmpty()
+                                    }
+                            ) {
+                                {
+                                    // Node editing (build 177): the working anchors are the
+                                    // layer's stored segments, converted once on entry
+                                    // (QUAD -> CUBIC inside PathEdit); edits write back live.
+                                    val target = tracks.flatMap { it.clips }.find { it.id == targetClipId }
+                                    if (target != null) {
+                                        if (!target.isActiveAt(playheadState.value)) {
+                                            viewModel.seekTo(target.startMs)
+                                        }
+                                        viewModel.pause()
+                                        editPath = com.example.model.PathEdit.fromSegments(target.pathSegments)
+                                        editSelSub = -1
+                                        editSelIdx = -1
+                                        editPointsClipId = targetClipId
+                                    }
                                 }
                             } else null,
                             onParent = if (tracks.flatMap { it.clips }.any { it.id == targetClipId && it.type == LayerType.GROUP }) null
@@ -3729,6 +3831,148 @@ fun VideoEditorScreen(
             }
         }
 
+        // ---- Pen panel (build 177): the point-based pen tool, same place as Draw ----
+        val closePen = {
+            showPenMode = false
+            penAnchors = emptyList()
+            penClosed = false
+        }
+        BackHandler(enabled = showPenMode) { closePen() }
+        if (showPenMode) {
+            com.example.ui.components.TransformHeaderBar(
+                height = headerH,
+                title = "Pen",
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(31f)
+                    .enterPop()
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = panelTop)
+                    .fillMaxWidth()
+                    .zIndex(30f)
+                    .enterPop(fromBottom = true)
+                    .background(EditorBackground)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
+            ) {
+                com.example.ui.components.TimescaleSection(
+                    height = timescaleH,
+                    playheadMs = { playheadState.value },
+                    totalDurationMs = totalDurationMs,
+                    onBack = closePen
+                )
+                com.example.ui.components.PenToolPanel(
+                    anchorCount = penAnchors.size,
+                    closed = penClosed,
+                    widthDp = penWidth,
+                    onWidth = { penWidth = it },
+                    onUndoPoint = {
+                        if (penClosed) penClosed = false
+                        else penAnchors = com.example.model.PenPath.undoPoint(penAnchors)
+                    },
+                    onCancel = closePen,
+                    onDone = {
+                        val cw = if (previewFrameWidthPx > 1f) previewFrameWidthPx else 1000f
+                        val chh = cw / selectedAspectRatio.ratioFloat.coerceAtLeast(0.1f)
+                        val built = com.example.model.PenPath.build(
+                            penAnchors, penClosed, cw, chh, previewDensity
+                        )
+                        if (built == null) {
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar("Place at least two points first")
+                            }
+                        } else {
+                            val dur = if (totalDurationMs > 0L && playheadState.value < totalDurationMs) {
+                                minOf(4000L, (totalDurationMs - playheadState.value).coerceAtLeast(1000L))
+                            } else 4000L
+                            viewModel.addDrawnPath(
+                                drawn = built,
+                                durationMs = dur,
+                                fillMode = if (penClosed) com.example.model.FILL_SOLID else com.example.model.FILL_NONE,
+                                fillColor = 0xFFFFFFFF,
+                                strokeWidth = penWidth,
+                                strokeColor = 0xFFFFFFFF,
+                                name = "Pen"
+                            )
+                            closePen()
+                        }
+                    }
+                )
+            }
+        }
+
+        // ---- Edit points panel (build 177): node editing of the selected PATH layer ----
+        val closeEditPoints = {
+            editPointsClipId = null
+            editPath = null
+            editSelSub = -1
+            editSelIdx = -1
+        }
+        BackHandler(enabled = editPointsClipId != null) { closeEditPoints() }
+        if (editPointsClipId != null && editPath != null) {
+            com.example.ui.components.TransformHeaderBar(
+                height = headerH,
+                title = "Edit points",
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .zIndex(31f)
+                    .enterPop()
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = panelTop)
+                    .fillMaxWidth()
+                    .zIndex(30f)
+                    .enterPop(fromBottom = true)
+                    .background(EditorBackground)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
+            ) {
+                com.example.ui.components.TimescaleSection(
+                    height = timescaleH,
+                    playheadMs = { playheadState.value },
+                    totalDurationMs = totalDurationMs,
+                    onBack = closeEditPoints
+                )
+                val selPath = editPath!!
+                val panelClip = tracks.flatMap { it.clips }.firstOrNull { it.id == editPointsClipId }
+                val selSubPath = selPath.subpaths.getOrNull(editSelSub)
+                val canDeletePoint = panelClip != null && selSubPath != null &&
+                    editSelIdx in selSubPath.anchors.indices &&
+                    (if (selSubPath.closed) selSubPath.anchors.size > 3 else selSubPath.anchors.size > 2)
+                com.example.ui.components.NodeEditPanel(
+                    canDelete = canDeletePoint,
+                    onDeletePoint = {
+                        val clipNow = panelClip
+                        if (clipNow != null && canDeletePoint) {
+                            viewModel.beginAdjust()
+                            val np = com.example.model.PathEdit.deleteAnchor(selPath, editSelSub, editSelIdx)
+                            if (np != selPath) {
+                                editPath = np
+                                editSelSub = -1
+                                editSelIdx = -1
+                                viewModel.setClipPathSegments(
+                                    clipNow.id, com.example.model.PathEdit.toSegments(np)
+                                )
+                            }
+                        }
+                    },
+                    onDone = closeEditPoints
+                )
+            }
+        }
+
         if (showClipCropSheet) {
             val selectedClip = tracks.flatMap { it.clips }.find { it.id == selectedClipId }
                 ?: tracks.flatMap { it.clips }.firstOrNull()
@@ -4234,6 +4478,12 @@ fun VideoEditorScreen(
                 drawPoints = emptyList()
                 viewModel.pause()
                 showDrawMode = true
+            },
+            onPen = {
+                penAnchors = emptyList()
+                penClosed = false
+                viewModel.pause()
+                showPenMode = true
             },
             onDismiss = { showAddLayerSheet = false }
         )

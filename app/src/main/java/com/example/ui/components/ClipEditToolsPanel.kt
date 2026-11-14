@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Polyline
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.FlipCameraAndroid
 import androidx.compose.material.icons.filled.GpsFixed
@@ -113,6 +114,8 @@ fun ClipEditToolsPanel(
     onEditText: (() -> Unit)? = null,
     /** Only set for shape layers (build 173): adds an "Edit shape" tool that opens the shape editor. */
     onEditShape: (() -> Unit)? = null,
+    /** Only set for PATH shape layers (build 177): adds an "Edit points" tool that opens node editing on the canvas. */
+    onEditPoints: (() -> Unit)? = null,
     /** Parent: pick a Null object this layer follows. */
     onParent: (() -> Unit)? = null,
     /** Only set for a real Group layer: takes the layers out of the group again. */
@@ -149,6 +152,7 @@ fun ClipEditToolsPanel(
     val allTools = (if (onEditGroup != null) listOf(ClipToolItem("edit_group", "Edit group", Icons.Default.FolderOpen))
     else emptyList()) + (if (onEditText != null) listOf(ClipToolItem("edit_text", "Edit", Icons.Default.Edit))
     else emptyList()) + (if (onEditShape != null) listOf(ClipToolItem("edit_shape", "Edit shape", Icons.Default.Edit))
+    else emptyList()) + (if (onEditPoints != null) listOf(ClipToolItem("edit_points", "Edit points", Icons.Default.Polyline))
     else emptyList()) + listOf(
         ClipToolItem("effects", "Effects", Icons.Default.AutoAwesome),
         ClipToolItem("animations", "Animations", Icons.Default.Animation),
@@ -249,6 +253,7 @@ fun ClipEditToolsPanel(
                                 when (tool.id) {
                                     "edit_text" -> onEditText?.invoke()
                                     "edit_shape" -> onEditShape?.invoke()
+                                    "edit_points" -> onEditPoints?.invoke()
                                     "effects" -> onEffects()
                                     "animations" -> onAnimations()
                                     "color" -> onColor()

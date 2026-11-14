@@ -13,6 +13,7 @@ import com.example.model.AspectRatio
 import com.example.model.CarouselParams
 import com.example.model.CarouselTemplate
 import com.example.model.VectorDraw
+import com.example.model.PathSeg
 import com.example.model.DonutChartTemplate
 import com.example.model.GenieTemplate
 import com.example.model.LogoRevealTemplate
@@ -839,12 +840,14 @@ class VideoEditorViewModel : ViewModel() {
         fillMode: Int,
         fillColor: Long,
         strokeWidth: Float,
-        strokeColor: Long = 0xFFFFFFFF
+        strokeColor: Long = 0xFFFFFFFF,
+        /** Layer name: "Drawing" for the freehand tool, "Pen" for the point-based pen (build 177). */
+        name: String = "Drawing"
     ) {
         pushHistory()
         val newClip = TimelineClip(
             id = UUID.randomUUID().toString(),
-            name = "Drawing",
+            name = name,
             type = LayerType.SHAPE,
             startMs = _currentPlayheadMs.value,
             durationMs = durationMs.coerceIn(250L, 60_000L),
@@ -1426,6 +1429,15 @@ class VideoEditorViewModel : ViewModel() {
         // The Color / Blend resets ride this path: on a Controller they fan out like any
         // other edit of those panels (build 155).
         if (before != null) applyControllerFanOut(before)
+    }
+
+    /**
+     * Replaces a PATH layer's outline (build 177, node editing): the segments are the
+     * layer's geometry, not a keyframable property, so the edit rides the no-keyframes
+     * path. Undo is the caller's: one [beginAdjust] per gesture / discrete edit.
+     */
+    fun setClipPathSegments(clipId: String, segments: List<PathSeg>) {
+        updateClipNoKeyframes(clipId) { it.copy(pathSegments = segments) }
     }
 
     /**

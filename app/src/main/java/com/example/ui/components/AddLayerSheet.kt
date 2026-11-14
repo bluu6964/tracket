@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Polyline
 import androidx.compose.material.icons.filled.SentimentSatisfiedAlt
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,8 +50,10 @@ fun AddLayerSheet(
     onSticker: () -> Unit,
     /** Ready-made compositions (build 143): opens the Templates picker. */
     onTemplates: () -> Unit = {},
-    /** Vector drawing (build 166): draw a freehand path that becomes a shape layer. */
+    /** Freehand drawing (build 166): draw a stroke that becomes a shape layer. */
     onDraw: () -> Unit = {},
+    /** Point-based Pen (build 177): tap places anchor points, drag pulls bezier handles — a vector path layer. */
+    onPen: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel) {
@@ -76,6 +79,8 @@ fun AddLayerSheet(
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Item("Draw", Icons.Default.Brush, "add_sheet_draw") { onDismiss(); onDraw() }
+                Item("Pen", Icons.Default.Polyline, "add_sheet_pen") { onDismiss(); onPen() }
+                Spacer(Modifier.weight(1f))
             }
         }
     }

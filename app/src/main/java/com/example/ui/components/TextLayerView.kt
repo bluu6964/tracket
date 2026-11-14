@@ -169,6 +169,8 @@ fun TextLayerOnCanvas(
     frameWidth: Dp,
     isSelected: Boolean,
     onMove: (clipId: String, offsetX: Float, offsetY: Float) -> Unit,
+    /** Called when the drag ends (build 176: clears the snap guides). */
+    onDragEnd: () -> Unit = {},
     onTap: (clipId: String) -> Unit,
     onDoubleTap: (clipId: String) -> Unit,
     modifier: Modifier = Modifier,
@@ -219,6 +221,8 @@ fun TextLayerOnCanvas(
                         dragY = y
                         tap(clip.id)
                     },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
                     onDrag = { change, amount ->
                         change.consume()
                         // The drag arrives in the layer's own (scaled + rotated) space:

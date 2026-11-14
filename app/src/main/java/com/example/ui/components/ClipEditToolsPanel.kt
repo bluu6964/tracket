@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.CopyAll
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -121,6 +123,14 @@ fun ClipEditToolsPanel(
     onEditGroup: (() -> Unit)? = null,
     /** Rename the layer. */
     onRename: (() -> Unit)? = null,
+    /** Copy this layer's keyframes to the in-app clipboard (build 176). */
+    onCopyKeyframes: (() -> Unit)? = null,
+    /** Paste the clipboard's keyframes onto this layer at the playhead (build 176). Only set while the clipboard holds keyframes. */
+    onPasteKeyframes: (() -> Unit)? = null,
+    /** Copy this layer's effect stack to the in-app clipboard (build 176). */
+    onCopyEffects: (() -> Unit)? = null,
+    /** Paste the clipboard's effect stack onto this layer, replacing its stack (build 176). Only set while the clipboard holds effects. */
+    onPasteEffects: (() -> Unit)? = null,
     /** Video layers: freeze frame (holds the picture at the playhead). */
     onFreeze: (() -> Unit)? = null,
     /**
@@ -146,7 +156,11 @@ fun ClipEditToolsPanel(
         ClipToolItem("transform", "Transform", Icons.Default.OpenWith),
         ClipToolItem("crop", "Crop", Icons.Default.Crop),
         ClipToolItem("blend", "Blend", Icons.Default.Layers)
-    ) + (if (onVolume != null) listOf(ClipToolItem("volume", "Volume", Icons.AutoMirrored.Filled.VolumeUp))
+    ) + (if (onCopyKeyframes != null) listOf(ClipToolItem("copy_keyframes", "Copy keyframes", Icons.Default.ContentCopy))
+    else emptyList()) + (if (onPasteKeyframes != null) listOf(ClipToolItem("paste_keyframes", "Paste keyframes", Icons.Default.ContentPaste))
+    else emptyList()) + (if (onCopyEffects != null) listOf(ClipToolItem("copy_effects", "Copy effects", Icons.Default.CopyAll))
+    else emptyList()) + (if (onPasteEffects != null) listOf(ClipToolItem("paste_effects", "Paste effects", Icons.Default.ContentPaste))
+    else emptyList()) + (if (onVolume != null) listOf(ClipToolItem("volume", "Volume", Icons.AutoMirrored.Filled.VolumeUp))
     else emptyList()) + (if (onMasks != null) listOf(ClipToolItem("masks", "Masks", Icons.Default.Tonality))
     else emptyList()) + (if (onCutout != null) listOf(ClipToolItem("cutout", "Cutout", Icons.Default.Person))
     else emptyList()) + (if (onRoto != null) listOf(ClipToolItem("roto", "Roto", Icons.Default.Brush))
@@ -241,6 +255,10 @@ fun ClipEditToolsPanel(
                                     "transform" -> onTransform()
                                     "crop" -> onCrop()
                                     "blend" -> onBlend()
+                                    "copy_keyframes" -> onCopyKeyframes?.invoke()
+                                    "paste_keyframes" -> onPasteKeyframes?.invoke()
+                                    "copy_effects" -> onCopyEffects?.invoke()
+                                    "paste_effects" -> onPasteEffects?.invoke()
                                     "cutout" -> onCutout?.invoke()
                                     "roto" -> onRoto?.invoke()
                                     "track" -> onTrack?.invoke()

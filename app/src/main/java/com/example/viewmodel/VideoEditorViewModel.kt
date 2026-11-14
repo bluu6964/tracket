@@ -37,6 +37,10 @@ import com.example.model.Easing
 import com.example.model.ShapeEditValues
 import com.example.model.TimelineClip
 import com.example.model.at
+import com.example.model.copyEffects
+import com.example.model.deepCopyKeyframes
+import com.example.model.withFreshEffectIds
+import com.example.model.withPastedKeyframes
 import com.example.model.trackOffsetAt
 import com.example.model.indexOnTime
 import com.example.model.propValues
@@ -636,6 +640,73 @@ class VideoEditorViewModel : ViewModel() {
                 if (clip.id == clipId) clip.copy(effectName = effect) else clip
             })
         }
+    }
+
+    // ---- In-app clipboard: copy / paste keyframes + effects (build 176) ----
+    //
+    // Sarowar's tools 1+2 from the missing-tools audit. The payload rules live in
+    // model/ClipClipboard.kt (pure, harness-tested); the clipboard itself is just two
+    // nullable fields here, with StateFlows so the tools panel can show Paste only
+    // while the clipboard holds something.
+
+    private var keyframesClipboard: Map<AnimProp, List<com.example.model.Keyframe>>? = null
+    private var effectsClipboard: List<com.example.model.ClipFx>? = null
+
+    private val _hasKeyframesClipboard = MutableStateFlow(false)
+    val hasKeyframesClipboard: StateFlow<Boolean> = _hasKeyframesClipboard.asStateFlow()
+    private val _hasEffectsClipboard = MutableStateFlow(false)
+    val hasEffectsClipboard: StateFlow<Boolean> = _hasEffectsClipboard.asStateFlow()
+
+    /** Copies every keyframe track of the selected layer. Returns false (and empties the clipboard) when the layer has no keyframes. */
+    fun copySelectedKeyframes(): Boolean {
+        val clip = _selectedClipId.value?.let { clipNow(it) } ?: return false
+        keyframesClipboard = if (clip.keyframes.values.all { it.isEmpty() }) null
+        else clip.keyframes.deepCopyKeyframes()
+        _hasKeyframesClipboard.value = keyframesClipboard != null
+        return keyframesClipboard != null
+    }
+
+    /**
+     * Pastes the copied keyframes onto the selected layer: the copied set's earliest key
+     * lands on the playhead (Alight's rule), each pasted prop replaces the target's keys
+     * inside its pasted span only. One undo step. Applies to the selected layer alone —
+     * a Controller's connected layers are NOT mirrored (a paste is a per-layer clipboard
+     * op, not one of the settled fan-out edits).
+     */
+    fun pasteKeyframes(): Boolean {
+        val copied = keyframesClipboard ?: return false
+        val clipId = _selectedClipId.value ?: return false
+        val clip = clipNow(clipId) ?: return false
+        val anchor = (_currentPlayheadMs.value - clip.startMs).coerceIn(0L, clip.durationMs)
+        pushHistory()
+        updateClipRaw(clipId) { it.withPastedKeyframes(copied, anchor) }
+        return true
+    }
+
+    /** Copies the selected layer's whole effect stack (deep copy, keyframed param tails included). Returns false (and empties the clipboard) when the stack is empty. */
+    fun copySelectedEffects(): Boolean {
+        val clip = _selectedClipId.value?.let { clipNow(it) } ?: return false
+        effectsClipboard = if (clip.effects.isEmpty()) null else clip.effects.copyEffects()
+        _hasEffectsClipboard.value = effectsClipboard != null
+        return effectsClipboard != null
+    }
+
+    /**
+     * Pastes the copied effect stack onto the selected layer, REPLACING its stack (fresh
+     * effect ids). One undo step. Same type gate as the Effects panel; on a Controller the
+     * paste rides [setClipEffects], so it fans out to the connected layers like any
+     * Effects-panel edit of a Controller.
+     */
+    fun pasteEffects(): Boolean {
+        val copied = effectsClipboard ?: return false
+        val clipId = _selectedClipId.value ?: return false
+        val target = clipNow(clipId) ?: return false
+        if (target.type == LayerType.AUDIO || target.type == LayerType.NULL || target.type == LayerType.CAMERA ||
+            target.type == LayerType.CHAIN || target.type == LayerType.GROUP
+        ) return false
+        pushHistory()
+        setClipEffects(clipId, copied.withFreshEffectIds())
+        return true
     }
 
     /**

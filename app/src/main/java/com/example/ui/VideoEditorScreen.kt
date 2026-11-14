@@ -154,6 +154,8 @@ fun VideoEditorScreen(
     val canvasColor by viewModel.canvasColor.collectAsState()
     val selectedResolution by viewModel.selectedResolution.collectAsState()
     val selectedClipId by viewModel.selectedClipId.collectAsState()
+    val hasKeyframesClipboard by viewModel.hasKeyframesClipboard.collectAsState()
+    val hasEffectsClipboard by viewModel.hasEffectsClipboard.collectAsState()
     val multiSelectIds by viewModel.multiSelectIds.collectAsState()
     val isMasterMuted by viewModel.isMasterMuted.collectAsState()
     val beatMarks by viewModel.beatMarks.collectAsState()
@@ -2875,6 +2877,42 @@ fun VideoEditorScreen(
                                 }
                             ) {
                                 { startFreezeFrame(targetClipId) }
+                            } else null,
+                            // Clipboard (build 176): copy / paste keyframes + effects.
+                            // Paste is only offered while the clipboard holds something.
+                            onCopyKeyframes = {
+                                val ok = viewModel.copySelectedKeyframes()
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        if (ok) "Keyframes copied" else "This layer has no keyframes to copy"
+                                    )
+                                }
+                            },
+                            onPasteKeyframes = if (hasKeyframesClipboard) {
+                                {
+                                    if (viewModel.pasteKeyframes()) {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        scope.launch { snackbarHostState.showSnackbar("Keyframes pasted at the playhead") }
+                                    }
+                                }
+                            } else null,
+                            onCopyEffects = {
+                                val ok = viewModel.copySelectedEffects()
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        if (ok) "Effects copied" else "This layer has no effects to copy"
+                                    )
+                                }
+                            },
+                            onPasteEffects = if (hasEffectsClipboard) {
+                                {
+                                    if (viewModel.pasteEffects()) {
+                                        snackbarHostState.currentSnackbarData?.dismiss()
+                                        scope.launch { snackbarHostState.showSnackbar("Effects pasted (replaced)") }
+                                    }
+                                }
                             } else null,
                             // Used-tool state (build 166, item 5): the tools already applied
                             // to this layer read white, the rest grey (UsedTools' rule).

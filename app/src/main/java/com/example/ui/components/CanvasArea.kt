@@ -49,6 +49,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -79,7 +80,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.AspectRatio
+import com.example.model.CanvasSnap
 import com.example.model.LayerType
+import com.example.model.SnapRect
 import com.example.model.at
 import com.example.model.renderAt
 import com.example.model.TimelineTrack
@@ -203,6 +206,51 @@ fun CanvasArea(
                         canvasArgb = canvasArgb,
                         modifier = Modifier.fillMaxSize()
                     )
+                }                // ---- Canvas snapping (build 176, Sarowar's tool 3 from the audit) ----
+                // Every drag path below (media, shape, sticker, text) reports the layer's
+                // proposed STORED position to snappedMove instead of onUpdateClipTransform:
+                // the move is snapped in canvas pixels (the pure rule is model/CanvasSnap)
+                // and the SNAPPED position is what gets written. Snapping the drag of a
+                // Controller moves the Controller's own handle the same way — the fan-out
+                // in the ViewModel then works from the snapped position. Multi-layer drag
+                // does not exist on this canvas (drags are one layer), so there is nothing
+                // else to snap by. Guide lines are flat white hairlines (the B/W language).
+                val fwPx = with(frameDensity) { frameW.toPx() }
+                val fhPx = with(frameDensity) { frameH.toPx() }
+                val textSizes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Size>() }
+                var snapGuideX by remember { mutableStateOf<Float?>(null) }
+                var snapGuideY by remember { mutableStateOf<Float?>(null) }
+                val snapTracksNow by mediaRememberUpdatedState(tracks)
+                val snapSizesNow by mediaRememberUpdatedState(textSizes)
+                val clearSnapGuides: () -> Unit = { snapGuideX = null; snapGuideY = null }
+                val snappedMove: (String, Float, Float) -> Unit = { id, sx, sy ->
+                    var outX = sx
+                    var outY = sy
+                    var gx: Float? = null
+                    var gy: Float? = null
+                    val t = playheadMs()
+                    val clipsNow = snapTracksNow.asReversed().flatMap { it.clips }
+                        .filter { it.isVisible && !it.isMask && it.isActiveAt(t) && !it.isBehindCamera }
+                        .map { com.example.engine.NativeRenderAt.renderAt(it, t, t) }
+                    val dragged = clipsNow.firstOrNull { it.id == id }
+                    if (dragged != null) {
+                        val moved = dragged.copy(transformX = sx, transformY = sy, shapeOffsetX = sx, shapeOffsetY = sy)
+                        val rect = snapRectOf(moved, fwPx, fhPx, frameDensity.density, snapSizesNow, forDragged = true)
+                        if (rect != null) {
+                            val others = clipsNow.filter { it.id != id }
+                                .mapNotNull { snapRectOf(it, fwPx, fhPx, frameDensity.density, snapSizesNow, forDragged = false) }
+                            val res = CanvasSnap.snap(rect, fwPx, fhPx, others, 8f * frameDensity.density)
+                            // Canvas px -> stored units: the stored position is drawn times the depth factor.
+                            val df = dragged.depthFactor.coerceAtLeast(0.001f)
+                            outX = sx + res.dx / df
+                            outY = sy + res.dy / df
+                            gx = res.guideX
+                            gy = res.guideY
+                        }
+                    }
+                    snapGuideX = gx
+                    snapGuideY = gy
+                    onUpdateClipTransform(id, outX, outY)
                 }
                 if (activeMediaClips.isNotEmpty()) {
                     // Tap a picture / video to select it, drag to move it (like text and shapes).
@@ -211,7 +259,8 @@ fun CanvasArea(
                         selectedId = selectedClipId,
                         onSelect = onClipSelect,
                         onBegin = onSelectionBegin,
-                        onMove = onUpdateClipTransform,
+                        onMove = snappedMove,
+                        onDragEnd = clearSnapGuides,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -265,7 +314,6 @@ fun CanvasArea(
                     }
                 }
 
-                val textSizes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Size>() }
                 activeOverlayClips.forEach { clip ->
                 // Every layer sits in a full-canvas box that applies its opacity / blend mode.
                 Box(
@@ -279,7 +327,8 @@ fun CanvasArea(
                         clip = clip,
                         timeMs = playheadMs(),
                         isSelected = clip.id == selectedClipId,
-                        onMove = onUpdateClipTransform,
+                        onMove = snappedMove,
+                        onDragEnd = clearSnapGuides,
                         onTap = onClipSelect,
                         hideContent = com.example.engine.nativeShapeEligible(clip),
                         modifier = Modifier.align(Alignment.Center)
@@ -289,7 +338,8 @@ fun CanvasArea(
                         clip = clip,
                         frameWidth = frameW,
                         isSelected = clip.id == selectedClipId,
-                        onMove = onUpdateClipTransform,
+                        onMove = snappedMove,
+                        onDragEnd = clearSnapGuides,
                         onTap = onClipSelect,
                         onDoubleTap = onTextDoubleTap,
                         hideContent = com.example.engine.nativeTextEligible(clip),
@@ -336,6 +386,8 @@ fun CanvasArea(
                                         currentDragX = latestShape.transformX
                                         currentDragY = latestShape.transformY
                                     },
+                                    onDragEnd = { clearSnapGuides() },
+                                    onDragCancel = { clearSnapGuides() },
                                     onDrag = { change, dragAmount ->
                                         change.consume()
                                         // The finger moves in the layer's own space (scaled, rotated and
@@ -349,7 +401,7 @@ fun CanvasArea(
                                         val sy = sc * (if (l.isFlippedV) -1f else 1f)
                                         currentDragX += dragAmount.x * sx * c - dragAmount.y * sy * sn
                                         currentDragY += dragAmount.x * sx * sn + dragAmount.y * sy * c
-                                        onUpdateClipTransform(l.id, currentDragX, currentDragY)
+                                        snappedMove(l.id, currentDragX, currentDragY)
                                     }
                                 )
                             }
@@ -456,6 +508,17 @@ fun CanvasArea(
                     }
                 }
 
+                // Snap guide lines (build 176): flat white hairlines, shown only while a
+                // drag is snapped (the B/W language — no colour, no glow).
+                if (snapGuideX != null || snapGuideY != null) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val col = Color.White.copy(alpha = 0.85f)
+                        val sw = 1.dp.toPx()
+                        snapGuideX?.let { x -> drawLine(col, Offset(x, 0f), Offset(x, size.height), strokeWidth = sw) }
+                        snapGuideY?.let { y -> drawLine(col, Offset(0f, y), Offset(size.width, y), strokeWidth = sw) }
+                    }
+                }
+
             }
 
             // Bounding box + corner / rotate handles of the selected picture / video layer.
@@ -509,6 +572,61 @@ internal fun mediaVisibleSize(mc: com.example.model.TimelineClip, fw: Float, fh:
 }
 
 /**
+ * Where a layer sits on the canvas for snapping (build 176): its axis-aligned bounds
+ * (the four rotated corners) and centre, in canvas pixels — the same [FrameGeo] geometry
+ * the selection frame uses. Media layers measure their visible (fitted, cropped) picture
+ * with the pivot on the whole canvas; shape / sticker / group layers their 130 dp box;
+ * text its measured box (centre-only until measured). A dragged Null / Controller /
+ * Camera (no picture) snaps by its centre only; as a snap TARGET those types (and
+ * anything without a measurable picture) return null and are skipped.
+ */
+private fun snapRectOf(
+    clip: TimelineClip,
+    fw: Float,
+    fh: Float,
+    density: Float,
+    textSizes: Map<String, androidx.compose.ui.geometry.Size>,
+    forDragged: Boolean
+): SnapRect? {
+    val w: Float
+    val h: Float
+    val prW: Float
+    val prH: Float
+    when {
+        clip.type == LayerType.VIDEO && clip.uri != null -> {
+            val s = mediaVisibleSize(clip, fw, fh)
+            w = s.width; h = s.height; prW = fw; prH = fh
+        }
+        clip.type == LayerType.SHAPE || clip.type == LayerType.STICKER || clip.type == LayerType.GROUP -> {
+            val s = 130f * density
+            w = s; h = s; prW = 0f; prH = 0f
+        }
+        clip.text != null -> {
+            val s = textSizes[clip.id]
+            w = s?.width ?: 0f; h = s?.height ?: 0f; prW = 0f; prH = 0f
+        }
+        forDragged -> {
+            w = 0f; h = 0f; prW = 0f; prH = 0f
+        }
+        else -> return null
+    }
+    val geo = FrameGeo(clip, w, h, fw, fh, 0.01f, prW, prH)
+    var l = Float.MAX_VALUE
+    var tp = Float.MAX_VALUE
+    var r = -Float.MAX_VALUE
+    var bt = -Float.MAX_VALUE
+    for (i in 0..3) {
+        val c = geo.corner(i)
+        if (c.x < l) l = c.x
+        if (c.x > r) r = c.x
+        if (c.y < tp) tp = c.y
+        if (c.y > bt) bt = c.y
+    }
+    val ctr = geo.center
+    return SnapRect(ctr.x, ctr.y, l, tp, r, bt)
+}
+
+/**
  * Invisible touch layer above the media layers: finds which picture / video is under the finger
  * (the selected one first, else the top one), selects it and moves it while dragging.
  * Text and shape layers sit above this layer and keep their own gestures.
@@ -520,6 +638,8 @@ private fun MediaGestureLayer(
     onSelect: (String) -> Unit,
     onBegin: () -> Unit,
     onMove: (id: String, x: Float, y: Float) -> Unit,
+    /** Called when a gesture on a layer ends (build 176: clears the snap guides). */
+    onDragEnd: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var fw by remember { mediaMutableFloatStateOf(1f) }
@@ -529,6 +649,7 @@ private fun MediaGestureLayer(
     val selectNow by mediaRememberUpdatedState(onSelect)
     val beginNow by mediaRememberUpdatedState(onBegin)
     val moveNow by mediaRememberUpdatedState(onMove)
+    val endNow by mediaRememberUpdatedState(onDragEnd)
 
     Box(
         modifier = modifier
@@ -581,6 +702,7 @@ private fun MediaGestureLayer(
                             c.consume()
                         }
                     }
+                    endNow()
                 }
             }
     )
@@ -619,6 +741,8 @@ private fun StickerLayerOnCanvas(
     timeMs: Long,
     isSelected: Boolean,
     onMove: (clipId: String, offsetX: Float, offsetY: Float) -> Unit,
+    /** Called when the drag ends (build 176: clears the snap guides). */
+    onDragEnd: () -> Unit = {},
     onTap: (clipId: String) -> Unit,
     modifier: Modifier = Modifier,
     /** The C++ preview draws this sticker: keep the (invisible) box for selection and touch only. */
@@ -654,6 +778,8 @@ private fun StickerLayerOnCanvas(
                         currentDragX = latest.transformX
                         currentDragY = latest.transformY
                     },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
                     onDrag = { change, dragAmount ->
                         change.consume()
                         val l = latest

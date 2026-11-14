@@ -249,4 +249,21 @@ class DuckingTest {
         assertEquals(0.5f, Ducking.gainAt(pts, 1500L), 0f)
         assertEquals(1f, Ducking.gainAt(pts, 4000L), 0f)      // clamped to the last gain
     }
+
+    // ---- build 198 hardening: non-finite settings ---------------------------------------------------
+    // Kotlin's coerceIn does NOT stop NaN (it passes straight through), so a
+    // NaN amount / smoothness / level must be stopped by the law itself — a
+    // NaN gain reaching the shared mixer would poison every sample it touches.
+
+    @Test
+    fun nonFiniteSettingsNeverDuck() {
+        assertEquals(1f, Ducking.floorGain(Float.NaN), 0f)
+        assertTrue(Ducking.attackMs(Float.NaN) in 2.0..50.0)
+        assertTrue(Ducking.releaseMs(Float.NaN) in 60.0..1000.0)
+        val levels = FloatArray(50) { 0.9f }
+        assertTrue(Ducking.gainsForLevels(levels, Float.NaN, 0.5f).all { it == 1f })
+        assertTrue(Ducking.gainsForLevels(levels, 12f, Float.NaN).all { it.isFinite() })
+        assertTrue(Ducking.gainsForLevels(FloatArray(50) { Float.NaN }, 12f, 0.5f).all { it == 1f })
+        assertNull(Ducking.curve(0L, levels, audioClip(durationMs = 4000L), amountDb = Float.NaN, smoothness = 0.5f))
+    }
 }

@@ -500,4 +500,62 @@ class AlightXmlExportTest {
         assertTrue(out.report.omittedLayers[0].contains("Controller"))
         assertEquals(1, clipsOf(back).size)
     }
+
+    // ---- build 198 hardening ----------------------------------------------------------------------
+
+    @Test
+    fun groupChildOutsideTheGroupSpanIsOmittedNotACrash() {
+        val groupId = "id-Group"
+        val group = clip("Group", LayerType.GROUP, start = 1000, dur = 2000) {
+            copy(id = groupId, transformX = 0f, transformY = 0f)
+        }
+        // The child starts only after the group has already ended (the group was
+        // trimmed shorter, the child moved out). The exporter must list it as
+        // omitted — build 197's span clamp threw IllegalArgumentException on the
+        // empty coerce range this shape of project produces (build 198 fix).
+        val late = clip("Late", LayerType.SHAPE, start = 5000, dur = 1000) {
+            copy(shapePattern = "RECT", groupId = groupId)
+        }
+        val out = AlightXmlExporter.export("RT", snap(listOf(late, group)), pw)
+        assertNotNull(out)
+        assertTrue(out!!.report.omittedLayers.any { it.contains("outside its group's span") })
+        assertEquals(1, out.report.layersWritten)
+    }
+
+    @Test
+    fun controlCharactersNeverReachTheFile() {
+        // XML 1.0 forbids most C0 control characters: a layer name or text body
+        // carrying one (a stray paste) must not turn the export into a file no
+        // strict parser — Alight's, or this app's own importer — can reopen.
+        val text = clip("T\u0002x", LayerType.TEXT) {
+            copy(text = "A\u0001B\u000BC")
+        }
+        val out = AlightXmlExporter.export("RT", snap(listOf(text)), pw)
+        assertNotNull(out)
+        val xml = out!!.xml
+        assertTrue(
+            "no raw control chars in the file",
+            xml.none { it.code < 0x20 && it != '\t' && it != '\n' && it != '\r' }
+        )
+        DocumentBuilderFactory.newInstance().newDocumentBuilder()
+            .parse(xml.byteInputStream(Charsets.UTF_8))
+    }
+
+    @Test
+    fun malformedEffectTailCountCannotCrashTheExport() {
+        // A corrupted values list whose first tail-track count is absurd: the
+        // count x 6 bounds check must be overflow-safe, or the decode reads
+        // past the list and the export dies (build 198 fix). The effect must
+        // still export from its constants.
+        val bogus = ClipFx(
+            type = ClipFxLibrary.EXPOSURE,
+            values = listOf(0.5f, 0f, 100f, 0f, 0f, 0f, 0f, 4.0e8f, 1f, 2f)
+        )
+        val shape = clip("Fx", LayerType.SHAPE) {
+            copy(shapePattern = "RECT", effects = listOf(bogus))
+        }
+        val out = AlightXmlExporter.export("RT", snap(listOf(shape)), pw)
+        assertNotNull(out)
+        assertTrue(out!!.xml.contains("com.alightcreative.effects.exposure"))
+    }
 }

@@ -90,8 +90,15 @@ object NoiseReduction {
     /** Gain-recovery time constant of the temporal smoother (ms). */
     const val RELEASE_MS = 80.0
 
-    /** The over-subtraction factor of a strength 0..1. */
-    fun overSubtraction(strength: Float): Float = MAX_OVER * strength.coerceIn(0f, 1f)
+    /**
+     * The over-subtraction factor of a strength 0..1. Build 198: a NaN strength
+     * (coerceIn passes NaN through) reads as 0 — no processing — never as a
+     * NaN factor that would turn every gate gain NaN downstream.
+     */
+    fun overSubtraction(strength: Float): Float {
+        val s = strength.coerceIn(0f, 1f)
+        return if (s.isNaN()) 0f else MAX_OVER * s
+    }
 
     /**
      * One bin's raw (unsmoothed) gate gain for magnitude [magnitude] against
@@ -102,7 +109,7 @@ object NoiseReduction {
      */
     fun rawGain(magnitude: Float, noise: Float, strength: Float): Float {
         val s = strength.coerceIn(0f, 1f)
-        if (s <= 0f) return 1f
+        if (!(s > 0f)) return 1f   // NaN included (build 198): no strength, no gating
         if (magnitude <= 0f) return FLOOR_GAIN
         val r = (overSubtraction(s) * noise / magnitude).toDouble()
         val g2 = 1.0 - r * r
@@ -254,7 +261,7 @@ object NoiseReduction {
 
         fun process(input: FloatArray): FloatArray {
             if (input.isEmpty()) return FloatArray(0)
-            if (strength <= 0f || profile.size != BINS) return input.copyOf()
+            if (!(strength > 0f) || profile.size != BINS) return input.copyOf()   // NaN strength = passthrough (build 198)
             val acc = FloatArray(input.size + FFT_SIZE)
             val norm = FloatArray(input.size + FFT_SIZE)
             val re = FloatArray(FFT_SIZE)

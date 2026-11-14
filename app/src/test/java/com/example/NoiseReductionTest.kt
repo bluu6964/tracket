@@ -258,4 +258,19 @@ class NoiseReductionTest {
         // Empty input -> empty output.
         assertEquals(0, NoiseReduction.Processor(profile, 1f).process(FloatArray(0)).size)
     }
+
+    // ---- build 198 hardening: non-finite strength ---------------------------------------------------
+    // coerceIn passes NaN through, so the law must treat a NaN strength as
+    // "no processing" itself — never as a gain computation (a NaN gain in the
+    // shared mixer's gate would poison the whole render).
+
+    @Test
+    fun nonFiniteStrengthIsAnExactPassthrough() {
+        assertEquals(0f, NoiseReduction.overSubtraction(Float.NaN), 0f)
+        assertEquals(1f, NoiseReduction.rawGain(0.5f, 0.1f, Float.NaN), 0f)
+        val input = FloatArray(4096) { sin(it * 0.1).toFloat() }
+        val out = NoiseReduction.Processor(FloatArray(NoiseReduction.BINS) { 0.01f }, Float.NaN)
+            .process(input)
+        assertTrue(input.contentEquals(out))
+    }
 }

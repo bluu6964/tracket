@@ -2868,51 +2868,63 @@ fun VideoEditorScreen(
                         }
                         if (fw > 1f && pair.size == 2) {
                             val fh = fw / selectedAspectRatio.ratioFloat
-                            val rig = com.example.engine.ParentRig(allClips) { c, tm ->
-                                com.example.engine.NativeRenderAt.renderAt(c, tm)
-                            }
-                            val ra = com.example.engine.ShapeBooleanGeometry.frameRings(
-                                allClips, rig, pair[0], t, fw, fh, 1f, previewDensity
-                            )
-                            val rb = com.example.engine.ShapeBooleanGeometry.frameRings(
-                                allClips, rig, pair[1], t, fw, fh, 1f, previewDensity
-                            )
-                            if (ra == null || rb == null) {
-                                report("These two shapes cannot be combined")
-                            } else {
-                                val result = com.example.model.ShapeBoolean.combine(ra, rb, op)
-                                if (result.isEmpty()) {
-                                    report(
-                                        when (op) {
-                                            com.example.model.ShapeBooleanOp.INTERSECT -> "The two shapes do not overlap"
-                                            com.example.model.ShapeBooleanOp.SUBTRACT -> "Nothing is left after the cut"
-                                            com.example.model.ShapeBooleanOp.XOR -> "The two shapes cancel each other out"
-                                            com.example.model.ShapeBooleanOp.UNION -> "Nothing to combine"
-                                        }
-                                    )
+                            // Build 198: the frame evaluation and the combine run OFF
+                            // the main thread — the combine is O(E^2) in the outlines'
+                            // edges and a detailed pair froze the editor for seconds —
+                            // and an over-budget pair is refused up front with an
+                            // honest message instead of being computed at all. The
+                            // result layer is added back on the main scope.
+                            scope.launch(Dispatchers.Default) {
+                                val rig = com.example.engine.ParentRig(allClips) { c, tm ->
+                                    com.example.engine.NativeRenderAt.renderAt(c, tm)
+                                }
+                                val ra = com.example.engine.ShapeBooleanGeometry.frameRings(
+                                    allClips, rig, pair[0], t, fw, fh, 1f, previewDensity
+                                )
+                                val rb = com.example.engine.ShapeBooleanGeometry.frameRings(
+                                    allClips, rig, pair[1], t, fw, fh, 1f, previewDensity
+                                )
+                                if (ra == null || rb == null) {
+                                    report("These two shapes cannot be combined")
+                                } else if (com.example.model.ShapeBoolean.overBudget(ra, rb)) {
+                                    report("These shapes are too detailed to combine")
                                 } else {
-                                    val raw = ArrayList<com.example.model.PathSeg>()
-                                    for (ring in result) {
-                                        ring.forEachIndexed { i, p ->
-                                            raw += com.example.model.PathSeg(
-                                                if (i == 0) com.example.model.PATH_OP_MOVE
-                                                else com.example.model.PATH_OP_LINE,
-                                                listOf((p.x / fh).toFloat(), (p.y / fh).toFloat())
-                                            )
-                                        }
-                                        raw += com.example.model.PathSeg(com.example.model.PATH_OP_CLOSE)
-                                    }
-                                    val built = com.example.model.VectorDraw.normalize(raw, fw, fh, previewDensity)
-                                    if (built == null) {
-                                        report("Nothing to combine")
-                                    } else {
-                                        viewModel.addBooleanResultClip(
-                                            drawn = built,
-                                            name = op.displayName,
-                                            fillFrom = pair[0],
-                                            startMs = pair[0].startMs,
-                                            durationMs = pair[0].durationMs
+                                    val result = com.example.model.ShapeBoolean.combine(ra, rb, op)
+                                    if (result.isEmpty()) {
+                                        report(
+                                            when (op) {
+                                                com.example.model.ShapeBooleanOp.INTERSECT -> "The two shapes do not overlap"
+                                                com.example.model.ShapeBooleanOp.SUBTRACT -> "Nothing is left after the cut"
+                                                com.example.model.ShapeBooleanOp.XOR -> "The two shapes cancel each other out"
+                                                com.example.model.ShapeBooleanOp.UNION -> "Nothing to combine"
+                                            }
                                         )
+                                    } else {
+                                        val raw = ArrayList<com.example.model.PathSeg>()
+                                        for (ring in result) {
+                                            ring.forEachIndexed { i, p ->
+                                                raw += com.example.model.PathSeg(
+                                                    if (i == 0) com.example.model.PATH_OP_MOVE
+                                                    else com.example.model.PATH_OP_LINE,
+                                                    listOf((p.x / fh).toFloat(), (p.y / fh).toFloat())
+                                                )
+                                            }
+                                            raw += com.example.model.PathSeg(com.example.model.PATH_OP_CLOSE)
+                                        }
+                                        val built = com.example.model.VectorDraw.normalize(raw, fw, fh, previewDensity)
+                                        if (built == null) {
+                                            report("Nothing to combine")
+                                        } else {
+                                            scope.launch {
+                                                viewModel.addBooleanResultClip(
+                                                    drawn = built,
+                                                    name = op.displayName,
+                                                    fillFrom = pair[0],
+                                                    startMs = pair[0].startMs,
+                                                    durationMs = pair[0].durationMs
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

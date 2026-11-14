@@ -173,4 +173,13 @@ class ScopeStatsTest {
         assertNull(ScopeStats.downscale(IntArray(0), 0, 5))
         assertNull(ScopeStats.downscale(IntArray(10), 11, 1))
     }
+
+    @Test
+    fun absurdDimensionsReturnNull() {
+        // width x height here overflows Int (3e9 wraps negative), which used
+        // to bypass the "array shorter than width x height" guard entirely
+        // and read out of bounds (build 198: the size check is Long math).
+        assertNull(ScopeStats.analyze(IntArray(4), 1_000_000, 3_000))
+        assertNull(ScopeStats.downscale(IntArray(4), 1_000_000, 3_000))
+    }
 }

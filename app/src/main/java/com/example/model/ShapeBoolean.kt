@@ -79,6 +79,25 @@ data class BoolPt(val x: Double, val y: Double) {
 
 object ShapeBoolean {
 
+    /**
+     * The most edges (ring points, summed over BOTH regions) one combine may
+     * be fed (build 198 hardening). [combine] splits every edge at every
+     * intersection — O(E²) pair work — so past a few thousand edges a single
+     * combine runs for seconds (measured in the harness JVM: ~0.6 s at 4,000
+     * total edges, ~0.9 s at 6,000, and unbounded beyond). Callers refuse
+     * over-budget pairs with [overBudget] and say so honestly instead of
+     * freezing the editor; typical shapes are far under (a built-in kind is
+     * <= 65 points; 4,000 edges is ~165 Pen curves across both shapes).
+     */
+    const val MAX_TOTAL_EDGES = 4000
+
+    /** The edge count of a region: one edge per ring point (each ring is implicitly closed). */
+    fun edgeCount(region: List<List<BoolPt>>): Int = region.sumOf { it.size }
+
+    /** True when combining [a] and [b] would exceed the edge budget (see [MAX_TOTAL_EDGES]). */
+    fun overBudget(a: List<List<BoolPt>>, b: List<List<BoolPt>>): Boolean =
+        edgeCount(a) + edgeCount(b) > MAX_TOTAL_EDGES
+
     /** Signed area of one ring (positive = the winding that fills its interior with +1). */
     fun signedArea(ring: List<BoolPt>): Double {
         var s = 0.0
@@ -615,6 +634,11 @@ fun TimelineClip.shapeBooleanRings(): List<List<BoolPt>>? {
     } else {
         primitiveShapeRings(this)
     }
+    // Edge budget (build 198): past ShapeBoolean.MAX_TOTAL_EDGES the crop cut
+    // below — and any pair combine this region would feed — is O(E^2) pair
+    // work measured in seconds. The shape reads as having no combinable
+    // region (the boolean row simply does not offer), never as a freeze.
+    if (ShapeBoolean.edgeCount(rings) > ShapeBoolean.MAX_TOTAL_EDGES) return null
     val win = cropVisibleRect(2f, 2f)
     if (win != null && (win.width < 2f - 1e-4f || win.height < 2f - 1e-4f)) {
         val l = win.left.toDouble() - 1.0

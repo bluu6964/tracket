@@ -47,12 +47,21 @@ object SpatialAlign {
     /** Deltas smaller than this (canvas px) count as "already there" and are dropped. */
     private const val EPS = 0.01f
 
-    /** The deltas for any [SpatialAction]; empty when the action cannot apply. */
-    fun deltas(rects: List<AlignRect>, action: SpatialAction): Map<String, Pair<Float, Float>> =
-        when (action) {
-            SpatialAction.DISTRIBUTE_H, SpatialAction.DISTRIBUTE_V -> distributeDeltas(rects, horizontal = action == SpatialAction.DISTRIBUTE_H)
-            else -> alignDeltas(rects, action)
+    /**
+     * The deltas for any [SpatialAction]; empty when the action cannot apply.
+     * Build 198: a rect with ANY non-finite bound drops out first — one layer
+     * with an extreme (infinite / NaN) evaluated bounds must not poison the
+     * shared bounding box and fling every other selected layer with it.
+     */
+    fun deltas(rects: List<AlignRect>, action: SpatialAction): Map<String, Pair<Float, Float>> {
+        val finite = rects.filter {
+            it.left.isFinite() && it.top.isFinite() && it.right.isFinite() && it.bottom.isFinite()
         }
+        return when (action) {
+            SpatialAction.DISTRIBUTE_H, SpatialAction.DISTRIBUTE_V -> distributeDeltas(finite, horizontal = action == SpatialAction.DISTRIBUTE_H)
+            else -> alignDeltas(finite, action)
+        }
+    }
 
     /** Align needs at least 2 rects. */
     fun alignDeltas(rects: List<AlignRect>, action: SpatialAction): Map<String, Pair<Float, Float>> {

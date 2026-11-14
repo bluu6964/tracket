@@ -45,7 +45,9 @@ internal object NoiseProfile {
 
     /** The cache key for [clip]'s profile, or null when it cannot be processed. */
     fun keyFor(clip: TimelineClip): Key? {
-        if (!clip.nrEnabled || clip.nrStrength <= 0f) return null
+        // !(x > 0) also refuses a NaN strength (build 198): with no key, no profile is
+        // computed and both mix paths pass strength 0 — a NaN can never reach the gate.
+        if (!clip.nrEnabled || !(clip.nrStrength > 0f)) return null
         val uri = clip.uri ?: return null
         val spanMs = clip.sourceOffsetMs(clip.durationMs)
         if (spanMs <= 0L) return null

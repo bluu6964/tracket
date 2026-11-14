@@ -256,4 +256,28 @@ class ProjectStoreTest {
         assertNull(ProjectFiles.fileOf("content://x/imports/../../secret", files))
         assertFalse(ProjectFiles.fileOf("content://com.example.fileprovider/imports/a.mp4", files)!!.exists())
     }
+
+    @Test
+    fun prePushFileLoadsWithPushFieldDefaults() {
+        // A project file written before the production push (builds 188-197):
+        // no "markers" key on the snapshot, and clips without the ducking
+        // (194), noise-reduction (195) or text-on-path (191) fields. Every one
+        // must load at its documented default (build 198 regression pin).
+        val old = """{"tracks":[{"id":"t","name":"L","clips":[
+          {"id":"a","name":"Music","type":"AUDIO","startMs":0,"durationMs":4000,"color":1,"uri":"file:///m.mp3"},
+          {"id":"x","name":"Title","type":"TEXT","startMs":0,"durationMs":2000,"color":1,"text":"Hi"}
+        ]}]}"""
+        val s = ProjectStore.decode(old)
+        assertTrue(s.markers.isEmpty())
+        val a = s.tracks[0].clips[0]
+        assertEquals(false, a.duckEnabled)
+        assertNull(a.duckTriggerId)
+        assertEquals(12f, a.duckAmountDb, 0f)
+        assertEquals(0.5f, a.duckSmoothness, 0f)
+        assertEquals(false, a.nrEnabled)
+        assertEquals(0.6f, a.nrStrength, 0f)
+        val x = s.tracks[0].clips[1]
+        assertNull(x.textPathLayerId)
+        assertEquals(0f, x.textPathStart, 0f)
+    }
 }

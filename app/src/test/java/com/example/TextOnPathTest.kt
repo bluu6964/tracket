@@ -186,4 +186,18 @@ class TextOnPathTest {
         assertFalse(pen.copy(pathSegments = emptyList()).isPathBearing)
         assertFalse(pen.copy(type = LayerType.TEXT).isPathBearing)
     }
+
+    // ---- build 198 hardening: NaN start fraction -------------------------------------------------------
+
+    @Test
+    fun nanStartFractionStartsAtThePathStart() {
+        // A NaN textPathStart (it survives every coerceIn) must read as 0 —
+        // the text starts at the path's start — not as a NaN pen position
+        // that silently swallows every glyph (build 198).
+        val t = tableOf(0f to 0f, 100f to 0f)
+        val placed = TextOnPath.layout(listOf(10f, 10f), Float.NaN, t)
+        assertEquals(0f, placed[0].startDist, 1e-4f)
+        assertTrue(placed[0].drawn)
+        assertEquals(0f, placed[0].x, 1e-4f)
+    }
 }

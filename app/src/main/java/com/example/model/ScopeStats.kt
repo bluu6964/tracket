@@ -117,7 +117,10 @@ object ScopeStats {
      * array shorter than width × height.
      */
     fun downscale(argb: IntArray, width: Int, height: Int): Downscaled? {
-        if (width <= 0 || height <= 0 || argb.size < width * height) return null
+        // The size comparison is LONG math (build 198): width x height in Int
+        // overflows for absurd dimensions (1e6 x 3000 wraps negative), which
+        // used to bypass this guard and read the array out of bounds.
+        if (width <= 0 || height <= 0 || argb.size.toLong() < width.toLong() * height.toLong()) return null
         val longest = maxOf(width, height)
         if (longest <= MAX_SIDE) return Downscaled(argb, width, height)
         val scale = MAX_SIDE.toFloat() / longest

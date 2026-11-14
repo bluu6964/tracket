@@ -110,6 +110,9 @@ object TextOnPath {
     fun layout(advances: List<Float>, startFrac: Float, table: ArcTable): List<Placement> {
         val out = ArrayList<Placement>(advances.size)
         var pen = startFrac.coerceIn(0f, 1f) * table.total
+        // A NaN start fraction survives coerceIn (build 198): read it as 0 (the
+        // path's start) instead of a NaN pen that swallows every glyph.
+        if (pen.isNaN()) pen = 0f
         for (adv in advances) {
             val p = table.pointAt(pen)
             out += Placement(pen, p.x, p.y, p.angleDeg, table.total > 0f && pen < table.total)

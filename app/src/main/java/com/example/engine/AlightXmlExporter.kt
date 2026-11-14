@@ -106,11 +106,38 @@ object AlightXmlExporter {
         return if (s == "-0" || s.isEmpty()) "0" else s
     }
 
-    internal fun escAttr(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;")
+    /**
+     * XML 1.0 character legality (build 198): the C0 control characters other than
+     * tab / LF / CR — and the two non-characters U+FFFE / U+FFFF — are forbidden
+     * ANYWHERE in an XML file, escaping cannot represent them, and a strict parser
+     * (Alight's, or this app's own importer) rejects the whole document over one
+     * stray byte in a layer name or a text body. They are replaced with a space
+     * before escaping; everything else passes through byte-identical.
+     */
+    internal fun xmlChars(s: String): String {
+        var dirty = false
+        for (c in s) {
+            if ((c.code < 0x20 && c != '\t' && c != '\n' && c != '\r') ||
+                c.code == 0xFFFE || c.code == 0xFFFF
+            ) { dirty = true; break }
+        }
+        if (!dirty) return s
+        val sb = StringBuilder(s.length)
+        for (c in s) {
+            sb.append(
+                if ((c.code < 0x20 && c != '\t' && c != '\n' && c != '\r') ||
+                    c.code == 0xFFFE || c.code == 0xFFFF
+                ) ' ' else c
+            )
+        }
+        return sb.toString()
+    }
+
+    internal fun escAttr(s: String): String = xmlChars(s).replace("&", "&amp;").replace("<", "&lt;")
         .replace(">", "&gt;").replace("\"", "&quot;")
 
     internal fun escText(s: String): String =
-        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        xmlChars(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     internal fun colorHex(argb: Long): String =
         "#" + (argb and 0xFFFFFFFFL).toString(16).padStart(8, '0')
@@ -310,7 +337,17 @@ object AlightXmlExporter {
             }
             val writtenBefore = layersWritten
             val start = (clip.startMs - timeShiftMs).coerceAtLeast(0L)
-            val end = (clip.endMs - timeShiftMs).coerceIn(start, windowMs)
+            // Manual clamp, NOT coerceIn(start, windowMs): a group child whose start
+            // lies past the group's end (group trimmed shorter, child moved out) makes
+            // windowMs < start, and coerceIn on an empty range THROWS — the child must
+            // land in the end <= start omission below instead (build 198).
+            val rawEnd = clip.endMs - timeShiftMs
+            val end = when {
+                windowMs <= start -> start
+                rawEnd < start -> start
+                rawEnd > windowMs -> windowMs
+                else -> rawEnd
+            }
             if (end <= start && parentGroup != null) {
                 omittedLayers += "Layer \"" + clip.name + "\" lies outside its group's span"
                 return
@@ -1103,7 +1140,10 @@ object AlightXmlExporter {
                         out += null
                         pos += 1
                     }
-                    n >= 2 && pos + 1 + n * 6 <= values.size -> {
+                    // The length check is LONG math (build 198): a corrupted count
+                    // (n ~ 4e8) overflows n * 6 in Int, wraps negative, passes an Int
+                    // check and the key loop then reads / allocates past the list.
+                    n >= 2 && pos + 1L + n.toLong() * 6L <= values.size.toLong() -> {
                         val keys = ArrayList<TailKey>(n)
                         for (j in 0 until n) {
                             val b = pos + 1 + j * 6

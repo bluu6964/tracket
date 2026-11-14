@@ -71,18 +71,29 @@ object Ducking {
     /** One breakpoint of a duck curve, on the ducked layer's own clock (ms from its start). */
     data class Point(val relMs: Long, val gain: Float)
 
-    /** The gain a full-scale trigger settles at for [amountDb] dB of drop (1 when amount <= 0). */
+    /**
+     * The gain a full-scale trigger settles at for [amountDb] dB of drop (1 when amount <= 0).
+     * Build 198: a NaN amount reads as NO ducking — `amountDb <= 0f` is false for NaN and
+     * coerceAtMost passes NaN through, so an unsanitised NaN used to become a NaN floor
+     * and from there a curve of NaN gains for the shared mixer.
+     */
     fun floorGain(amountDb: Float): Float =
-        if (amountDb <= 0f) 1f
+        if (!(amountDb > 0f)) 1f
         else 10.0.pow(-amountDb.coerceAtMost(MAX_AMOUNT_DB).toDouble() / 20.0).toFloat()
+
+    /** The smoothness as a lerp factor: NaN reads as the neutral middle (build 198). */
+    private fun smoothFactor(smoothness: Float): Double {
+        val s = smoothness.coerceIn(0f, 1f)
+        return if (s.isNaN()) 0.5 else s.toDouble()
+    }
 
     /** Attack time constant (ms) for a smoothness 0..1: 2 ms (snappy) .. 50 ms (soft), exponential. */
     fun attackMs(smoothness: Float): Double =
-        exp(lerp(ln(2.0), ln(50.0), smoothness.coerceIn(0f, 1f).toDouble()))
+        exp(lerp(ln(2.0), ln(50.0), smoothFactor(smoothness)))
 
     /** Release time constant (ms) for a smoothness 0..1: 60 ms (quick) .. 1000 ms (slow), exponential. */
     fun releaseMs(smoothness: Float): Double =
-        exp(lerp(ln(60.0), ln(1000.0), smoothness.coerceIn(0f, 1f).toDouble()))
+        exp(lerp(ln(60.0), ln(1000.0), smoothFactor(smoothness)))
 
     /**
      * The peak |sample| of mono PCM per [stepMs] step (the last, partial step
@@ -136,7 +147,11 @@ object Ducking {
         val aRelease = 1.0 - exp(-stepMs.toDouble() / releaseMs(smoothness))
         var g = 1.0
         for (k in levels.indices) {
-            val t = targetGain(levels[k], floor).toDouble()
+            val raw = targetGain(levels[k], floor).toDouble()
+            // A non-finite target (a NaN level out of a corrupt decode, say) means
+            // "no information": hold the gain at 1 rather than letting one NaN step
+            // poison the follower — and with it every later gain (build 198).
+            val t = if (raw.isNaN()) 1.0 else raw
             val a = if (t < g) aAttack else aRelease
             g += (t - g) * a
             out[k] = g.toFloat()

@@ -56,7 +56,9 @@ object OnionSkin {
     /** The settings with every value inside its range (the settings UI writes through this). */
     fun normalize(s: OnionSkinSettings): OnionSkinSettings = s.copy(
         countPerSide = s.countPerSide.coerceIn(1, MAX_PER_SIDE),
-        opacity = s.opacity.coerceIn(MIN_OPACITY, MAX_OPACITY)
+        // A NaN opacity survives coerceIn (build 198): fall back to the default
+        // rather than carrying a NaN alpha into the renderer's colorize pass.
+        opacity = if (s.opacity.isNaN()) DEFAULT_OPACITY else s.opacity.coerceIn(MIN_OPACITY, MAX_OPACITY)
     )
 
     /** One frame step in ms at [fps]: [step] frames from the playhead. */
@@ -84,7 +86,7 @@ object OnionSkin {
         val count = countPerSide.coerceIn(0, MAX_PER_SIDE)
         if (count == 0 || fps <= 0 || durationMs <= 0L) return emptyList()
         val base = baseOpacity.coerceIn(0f, 1f)
-        if (base <= 0f) return emptyList()
+        if (!(base > 0f)) return emptyList()   // NaN base draws nothing (build 198)
         val head = playheadMs.coerceIn(0L, durationMs)
         val out = ArrayList<OnionGhost>(count * 2)
         for (step in 1..count) {

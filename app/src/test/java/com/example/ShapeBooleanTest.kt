@@ -368,4 +368,21 @@ class ShapeBooleanTest {
         // Non-shape layers never qualify.
         assertNull(rect.copy(type = LayerType.TEXT).shapeBooleanRings())
     }
+
+    // ---- build 198 hardening: the edge budget ---------------------------------------------------------
+    // combine() splits every edge at every intersection — O(E^2) pair work.
+    // The budget the two call sites refuse over (the boolean action and the
+    // crop cut inside shapeBooleanRings) counts ring points = edges.
+
+    @Test
+    fun edgeBudgetCountsRingPoints() {
+        val small = listOf(
+            listOf(BoolPt(0.0, 0.0), BoolPt(10.0, 0.0), BoolPt(10.0, 10.0), BoolPt(0.0, 10.0))
+        )
+        assertEquals(4, ShapeBoolean.edgeCount(small))
+        assertFalse(ShapeBoolean.overBudget(small, small))
+        val big = listOf((0 until ShapeBoolean.MAX_TOTAL_EDGES).map { BoolPt(it.toDouble(), 0.0) })
+        assertTrue(ShapeBoolean.overBudget(big, small))
+        assertTrue(ShapeBoolean.overBudget(small, big))
+    }
 }

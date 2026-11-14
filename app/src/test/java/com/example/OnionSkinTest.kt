@@ -137,4 +137,18 @@ class OnionSkinTest {
         assertEquals(OnionSkin.DEFAULT_COUNT, d.countPerSide)
         assertEquals(OnionSkin.DEFAULT_OPACITY, d.opacity, 0.0001f)
     }
+
+    // ---- build 198 hardening: NaN opacity -------------------------------------------------------------
+    // coerceIn passes NaN through: the plan must draw nothing and normalize
+    // must fall back to the default rather than carrying a NaN alpha into
+    // the renderer's colorize pass.
+
+    @Test
+    fun nanOpacityDrawsNothingAndNormalizesToTheDefault() {
+        assertTrue(OnionSkin.plan(1000L, 30, 5000L, 2, Float.NaN).isEmpty())
+        assertEquals(
+            OnionSkin.DEFAULT_OPACITY,
+            OnionSkin.normalize(OnionSkinSettings(opacity = Float.NaN)).opacity, 0f
+        )
+    }
 }

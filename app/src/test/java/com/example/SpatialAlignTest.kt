@@ -168,4 +168,29 @@ class SpatialAlignTest {
         assertDelta(dc, "n", 0f, -25f)                // bounds centre y = 25
         assertDelta(dc, "a", 0f, 15f)
     }
+
+    // ---- build 198 hardening: non-finite rects -----------------------------------------------------------
+    // A layer whose bounds are not finite (an extreme keyframed scale or
+    // position upstream) must drop OUT of the action — never poison the
+    // shared bounding box so every other layer is flung to infinity.
+
+    @Test
+    fun nonFiniteRectsAreExcludedNotPoisonous() {
+        val rects = listOf(
+            r("a", 10f, 20f, 40f, 20f),               // right edge 50
+            r("b", 100f, 5f, 20f, 60f),               // right edge 120
+            AlignRect("bad", 0f, 0f, Float.POSITIVE_INFINITY, 10f)
+        )
+        val d = SpatialAlign.deltas(rects, SpatialAction.ALIGN_RIGHT)
+        assertDelta(d, "a", 70f, 0f)                  // b already sits at the shared edge
+        assertTrue(d.values.all { it.first.isFinite() && it.second.isFinite() })
+        val nan = SpatialAlign.deltas(
+            listOf(
+                AlignRect("x", Float.NaN, 0f, 10f, 10f),
+                AlignRect("y", Float.NaN, 0f, 5f, 5f)
+            ),
+            SpatialAction.ALIGN_LEFT
+        )
+        assertTrue(nan.isEmpty())
+    }
 }

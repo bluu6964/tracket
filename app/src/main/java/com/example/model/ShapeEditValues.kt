@@ -42,4 +42,19 @@ object ShapeEditValues {
     /** The corner radius as it looks at [playheadMs]: the value a "Use static radius" freeze keeps. */
     fun staticCornerRadiusAt(clip: TimelineClip, playheadMs: Long): Float =
         clip.at(playheadMs).shapeCornerRadius
+
+    /**
+     * True when the shape's stroke trim is keyframed (build 175): the same class as the corner
+     * radius — while the trim window animates (Alight `drawing.progress`, STROKE_TRIM track)
+     * the Trim start/end sliders stay hidden and the sheet says so, with a chip that replaces
+     * the animation by a static window frozen at the playhead (see [staticTrimAt]).
+     */
+    fun isTrimKeyframed(clip: TimelineClip): Boolean =
+        clip.keyframes[AnimProp.STROKE_TRIM].orEmpty().isNotEmpty()
+
+    /** The trim window as it looks at [playheadMs]: the values a "Use static trim" freeze keeps. */
+    fun staticTrimAt(clip: TimelineClip, playheadMs: Long): Pair<Float, Float> {
+        val at = clip.at(playheadMs)
+        return coerceTrim(at.strokeTrimStart, at.strokeTrimEnd)
+    }
 }

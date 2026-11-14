@@ -4373,12 +4373,39 @@ fun VideoEditorScreen(
                     {
                         // Freeze the radius at the playhead and drop the keys: the slider
                         // reappears with the frozen value (the sheet sets its own state too).
-                        viewModel.updateClip(clip.id) {
+                        // updateClipNoKeyframes, not updateClip (build 175 correction of the
+                        // build-173 chip): commitKeyframed re-adds a SINGLE keyframe at the
+                        // playhead whenever the frozen value differs from the stored one, so
+                        // the slider would stay hidden forever — probe-verified on a 10→30 dp
+                        // animation frozen at 20 dp mid-segment. The no-keyframes path drops
+                        // the keys outright, exactly like the Color reset does.
+                        viewModel.updateClipNoKeyframes(clip.id) {
                             it.copy(
                                 keyframes = it.keyframes - com.example.model.AnimProp.SHAPE_CORNER_RADIUS,
                                 shapeCornerRadius = com.example.model.ShapeEditValues.staticCornerRadiusAt(
                                     it, playheadState.value
                                 )
+                            )
+                        }
+                    }
+                },
+                keyframedTrim = editShapeClip?.let {
+                    com.example.model.ShapeEditValues.isTrimKeyframed(it)
+                } ?: false,
+                onUseStaticTrim = editShapeClip?.let { clip ->
+                    {
+                        // Freeze the trim window at the playhead and drop the keys (build 175):
+                        // updateClipNoKeyframes for the same reason as the radius chip above —
+                        // commitKeyframed would re-add a single STROKE_TRIM key at the playhead
+                        // and the sliders would stay hidden.
+                        viewModel.updateClipNoKeyframes(clip.id) {
+                            val (s, e) = com.example.model.ShapeEditValues.staticTrimAt(
+                                it, playheadState.value
+                            )
+                            it.copy(
+                                keyframes = it.keyframes - com.example.model.AnimProp.STROKE_TRIM,
+                                strokeTrimStart = s,
+                                strokeTrimEnd = e
                             )
                         }
                     }

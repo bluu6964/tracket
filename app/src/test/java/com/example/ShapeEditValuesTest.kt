@@ -74,4 +74,32 @@ class ShapeEditValuesTest {
         assertEquals(20f, ShapeEditValues.staticCornerRadiusAt(keyed, 1000), 0f)
         assertEquals(30f, ShapeEditValues.staticCornerRadiusAt(keyed, 2000), 0f)
     }
+
+    @Test
+    fun trimKeyframeAwareness() {
+        // Build 175: same class as the corner radius — while the trim window is keyframed
+        // (Alight drawing.progress) the editor's sliders must know, and a "Use static trim"
+        // freeze keeps the window as it looks at the playhead, mid-segment included.
+        val plain = TimelineClip(
+            id = "a", name = "a", type = LayerType.SHAPE, startMs = 0, durationMs = 2000,
+            color = 0xFF000000, strokeTrimStart = 0.2f, strokeTrimEnd = 0.6f
+        )
+        assertFalse(ShapeEditValues.isTrimKeyframed(plain))
+        assertEquals(0.2f, ShapeEditValues.staticTrimAt(plain, 1000).first, 0f)
+        assertEquals(0.6f, ShapeEditValues.staticTrimAt(plain, 1000).second, 0f)
+        val keyed = plain.copy(
+            keyframes = mapOf(
+                AnimProp.STROKE_TRIM to listOf(
+                    Keyframe(0, 0.2f, 0.6f, Easing.LINEAR), Keyframe(2000, 0.4f, 0.9f, Easing.LINEAR)
+                )
+            )
+        )
+        assertTrue(ShapeEditValues.isTrimKeyframed(keyed))
+        assertEquals(0.2f, ShapeEditValues.staticTrimAt(keyed, 0).first, 0f)
+        assertEquals(0.6f, ShapeEditValues.staticTrimAt(keyed, 0).second, 0f)
+        assertEquals(0.3f, ShapeEditValues.staticTrimAt(keyed, 1000).first, 0.001f)
+        assertEquals(0.75f, ShapeEditValues.staticTrimAt(keyed, 1000).second, 0.001f)
+        assertEquals(0.4f, ShapeEditValues.staticTrimAt(keyed, 2000).first, 0f)
+        assertEquals(0.9f, ShapeEditValues.staticTrimAt(keyed, 2000).second, 0f)
+    }
 }

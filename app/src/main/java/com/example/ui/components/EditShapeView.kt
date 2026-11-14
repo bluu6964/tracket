@@ -62,6 +62,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.model.AspectRatio
+import com.example.model.ShapeEditValues
 import com.example.model.TimelineClip
 import com.example.model.at
 import androidx.compose.ui.input.pointer.pointerInput
@@ -152,6 +153,14 @@ fun EditShapeView(
     keyframedCornerRadius: Boolean = false,
     /** Replaces the keyframed radius by a static one frozen at the playhead. */
     onUseStaticRadius: (() -> Unit)? = null,
+    /**
+     * The shape's stroke trim is keyframed (build 175): same class as the corner radius —
+     * the Trim start/end sliders stay hidden and the sheet says so, with a chip that
+     * replaces the animation by a static window frozen at the playhead.
+     */
+    keyframedTrim: Boolean = false,
+    /** Replaces the keyframed trim by a static window frozen at the playhead. */
+    onUseStaticTrim: (() -> Unit)? = null,
     /** Right button of the header: "Add" when adding, "Save" when editing. */
     saveLabel: String = "Add"
 ) {
@@ -916,23 +925,42 @@ fun EditShapeView(
                     // The sliders clamp against each other so start can never pass end.
                     if (strokeWidth > 0f) {
                         Spacer(modifier = Modifier.height(10.dp))
-                        RulerDialSlider(
-                            label = "Trim start",
-                            value = trimStartPercent,
-                            onValueChange = { trimStartPercent = it.coerceIn(0f, trimEndPercent) },
-                            min = 0f,
-                            max = 100f,
-                            isPercentage = true
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        RulerDialSlider(
-                            label = "Trim end",
-                            value = trimEndPercent,
-                            onValueChange = { trimEndPercent = it.coerceIn(trimStartPercent, 100f) },
-                            min = 0f,
-                            max = 100f,
-                            isPercentage = true
-                        )
+                        if (keyframedTrim) {
+                            // Animated trim (build 175): the sliders would silently mislead — the
+                            // window changes over time — so they stay hidden, like the build-173
+                            // corner-radius slider, until an explicit tap freezes it at the playhead.
+                            Text(
+                                "Animated stroke trim — the trim is keyframed in Alight Motion, so it changes over time.",
+                                color = TextSecondary, fontSize = 15.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ShapeEditChip(label = "Use static trim", onClick = {
+                                val (s, e) = initialClip?.let {
+                                    ShapeEditValues.staticTrimAt(it, currentPlayheadMs)
+                                } ?: (trimStartPercent / 100f to trimEndPercent / 100f)
+                                trimStartPercent = s * 100f
+                                trimEndPercent = e * 100f
+                                onUseStaticTrim?.invoke()
+                            })
+                        } else {
+                            RulerDialSlider(
+                                label = "Trim start",
+                                value = trimStartPercent,
+                                onValueChange = { trimStartPercent = it.coerceIn(0f, trimEndPercent) },
+                                min = 0f,
+                                max = 100f,
+                                isPercentage = true
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            RulerDialSlider(
+                                label = "Trim end",
+                                value = trimEndPercent,
+                                onValueChange = { trimEndPercent = it.coerceIn(trimStartPercent, 100f) },
+                                min = 0f,
+                                max = 100f,
+                                isPercentage = true
+                            )
+                        }
                     }
                 }
 

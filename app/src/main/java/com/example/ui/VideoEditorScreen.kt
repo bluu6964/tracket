@@ -80,6 +80,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
 import com.example.model.at
+import com.example.model.depthFactor
+import com.example.model.isBehindCamera
 import com.example.model.hasBlending
 import com.example.model.TIMELINE_PX_PER_MS
 import com.example.ui.components.AudioClipToolsPanel
@@ -272,6 +274,13 @@ fun VideoEditorScreen(
     // Size of the canvas frame in the preview: the export draws shapes / text at the same relative size.
     var previewFrameWidthPx by remember { mutableFloatStateOf(0f) }
     var previewDensity by remember { mutableFloatStateOf(1f) }
+    // Text-layer boxes measured on the canvas, shared with CanvasArea (build 184): the
+    // Transform panel's PositionPad snapper measures layers through the same map.
+    val canvasTextSizes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Size>() }
+    // Snap guide lines of the Transform panel's PositionPad (build 184): owned here,
+    // drawn by CanvasArea next to its own drag guides; cleared on pad release / panel close.
+    var transformSnapGuideX by remember { mutableStateOf<Float?>(null) }
+    var transformSnapGuideY by remember { mutableStateOf<Float?>(null) }
 
     // ---- Face AI (MediaPipe Face Landmarker): blur that follows the face / eyes / nose / lips ----
     var faceProgress by remember { androidx.compose.runtime.mutableStateOf<Float?>(null) }
@@ -2492,6 +2501,9 @@ fun VideoEditorScreen(
                         editingTextId = id
                     },
                     onPreviewFrame = { w, d -> previewFrameWidthPx = w; previewDensity = d },
+                    sharedTextSizes = canvasTextSizes,
+                    externalSnapGuideX = transformSnapGuideX,
+                    externalSnapGuideY = transformSnapGuideY,
                     frameOverlay = canvasOverlay,
                     onSelectionBegin = { viewModel.beginAdjust() },
                     onSelectionTransform = { id, sc, rot ->
@@ -3323,6 +3335,14 @@ fun VideoEditorScreen(
                 }
             }
 
+            // Build 184: the Transform panel's snap guides never outlive the panel.
+            LaunchedEffect(showTransformMode) {
+                if (!showTransformMode) {
+                    transformSnapGuideX = null
+                    transformSnapGuideY = null
+                }
+            }
+
             // Transform controls intentionally overlay only the lower timeline/tools area.
             // Keep the canvas viewport and all visible layers completely unchanged.
             if (showTransformMode) {
@@ -3385,6 +3405,58 @@ fun VideoEditorScreen(
                             selectedClip?.id?.let { viewModel.setKeyframeEasing(it, prop, kfTime, easing) }
                         },
                         layerRow = selectedClip?.id?.let { id -> @Composable { layerRow(id) } },
+                        // Magnetic snap for the PositionPad (build 184 — Sarowar's report:
+                        // build 176 snapped canvas finger-drags but not Transform moves).
+                        // The exact build-176 pattern, run from the screen: the same clip
+                        // filter, the same renderAt, the same snapRectOf (cropped bounds
+                        // included since build 182), the same pure CanvasSnap rule and
+                        // threshold, the correction converted back by the depth factor.
+                        // The snapped value flows into onApplyTransform below, so it is
+                        // written via commitKeyframed (lands as the playhead keyframe) and
+                        // a Controller's fan-out derives from the snapped delta.
+                        positionSnapper = { sx, sy ->
+                            val target = selectedClip
+                            val fw = previewFrameWidthPx
+                            if (target == null || fw <= 1f) null else {
+                                val fh = fw / selectedAspectRatio.ratioFloat
+                                val t = playheadState.value
+                                val clipsNow = shownTracks.asReversed().flatMap { it.clips }
+                                    .filter { it.isVisible && !it.isMask && it.isActiveAt(t) && !it.isBehindCamera }
+                                    .map { com.example.engine.NativeRenderAt.renderAt(it, t, t) }
+                                val dragged = clipsNow.firstOrNull { it.id == target.id }
+                                if (dragged == null) null else {
+                                    val moved = dragged.copy(
+                                        transformX = sx, transformY = sy,
+                                        shapeOffsetX = sx, shapeOffsetY = sy
+                                    )
+                                    val rect = com.example.ui.components.snapRectOf(
+                                        moved, fw, fh, previewDensity, canvasTextSizes, forDragged = true
+                                    )
+                                    if (rect == null) {
+                                        com.example.ui.components.PositionSnap(sx, sy, null, null)
+                                    } else {
+                                        val others = clipsNow.filter { it.id != target.id }
+                                            .mapNotNull {
+                                                com.example.ui.components.snapRectOf(
+                                                    it, fw, fh, previewDensity, canvasTextSizes, forDragged = false
+                                                )
+                                            }
+                                        val res = com.example.model.CanvasSnap.snap(
+                                            rect, fw, fh, others, 8f * previewDensity
+                                        )
+                                        // Canvas px -> stored units: the stored position is drawn times the depth factor.
+                                        val df = dragged.depthFactor.coerceAtLeast(0.001f)
+                                        com.example.ui.components.PositionSnap(
+                                            sx + res.dx / df, sy + res.dy / df, res.guideX, res.guideY
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        onSnapGuides = { gx, gy ->
+                            transformSnapGuideX = gx
+                            transformSnapGuideY = gy
+                        },
                         onApplyTransform = { h, v, sc, rot, px, py, r3x, r3y, warp, z ->
                             val targetId = selectedClip?.id ?: selectedClipId
                             if (targetId != null) {

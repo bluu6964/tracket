@@ -135,6 +135,18 @@ fun CanvasArea(
     nativePreview: com.example.engine.NativePreviewEngine? = null,
     /** True while an on-canvas editor (Masks) is open: the transform box of the selected layer is hidden. */
     selectionHidden: Boolean = false,
+    /**
+     * Measured text-layer boxes, shared with the caller (build 184): the Transform panel's
+     * snapper reads the same measurements this area's own snap uses. Null = this area keeps
+     * a private local map (the fullscreen player's behaviour, unchanged).
+     */
+    sharedTextSizes: MutableMap<String, androidx.compose.ui.geometry.Size>? = null,
+    /**
+     * Snap guide lines owned by the caller (build 184: the Transform panel's PositionPad
+     * snap), in canvas pixels like this area's own guides; drawn with the same hairlines.
+     */
+    externalSnapGuideX: Float? = null,
+    externalSnapGuideY: Float? = null,
     modifier: Modifier = Modifier
 ) {
     val canvasColor = LocalCanvasColor.current
@@ -219,7 +231,11 @@ fun CanvasArea(
                 // else to snap by. Guide lines are flat white hairlines (the B/W language).
                 val fwPx = with(frameDensity) { frameW.toPx() }
                 val fhPx = with(frameDensity) { frameH.toPx() }
-                val textSizes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Size>() }
+                // Build 184: the caller may share its measured text boxes (sharedTextSizes)
+                // so the Transform panel's snapper measures text layers exactly like the
+                // canvas drag below; without one this area keeps its own local map.
+                val localTextSizes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Size>() }
+                val textSizes = sharedTextSizes ?: localTextSizes
                 var snapGuideX by remember { mutableStateOf<Float?>(null) }
                 var snapGuideY by remember { mutableStateOf<Float?>(null) }
                 val snapTracksNow by mediaRememberUpdatedState(tracks)
@@ -526,13 +542,17 @@ fun CanvasArea(
                 }
 
                 // Snap guide lines (build 176): flat white hairlines, shown only while a
-                // drag is snapped (the B/W language — no colour, no glow).
-                if (snapGuideX != null || snapGuideY != null) {
+                // drag is snapped (the B/W language — no colour, no glow). Build 184: the
+                // Transform panel's PositionPad snap draws its guides through the same lines
+                // (externalSnapGuideX/Y, owned by the screen).
+                if (snapGuideX != null || snapGuideY != null || externalSnapGuideX != null || externalSnapGuideY != null) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val col = Color.White.copy(alpha = 0.85f)
                         val sw = 1.dp.toPx()
                         snapGuideX?.let { x -> drawLine(col, Offset(x, 0f), Offset(x, size.height), strokeWidth = sw) }
                         snapGuideY?.let { y -> drawLine(col, Offset(0f, y), Offset(size.width, y), strokeWidth = sw) }
+                        externalSnapGuideX?.let { x -> drawLine(col, Offset(x, 0f), Offset(x, size.height), strokeWidth = sw) }
+                        externalSnapGuideY?.let { y -> drawLine(col, Offset(0f, y), Offset(size.width, y), strokeWidth = sw) }
                     }
                 }
 
@@ -598,8 +618,12 @@ internal fun mediaVisibleSize(mc: com.example.model.TimelineClip, fw: Float, fh:
  * its crop window. A dragged Null / Controller / Camera (no picture) snaps by its centre
  * only; as a snap TARGET those types (and anything without a measurable picture) return
  * null and are skipped.
+ *
+ * Internal (not private) since build 184: the Transform panel's PositionPad snapper in
+ * VideoEditorScreen measures layers through this exact function, so a panel move snaps
+ * against the same rects (cropped bounds included) as a canvas drag.
  */
-private fun snapRectOf(
+internal fun snapRectOf(
     clip: TimelineClip,
     fw: Float,
     fh: Float,

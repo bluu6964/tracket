@@ -134,6 +134,18 @@ enum class TransformTab(val title: String) {
     THREE_D("3D")
 }
 
+/**
+ * One snapped PositionPad proposal (build 184): the stored X / Y to write (the proposal
+ * with the snap correction applied) and the guide lines to show on the canvas, in canvas
+ * pixels — a null guide means no snap is active on that axis.
+ */
+data class PositionSnap(
+    val x: Float,
+    val y: Float,
+    val guideX: Float?,
+    val guideY: Float?
+)
+
 @Composable
 fun TransformView(
     clip: TimelineClip?,
@@ -159,6 +171,16 @@ fun TransformView(
     /** Easing editor: a change is about to start (one undo step) / the curve of the segment that starts at the keyframe time changed. */
     onEasingBegin: () -> Unit = {},
     onEasingChange: (AnimProp, Long, Easing) -> Unit = { _, _, _ -> },
+    /**
+     * Magnetic snap for the PositionPad ONLY (build 184 — the canvas drag had it since
+     * build 176, the Transform panel did not): given the pad's proposed stored X / Y,
+     * returns the snapped position plus the canvas guide lines, or null when it has no
+     * result (proposal then passes through raw). Scale / rotation / Z / pivot never pass
+     * through it, and Reset writes its exact values through onApplyTransform directly.
+     */
+    positionSnapper: ((x: Float, y: Float) -> PositionSnap?)? = null,
+    /** The snapper's guide lines, forwarded to the canvas; (null, null) clears them. */
+    onSnapGuides: (guideX: Float?, guideY: Float?) -> Unit = { _, _ -> },
     onApplyTransform: (
         horizontal: Float,
         vertical: Float,
@@ -397,10 +419,24 @@ fun TransformView(
                                     x = horizontal,
                                     y = vertical,
                                     onChange = { nx, ny ->
-                                        horizontal = nx
-                                        vertical = ny
+                                        // Build 184: the pad's proposal passes through the
+                                        // magnetic snapper (PositionPad branch ONLY — every
+                                        // other part emits raw). The snapped value is what
+                                        // emitTransform writes, so it also lands as the
+                                        // playhead keyframe, exactly like a canvas drag.
+                                        val snap = positionSnapper?.invoke(nx, ny)
+                                        if (snap != null) {
+                                            horizontal = snap.x
+                                            vertical = snap.y
+                                            onSnapGuides(snap.guideX, snap.guideY)
+                                        } else {
+                                            horizontal = nx
+                                            vertical = ny
+                                            if (positionSnapper != null) onSnapGuides(null, null)
+                                        }
                                         emitTransform()
-                                    }
+                                    },
+                                    onEnd = { onSnapGuides(null, null) }
                                 )
                                 Transform2DPart.SCALE -> RulerDialSlider(
                                     label = "",
@@ -590,11 +626,14 @@ private fun PositionPad(
     x: Float,
     y: Float,
     onChange: (x: Float, y: Float) -> Unit,
+    /** Called once when the finger leaves the pad (build 184: clears the snap guides). */
+    onEnd: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val curX by rememberUpdatedState(x)
     val curY by rememberUpdatedState(y)
     val change by rememberUpdatedState(onChange)
+    val end by rememberUpdatedState(onEnd)
     val range = 100000f   // practically unlimited
     val visualRange = 500f // the dot shows a +-500 window, then stays at the edge
     Row(
@@ -635,6 +674,7 @@ private fun PositionPad(
                                 change(nx, ny)
                             }
                         }
+                        end()
                     }
                 }
         ) {

@@ -58,6 +58,8 @@ import com.example.engine.MediaImporter
 import com.example.engine.VideoExporter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
@@ -79,6 +81,9 @@ import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.model.LayerType
+import com.example.model.ScopeData
+import com.example.model.ScopeStats
+import com.example.model.TimelineTrack
 import com.example.model.at
 import com.example.model.depthFactor
 import com.example.model.isBehindCamera
@@ -109,6 +114,8 @@ import com.example.ui.components.EditorHeader
 import com.example.ui.components.ExportModalDialog
 import com.example.ui.components.FullscreenPlayerModal
 import com.example.ui.components.OnionSkinRow
+import com.example.ui.components.ScopesPanel
+import com.example.ui.components.ScopesPanelHeight
 import com.example.ui.components.PlayControlsSection
 import com.example.ui.components.ResolutionSheet
 import com.example.ui.components.TimelineLayerPanel
@@ -169,6 +176,11 @@ fun VideoEditorScreen(
     val beatMarks by viewModel.beatMarks.collectAsState()
     val markers by viewModel.markers.collectAsState()
     val onionSkin by viewModel.onionSkin.collectAsState()
+    val scopesOn by viewModel.scopesOn.collectAsState()
+    // Video scopes (build 196): the latest ScopeStats of the composed preview
+    // frame at the playhead; null while no frame has been read (the panel then
+    // shows its honest empty state). Filled by the refresh effect below.
+    var scopeData by remember { mutableStateOf<ScopeData?>(null) }
     // Named-marker dialogs (build 188): add-at-playhead, or edit the marker the user
     // long-pressed on the ruler / the one already sitting at the playhead.
     var showAddMarker by remember { mutableStateOf(false) }
@@ -2067,6 +2079,62 @@ fun VideoEditorScreen(
     LaunchedEffect(tracks) {
         viewModel.currentPlayheadMs.collect { nativePreview.requestFrame() }
     }
+    // Video scopes (build 196) — the refresh law. While the panel is open this
+    // keeps scopeData describing the composed frame at the playhead, read back
+    // through the engine's own captureFrame (PixelCopy of the canvas surface:
+    // exactly the composed picture — layers, effects, canvas colour — with no
+    // Compose overlay in it). CHANGE-DRIVEN and SINGLE-FLIGHT: a capture runs
+    // only when the playhead or the tracks instance has moved past what the
+    // displayed stats were captured for, and the next one starts only after
+    // the previous capture + analysis finished — during playback that means
+    // back-to-back refreshes at the pipeline's own throughput (a PixelCopy
+    // plus a ≤320 px stats pass), never a free-running timer; while paused
+    // and unchanged it reads nothing at all. One frame wait before each
+    // capture gives the frame requested for this playhead its vsync to reach
+    // the surface; a capture taken mid-scrub can still land on the previously
+    // presented frame, but the loop then sees the playhead has moved and
+    // re-captures, so staleness is bounded by one pipeline round-trip and the
+    // scopes always settle on the frame the playhead rests on. A FAILED
+    // readback clears the stats to the panel's empty state — stale traces are
+    // never presented as current — and the failed (playhead, tracks) pair is
+    // remembered so a dead surface is not retried in a hot loop. Closing the
+    // panel cancels the effect: zero readback cost while off. The analysis
+    // itself (ScopeStats) runs on Dispatchers.Default, never on the UI thread.
+    LaunchedEffect(scopesOn) {
+        if (!scopesOn) {
+            scopeData = null
+            return@LaunchedEffect
+        }
+        // The (playhead, tracks) pair the last capture ATTEMPT was made for —
+        // success or failure. The loop only captures for a new pair.
+        var seenHead = Long.MIN_VALUE
+        var seenTracks: List<TimelineTrack>? = null
+        while (isActive) {
+            val head = playheadState.value
+            val tr = tracks
+            if (head == seenHead && tr === seenTracks) {
+                delay(50)
+                continue
+            }
+            androidx.compose.runtime.withFrameNanos { }
+            val bmp = suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                nativePreview.captureFrame { b -> if (cont.isActive) cont.resume(b) }
+            }
+            seenHead = head
+            seenTracks = tr
+            if (bmp == null) {
+                scopeData = null
+                continue
+            }
+            val data = withContext(Dispatchers.Default) {
+                val pixels = IntArray(bmp.width * bmp.height)
+                bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
+                ScopeStats.analyze(pixels, bmp.width, bmp.height)
+            }
+            bmp.recycle()
+            scopeData = data
+        }
+    }
     // Decode the waveform of every audio file and of every video's own sound once, in the
     // background (a video without an audio track just gets an empty waveform = nothing drawn).
     LaunchedEffect(tracks) {
@@ -2313,7 +2381,10 @@ fun VideoEditorScreen(
             // the play controls takes its height from the canvas; the sections below
             // keep their places.
             val onionRowH = if (onionSkin.enabled) 36.dp else 0.dp
-            val canvasH = (totalHeight * (9f / 18f) - onionRowH).coerceAtLeast(260.dp)
+            // Scopes (build 196): the same discipline — while the panel is open its
+            // height comes out of the canvas too, so nothing below moves.
+            val scopesPanelH = if (scopesOn) ScopesPanelHeight else 0.dp
+            val canvasH = (totalHeight * (9f / 18f) - onionRowH - scopesPanelH).coerceAtLeast(260.dp)
             val playControlsH = (totalHeight * (1f / 18f)).coerceAtLeast(44.dp)
             val timescaleH = (totalHeight * (1f / 30f)).coerceAtLeast(24.dp)
             val layerPanelH = (totalHeight * (5f / 18f)).coerceAtLeast(160.dp)
@@ -2635,6 +2706,8 @@ fun VideoEditorScreen(
                     },
                     onionSkinOn = onionSkin.enabled,
                     onOnionSkinClick = { viewModel.setOnionSkinEnabled(!onionSkin.enabled) },
+                    scopesOn = scopesOn,
+                    onScopesClick = { viewModel.setScopesOn(!scopesOn) },
                     onPreviousClick = { viewModel.jumpPrevious() },
                     onPlayPauseClick = { viewModel.togglePlayPause() },
                     onNextClick = { viewModel.jumpNext() },
@@ -2650,6 +2723,12 @@ fun VideoEditorScreen(
                         onCountChange = { viewModel.setOnionSkinCount(it) },
                         onOpacityChange = { viewModel.setOnionSkinOpacity(it) }
                     )
+                }
+
+                // 3c. Video scopes panel (build 196) — only while the scopes are on;
+                // same height discipline as the onion row (out of the canvas).
+                if (scopesOn) {
+                    ScopesPanel(data = scopeData)
                 }
 
                 // 4. Timescale Section (1/30 of screen)

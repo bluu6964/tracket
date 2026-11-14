@@ -77,7 +77,10 @@ fun PlayControlsSection(
     onMarkerClick: () -> Unit = {},
     /** Stacked-frames icon at the right end (build 190): toggles the onion-skin ghost frames on the canvas. */
     onionSkinOn: Boolean = false,
-    onOnionSkinClick: () -> Unit = {}
+    onOnionSkinClick: () -> Unit = {},
+    /** Histogram-bars icon beside the onion toggle (build 196): toggles the video-scopes panel. */
+    scopesOn: Boolean = false,
+    onScopesClick: () -> Unit = {}
 ) {
     Box(
         modifier = modifier
@@ -161,6 +164,9 @@ fun PlayControlsSection(
             }
             IconButton44(enabled = true, onClick = onOnionSkinClick, tag = "onion_skin_button", description = "Onion skin") {
                 OnionGlyph(onionSkinOn)
+            }
+            IconButton44(enabled = true, onClick = onScopesClick, tag = "scopes_button", description = "Scopes") {
+                ScopesGlyph(scopesOn)
             }
         }
     }
@@ -312,6 +318,24 @@ private fun OnionGlyph(on: Boolean) {
         drawRoundRect(c, Offset(8.6f * u, 3.4f * u), Size(12f * u, 12f * u), CornerRadius(2.6f * u), style = Stroke(1.8f * u))
         if (on) drawRoundRect(c, Offset(3.4f * u, 8.6f * u), Size(12f * u, 12f * u), CornerRadius(2.6f * u))
         else drawRoundRect(c, Offset(3.4f * u, 8.6f * u), Size(12f * u, 12f * u), CornerRadius(2.6f * u), style = Stroke(1.8f * u))
+    }
+}
+
+/**
+ * Four histogram bars on a baseline (the video scopes, build 196). White =
+ * on, grey = off — the used-tool state law, like the onion glyph beside it.
+ */
+@Composable
+private fun ScopesGlyph(on: Boolean) {
+    Canvas(Modifier.size(24.dp)) {
+        val u = size.width / 24f
+        val c = if (on) Color(0xFFF2F2F2) else IconDisabled
+        val base = 19.4f * u
+        drawLine(c, Offset(3.4f * u, base), Offset(20.6f * u, base), 1.8f * u, StrokeCap.Round)
+        val bars = listOf(6.5f to 8f, 10.6f to 13.5f, 14.7f to 10.5f, 18.8f to 15.5f)
+        for ((x, top) in bars) {
+            drawLine(c, Offset(x * u, base), Offset(x * u, (24f - top) * u), 2.6f * u, StrokeCap.Round)
+        }
     }
 }
 

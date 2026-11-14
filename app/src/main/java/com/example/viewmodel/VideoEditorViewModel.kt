@@ -403,6 +403,20 @@ class VideoEditorViewModel : ViewModel() {
         _onionSkin.value = OnionSkin.normalize(_onionSkin.value.copy(opacity = opacity))
     }
 
+    // ---- Video scopes (build 196): histogram / waveform / vectorscope of the preview frame ----
+    private val _scopesOn = MutableStateFlow(false)
+    /**
+     * Whether the scopes panel is open. Editor VIEW state only, like the onion
+     * skin above: never saved with the project, never near an export — the
+     * scopes only READ the composed preview frame (through the engine's
+     * capture) and can change nothing. While off there is no readback at all.
+     */
+    val scopesOn: StateFlow<Boolean> = _scopesOn.asStateFlow()
+
+    fun setScopesOn(on: Boolean) {
+        _scopesOn.value = on
+    }
+
     fun setCanvasColor(argb: Long) {
         _canvasColor.value = argb or 0xFF000000L // the canvas is always opaque
     }

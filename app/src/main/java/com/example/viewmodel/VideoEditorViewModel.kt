@@ -345,6 +345,22 @@ class VideoEditorViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Auto beat detection (build 193): merges detected beat times (project ms) into the beat marks
+     * and returns how many were NEW. The merge is [com.example.model.BeatDetect.merge]: a detected
+     * mark within [BEAT_MARK_TOLERANCE_MS] of an existing one is a duplicate, so running detection
+     * never removes or moves a mark placed by hand. Like every beat-mark edit this lives OUTSIDE
+     * the track undo history.
+     */
+    fun addDetectedBeatMarks(detectedMs: List<Long>): Int {
+        val before = _beatMarks.value
+        val merged = com.example.model.BeatDetect.merge(
+            before, detectedMs.filter { it >= 0L }, BEAT_MARK_TOLERANCE_MS
+        )
+        _beatMarks.value = merged
+        return merged.size - before.size
+    }
+
     // ---- Named timeline markers (build 188): labelled flags on the ruler, saved with the project ----
     private val _markers = MutableStateFlow<List<TimelineMarker>>(emptyList())
     /** Named markers, sorted by time. Like the beat marks they live OUTSIDE the track undo history. */

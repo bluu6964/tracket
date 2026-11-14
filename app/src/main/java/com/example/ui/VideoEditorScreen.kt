@@ -1397,6 +1397,76 @@ fun VideoEditorScreen(
         }
     }
 
+    /**
+     * Detect beats (build 193): decodes exactly the source window the audio layer plays, runs the
+     * spectral-flux detector over it, maps the beats back through the layer's trim + speed law
+     * ([com.example.model.BeatDetect.timelineMsForSourceOffsets] — the inverse of sourceOffsetMs,
+     * so a speed ramp is handled exactly, not by an average) and merges them into the beat marks.
+     * Hand-placed marks are never removed (the merge dedupes against them). Same long-operation
+     * surface as Audio Reverse: progress, a Stop button, a result snackbar, failures spoken.
+     */
+    val startBeatDetect: (String) -> Unit = startBd@{ clipId ->
+        val audio = tracks.flatMap { it.clips }.find { it.id == clipId } ?: return@startBd
+        val uri = audio.uri
+        if (audio.type != LayerType.AUDIO || uri == null) return@startBd
+        if (trackRunning) return@startBd
+        val spanMs = audio.sourceOffsetMs(audio.durationMs)
+        if (spanMs <= 0L) {
+            scope.launch { snackbarHostState.showSnackbar("This layer has no sound to scan") }
+            return@startBd
+        }
+        if (spanMs > com.example.engine.AudioBeatDecode.MAX_SPAN_MS) {
+            scope.launch {
+                snackbarHostState.showSnackbar("This layer's sound is too long to scan for beats (over 10 minutes)")
+            }
+            return@startBd
+        }
+        viewModel.pause()
+        trackStop.set(false)
+        trackProgress = 0f
+        trackRunning = true
+        removeLabel = "Detecting beats…"
+        trackJob = scope.launch {
+            try {
+                val pcm = com.example.engine.AudioBeatDecode.decodeWindow(
+                    context, uri, audio.trimStartMs, spanMs,
+                    onProgress = { trackProgress = it * 0.9f },
+                    shouldStop = { trackStop.get() }
+                )
+                trackProgress = 0.95f
+                val (found, added) = withContext(Dispatchers.Default) {
+                    val result = com.example.model.BeatDetect.detect(pcm.samples, pcm.sampleRate)
+                    val rel = com.example.model.BeatDetect.timelineMsForSourceOffsets(audio, result.beatsMs)
+                    val timeline = rel.map { (audio.startMs + it).coerceIn(audio.startMs, audio.endMs) }
+                    result to viewModel.addDetectedBeatMarks(timeline)
+                }
+                val bpm = found.bpm
+                snackbarHostState.showSnackbar(
+                    when {
+                        found.beatsMs.isEmpty() -> "No beats found in this layer"
+                        added == 0 -> "Found ${found.beatsMs.size} beats — every one is already marked"
+                        bpm != null -> {
+                            val bpmText = if (bpm % 1.0 == 0.0) bpm.toInt().toString() else bpm.toString()
+                            "Found ${found.beatsMs.size} beats · about $bpmText BPM · $added new marks added"
+                        }
+                        else -> "Found ${found.beatsMs.size} beats · $added new marks added"
+                    }
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: com.example.engine.AudioBeatDecode.Stopped) {
+                snackbarHostState.showSnackbar("Stopped")
+            } catch (e: Throwable) {
+                snackbarHostState.showSnackbar("Beat detection failed: ${e.message ?: "unknown error"}")
+            } finally {
+                trackRunning = false
+                trackProgress = null
+                trackJob = null
+                removeLabel = null
+            }
+        }
+    }
+
     var renameTargetId by remember { mutableStateOf<String?>(null) }
     /** "Save as Template" (Templates v2): the Group layer waiting for its template name. */
     var saveTemplateGroupId by remember { mutableStateOf<String?>(null) }
@@ -2853,6 +2923,7 @@ fun VideoEditorScreen(
                                 showAudioSpeedSheet = true
                             },
                             onReverse = { startAudioReverse(targetClipId) },
+                            onDetectBeats = { startBeatDetect(targetClipId) },
                             onCaptions = { requestCaptions(targetClipId) },
                             onRename = { renameTargetId = targetClipId }
                         ) else ClipEditToolsPanel(

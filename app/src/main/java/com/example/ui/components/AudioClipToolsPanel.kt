@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.MusicNote
 import com.example.ui.theme.AmHairline
 import com.example.ui.theme.EditorBackground
 import com.example.ui.theme.IconActive
@@ -58,6 +59,8 @@ fun AudioClipToolsPanel(
     modifier: Modifier = Modifier,
     /** Auto Captions: speech of this audio layer to text layers (whisper.cpp). */
     onCaptions: (() -> Unit)? = null,
+    /** Detect beats: scans this layer's sound and drops beat marks on the ruler (build 193). */
+    onDetectBeats: (() -> Unit)? = null,
     /** Rename the layer. */
     onRename: (() -> Unit)? = null
 ) {
@@ -66,7 +69,8 @@ fun AudioClipToolsPanel(
         ClipToolItem("fade", "Fade", Icons.Default.Tonality),
         ClipToolItem("speed", "Speed", Icons.Default.Speed),
         ClipToolItem("reverse", "Reverse", Icons.Default.FastRewind)
-    ) + (if (onCaptions != null) listOf(ClipToolItem("captions", "Captions", Icons.Default.ClosedCaption))
+    ) + (if (onDetectBeats != null) listOf(ClipToolItem("beats", "Beats", Icons.Default.MusicNote))
+    else emptyList()) + (if (onCaptions != null) listOf(ClipToolItem("captions", "Captions", Icons.Default.ClosedCaption))
     else emptyList()) + (if (onRename != null) listOf(ClipToolItem("rename", "Rename", Icons.Default.Edit))
     else emptyList())
 
@@ -127,6 +131,7 @@ fun AudioClipToolsPanel(
                                     "fade" -> onFade()
                                     "speed" -> onSpeed()
                                     "reverse" -> onReverse()
+                                    "beats" -> onDetectBeats?.invoke()
                                     "captions" -> onCaptions?.invoke()
                                     "rename" -> onRename?.invoke()
                                 }

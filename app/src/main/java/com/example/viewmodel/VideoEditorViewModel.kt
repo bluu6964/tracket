@@ -2263,6 +2263,19 @@ class VideoEditorViewModel : ViewModel() {
         )
     }
 
+    /**
+     * Audio noise reduction (build 195): this layer's steady background noise is gated
+     * against a profile of its own sound (see [com.example.model.NoiseReduction]). The
+     * profile is computed live by the sound paths; only the two settings live on the layer.
+     */
+    fun setClipNoiseReduction(clipId: String, enabled: Boolean, strength: Float) =
+        updateClip(clipId) {
+            it.copy(
+                nrEnabled = enabled,
+                nrStrength = strength.coerceIn(0f, 1f)
+            )
+        }
+
     fun setAudioSpeed(clipId: String, speed: Float) = setClipSpeed(clipId, speed)
 
     /**

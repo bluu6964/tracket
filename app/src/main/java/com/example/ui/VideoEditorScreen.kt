@@ -88,6 +88,7 @@ import com.example.model.TIMELINE_PX_PER_MS
 import com.example.ui.components.AudioClipToolsPanel
 import com.example.ui.components.AudioDuckingSheet
 import com.example.ui.components.AudioFadeSheet
+import com.example.ui.components.AudioNoiseSheet
 import com.example.ui.components.AudioSpeedSheet
 import com.example.ui.components.AudioVolumeSheet
 import com.example.ui.components.AddShapeSheet
@@ -2166,6 +2167,7 @@ fun VideoEditorScreen(
     var showAudioFadeSheet by remember { mutableStateOf(false) }
     var showAudioSpeedSheet by remember { mutableStateOf(false) }
     var showAudioDuckingSheet by remember { mutableStateOf(false) }
+    var showAudioNoiseSheet by remember { mutableStateOf(false) }
     var showAddTextSheet by remember { mutableStateOf(false) }
     var showAddShapeSheet by remember { mutableStateOf(false) }
     var showStickerSheet by remember { mutableStateOf(false) }
@@ -2929,6 +2931,10 @@ fun VideoEditorScreen(
                             onDucking = {
                                 viewModel.beginAdjust()
                                 showAudioDuckingSheet = true
+                            },
+                            onNoiseReduction = {
+                                viewModel.beginAdjust()
+                                showAudioNoiseSheet = true
                             },
                             onCaptions = { requestCaptions(targetClipId) },
                             onRename = { renameTargetId = targetClipId }
@@ -3714,6 +3720,7 @@ fun VideoEditorScreen(
                 showAudioFadeSheet -> "Fade"
                 showAudioSpeedSheet -> "Speed"
                 showAudioDuckingSheet -> "Ducking"
+                showAudioNoiseSheet -> "Noise reduction"
                 else -> null
             }
             val closeAudioPanel = {
@@ -3721,6 +3728,7 @@ fun VideoEditorScreen(
                 showAudioFadeSheet = false
                 showAudioSpeedSheet = false
                 showAudioDuckingSheet = false
+                showAudioNoiseSheet = false
             }
             LaunchedEffect(audioClip == null, audioPanelTitle) {
                 if (audioClip == null && audioPanelTitle != null) closeAudioPanel()
@@ -3812,6 +3820,14 @@ fun VideoEditorScreen(
                                 },
                                 onChange = { enabled, triggerId, amountDb, smoothness ->
                                     viewModel.setClipDucking(audioClip.id, enabled, triggerId, amountDb, smoothness)
+                                },
+                                onDismiss = closeAudioPanel
+                            )
+                        } else if (showAudioNoiseSheet) {
+                            AudioNoiseSheet(
+                                clip = audioClip,
+                                onChange = { enabled, strength ->
+                                    viewModel.setClipNoiseReduction(audioClip.id, enabled, strength)
                                 },
                                 onDismiss = closeAudioPanel
                             )

@@ -1,6 +1,7 @@
 #include "native_export_encoder.h"
 #include "renderer.h"
 #include "audio_decoder.h"
+#include "noise_gate.h"
 #include "prof.h"
 
 #include <media/NdkMediaFormat.h>
@@ -129,7 +130,8 @@ bool NativeExportEncoder::addAudioClip(int fd, int64_t length, int64_t startUs, 
                                        int64_t trimStartUs, double speed, float volume,
                                        int64_t fadeInUs, int64_t fadeOutUs,
                                        const std::vector<int64_t>& duckRelUs,
-                                       const std::vector<float>& duckGains) {
+                                       const std::vector<float>& duckGains,
+                                       const std::vector<float>& noiseProfile, float nrStrength) {
     if (hasAudio_) { error_ = "Add audio clips before startAudio()"; return false; }
     const int copy = dup(fd);
     if (copy < 0) { error_ = "Could not duplicate audio file descriptor"; return false; }
@@ -151,6 +153,8 @@ bool NativeExportEncoder::addAudioClip(int fd, int64_t length, int64_t startUs, 
         spec.duckFrames.push_back(frames(std::max<int64_t>(0, duckRelUs[i])));
         spec.duckGains.push_back(duckGains[i]);
     }
+    spec.noiseProfile = noiseProfile;
+    spec.nrStrength = nrStrength;
     audioFiles_.push_back({copy, length});
     pendingClips_.push_back(spec);
     return true;
@@ -163,6 +167,10 @@ bool NativeExportEncoder::startAudio(int64_t totalDurationUs, int bitrate) {
     mixer_.reset(new AudioMixer([this](const AudioClipSpec& spec) -> std::unique_ptr<FrameSource> {
         const AudioFile& f = audioFiles_[(size_t)spec.source];
         std::unique_ptr<FrameSource> src = AudioFileSource::open(f.fd, f.length, spec.trimStartUs);
+        // Noise reduction (build 195): gate the decoded stream BEFORE the speed change,
+        // exactly like the preview's factory — the profile was estimated on this stream.
+        if (src && !spec.noiseProfile.empty() && spec.nrStrength > 0.f)
+            src.reset(new NoiseGateSource(std::move(src), spec.noiseProfile, spec.nrStrength));
         if (src && std::fabs(spec.speed - 1.0) > 0.001)
             src.reset(new TimeStretcher(std::move(src), spec.speed));
         return src;

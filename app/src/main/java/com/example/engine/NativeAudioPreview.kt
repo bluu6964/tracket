@@ -22,7 +22,8 @@ internal object AudioPreviewNative {
     @JvmStatic external fun nativeClearClips(p: Long)
     @JvmStatic external fun nativeAddClip(
         p: Long, fd: Int, length: Long, startUs: Long, durUs: Long, trimStartUs: Long, speed: Double,
-        volume: Float, fadeInUs: Long, fadeOutUs: Long, duckRelUs: LongArray?, duckGains: FloatArray?
+        volume: Float, fadeInUs: Long, fadeOutUs: Long, duckRelUs: LongArray?, duckGains: FloatArray?,
+        noiseProfile: FloatArray?, nrStrength: Float
     ): Boolean
 
     @JvmStatic external fun nativeStart(p: Long, positionUs: Long): Boolean
@@ -49,6 +50,13 @@ internal object AudioPreviewNative {
  * path and cached by the exact fields it depends on ([DuckCurve.Key]); until the curve lands
  * the layer plays unducked, and the curve's arrival changes the sound signature, so the next
  * sync restarts the sound with the ducking in — the same restart any other sound change gets.
+ *
+ * Noise reduction (build 195): a processed layer's noise profile is estimated from its own
+ * sound off the sync path and cached by the exact window it depends on ([NoiseProfile.Key]);
+ * until the profile lands the layer plays UNPROCESSED, and the profile's arrival changes the
+ * sound signature, so the next sync restarts the sound with the gate in — the same restart
+ * any other sound change gets. The export computes the profile during setup, so a finished
+ * file is always cleaned when the profile could be computed at all.
  */
 internal class NativeAudioPreview(context: Context) {
     private val appCtx = context.applicationContext
@@ -70,6 +78,14 @@ internal class NativeAudioPreview(context: Context) {
 
     /** Cache marker: this key was computed and has NO curve (silent / unresolvable trigger). */
     private val noCurve = DuckCurve.Curve(LongArray(0), FloatArray(0))
+
+    // Noise profiles (build 195): computed on their own thread, read on the caller's thread.
+    private val noiseWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "am-noise").apply { isDaemon = true } }
+    private val nrCache = ConcurrentHashMap<NoiseProfile.Key, FloatArray>()
+    private val nrInFlight: MutableSet<NoiseProfile.Key> = Collections.newSetFromMap(ConcurrentHashMap())
+
+    /** Cache marker: this key was computed and has NO profile (no sound / over-long span). */
+    private val noProfile = FloatArray(0)
 
     companion object {
         private const val TAG = "AmAudioPreview"
@@ -127,11 +143,36 @@ internal class NativeAudioPreview(context: Context) {
             }
             null
         }
+        // Noise reduction (build 195): each pick's noise profile (or null), aligned with
+        // `picks`. A profile that is not computed yet is scheduled; the sound starts
+        // unprocessed and restarts gated when the profile lands, because the signature
+        // below carries the profile's hash.
+        val nrProfiles: List<FloatArray?> = picks.map { pick ->
+            val key = NoiseProfile.keyFor(pick.clip) ?: return@map null
+            val cached = nrCache[key]
+            if (cached != null) return@map if (cached === noProfile) null else cached
+            if (nrInFlight.add(key)) {
+                val clip = pick.clip
+                noiseWorker.execute {
+                    try {
+                        val profile = runBlocking { NoiseProfile.compute(appCtx, clip) }
+                        if (nrCache.size > 64) nrCache.clear()
+                        nrCache[key] = profile ?: noProfile
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "noise profile computation failed", t)
+                        nrCache[key] = noProfile
+                    } finally {
+                        nrInFlight.remove(key)
+                    }
+                }
+            }
+            null
+        }
         // Everything that changes how it sounds, in one comparable value.
         val sig: List<Any?> = picks.mapIndexed { index, it ->
             val c = it.clip
             listOf(c.id, c.uri, c.startMs, c.durationMs, c.trimStartMs, c.exportSpeed, it.volume, it.fadeInMs, it.fadeOutMs,
-                duckCurves[index]?.version)
+                duckCurves[index]?.version, nrProfiles[index]?.contentHashCode(), if (nrProfiles[index] != null) c.nrStrength else 0f)
         }
         if (picks.isEmpty()) {
             if (running) stop()
@@ -180,10 +221,12 @@ internal class NativeAudioPreview(context: Context) {
                         val pfd = try { appCtx.contentResolver.openFileDescriptor(uri, "r") } catch (_: Exception) { null } ?: continue
                         pfd.use {
                             val duck = duckCurves[index]
+                            val profile = nrProfiles[index]
                             if (AudioPreviewNative.nativeAddClip(
                                     p, it.fd, it.statSize, c.startMs * 1000L, c.durationMs * 1000L, c.trimStartMs * 1000L,
                                     c.exportSpeed.toDouble(), a.volume, a.fadeInMs * 1000L, a.fadeOutMs * 1000L,
-                                    duck?.relUs, duck?.gains
+                                    duck?.relUs, duck?.gains,
+                                    profile, if (profile != null) c.nrStrength else 0f
                                 )) added++
                         }
                     }
@@ -220,6 +263,7 @@ internal class NativeAudioPreview(context: Context) {
         released = true
         running = false
         duckWorker.shutdown()
+        noiseWorker.shutdown()
         worker.execute {
             try {
                 lock.withLock {

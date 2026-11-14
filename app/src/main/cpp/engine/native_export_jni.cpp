@@ -48,7 +48,7 @@ Java_com_example_engine_NativeExportNative_nativeError(JNIEnv* env, jclass, jlon
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_example_engine_NativeExportNative_nativeAddAudioClip(JNIEnv* env, jclass, jlong p, jint fd, jlong length,
         jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed, jfloat volume, jlong fadeInUs, jlong fadeOutUs,
-        jlongArray duckRelUs, jfloatArray duckGains) {
+        jlongArray duckRelUs, jfloatArray duckGains, jfloatArray noiseProfile, jfloat nrStrength) {
     std::vector<int64_t> rel;
     std::vector<float> gains;
     if (duckRelUs && duckGains) {
@@ -60,8 +60,20 @@ Java_com_example_engine_NativeExportNative_nativeAddAudioClip(JNIEnv* env, jclas
             env->GetFloatArrayRegion(duckGains, 0, n, gains.data());
         }
     }
+    // Noise reduction (build 195): the clip's per-bin noise profile + gate strength;
+    // null / empty = the source passes through ungated.
+    std::vector<float> profile;
+    float strength = 0.f;
+    if (noiseProfile) {
+        const jsize n = env->GetArrayLength(noiseProfile);
+        if (n > 0) {
+            profile.resize((size_t)n);
+            env->GetFloatArrayRegion(noiseProfile, 0, n, profile.data());
+            strength = nrStrength;
+        }
+    }
     return E(p)->addAudioClip(fd, length, startUs, durUs, trimStartUs, speed, volume, fadeInUs, fadeOutUs,
-                              rel, gains)
+                              rel, gains, profile, strength)
                ? JNI_TRUE : JNI_FALSE;
 }
 extern "C" JNIEXPORT jboolean JNICALL

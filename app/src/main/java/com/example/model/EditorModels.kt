@@ -360,6 +360,19 @@ data class TimelineClip(
     val duckAmountDb: Float = 12f,
     /** Attack / release smoothing of the duck gain, 0 (snappy) .. 1 (very smooth). See [Ducking]. */
     val duckSmoothness: Float = 0.5f,
+    /**
+     * Audio noise reduction (build 195): this layer's steady background noise (hiss, hum,
+     * fan noise) is spectrally gated against a noise profile estimated from the layer's OWN
+     * played window — the pure law lives in [NoiseReduction] (harness-pinned) and the gate
+     * itself is a FrameSource inside the shared C++ mixer's per-clip source chain, ahead of
+     * the mixer's volume/fade/duck gain, so preview and export are cleaned identically. The
+     * profile is computed live from the file (never stored, never baked into the samples);
+     * in the preview the layer plays unprocessed until the profile lands. Defaults = off:
+     * old project files load unprocessed and behave byte-identically.
+     */
+    val nrEnabled: Boolean = false,
+    /** Gate strength 0..1: how hard the noise floor is pushed down (0 = no reduction). See [NoiseReduction]. */
+    val nrStrength: Float = 0.6f,
     val isLocked: Boolean = false,
     /** When false the layer is hidden on the canvas and skipped on export (eye control). */
     val isVisible: Boolean = true,

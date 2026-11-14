@@ -399,3 +399,72 @@ fun AudioDuckingSheet(
         }
     }
 }
+
+/**
+ * Noise reduction of one audio layer (build 195): the layer's steady background
+ * noise (hiss, hum, fan noise) is gated down against a noise profile estimated
+ * from the layer's own sound (see [com.example.model.NoiseReduction]). The two
+ * settings live on this layer; the profile itself is computed live by the sound
+ * paths — nothing is baked. Changes are applied live.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AudioNoiseSheet(
+    clip: TimelineClip,
+    onChange: (enabled: Boolean, strength: Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val enabled = clip.nrEnabled
+    val strength = clip.nrStrength
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(bottom = 28.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Noise reduction", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { onChange(it, strength) },
+                    colors = SwitchDefaults.colors(checkedTrackColor = NeonCyan)
+                )
+            }
+            Text(
+                "Remove the steady background noise of this layer — hiss, hum, fan " +
+                    "noise — while keeping the voice or music on top of it.",
+                color = TextSecondary, fontSize = 13.sp
+            )
+            if (enabled) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Strength", color = TextSecondary, fontSize = 14.sp)
+                    Text(
+                        "${(strength * 100f).roundToInt()}%",
+                        color = NeonCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+                Slider(
+                    value = strength.coerceIn(0f, 1f),
+                    onValueChange = { onChange(true, it) },
+                    valueRange = 0f..1f,
+                    colors = sliderColors()
+                )
+                Text(
+                    "The layer's sound is analysed the first time it plays and after " +
+                        "its trim or speed changes — until the analysis lands, the layer " +
+                        "plays unprocessed. Exports are always cleaned.",
+                    color = TextSecondary, fontSize = 13.sp
+                )
+            }
+        }
+    }
+}

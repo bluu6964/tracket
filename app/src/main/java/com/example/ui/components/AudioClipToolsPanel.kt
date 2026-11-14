@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.TrendingDown
 import com.example.ui.theme.AmHairline
@@ -64,6 +65,8 @@ fun AudioClipToolsPanel(
     onDetectBeats: (() -> Unit)? = null,
     /** Ducking: this layer's volume lowers itself under another layer's loudness (build 194). */
     onDucking: (() -> Unit)? = null,
+    /** Noise reduction: this layer's steady background noise is gated down (build 195). */
+    onNoiseReduction: (() -> Unit)? = null,
     /** Rename the layer. */
     onRename: (() -> Unit)? = null
 ) {
@@ -74,6 +77,7 @@ fun AudioClipToolsPanel(
         ClipToolItem("reverse", "Reverse", Icons.Default.FastRewind)
     ) + (if (onDetectBeats != null) listOf(ClipToolItem("beats", "Beats", Icons.Default.MusicNote))
     else emptyList()) + (if (onDucking != null) listOf(ClipToolItem("ducking", "Ducking", Icons.Default.TrendingDown))
+    else emptyList()) + (if (onNoiseReduction != null) listOf(ClipToolItem("noise", "Noise", Icons.Default.GraphicEq))
     else emptyList()) + (if (onCaptions != null) listOf(ClipToolItem("captions", "Captions", Icons.Default.ClosedCaption))
     else emptyList()) + (if (onRename != null) listOf(ClipToolItem("rename", "Rename", Icons.Default.Edit))
     else emptyList())
@@ -137,6 +141,7 @@ fun AudioClipToolsPanel(
                                     "reverse" -> onReverse()
                                     "beats" -> onDetectBeats?.invoke()
                                     "ducking" -> onDucking?.invoke()
+                                    "noise" -> onNoiseReduction?.invoke()
                                     "captions" -> onCaptions?.invoke()
                                     "rename" -> onRename?.invoke()
                                 }

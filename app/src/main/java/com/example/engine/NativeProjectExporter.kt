@@ -1323,14 +1323,25 @@ class NativeProjectExporter(private val context: Context) {
             if (DuckCurve.keyFor(picks, a.clip) == null) null
             else runBlocking { DuckCurve.compute(context, picks, a.clip) }
         }
+        // Noise reduction (build 195): each processed layer's noise profile is estimated
+        // from its own played window before its clip is added — the same NoiseProfile
+        // computation the preview uses, so the export is cleaned exactly like the preview.
+        // A layer whose profile cannot be computed (no sound / over-long span) is simply
+        // added ungated.
+        val nrProfiles: List<FloatArray?> = picks.map { a ->
+            if (NoiseProfile.keyFor(a.clip) == null) null
+            else runBlocking { NoiseProfile.compute(context, a.clip) }
+        }
         for ((index, a) in picks.withIndex()) {
             val c = a.clip
             val uri = Uri.parse(c.uri ?: continue)
             val pfd = try { context.contentResolver.openFileDescriptor(uri, "r") } catch (_: Exception) { null } ?: continue
             pfd.use {
                 val duck = duckCurves[index]
+                val profile = nrProfiles[index]
                 if (encoder.addAudioClip(it.fd, it.statSize, c.startMs, c.durationMs, c.trimStartMs,
-                        c.exportSpeed, a.volume, a.fadeInMs, a.fadeOutMs, duck?.relUs, duck?.gains)) added = true
+                        c.exportSpeed, a.volume, a.fadeInMs, a.fadeOutMs, duck?.relUs, duck?.gains,
+                        profile, if (profile != null) c.nrStrength else 0f)) added = true
             }
         }
         return added

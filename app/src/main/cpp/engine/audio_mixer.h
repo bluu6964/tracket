@@ -31,6 +31,13 @@ struct AudioClipSpec {
     // empty = no ducking. Same length, at least one point when non-empty.
     std::vector<int64_t> duckFrames;
     std::vector<float> duckGains;
+    // Audio noise reduction (build 195): the clip's noise profile — kNoiseBins per-bin
+    // magnitude estimates (noise_gate.h) computed live by the Kotlin side from the clip's
+    // own played window (model/NoiseReduction) — plus the gate strength 0..1. The source
+    // factories wrap the clip's decoder in a NoiseGateSource when the profile is present
+    // and the strength > 0; empty / 0 = the source passes through untouched.
+    std::vector<float> noiseProfile;
+    float nrStrength = 0.f;
 };
 
 using SourceFactory = std::function<std::unique_ptr<FrameSource>(const AudioClipSpec&)>;

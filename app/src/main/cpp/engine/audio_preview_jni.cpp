@@ -24,6 +24,7 @@
 
 #include "audio_decoder.h"
 #include "audio_preview.h"
+#include "noise_gate.h"
 
 #define TAG "AmAudioPreview"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -214,9 +215,12 @@ JNIEXPORT void JNICALL Java_com_example_engine_AudioPreviewNative_nativeClearCli
 // Same numbers as NativeExportEncoder.addAudioClip (microseconds on the timeline / in the file).
 // duckRelUs / duckGains (build 194, nullable): the clip's duck curve on its own clock —
 // microseconds from its start + the gain there; empty / null = no ducking.
+// noiseProfile / nrStrength (build 195): the clip's per-bin noise profile (kNoiseBins
+// magnitudes) + gate strength; null / empty / 0 = the source passes through ungated.
 JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeAddClip(
     JNIEnv* env, jclass, jlong p, jint fd, jlong length, jlong startUs, jlong durUs, jlong trimStartUs, jdouble speed,
-    jfloat volume, jlong fadeInUs, jlong fadeOutUs, jlongArray duckRelUs, jfloatArray duckGains) {
+    jfloat volume, jlong fadeInUs, jlong fadeOutUs, jlongArray duckRelUs, jfloatArray duckGains,
+    jfloatArray noiseProfile, jfloat nrStrength) {
     Handle* h = reinterpret_cast<Handle*>(p);
     std::lock_guard<std::mutex> lock(h->mu);
     const int copy = dup(fd);
@@ -247,6 +251,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeAddC
             }
         }
     }
+    if (noiseProfile) {
+        const jsize n = env->GetArrayLength(noiseProfile);
+        if (n > 0) {
+            s.noiseProfile.assign((size_t)n, 0.f);
+            env->GetFloatArrayRegion(noiseProfile, 0, n, s.noiseProfile.data());
+            s.nrStrength = nrStrength;
+        }
+    }
     h->fds.push_back(copy);
     h->lens.push_back(length);
     h->clips.push_back(s);
@@ -273,6 +285,10 @@ JNIEXPORT jboolean JNICALL Java_com_example_engine_AudioPreviewNative_nativeStar
         if (s.source < 0 || (size_t)s.source >= hp->fds.size()) return nullptr;
         std::unique_ptr<FrameSource> src =
             AudioFileSource::open(hp->fds[(size_t)s.source], hp->lens[(size_t)s.source], s.trimStartUs);
+        // Noise reduction (build 195): gate the decoded stream BEFORE the speed change,
+        // exactly like the export's factory — the profile was estimated on this stream.
+        if (src && !s.noiseProfile.empty() && s.nrStrength > 0.f)
+            src.reset(new NoiseGateSource(std::move(src), s.noiseProfile, s.nrStrength));
         if (src && std::fabs(s.speed - 1.0) > 0.001) src.reset(new TimeStretcher(std::move(src), s.speed));
         return src;
     }, h->clips, h->startFrame));

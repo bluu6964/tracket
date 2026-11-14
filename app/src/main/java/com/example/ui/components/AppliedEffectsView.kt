@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -427,7 +428,7 @@ fun AppliedEffectsView(
                     modifier = Modifier
                         .offset(x = 120.dp)
                         .height(28.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RectangleShape)
                         .background(Color(0xFF2C2C2C))
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -439,7 +440,7 @@ fun AppliedEffectsView(
                         modifier = Modifier
                             .width(80.dp)
                             .height(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .clip(RectangleShape)
                     )
 
                     Spacer(modifier = Modifier.width(10.dp))
@@ -449,7 +450,7 @@ fun AppliedEffectsView(
                         modifier = Modifier
                             .size(20.dp)
                             .graphicsLayer { rotationZ = 45f }
-                            .background(Color(0xFF565656), RoundedCornerShape(2.dp))
+                            .background(Color(0xFF565656), RectangleShape)
                             .bouncyClickable(onClick = {}),
                         contentAlignment = Alignment.Center
                     ) {
@@ -485,7 +486,7 @@ fun AppliedEffectsView(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .clip(RectangleShape)
                 .background(Color(0xFF141414))
                 .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
@@ -496,7 +497,7 @@ fun AppliedEffectsView(
                         .align(Alignment.CenterHorizontally)
                         .width(36.dp)
                         .height(4.dp)
-                        .background(Color(0xFF3F3F3F), RoundedCornerShape(2.dp))
+                        .background(Color(0xFF3F3F3F), RectangleShape)
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -518,7 +519,7 @@ fun AppliedEffectsView(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(46.dp)
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .clip(RectangleShape)
                                         .background(Color(0xFF2A2A2A))
                                         .bouncyClickable(
                                             pressedScale = 0.96f,
@@ -564,7 +565,7 @@ fun AppliedEffectsView(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .height(48.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .clip(RectangleShape)
                                                     .background(Color(0xFF242424))
                                                     .padding(horizontal = 10.dp),
                                                 verticalAlignment = Alignment.CenterVertically
@@ -662,7 +663,7 @@ fun AppliedEffectsView(
                                         val isSelected = cat == selectedCategory
                                         Box(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
+                                                .clip(RectangleShape)
                                                 .background(if (isSelected) Color(0xFFF3F4F6) else Color(0xFF232323))
                                                 .bouncyClickable(onClick = { selectedCategory = cat })
                                                 .padding(horizontal = 14.dp, vertical = 7.dp),
@@ -717,9 +718,9 @@ fun AppliedEffectsView(
                                             Box(
                                                 modifier = Modifier
                                                     .size(62.dp)
-                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clip(RectangleShape)
                                                     .background(Color(0xFF2A2A2A))
-                                                    .border(1.dp, Color(0xFF3B3B3B), RoundedCornerShape(10.dp)),
+                                                    .border(1.dp, Color(0xFF3B3B3B), RectangleShape),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 // Stylized Rocket / Graphic Canvas

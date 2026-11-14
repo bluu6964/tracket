@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -371,7 +372,7 @@ fun CropView(
 
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RectangleShape)
                     .background(NeonCyan)
                     .bouncyClickable(onClick = {
                         emitCrop()
@@ -433,9 +434,9 @@ fun CropView(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RectangleShape)
                         .background(com.example.ui.theme.LocalCanvasColor.current)
-                        .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
+                        .border(1.dp, Color.White.copy(alpha = 0.15f), RectangleShape),
                     contentAlignment = Alignment.Center
                 ) {
                 // Background Layer (Video / Shape / Text Media)
@@ -774,9 +775,9 @@ fun CropView(
             Box(
                 modifier = Modifier
                     .size(32.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RectangleShape)
                     .background(Color(0xFF1D1D1D))
-                    .border(1.dp, Color(0xFF333333), RoundedCornerShape(6.dp))
+                    .border(1.dp, Color(0xFF333333), RectangleShape)
                     .bouncyClickable(onClick = {
                         activePreset = "Free"
                         setRect(0f, 0f, 1f, 1f)
@@ -797,9 +798,9 @@ fun CropView(
                 modifier = Modifier
                     .weight(1f)
                     .height(30.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RectangleShape)
                     .background(Color(0xFF1E1E1E))
-                    .border(1.dp, Color(0xFF2C2C2C), RoundedCornerShape(6.dp))
+                    .border(1.dp, Color(0xFF2C2C2C), RectangleShape)
                     .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
@@ -812,7 +813,7 @@ fun CropView(
                         modifier = Modifier
                             .size(20.dp)
                             .graphicsLayer { rotationZ = 45f }
-                            .background(Color(0xFF3B3B3B), RoundedCornerShape(2.dp))
+                            .background(Color(0xFF3B3B3B), RectangleShape)
                             .bouncyClickable(onClick = {}),
                         contentAlignment = Alignment.Center
                     ) {
@@ -850,7 +851,7 @@ fun CropView(
                         .verticalScroll(androidx.compose.foundation.rememberScrollState())
                     else Modifier
                 )
-                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .clip(RectangleShape)
                 .background(Color(0xFF141414))
                 .padding(horizontal = 16.dp, vertical = 6.dp)
         ) {
@@ -860,7 +861,7 @@ fun CropView(
                     .align(Alignment.CenterHorizontally)
                     .width(36.dp)
                     .height(4.dp)
-                    .background(Color(0xFF3F3F3F), RoundedCornerShape(2.dp))
+                    .background(Color(0xFF3F3F3F), RectangleShape)
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -906,9 +907,9 @@ fun CropView(
                     val isSelected = (preset == activePreset)
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RectangleShape)
                             .background(if (isSelected) Color.White else Color(0xFF262626))
-                            .border(1.dp, if (isSelected) Color.White else Color(0xFF3D3D3D), RoundedCornerShape(8.dp))
+                            .border(1.dp, if (isSelected) Color.White else Color(0xFF3D3D3D), RectangleShape)
                             .bouncyClickable(onClick = { applyPresetRatio(preset) })
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center

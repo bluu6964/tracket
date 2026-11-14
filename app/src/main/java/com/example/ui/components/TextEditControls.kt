@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import android.app.Activity
 import android.content.Context
@@ -171,7 +172,7 @@ fun ColorPickerDialog(
         Column(
             modifier = Modifier
                 .enterPop()
-                .clip(RoundedCornerShape(20.dp))
+                .clip(RectangleShape)
                 .background(SheetBg)
                 .padding(18.dp)
         ) {

@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -47,7 +48,7 @@ fun ParentSheet(
     onPick: (String?) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel, shape = RectangleShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -83,7 +84,7 @@ private fun Row1(name: String, id: String?, selected: Boolean, onClick: () -> Un
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(EditorSurfaceVariant, RoundedCornerShape(12.dp))
+            .background(EditorSurfaceVariant, RectangleShape)
             .bouncyClickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 14.dp)
             .testTag("parent_pick_${id ?: "none"}"),

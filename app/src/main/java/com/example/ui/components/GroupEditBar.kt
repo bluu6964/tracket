@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,7 +31,7 @@ fun GroupEditBar(name: String, onExit: () -> Unit, modifier: Modifier = Modifier
     Row(
         modifier = modifier
             .padding(6.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RectangleShape)
             .background(Color(0xE63F8F43))
             .clickable { onExit() }
             .padding(horizontal = 10.dp, vertical = 6.dp)

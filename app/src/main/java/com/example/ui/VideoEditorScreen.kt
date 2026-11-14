@@ -1,4 +1,5 @@
 package com.example.ui
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -2191,7 +2192,11 @@ fun VideoEditorScreen(
                         p, removeLabel ?: if (planarRunning) "Tracking the surface…" else "Tracking the object…", onCancel = { trackStop.set(true) }, actionLabel = "Stop"
                     )
                 }
-                SnackbarHost(snackbarHostState)
+                // Square snackbar surface (Sarowar's square order 2026-11-14 —
+                // the Material default snackbar shape is rounded).
+                SnackbarHost(snackbarHostState) { data ->
+                    androidx.compose.material3.Snackbar(data, shape = RectangleShape)
+                }
             }
         },
         containerColor = EditorBackground
@@ -3310,7 +3315,7 @@ fun VideoEditorScreen(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
                                 .padding(top = 10.dp)
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RectangleShape)
                                 .background(Color.Black.copy(alpha = 0.65f))
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                         )

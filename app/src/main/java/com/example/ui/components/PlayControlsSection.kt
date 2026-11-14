@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -104,7 +105,7 @@ fun PlayControlsSection(
                     modifier = Modifier
                         .width(26.dp)
                         .height(17.5.dp)
-                        .glassSurface(RoundedCornerShape(AmCornerMicro), fill = amGlassChipBrush()),
+                        .glassSurface(RectangleShape, fill = amGlassChipBrush()),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

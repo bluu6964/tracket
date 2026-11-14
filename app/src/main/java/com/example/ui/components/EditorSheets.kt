@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.Canvas
@@ -150,7 +151,8 @@ fun AspectRatioSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -171,7 +173,7 @@ fun AspectRatioSheet(
                         modifier = Modifier
                             .width(100.dp)
                             .height(100.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RectangleShape)
                             .background(if (selected) Color(0xFFE8E4E4) else Color(0xFF3A3A3D))
                             .bouncyClickable(pressedScale = 0.94f) { onRatioSelected(ratio) }
                             .testTag("aspect_${ratio.label}"),
@@ -211,12 +213,12 @@ fun AspectRatioSheet(
                     Box(
                         modifier = Modifier
                             .size(48.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RectangleShape)
                             .background(if (custom) Color(canvasColor) else Color(0xFF3A3A3D))
                             .border(
                                 if (custom) 3.dp else 1.5.dp,
                                 if (custom) Color.White else Color.White.copy(alpha = 0.7f),
-                                RoundedCornerShape(12.dp)
+                                RectangleShape
                             )
                             .bouncyClickable(pressedScale = 0.9f) { showPicker = true }
                             .testTag("canvas_color_custom"),
@@ -230,12 +232,12 @@ fun AspectRatioSheet(
                     Box(
                         modifier = Modifier
                             .size(48.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RectangleShape)
                             .background(Color(c))
                             .border(
                                 if (selected) 3.dp else 1.dp,
                                 if (selected) Color.White else Color.White.copy(alpha = 0.18f),
-                                RoundedCornerShape(12.dp)
+                                RectangleShape
                             )
                             .bouncyClickable(pressedScale = 0.88f) { onCanvasColor(c) }
                     )
@@ -252,7 +254,7 @@ fun AspectRatioSheet(
                     val selected = label == resolution
                     Column(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RectangleShape)
                             .background(if (selected) Color(0xFFE8E4E4) else Color(0xFF3A3A3D))
                             .bouncyClickable(pressedScale = 0.94f) { onResolution(label) }
                             .padding(horizontal = 18.dp, vertical = 12.dp)
@@ -302,7 +304,8 @@ fun ResolutionSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -323,7 +326,7 @@ fun ResolutionSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RectangleShape)
                         .background(if (isSelected) EditorSurfaceVariant else Color.Transparent)
                         .bouncyClickable {
                             onResolutionSelected(res)
@@ -518,7 +521,7 @@ fun ExportModalDialog(
                     .navigationBarsPadding()
                     .width(96.dp)
                     .height(56.dp)
-                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .clip(RectangleShape)
                     .background(Color.White.copy(alpha = 0.10f))
                     .clickable { if (isExporting) onCancel() else onDismiss() }
                     .testTag("export_close"),
@@ -626,7 +629,7 @@ private fun ColumnScope.ExportSettingsPage(
     Button(
         onClick = onStartExport,
         modifier = Modifier.fillMaxWidth().height(52.dp).testTag("export_now"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RectangleShape,
         colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
     ) {
         Text("Export Now", color = EditorBackground, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -640,9 +643,9 @@ private fun ExportCard(title: String, value: String, hint: String, content: @Com
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RectangleShape)
             .background(AmPanel)
-            .border(1.dp, AmHairline, RoundedCornerShape(16.dp))
+            .border(1.dp, AmHairline, RectangleShape)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -689,7 +692,7 @@ private fun ExportChip(text: String, selected: Boolean, onClick: () -> Unit) {
         fontWeight = FontWeight.SemiBold,
         color = if (selected) Color(0xFF0A0A0A) else Color(0xFFE5E5E7),
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(RectangleShape)
             .background(if (selected) ExportAccent else Color.White.copy(alpha = 0.10f))
             .bouncyClickable(pressedScale = 0.94f) { onClick() }
             .padding(horizontal = 14.dp, vertical = 7.dp)
@@ -801,7 +804,8 @@ fun AddAudioSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -823,7 +827,7 @@ fun AddAudioSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RectangleShape)
                         .bouncyClickable {
                             onAddAudio(title)
                             onDismiss()
@@ -858,7 +862,8 @@ fun AddTextSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -943,14 +948,14 @@ fun AddShapeSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = AmPanel,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        shape = RectangleShape,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(top = 10.dp, bottom = 4.dp)
                     .width(36.dp)
                     .height(4.dp)
-                    .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(2.dp))
+                    .background(Color.White.copy(alpha = 0.25f), RectangleShape)
             )
         }
     ) {
@@ -1036,7 +1041,7 @@ private fun ShapePickerCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val tile = RoundedCornerShape(12.dp)
+    val tile = RectangleShape
     Column(
         modifier = modifier.bouncyClickable(pressedScale = 0.94f, hoverScale = 1.0f, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally

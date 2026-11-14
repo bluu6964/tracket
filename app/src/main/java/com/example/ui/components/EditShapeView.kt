@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -265,7 +266,7 @@ fun EditShapeView(
 
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RectangleShape)
                     .background(NeonCyan)
                     .bouncyClickable(onClick = {
                         onSaveShape(
@@ -652,7 +653,7 @@ fun EditShapeView(
                     modifier = Modifier
                         .fillMaxWidth(progressFraction.coerceIn(0.2f, 1f))
                         .height(28.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RectangleShape)
                         .background(Color(0xFF2C2C2C))
                         .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -692,7 +693,7 @@ fun EditShapeView(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .clip(RectangleShape)
                 .background(Color(0xFF141414))
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
@@ -702,7 +703,7 @@ fun EditShapeView(
                     .align(Alignment.CenterHorizontally)
                     .width(36.dp)
                     .height(4.dp)
-                    .background(Color(0xFF3F3F3F), RoundedCornerShape(2.dp))
+                    .background(Color(0xFF3F3F3F), RectangleShape)
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -716,7 +717,7 @@ fun EditShapeView(
                     val isSelected = tab == activeTab
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RectangleShape)
                             .background(if (isSelected) Color(0xFFF3F4F6) else Color(0xFF232323))
                             .bouncyClickable(
                                 pressedScale = 0.92f,
@@ -764,12 +765,12 @@ fun EditShapeView(
                                 Box(
                                     modifier = Modifier
                                         .size(38.dp)
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .clip(RectangleShape)
                                         .background(if (isSelected) Color(0xFF2C2C2C) else Color(0xFF1D1D1D))
                                         .border(
                                             width = if (isSelected) 2.dp else 1.dp,
                                             color = if (isSelected) Color.White else Color(0xFF3B3B3B),
-                                            shape = RoundedCornerShape(8.dp)
+                                            shape = RectangleShape
                                         )
                                         .bouncyClickable(onClick = {
                                             selectedShapeType = shape
@@ -1010,7 +1011,7 @@ fun EditShapeView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(46.dp),
-                shape = RoundedCornerShape(10.dp),
+                shape = RectangleShape,
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = NeonCyan)
             ) {
                 Text(
@@ -1050,7 +1051,7 @@ private fun ShapeEditChip(label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .height(48.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RectangleShape)
             .background(ChipBg)
             .bouncyClickable(pressedScale = 0.9f, onClick = onClick)
             .padding(horizontal = 22.dp),

@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import android.app.Activity
 import android.content.Context
@@ -166,7 +167,7 @@ fun ChromaPickRing(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 8.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RectangleShape)
                 .background(Color.Black.copy(alpha = 0.72f))
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -186,7 +187,7 @@ fun ChromaPickRing(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RectangleShape)
                     .bouncyClickable(onClick = onCancel)
                     .padding(horizontal = 10.dp, vertical = 6.dp)
                     .testTag("chroma_pick_cancel")
@@ -198,7 +199,7 @@ fun ChromaPickRing(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RectangleShape)
                     .background(if (color != null) NeonCyan else Color.Gray)
                     .bouncyClickable(onClick = { color?.let(onConfirm) })
                     .padding(horizontal = 14.dp, vertical = 6.dp)

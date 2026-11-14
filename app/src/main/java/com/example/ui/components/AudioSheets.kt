@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.mutableStateOf
@@ -257,7 +258,7 @@ fun AudioSpeedSheet(
                         color = TextPrimary,
                         fontSize = 13.sp,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RectangleShape)
                             .background(EditorSurfaceVariant)
                             .bouncyClickable { applySpeed(preset) }
                             .padding(horizontal = 14.dp, vertical = 8.dp)
@@ -271,7 +272,7 @@ fun AudioSpeedSheet(
                     color = TextPrimary,
                     fontSize = 13.sp,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RectangleShape)
                         .background(EditorSurfaceVariant)
                         .bouncyClickable { onSmooth() }
                         .padding(horizontal = 14.dp, vertical = 10.dp)

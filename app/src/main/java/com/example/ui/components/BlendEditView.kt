@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -130,7 +131,7 @@ fun BlendEditSheet(
         modifier = modifier
             .fillMaxWidth()
             .glassSurface(
-                RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                RectangleShape,
                 fill = amGlassBrush()
             )
             // swallow touches so nothing underneath can be hit
@@ -362,7 +363,7 @@ private fun OpacitySlider(
 
 @Composable
 private fun BlendThumb(spec: BlendSpec, selected: Boolean, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RectangleShape
     Box(
         modifier = modifier
             .clip(shape)

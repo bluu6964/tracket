@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.animateDecay
@@ -340,7 +341,7 @@ fun TransformLayerStrip(
                             layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(xPx, 0) }
                         }
                         .padding(vertical = 6.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(RectangleShape)
                 ) {
                     if (clip.type == LayerType.SHAPE) {
                         ShapeStripContent(clip)
@@ -382,7 +383,7 @@ fun TransformLayerStrip(
                 modifier = Modifier
                     .size(22.dp)
                     .graphicsLayer { rotationZ = 45f }
-                    .border(1.5.dp, Color.White, RoundedCornerShape(4.dp))
+                    .border(1.5.dp, Color.White, RectangleShape)
                     .bouncyClickable(onClick = {}),
                 contentAlignment = Alignment.Center
             ) {

@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -48,6 +49,7 @@ fun MissingMediaDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = DialogFill,
+        shape = RectangleShape,
         title = { Text("Replace missing media", color = HeaderText, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -64,9 +66,9 @@ fun MissingMediaDialog(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RectangleShape)
                                 .background(AmPanelHigh)
-                                .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
+                                .border(1.dp, AmHairline, RectangleShape)
                                 .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {

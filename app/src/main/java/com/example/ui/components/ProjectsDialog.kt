@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -78,6 +79,7 @@ fun ProjectsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = DialogFill,
+        shape = RectangleShape,
         title = { Text("Projects", color = HeaderText, fontWeight = FontWeight.Bold) },
         text = {
             LazyColumn(
@@ -99,9 +101,9 @@ fun ProjectsDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RectangleShape)
                             .background(AmPanelHigh)
-                            .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
+                            .border(1.dp, AmHairline, RectangleShape)
                             .clickable { onOpen(p.id) }
                             .padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -159,6 +161,7 @@ fun ProjectsDialog(
         AlertDialog(
             onDismissRequest = { renaming = null },
             containerColor = DialogFill,
+        shape = RectangleShape,
             title = { Text("Rename", color = HeaderText) },
             text = {
                 OutlinedTextField(value = text, onValueChange = { text = it.take(60) }, singleLine = true)
@@ -177,6 +180,7 @@ fun ProjectsDialog(
         AlertDialog(
             onDismissRequest = { deleting = null },
             containerColor = DialogFill,
+        shape = RectangleShape,
             title = { Text("Delete project?", color = HeaderText) },
             text = { Text("\"${p.name}\" will be removed. This cannot be undone.", color = TextSecondary) },
             confirmButton = {

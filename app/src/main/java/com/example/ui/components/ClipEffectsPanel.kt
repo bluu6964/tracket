@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -173,8 +174,8 @@ fun ClipEffectsPanel(
                         Modifier
                             .matchParentSize()
                             .then(
-                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RoundedCornerShape(16.dp))
-                                else Modifier.border(1.dp, AmHairline, RoundedCornerShape(16.dp))
+                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
+                                else Modifier.border(1.dp, AmHairline, RectangleShape)
                             )
                     ) {}
                     Text(
@@ -232,7 +233,7 @@ fun ClipEffectsPanel(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .glassSurface(RoundedCornerShape(14.dp), fill = amGlassBrush())
+                    .glassSurface(RectangleShape, fill = amGlassBrush())
                     .padding(vertical = 18.dp, horizontal = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -250,7 +251,7 @@ fun ClipEffectsPanel(
                     .padding(bottom = 10.dp)
                     .fillMaxWidth()
                     .glassSurface(
-                        RoundedCornerShape(14.dp),
+                        RectangleShape,
                         fill = amGlassBrush(),
                         borderColor = AmHairline,
                         borderBrush = if (selected) amCyanVioletBrush() else null,
@@ -432,7 +433,7 @@ private fun KeyPickerRow(swatch: Color, onPick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(18.dp))
+                .clip(RectangleShape)
                 .background(amMintCyanBrush())
                 .bouncyClickable(onClick = onPick)
                 .padding(horizontal = 16.dp, vertical = 8.dp)

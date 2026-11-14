@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -60,7 +61,7 @@ fun StickerPickerSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = AmPanel,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -86,7 +87,7 @@ fun StickerPickerSheet(
                     val on = cat == selected
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(50))
+                            .clip(RectangleShape)
                             // Selected tab: flat white (B/W language) — was lime #ABE41D.
                             .background(if (on) Color.White else Color(0xFF2B2B2B))
                             .clickable { selected = cat }
@@ -135,7 +136,7 @@ private fun StickerTile(item: StickerLibrary.Item, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RectangleShape)
             .background(Color(0xFF2B2B2B))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
@@ -155,7 +156,7 @@ private fun StickerTile(item: StickerLibrary.Item, onClick: () -> Unit) {
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(4.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RectangleShape)
                     .background(Color(0xCC000000))
                     .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
@@ -182,7 +183,7 @@ fun StickerSpeedSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = AmPanel,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        shape = RectangleShape
     ) {
         AudioSpeedSheet(
             speed = clip.at(playheadMs).speed,

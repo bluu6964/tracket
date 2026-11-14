@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -146,7 +147,7 @@ fun ColorEditSheet(
             .fillMaxWidth()
             .then(if (fullHeight != null) Modifier.height(fullHeight) else Modifier)
             .glassSurface(
-                RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                RectangleShape,
                 fill = amGlassBrush()
             )
             .clickable(
@@ -248,7 +249,7 @@ fun ColorEditSheet(
                     val stop = editingStop
                     Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RectangleShape)
                             .background(CeTabBg)
                             .bouncyClickable(pressedScale = 0.92f, onClick = { editingStop = -1 })
                             .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -307,7 +308,7 @@ fun ColorEditSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(44.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RectangleShape)
                 .background(CeTabBg)
         ) {
             FillTab(Icons.Default.Block, "No fill", clip.fillMode == FILL_NONE, "color_tab_none") {
@@ -374,7 +375,7 @@ private fun GradientOverview(
         // Gradient type: linear / radial / sweep
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RectangleShape)
                 .background(CeTabBg)
         ) {
             listOf(GRAD_LINEAR to "Linear", GRAD_RADIAL to "Radial", GRAD_SWEEP to "Sweep").forEach { (type, name) ->
@@ -447,7 +448,7 @@ private fun GradientOverview(
         Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RectangleShape)
                 .background(CeTabBg)
                 .bouncyClickable(pressedScale = 0.94f) {
                     onUpdate { it.copy(gradColor1 = it.gradColor2, gradColor2 = it.gradColor1) }
@@ -469,10 +470,10 @@ private fun StopHandle(color: Color, tag: String, modifier: Modifier, onClick: (
     Box(
         modifier = modifier
             .size(46.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RectangleShape)
             .background(Color.White)
             .padding(3.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RectangleShape)
             .background(Color(0xFF8A8A8A))
             .bouncyClickable(pressedScale = 0.9f, onClick = onClick)
             .testTag(tag)
@@ -501,7 +502,7 @@ private fun ColorPickerPanel(
 
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RectangleShape)
             .background(CeInnerBg)
     ) {
         Box(
@@ -542,7 +543,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.RailButton(
             .weight(1f)
             .fillMaxWidth()
             .padding(2.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RectangleShape)
             .background(if (selected) AmMint.copy(alpha = 0.16f) else CeTabBg)
             .bouncyClickable(pressedScale = 0.92f, onClick = onClick)
             .testTag(tag),
@@ -569,7 +570,7 @@ private fun SwatchGrid(color: Long, onColor: (Long) -> Unit, modifier: Modifier 
             modifier = Modifier
                 .fillMaxWidth()
                 .height(44.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RectangleShape)
         ) {
             Canvas(Modifier.fillMaxSize()) { drawChecker(size) }
             Box(
@@ -841,7 +842,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.RailWheelButton(selec
             .weight(1f)
             .fillMaxWidth()
             .padding(2.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RectangleShape)
             .background(if (selected) AmMint.copy(alpha = 0.16f) else CeTabBg)
             .bouncyClickable(pressedScale = 0.92f, onClick = onClick)
             .testTag("color_view_wheel"),
@@ -877,9 +878,9 @@ private fun ImageFillPanel(
         Box(
             modifier = Modifier
                 .size(120.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RectangleShape)
                 .background(CeInnerBg)
-                .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
+                .border(1.dp, AmHairline, RectangleShape)
                 .bouncyClickable(pressedScale = 0.95f, onClick = onPickImage)
                 .testTag("fill_image_preview"),
             contentAlignment = Alignment.Center
@@ -898,7 +899,7 @@ private fun ImageFillPanel(
         Spacer(Modifier.height(10.dp))
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RectangleShape)
                 .background(CeTabBg)
                 .bouncyClickable(pressedScale = 0.94f, onClick = onPickImage)
                 .padding(horizontal = 16.dp, vertical = 10.dp)
@@ -915,7 +916,7 @@ private fun ImageFillPanel(
         Spacer(Modifier.height(14.dp))
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RectangleShape)
                 .background(CeTabBg)
         ) {
             listOf(

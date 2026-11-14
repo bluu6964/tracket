@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -195,7 +196,7 @@ fun EasingEditor(
                 Box(
                     modifier = Modifier
                         .size(66.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RectangleShape)
                         .background(if (selected) TileBgSelected else TileBg)
                         .bouncyClickable(pressedScale = 0.92f, onClick = {
                             begin()

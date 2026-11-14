@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -257,6 +258,7 @@ fun TrackLayerPickDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = RectangleShape,
         title = { Text("Which layer should follow the object?") },
         text = {
             Column {

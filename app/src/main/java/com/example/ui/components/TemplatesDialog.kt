@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -137,6 +138,7 @@ fun TemplatesDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = AmPanel,
+        shape = RectangleShape,
         title = { Text("Templates", color = HeaderText, fontWeight = FontWeight.Bold) },
         text = {
             Column(
@@ -220,7 +222,7 @@ fun TemplatesDialog(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .padding(8.dp)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RectangleShape)
                                     .background(Color(0xCC14181D))
                                     .padding(horizontal = 10.dp, vertical = 5.dp)
                             ) {
@@ -356,6 +358,7 @@ fun TemplatesDialog(
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             containerColor = AmPanel,
+            shape = RectangleShape,
             title = { Text("Delete template?", color = HeaderText, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
@@ -386,7 +389,7 @@ fun TemplatesDialog(
  */
 @Composable
 private fun TemplateCard(content: @Composable ColumnScope.() -> Unit) {
-    val card = RoundedCornerShape(16.dp)
+    val card = RectangleShape
     Column(
         modifier = Modifier
             .fillMaxWidth()

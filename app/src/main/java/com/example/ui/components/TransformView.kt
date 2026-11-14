@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.OpenWith
@@ -285,7 +286,7 @@ fun TransformView(
                 // In the editor the panel takes all the space under the layer strip.
                 .then(if (panelOnly) Modifier.weight(1f) else Modifier)
                 .glassSurface(
-                    RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                    RectangleShape,
                     fill = amGlassBrush()
                 )
                 .padding(horizontal = 16.dp, vertical = 6.dp)
@@ -296,7 +297,7 @@ fun TransformView(
                     .align(Alignment.CenterHorizontally)
                     .width(36.dp)
                     .height(4.dp)
-                    .background(AmHairlineStrong, RoundedCornerShape(2.dp))
+                    .background(AmHairlineStrong, RectangleShape)
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -509,7 +510,7 @@ fun TransformView(
                             .weight(1f)
                             .height(38.dp)
                             .then(
-                                if (isSelected) Modifier.background(amMintCyanBrush(), RoundedCornerShape(8.dp))
+                                if (isSelected) Modifier.background(amMintCyanBrush(), RectangleShape)
                                 else Modifier
                             )
                             .bouncyClickable(
@@ -607,9 +608,9 @@ private fun PositionPad(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RectangleShape)
                 .background(AmPanel)
-                .border(1.dp, AmHairline, RoundedCornerShape(10.dp))
+                .border(1.dp, AmHairline, RectangleShape)
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -685,7 +686,7 @@ private fun IconRail(
             Box(
                 modifier = Modifier
                     .size(width = 40.dp, height = 32.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RectangleShape)
                     .bouncyClickable(onClick = { onSelect(i) }),
                 contentAlignment = Alignment.Center
             ) {
@@ -741,7 +742,7 @@ internal fun TransformValueHeader(
             Box(
                 modifier = Modifier
                     .size(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RectangleShape)
                     .bouncyClickable(onClick = onBack)
                     .testTag("panel_back_button"),
                 contentAlignment = Alignment.Center
@@ -804,7 +805,7 @@ internal fun TransformValueHeader(
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RectangleShape)
                 .background(if (easingOpen) AmPanelHigh else Color.Transparent)
                 .bouncyClickable(onClick = { if (easingEnabled) onEasing() })
                 .testTag("transform_easing_button"),

@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.sp
  *    (#161616–#262626); hairline dividers in mid-grey / white-alpha.
  *  - Text/icons: white primary, grey secondary. No coloured accents in UI chrome.
  *  - The ONE emphasis mechanism: white vs grey. The primary action (Export) is a flat
- *    WHITE pill with BLACK text; selected/active states are white (fill, border or
+ *    WHITE button with BLACK text; selected/active states are white (fill, border or
  *    text), inactive states grey.
  *  - No gradients, no glow, no glass: no gradient brushes, no dome light / top sheen,
  *    no additive bloom anywhere in chrome. The brush factories below survive only as
@@ -100,17 +100,24 @@ fun amGlassChipBrush(): Brush = SolidColor(AmPanelHigh)
 /** Selected-state border: flat white. */
 fun amCyanVioletBrush(): Brush = SolidColor(Color.White)
 
-// ── Corner scale ─────────────────────────────────────────────────────────
-/** Cards (dialogs and panels). */
-val AmCornerCard = 24.dp
-/** Panels and sheets. */
-val AmCornerPanel = 20.dp
-/** Toolbar items and medium chips. */
-val AmCornerItem = 18.dp
-/** Small chips and readout pills. */
-val AmCornerChip = 12.dp
-/** Micro elements (readout boxes, badges). */
-val AmCornerMicro = 9.dp
+// ── Corner scale — SQUARE (Sarowar's order 2026-11-14: the rounded corners
+//    around every button and card GO — flat square, CapCut-simple). All chrome
+//    corner tokens are 0.dp: buttons, cards, dialogs, sheets, panels, chips and
+//    tiles render with sharp square corners. The token names survive so call
+//    sites read as before. Shapes that are round BY FUNCTION are not corners
+//    and are untouched: discs (play button, icon discs), colour swatches and
+//    picker discs, slider thumbs, the export progress ring, and all user
+//    CONTENT (media, template artwork, layer rendering). ───────────────────
+/** Cards (dialogs and panels) — square since 2026-11-14. */
+val AmCornerCard = 0.dp
+/** Panels and sheets — square since 2026-11-14. */
+val AmCornerPanel = 0.dp
+/** Toolbar items and medium chips — square since 2026-11-14. */
+val AmCornerItem = 0.dp
+/** Small chips and readout pills — square since 2026-11-14. */
+val AmCornerChip = 0.dp
+/** Micro elements (readout boxes, badges) — square since 2026-11-14. */
+val AmCornerMicro = 0.dp
 
 // ── Type emphasis ────────────────────────────────────────────────────────
 /** Tiny uppercase micro-label (10–11 sp, letter-spaced) — apply `.uppercase()` at the call site. */

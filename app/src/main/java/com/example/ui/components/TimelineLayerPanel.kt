@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import com.example.model.sourceOffsetMs
 import androidx.compose.animation.core.Animatable
@@ -655,7 +656,7 @@ private fun SelectedBarButton(
         Box(
             Modifier
                 .matchParentSize()
-                .border(1.dp, AmHairline, RoundedCornerShape(12.dp))
+                .border(1.dp, AmHairline, RectangleShape)
         ) {}
         // Icon only (no name text); the label stays as the accessibility description.
         // A destructive action (Delete) reads red — the flag used to be accepted but never applied.
@@ -720,7 +721,7 @@ private fun LayerLaneControl(
     val latestLong by rememberUpdatedState(onLongPress)
     val latestToggle by rememberUpdatedState(onToggleMulti)
     val latestMulti by rememberUpdatedState(isMulti)
-    val pillShape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp, topEnd = height / 2, bottomEnd = height / 2)
+    val pillShape = RectangleShape
     Box(
         modifier = Modifier
             .padding(start = 5.dp)

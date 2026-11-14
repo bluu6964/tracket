@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.testTag
@@ -81,7 +83,7 @@ fun FlatDisc(modifier: Modifier = Modifier) {
 /** Flat rounded-square base (toolbar/tool tiles): solid fill + hairline. */
 @Composable
 fun FlatTile(modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(AmCornerItem)
+    val shape = RectangleShape
     Box(
         modifier
             .background(AmGlassFill, shape)
@@ -90,14 +92,16 @@ fun FlatTile(modifier: Modifier = Modifier) {
     )
 }
 
-/** Flat capsule base (chips, lane pills, readouts): solid raised grey + hairline. */
+/** Flat square base (chips, lane pills, readouts): solid raised grey + hairline.
+ *  Was a capsule (CircleShape) until Sarowar's square order 2026-11-14 — chips
+ *  and pills are chrome, so they are square now like every other chrome shape. */
 @Composable
 fun FlatPill(modifier: Modifier = Modifier) {
     Box(
         modifier
-            .background(AmPanelHigh, CircleShape)
-            .border(1.dp, AmHairline, CircleShape)
-            .clip(CircleShape)
+            .background(AmPanelHigh, RectangleShape)
+            .border(1.dp, AmHairline, RectangleShape)
+            .clip(RectangleShape)
     )
 }
 
@@ -133,9 +137,11 @@ fun GlassIconButton(
 }
 
 /**
- * The primary action: a FLAT WHITE pill (CapCut-style emphasis) — content colours
+ * The primary action: a FLAT WHITE button (CapCut-style emphasis) — content colours
  * come from the call site (dark ink on white). ([glowColor] is gone with the glow;
- * the name is kept so call sites read as before.)
+ * the name is kept so call sites read as before.) Was a white PILL until Sarowar's
+ * square order 2026-11-14 — buttons are chrome, so it is a square button now; the
+ * white-fill/black-text emphasis is unchanged.
  */
 @Composable
 fun GradientPillButton(
@@ -150,8 +156,8 @@ fun GradientPillButton(
     Box(m, contentAlignment = Alignment.Center) {
         Row(
             Modifier
-                .background(Color.White, CircleShape)
-                .clip(CircleShape)
+                .background(Color.White, RectangleShape)
+                .clip(RectangleShape)
                 .bouncyClickable(pressedScale = 0.94f, onClick = onClick)
                 .padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically,
@@ -161,7 +167,7 @@ fun GradientPillButton(
 }
 
 /**
- * Flat chip / tab: a flat grey pill under the label. Selected = white hairline +
+ * Flat chip / tab: a flat grey square under the label. Selected = white hairline +
  * bright bold label; unselected = plain hairline + dim label. A null [onClick]
  * renders static.
  */
@@ -182,8 +188,8 @@ fun GlassChip(
             Modifier
                 .matchParentSize()
                 .then(
-                    if (selected) Modifier.border(1.dp, amCyanVioletBrush(), CircleShape)
-                    else Modifier.border(1.dp, AmHairline, CircleShape)
+                    if (selected) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
+                    else Modifier.border(1.dp, AmHairline, RectangleShape)
                 )
         ) {}
         Text(

@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -56,7 +57,7 @@ fun AddLayerSheet(
     onPen: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = AmPanel, shape = RectangleShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

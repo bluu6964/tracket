@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -169,8 +170,8 @@ fun ClipAnimationsPanel(
                         Modifier
                             .matchParentSize()
                             .then(
-                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RoundedCornerShape(16.dp))
-                                else Modifier.border(1.dp, AmHairline, RoundedCornerShape(16.dp))
+                                if (on) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
+                                else Modifier.border(1.dp, AmHairline, RectangleShape)
                             )
                     ) {}
                     Text(
@@ -189,12 +190,12 @@ fun ClipAnimationsPanel(
                     Box(
                         modifier = Modifier
                             .padding(start = 6.dp)
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(RectangleShape)
                             .then(
-                                if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(16.dp))
+                                if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
                                 else Modifier
                             )
-                            .border(1.dp, if (on) AmCyan else Color.Transparent, RoundedCornerShape(16.dp))
+                            .border(1.dp, if (on) AmCyan else Color.Transparent, RectangleShape)
                             .bouncyClickable(onClick = { section = sec })
                             .testTag("anim_section_${sec.name.lowercase()}"),
                         contentAlignment = Alignment.Center
@@ -255,12 +256,12 @@ fun ClipAnimationsPanel(
                             val spin = appliedPreset.id.startsWith("spin")
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RectangleShape)
                                     .then(
-                                        if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                                        if (on) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
                                         else Modifier
                                     )
-                                    .border(1.5.dp, if (on) AmCyan else Color.Transparent, RoundedCornerShape(10.dp))
+                                    .border(1.5.dp, if (on) AmCyan else Color.Transparent, RectangleShape)
                                     .bouncyClickable(onClick = {
                                         dir = d
                                         applyAnim(appliedPreset, d, durMs.toLong(), easing)
@@ -411,7 +412,7 @@ private fun AnimShapePreview(
     Canvas(
         modifier
             .aspectRatio(ratio, matchHeightConstraintsFirst = true)
-            .glassSurface(RoundedCornerShape(8.dp), fill = amGlassBrush())
+            .glassSurface(RectangleShape, fill = amGlassBrush())
     ) {
         val k = size.width / previewW // preview px -> screen px
         val base = size.height * 0.5f
@@ -458,12 +459,12 @@ private fun AnimTile(label: String, icon: ImageVector, selected: Boolean, tag: S
         Box(
             modifier = Modifier
                 .size(60.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RectangleShape)
                 .then(
-                    if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+                    if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
                     else Modifier
                 )
-                .border(if (selected) 2.dp else 1.dp, if (selected) AmCyan else Color.Transparent, RoundedCornerShape(12.dp)),
+                .border(if (selected) 2.dp else 1.dp, if (selected) AmCyan else Color.Transparent, RectangleShape),
             contentAlignment = Alignment.Center
         ) {
             if (!selected) FlatTile(Modifier.matchParentSize())
@@ -479,12 +480,12 @@ private fun CurveChip(label: String, easing: Easing?, selected: Boolean, onClick
     Box(
         modifier = Modifier
             .width(62.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RectangleShape)
             .then(
-                if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                if (selected) Modifier.background(AmCyan.copy(alpha = 0.18f), RectangleShape)
                 else Modifier
             )
-            .border(1.5.dp, if (selected) AmCyan else Color.Transparent, RoundedCornerShape(10.dp))
+            .border(1.5.dp, if (selected) AmCyan else Color.Transparent, RectangleShape)
             .bouncyClickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {

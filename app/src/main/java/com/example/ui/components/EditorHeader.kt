@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -280,7 +281,7 @@ fun LayerHeader(
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RectangleShape)
                     .semantics { contentDescription = "Rename layer" }
                     .bouncyClickable(pressedScale = 0.97f, onClick = onRename)
                     .padding(horizontal = 6.dp)

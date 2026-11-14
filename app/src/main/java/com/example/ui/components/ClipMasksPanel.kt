@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -181,7 +182,7 @@ fun ClipMasksPanel(
                 if (on) Box(
                     Modifier
                         .matchParentSize()
-                        .border(1.5.dp, amCyanVioletBrush(), RoundedCornerShape(12.dp))
+                        .border(1.5.dp, amCyanVioletBrush(), RectangleShape)
                 ) {}
                 Row(
                     modifier = Modifier
@@ -246,7 +247,7 @@ fun ClipMasksPanel(
                 Box(
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RectangleShape)
                         .bouncyClickable(onClick = { replace(selected.toggleKeyAt(rel)) })
                         .testTag("mask_key_toggle"),
                     contentAlignment = Alignment.Center
@@ -351,8 +352,8 @@ private fun Chip(label: String, on: Boolean, enabled: Boolean = true, tag: Strin
             Modifier
                 .matchParentSize()
                 .then(
-                    if (on) Modifier.border(1.dp, amCyanVioletBrush(), RoundedCornerShape(16.dp))
-                    else Modifier.border(1.dp, AmHairline, RoundedCornerShape(16.dp))
+                    if (on) Modifier.border(1.dp, amCyanVioletBrush(), RectangleShape)
+                    else Modifier.border(1.dp, AmHairline, RectangleShape)
                 )
         ) {}
         Text(

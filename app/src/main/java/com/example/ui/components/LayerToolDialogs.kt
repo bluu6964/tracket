@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,6 +45,7 @@ fun RenameLayerDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = AmPanel,
+        shape = RectangleShape,
         title = { Text("Rename layer") },
         text = {
             OutlinedTextField(
@@ -77,6 +79,7 @@ fun SaveTemplateDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = AmPanel,
+        shape = RectangleShape,
         title = { Text("Save as Template") },
         text = {
             Column {

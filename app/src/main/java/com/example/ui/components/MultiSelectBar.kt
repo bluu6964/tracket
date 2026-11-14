@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -45,7 +46,7 @@ fun MultiSelectBar(
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .height(54.dp)
-            .glassSurface(RoundedCornerShape(14.dp), fill = amGlassBrush())
+            .glassSurface(RectangleShape, fill = amGlassBrush())
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween

@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -70,7 +71,8 @@ fun ClipEffectsSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -96,12 +98,12 @@ fun ClipEffectsSheet(
                         Box(
                             modifier = Modifier
                                 .size(64.dp)
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RectangleShape)
                                 .background(if (isSelected) NeonCyan.copy(alpha = 0.2f) else EditorSurfaceVariant)
                                 .border(
                                     width = if (isSelected) 2.dp else 1.dp,
                                     color = if (isSelected) NeonCyan else Color.Transparent,
-                                    shape = RoundedCornerShape(10.dp)
+                                    shape = RectangleShape
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
@@ -130,7 +132,8 @@ fun ClipReplaceSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -145,7 +148,7 @@ fun ClipReplaceSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RectangleShape)
                         .bouncyClickable(onClick = {
                             onMediaSelected(res, name)
                             onDismiss()
@@ -159,7 +162,7 @@ fun ClipReplaceSheet(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .size(54.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RectangleShape)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
@@ -183,7 +186,8 @@ fun ClipBlendSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -199,7 +203,7 @@ fun ClipBlendSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RectangleShape)
                         .background(if (isSelected) EditorSurfaceVariant else Color.Transparent)
                         .bouncyClickable(onClick = {
                             onBlendSelected(mode)
@@ -229,7 +233,8 @@ fun ClipCropSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = AmPanel
+        containerColor = AmPanel,
+        shape = RectangleShape
     ) {
         Column(
             modifier = Modifier
@@ -244,7 +249,7 @@ fun ClipCropSheet(
                 items(cropRatios) { ratio ->
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RectangleShape)
                             .background(EditorSurfaceVariant)
                             .bouncyClickable(onClick = {
                                 onCropRatioSelected(ratio)

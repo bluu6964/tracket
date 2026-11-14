@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -34,7 +35,7 @@ fun CutoutProgressBar(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RectangleShape)
             .background(Color(0xFF1C1C1C))
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
@@ -56,7 +57,7 @@ fun CutoutProgressBar(
             Modifier
                 .fillMaxWidth()
                 .height(5.dp)
-                .clip(RoundedCornerShape(3.dp))
+                .clip(RectangleShape)
                 .background(Color(0xFF3A3A3A))
         ) {
             Box(

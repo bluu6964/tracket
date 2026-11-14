@@ -1,4 +1,5 @@
 package com.example.ui.components
+import androidx.compose.ui.graphics.RectangleShape
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -293,7 +294,7 @@ fun ClipEditToolsPanel(
                         Box(
                             Modifier
                                 .matchParentSize()
-                                .border(1.dp, Color.White, RoundedCornerShape(AmCornerItem))
+                                .border(1.dp, Color.White, RectangleShape)
                         )
                     }
                     Column(

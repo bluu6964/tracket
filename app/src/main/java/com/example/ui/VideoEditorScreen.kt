@@ -76,6 +76,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.ui.platform.testTag
+import com.example.ui.util.bouncyClickable
 import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
@@ -2309,6 +2318,23 @@ fun VideoEditorScreen(
     // Editing an existing shape (build 173): the id of the shape the shape editor is open for (null = adding).
     var editShapeClipId by remember { mutableStateOf<String?>(null) }
     var showClipEffectsSheet by remember { mutableStateOf(false) }
+    // Effects panel, build 200 (the reference-layout rebuild): the header title follows the
+    // panel's state ("Applied Effects", or the edited effect's name); the browser's selected
+    // effect drives the bookmark / info buttons floating at the preview's bottom-left; the
+    // per-user Favorites / Recent lists persist as comma-joined ids in the editor
+    // SharedPreferences (the model/FxLists laws), loaded once here.
+    var fxPanelTitle by remember { mutableStateOf("Applied Effects") }
+    var fxBrowserSelDefId by remember { mutableStateOf<String?>(null) }
+    var fxInfoDefId by remember { mutableStateOf<String?>(null) }
+    val fxPrefs = remember {
+        context.getSharedPreferences("editor", android.content.Context.MODE_PRIVATE)
+    }
+    var fxFavorites by remember {
+        mutableStateOf(com.example.model.FxLists.parse(fxPrefs.getString("fx_favorites", null)))
+    }
+    var fxRecent by remember {
+        mutableStateOf(com.example.model.FxLists.parse(fxPrefs.getString("fx_recent", null)))
+    }
     // Masks panel: open flag, selected mask, selected pen point, and the points of a pen path being drawn (null = not drawing).
     var showClipMasksSheet by remember { mutableStateOf(false) }
     var maskSelectedId by remember { mutableStateOf<String?>(null) }
@@ -4198,6 +4224,10 @@ fun VideoEditorScreen(
                 eyedropperCancel = null
                 eyedropperCallback = null
                 showClipEffectsSheet = false
+                // Build 200: the browser selection / header title belong to the open panel only.
+                fxBrowserSelDefId = null
+                fxInfoDefId = null
+                fxPanelTitle = "Applied Effects"
             }
             LaunchedEffect(fxClip == null, showClipEffectsSheet) {
                 if (fxClip == null && showClipEffectsSheet) closeFxPanel()
@@ -4212,7 +4242,7 @@ fun VideoEditorScreen(
             if (showClipEffectsSheet && fxClip != null) {
                 com.example.ui.components.TransformHeaderBar(
                     height = headerH,
-                    title = "Effects",
+                    title = fxPanelTitle,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .zIndex(31f)
@@ -4241,11 +4271,12 @@ fun VideoEditorScreen(
                         onBack = closeFxPanel
                     )
                     layerRow(fxClip.id)
+                    // Build 200: the panel owns its scrolling per state (applied list /
+                    // parameter editor scroll; the browser is a lazy grid) — no outer scroll.
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
                     ) {
                         com.example.ui.components.ClipEffectsPanel(
                             clip = fxClip,
@@ -4256,8 +4287,74 @@ fun VideoEditorScreen(
                                     eyedropperCancel = null
                                     onPicked(c)
                                 }
-                            }
+                            },
+                            favorites = fxFavorites,
+                            recent = fxRecent,
+                            onApplied = { defId ->
+                                val next = com.example.model.FxLists.pushRecent(fxRecent, defId)
+                                fxRecent = next
+                                fxPrefs.edit()
+                                    .putString("fx_recent", com.example.model.FxLists.serialize(next))
+                                    .apply()
+                            },
+                            onTitleChange = { fxPanelTitle = it },
+                            onBrowserSelectionChange = { fxBrowserSelDefId = it },
+                            modifier = Modifier.fillMaxSize()
                         )
+                    }
+                }
+            }
+
+            // Build 200: while the effects browser has a selected tile, the reference's
+            // bookmark / info buttons float at the preview's bottom-left (over the picture,
+            // just above the play controls). Bookmark toggles the effect in Favorites.
+            if (showClipEffectsSheet && fxBrowserSelDefId != null) {
+                val selDef = com.example.model.ClipFxLibrary.def(fxBrowserSelDefId!!)
+                if (selDef != null) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset(x = 10.dp, y = panelTop - playControlsH - 54.dp)
+                            .zIndex(29f)
+                            .enterPop(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .bouncyClickable(onClick = {
+                                    val next = com.example.model.FxLists.toggleFavorite(fxFavorites, selDef.id)
+                                    fxFavorites = next
+                                    fxPrefs.edit()
+                                        .putString("fx_favorites", com.example.model.FxLists.serialize(next))
+                                        .apply()
+                                })
+                                .testTag("fx_bookmark_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.Icon(
+                                if (selDef.id in fxFavorites) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = if (selDef.id in fxFavorites) "Remove from favorites" else "Add to favorites",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .bouncyClickable(onClick = { fxInfoDefId = selDef.id })
+                                .testTag("fx_info_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.Icon(
+                                Icons.Default.Info,
+                                contentDescription = "About this effect",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -5429,6 +5526,17 @@ fun VideoEditorScreen(
             },
             onDismiss = { showClipBlendSheet = false }
         )
+    }
+
+    // Build 200: the effects browser's info sheet (name / category / the library's blurb).
+    if (fxInfoDefId != null) {
+        val infoDef = com.example.model.ClipFxLibrary.def(fxInfoDefId!!)
+        if (infoDef != null) {
+            com.example.ui.components.FxInfoDialog(
+                def = infoDef,
+                onDismiss = { fxInfoDefId = null }
+            )
+        }
     }
 
     if (showAppliedEffectsMode) {

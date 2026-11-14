@@ -71,6 +71,12 @@ val AmOrange = Color(0xFFC8C8C8)
 val AmPink = Color(0xFFFFFFFF)
 /** Soft red for destructive actions — the ONE retained functional colour (since batch 1). */
 val AmDanger = Color(0xFFFF6B6B)
+/**
+ * Magenta-pink — the ONE accent borrowed from Sarowar's effects-layout reference
+ * (build 200): it colours ONLY the parameter ruler's thumb in the Effects
+ * parameter editor. No other chrome may use it.
+ */
+val AmFxAccent = Color(0xFFFF2E7E)
 /** Dark ink drawn ON TOP of white fills (Export label, Add/check badges). */
 val AmInk = Color(0xFF0A0A0A)
 

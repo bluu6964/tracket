@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AmFxAccent
 import com.example.ui.theme.AmTickMajor
 import com.example.ui.theme.AmTickMinor
 import com.example.ui.theme.TextPrimary
@@ -67,7 +68,13 @@ fun RulerDial(
     min: Float,
     max: Float,
     modifier: Modifier = Modifier,
-    step: Float = 1f
+    step: Float = 1f,
+    /**
+     * Build 200: the Effects parameter editor's borrowed accent — the needle and
+     * thumb render in [AmFxAccent] magenta instead of white (Sarowar's reference
+     * layout). Every other host leaves this false and keeps the white needle.
+     */
+    accentNeedle: Boolean = false
 ) {
     val currentValue by rememberUpdatedState(value)
     val currentMin by rememberUpdatedState(min)
@@ -179,23 +186,36 @@ fun RulerDial(
 
             // Center indicator (needle): a flat white line (B/W language; geometry
             // and drag law unchanged), with a flat white thumb disc at its centre.
+            // In the Effects parameter editor (accentNeedle) the same needle renders
+            // in the one borrowed magenta — geometry and drag law identical.
+            val needleColor = if (accentNeedle) AmFxAccent else Color.White
             val needleHeight = h * 0.82f
             val needleStart = (h - needleHeight) / 2f
             drawLine(
-                color = Color.White.copy(alpha = 0.20f),
+                color = needleColor.copy(alpha = 0.20f),
                 start = Offset(centerX, needleStart),
                 end = Offset(centerX, needleStart + needleHeight),
                 strokeWidth = 7.dp.toPx(),
                 cap = StrokeCap.Round
             )
             drawLine(
-                color = Color.White,
+                color = needleColor,
                 start = Offset(centerX, needleStart),
                 end = Offset(centerX, needleStart + needleHeight),
                 strokeWidth = 2.5.dp.toPx(),
                 cap = StrokeCap.Round
             )
-            drawFlatThumb(Offset(centerX, h / 2f), 7.5.dp.toPx())
+            if (accentNeedle) {
+                drawCircle(AmFxAccent, radius = 7.5.dp.toPx(), center = Offset(centerX, h / 2f))
+                drawCircle(
+                    Color.Black.copy(alpha = 0.35f),
+                    radius = 7.5.dp.toPx(),
+                    center = Offset(centerX, h / 2f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                )
+            } else {
+                drawFlatThumb(Offset(centerX, h / 2f), 7.5.dp.toPx())
+            }
         }
     }
 }
@@ -215,6 +235,8 @@ fun RulerDialSlider(
     icon: ImageVector? = null,
     /** false = the caller shows the value somewhere else (e.g. a header above the slider). */
     showValue: Boolean = true,
+    /** Build 200: magenta needle for the Effects parameter editor (see [RulerDial]). */
+    accentNeedle: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     // The readout must be able to show the value EXACTLY: the decimals follow the step
@@ -267,6 +289,7 @@ fun RulerDialSlider(
             min = min,
             max = max,
             step = step,
+            accentNeedle = accentNeedle,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()

@@ -105,6 +105,7 @@ import com.example.ui.components.ClipCropSheet
 import com.example.ui.components.EditorHeader
 import com.example.ui.components.ExportModalDialog
 import com.example.ui.components.FullscreenPlayerModal
+import com.example.ui.components.OnionSkinRow
 import com.example.ui.components.PlayControlsSection
 import com.example.ui.components.ResolutionSheet
 import com.example.ui.components.TimelineLayerPanel
@@ -164,6 +165,7 @@ fun VideoEditorScreen(
     val isMasterMuted by viewModel.isMasterMuted.collectAsState()
     val beatMarks by viewModel.beatMarks.collectAsState()
     val markers by viewModel.markers.collectAsState()
+    val onionSkin by viewModel.onionSkin.collectAsState()
     // Named-marker dialogs (build 188): add-at-playhead, or edit the marker the user
     // long-pressed on the ruler / the one already sitting at the playhead.
     var showAddMarker by remember { mutableStateOf(false) }
@@ -2232,7 +2234,11 @@ fun VideoEditorScreen(
             // Layer panel: 5/18 of screen
             // Bottom toolbar: remaining screen height (~2/18)
             val headerH = (totalHeight * (1f / 18f)).coerceAtLeast(44.dp)
-            val canvasH = (totalHeight * (9f / 18f)).coerceAtLeast(260.dp)
+            // Onion skin (build 190): while the ghosts are on, the settings row under
+            // the play controls takes its height from the canvas; the sections below
+            // keep their places.
+            val onionRowH = if (onionSkin.enabled) 36.dp else 0.dp
+            val canvasH = (totalHeight * (9f / 18f) - onionRowH).coerceAtLeast(260.dp)
             val playControlsH = (totalHeight * (1f / 18f)).coerceAtLeast(44.dp)
             val timescaleH = (totalHeight * (1f / 30f)).coerceAtLeast(24.dp)
             val layerPanelH = (totalHeight * (5f / 18f)).coerceAtLeast(160.dp)
@@ -2512,6 +2518,9 @@ fun VideoEditorScreen(
                     sharedTextSizes = canvasTextSizes,
                     externalSnapGuideX = transformSnapGuideX,
                     externalSnapGuideY = transformSnapGuideY,
+                    onionSkin = onionSkin,
+                    onionFps = exportSettings.frameRate,
+                    onionDurationMs = totalDurationMs,
                     frameOverlay = canvasOverlay,
                     onSelectionBegin = { viewModel.beginAdjust() },
                     onSelectionTransform = { id, sc, rot ->
@@ -2549,12 +2558,24 @@ fun VideoEditorScreen(
                         val near = viewModel.markerNear(playheadState.value)
                         if (near != null) markerEditTarget = near else showAddMarker = true
                     },
+                    onionSkinOn = onionSkin.enabled,
+                    onOnionSkinClick = { viewModel.setOnionSkinEnabled(!onionSkin.enabled) },
                     onPreviousClick = { viewModel.jumpPrevious() },
                     onPlayPauseClick = { viewModel.togglePlayPause() },
                     onNextClick = { viewModel.jumpNext() },
                     onUndoClick = { viewModel.undo(); com.example.ui.buddy.BuddyBrain.react(com.example.ui.buddy.BuddyEvent.UNDO) },
                     onRedoClick = { viewModel.redo(); com.example.ui.buddy.BuddyBrain.react(com.example.ui.buddy.BuddyEvent.REDO) }
                 )
+
+                // 3b. Onion-skin settings row (build 190) — only while the ghosts are
+                // on; its height came out of the canvas above, so nothing below moves.
+                if (onionSkin.enabled) {
+                    OnionSkinRow(
+                        settings = onionSkin,
+                        onCountChange = { viewModel.setOnionSkinCount(it) },
+                        onOpacityChange = { viewModel.setOnionSkinOpacity(it) }
+                    )
+                }
 
                 // 4. Timescale Section (1/30 of screen)
                 TimescaleSection(
@@ -4742,7 +4763,10 @@ fun VideoEditorScreen(
             nativePreview = nativePreview,
             playheadMs = playheadProvider,
             onTogglePlay = { viewModel.togglePlayPause() },
-            onDismiss = { showFullscreenPlayer = false }
+            onDismiss = { showFullscreenPlayer = false },
+            onionSkin = onionSkin,
+            onionFps = exportSettings.frameRate,
+            onionDurationMs = totalDurationMs
         )
     }
 

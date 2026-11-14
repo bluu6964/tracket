@@ -8,8 +8,11 @@ import android.net.Uri
 import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
+import com.example.model.ClipFx
 import com.example.model.ClipFxLibrary
 import com.example.model.GroupOps
+import com.example.model.OnionSkin
+import com.example.model.OnionSkinSettings
 import com.example.model.ClipMaskLibrary
 import com.example.model.BlendKind
 import com.example.model.BlendModes
@@ -32,6 +35,14 @@ import kotlin.math.roundToInt
  *  - playing: next() frames in order, a re-seek only when far off
  * Sound is not played here: [NativeAudioPreview] (C++ mixer + AAudio) plays it; there are no Media3 players in the preview any more.
  * The canvas and a full-screen editor (Crop, Edit shape) can each have a surface: see [surfaceChanged] and [setOverride].
+ *
+ * Onion skin (build 190): while paused / scrubbing with the toggle on, [drawFrame] first draws ghost
+ * pictures of the scene at the neighbouring frame times of [OnionSkin.plan] — each rendered by the
+ * very same scene pass into a group picture, colorized to its side's tint (the shipped COLORIZE_AM
+ * op: previous = warm red, next = green) and composited at its falloff alpha UNDER the real frame,
+ * which is then drawn over them at full opacity as always. Preview only: the exporter owns a
+ * separate renderer and never sees this state, and while playing (or in a full-screen editor
+ * override) no ghost pass runs at all.
  */
 class NativePreviewEngine(context: Context) {
 
@@ -58,6 +69,10 @@ class NativePreviewEngine(context: Context) {
     private val liveTracks: List<TimelineTrack> get() = editorTracks ?: tracks
     @Volatile private var playheadOf: () -> Long = { 0L }
     @Volatile private var canvasArgb: Int = 0xFF000000.toInt()
+    /** Onion-skin state (build 190), handed over with [update]: settings, the project frame rate the ghost steps use, and the project duration they clamp to. */
+    @Volatile private var onionSkin: OnionSkinSettings = OnionSkinSettings()
+    @Volatile private var onionFps: Int = 30
+    @Volatile private var onionDurationMs: Long = 0L
     @Volatile private var playing = false
     @Volatile private var released = false
     private val framePending = AtomicBoolean(false)
@@ -125,10 +140,16 @@ class NativePreviewEngine(context: Context) {
     }
 
     /** Hand over the state. Cheap, call it whenever the composition has new tracks / colour. */
-    fun update(tracks: List<TimelineTrack>, playheadOf: () -> Long, canvasArgb: Int) {
+    fun update(
+        tracks: List<TimelineTrack>, playheadOf: () -> Long, canvasArgb: Int,
+        onionSkin: OnionSkinSettings = OnionSkinSettings(), onionFps: Int = 30, onionDurationMs: Long = 0L
+    ) {
         this.tracks = tracks
         this.playheadOf = playheadOf
         this.canvasArgb = canvasArgb
+        this.onionSkin = onionSkin
+        this.onionFps = onionFps
+        this.onionDurationMs = onionDurationMs
     }
 
     /** Draw these tracks instead of the project's (a full-screen editor), or the project again with null. */
@@ -479,6 +500,11 @@ class NativePreviewEngine(context: Context) {
             ((bg shr 16) and 0xFF) / 255f, ((bg shr 8) and 0xFF) / 255f, (bg and 0xFF) / 255f
         )
         r.beginFrame(canvasRgb[0], canvasRgb[1], canvasRgb[2], 1f)
+        // The time the scene passes below draw at: the playhead [t] for the real frame, a
+        // neighbouring frame time for an onion-skin ghost pass (build 190). The decoder-pool
+        // management above always works on the real playhead; a ghost pass seeks the decoders
+        // to its own time and the real pass after it seeks them back.
+        var sceneT = t
         val previewW = PreviewFrameRef.widthPx
         val rig = parentRig()
         val cam = CameraRig(liveTracks, rig)
@@ -487,26 +513,26 @@ class NativePreviewEngine(context: Context) {
         // Depth of a layer or group: bigger Z = nearer = drawn later.
         // Under a 3D camera it is the distance from the camera instead (CameraRig.stackKey), also for shapes / text / stickers.
         fun zOf(c: TimelineClip): Float =
-            if (c.type == LayerType.GROUP) (if (rig.hasLinks) rig.adjusted(c, t) else NativeRenderAt.renderAt(c, t)).transformZ
-            else (if (cam.hasCamera) cam.stackKey(if (rig.hasLinks) rig.adjusted(c, t) else NativeRenderAt.renderAt(c, t), t) else null)
-                ?: animFor(c)?.let { a -> a.clipAt(t, t)[2] } ?: 0f
+            if (c.type == LayerType.GROUP) (if (rig.hasLinks) rig.adjusted(c, sceneT) else NativeRenderAt.renderAt(c, sceneT)).transformZ
+            else (if (cam.hasCamera) cam.stackKey(if (rig.hasLinks) rig.adjusted(c, sceneT) else NativeRenderAt.renderAt(c, sceneT), sceneT) else null)
+                ?: animFor(c)?.let { a -> a.clipAt(sceneT, sceneT)[2] } ?: 0f
         // drawScope (below) draws one level; a group needs it for its own level, so it is reached through this variable.
         var drawScopeRef: (String?, Int) -> Unit = { _, _ -> }
         // The mask layers cutting a layer of one level (a Group or a picture layer, Alight style),
-        // evaluated at [t] like every layer — empty when no mask sits on it, or none of its masks is
-        // there at [t] (outside a mask layer's own span there is no cut from it). A stack of masks
+        // evaluated at [sceneT] like every layer — empty when no mask sits on it, or none of its masks is
+        // there at [sceneT] (outside a mask layer's own span there is no cut from it). A stack of masks
         // over the layer comes back as several entries: the layer is cut by each in turn.
-        fun scopeMasksFor(c: TimelineClip, t: Long): List<TimelineClip> {
+        fun scopeMasksFor(c: TimelineClip, sceneT: Long): List<TimelineClip> {
             val scopeClips = GroupOps.scopeTracks(liveTracks, c.groupId).asReversed().flatMap { it.clips }
             val mcs = LayerMaskLinks.masksByTarget(scopeClips)[c.id] ?: return emptyList()
-            return mcs.filter { it.isActiveAt(t) }
-                .map { if (rig.hasLinks) rig.adjusted(it, t) else NativeRenderAt.renderAt(it, t) }
+            return mcs.filter { it.isActiveAt(sceneT) }
+                .map { if (rig.hasLinks) rig.adjusted(it, sceneT) else NativeRenderAt.renderAt(it, sceneT) }
         }
         // One picture layer (video / photo); returns early when the layer is not drawn.
         fun drawMediaLayer(c: TimelineClip, depth: Int) {
             val anim = animFor(c) ?: return
-            val fp = anim.eval(t, outW, outH, previewW)
-            if (rig.hasLinks) rig.applyToFp(c, t, fp, if (previewW > 0f) outW / previewW else 1f)  // Null parent
+            val fp = anim.eval(sceneT, outW, outH, previewW)
+            if (rig.hasLinks) rig.applyToFp(c, sceneT, fp, if (previewW > 0f) outW / previewW else 1f)  // Null parent
             if (fp[5] <= 0f) return
             val p = LayerParams().apply {
                 offsetX = fp[0]; offsetY = fp[1]
@@ -522,8 +548,8 @@ class NativePreviewEngine(context: Context) {
             if (pinSpec != null) {
                 val baseClip = media.firstOrNull { it.id == pinSpec.videoId }
                 val baseAnim = baseClip?.let { animFor(it) }
-                if (baseClip == null || baseAnim == null || !baseClip.isActiveAt(t)) return
-                val bfp = baseAnim.eval(t, outW, outH, previewW)
+                if (baseClip == null || baseAnim == null || !baseClip.isActiveAt(sceneT)) return
+                val bfp = baseAnim.eval(sceneT, outW, outH, previewW)
                 val bp = LayerParams().apply {
                     offsetX = bfp[0]; offsetY = bfp[1]
                     scaleX = bfp[2]; scaleY = bfp[3]
@@ -532,7 +558,7 @@ class NativePreviewEngine(context: Context) {
                     rotX = bfp[10]; rotY = bfp[11]; pivotX = bfp[12]; pivotY = bfp[13]
                     baseX = bfp[14]; baseY = bfp[15]; perspD = bfp[16]
                 }
-                p.pin = CornerPinRuntime.quadOnCanvas(pinSpec, t, bp, outW, outH) ?: return
+                p.pin = CornerPinRuntime.quadOnCanvas(pinSpec, sceneT, bp, outW, outH) ?: return
             }
             // Blend mode (same rule as the export): a matte on the lowest layer has nothing to cut, it behaves like Normal.
             // The layer's own values are read directly: a Controller connection hands nothing down
@@ -553,7 +579,7 @@ class NativePreviewEngine(context: Context) {
             // when the cut picture is composited onto the frame.
             var effBlendId = blendId
             fun drawTex(tex: Int, oes: Boolean, mat: FloatArray, cw: Int, ch: Int, rot: Int) {
-                for (pp in repeatDrawParams(p, c, t, if (previewW > 0f) outW / previewW else 1f)) {
+                for (pp in repeatDrawParams(p, c, sceneT, if (previewW > 0f) outW / previewW else 1f)) {
                     if (effBlendId == 0) r.drawLayer(tex, oes, mat, cw, ch, rot, pp)
                     else r.drawLayerBlended(tex, oes, mat, cw, ch, rot, pp, effBlendId, canvasRgb)
                 }
@@ -565,14 +591,14 @@ class NativePreviewEngine(context: Context) {
                 val src = sources[c.id] ?: return false
                 val img = src.image
                 if (img != null) {
-                    if (!placeByCamera(cam, c, t, anim, fp, p, img.w, img.h, previewW)) return false
+                    if (!placeByCamera(cam, c, sceneT, anim, fp, p, img.w, img.h, previewW)) return false
                     // Effects of the Effects panel on a photo (before crop / transform, like on a video).
-                    val imgOps = fxOpsOf(c, t)
-                    val imgMasks = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
+                    val imgOps = fxOpsOf(c, sceneT)
+                    val imgMasks = ClipMaskLibrary.toNative(c.masks, sceneT - c.startMs, CutoutMasks.sourceMs(c, sceneT))
                     if (imgOps != null || imgMasks != null) {
                         val fxTex = r.applyFx(
                             img.tex, false, FLIP_V, img.w, img.h, 0,
-                            0, 0f, 0, false, canvasRgb, imgOps, ClipFxLibrary.grainFrame(t), imgMasks
+                            0, 0f, 0, false, canvasRgb, imgOps, ClipFxLibrary.grainFrame(sceneT), imgMasks
                         )
                         if (fxTex != 0) {
                             drawTex(fxTex, false, IDENTITY_TEX_MATRIX, img.w, img.h, 0)
@@ -584,34 +610,37 @@ class NativePreviewEngine(context: Context) {
                     return true
                 }
                 val v = src.video ?: return false
-                advance(r, c, src, v, anim, t, p)
+                advance(r, c, src, v, anim, sceneT, p)
                 val now = sources[c.id] ?: return false  // advance() may have swapped in a software decoder
                 val cur = now.video ?: return false
                 if (!now.shown) return false
-                if (!placeByCamera(cam, c, t, anim, fp, p, cur.contentWidth, cur.contentHeight, previewW)) return false
+                if (!placeByCamera(cam, c, sceneT, anim, fp, p, cur.contentWidth, cur.contentHeight, previewW)) return false
                 // Face blur / cutout on the decoded picture first (before crop / transform), like the export.
                 val slot = media.indexOfFirst { it.id == c.id }
-                val srcMs = anim.sourceMs(t)
+                val srcMs = anim.sourceMs(sceneT)
                 val faceMask = NativeFxMasks.face(r, c, slot, srcMs, strict = false)
                 val cutMask = NativeFxMasks.cutout(r, c, slot, srcMs, strict = false)
-                val fxOps = fxOpsOf(c, t)
-                val maskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
+                val fxOps = fxOpsOf(c, sceneT)
+                val maskOps = ClipMaskLibrary.toNative(c.masks, sceneT - c.startMs, CutoutMasks.sourceMs(c, sceneT))
                 if (faceMask != 0 || cutMask != 0 || fxOps != null || maskOps != null) {
                     val fxTex = r.applyFx(
                         cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation,
-                        faceMask, c.faceBlurStrength, cutMask, flatten = c === firstMedia && depth == 0, canvasRgb = canvasRgb,
-                        fxOps = fxOps, grainFrame = ClipFxLibrary.grainFrame(t), maskOps = maskOps
+                        // flatten (the lowest layer's cutout drawn straight onto the canvas
+                        // colour) belongs to the real frame only: in a ghost picture the
+                        // flattened rect would turn opaque and tint as a solid block.
+                        faceMask, c.faceBlurStrength, cutMask, flatten = sceneT == t && c === firstMedia && depth == 0, canvasRgb = canvasRgb,
+                        fxOps = fxOps, grainFrame = ClipFxLibrary.grainFrame(sceneT), maskOps = maskOps
                     )
                     if (fxTex != 0) {
                         drawTex(fxTex, false, IDENTITY_TEX_MATRIX, cur.contentWidth, cur.contentHeight, 0)
-                        RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, effBlendId, canvasRgb)
+                        RemoveRuntime.draw(r, removePatches, c, p, sceneT, outW, outH, effBlendId, canvasRgb)
                         return true
                     }
                     Log.w(TAG, "native face blur / cutout / effects / masks failed on '${c.name}', drawn without the effect")
                 }
                 drawTex(cur.textureId, true, cur.texMatrix, cur.contentWidth, cur.contentHeight, cur.drawRotation)
                 // Remove: the clean patch on the moving surface, right after the layer's own picture.
-                RemoveRuntime.draw(r, removePatches, c, p, t, outW, outH, effBlendId, canvasRgb)
+                RemoveRuntime.draw(r, removePatches, c, p, sceneT, outW, outH, effBlendId, canvasRgb)
                 return true
             }
             // A mask layer sitting on this picture (Alight style): the layer is captured into its own
@@ -620,7 +649,7 @@ class NativePreviewEngine(context: Context) {
             // composed picture — and only then composited, with its blend mode, onto the frame. The
             // cut is in frame space, so it holds for placed / turned / pinned pictures too. With no
             // group pass available the layer is drawn uncut, like a group in the same fallback.
-            val masks = scopeMasksFor(c, t)
+            val masks = scopeMasksFor(c, sceneT)
             if (masks.isEmpty()) {
                 drawContent()
                 return
@@ -638,7 +667,7 @@ class NativePreviewEngine(context: Context) {
             val kk = if (previewW > 0f) outW / previewW else 1f
             val dens = appCtx.resources.displayMetrics.density
             for (m in masks) {
-                val cut = cutGroupPicture(r, tex, m, outW, outH, kk, dens, t)
+                val cut = cutGroupPicture(r, tex, m, outW, outH, kk, dens, sceneT)
                 if (cut != 0) tex = cut
                 else Log.w(TAG, "layer mask '${m.name}' was not applied to '${c.name}', drawn uncut by it")
             }
@@ -650,7 +679,7 @@ class NativePreviewEngine(context: Context) {
         // picture gets the group's opacity, blend mode, effects and masks like a photo would. The group's move / scale / turn
         // already reached the layers inside through their parent link (ParentRig), so the picture is placed at 0 / 0 / 1.
         fun drawGroupLayer(c: TimelineClip, depth: Int) {
-            val g = if (rig.hasLinks) rig.adjusted(c, t) else NativeRenderAt.renderAt(c, t)
+            val g = if (rig.hasLinks) rig.adjusted(c, sceneT) else NativeRenderAt.renderAt(c, sceneT)
             val opacity = g.opacityFraction.coerceIn(0f, 1f)
             if (opacity <= 0f) return
             if (!r.beginGroup()) {  // too deep / no memory: the layers go straight onto the frame (no group blend / effects)
@@ -661,7 +690,7 @@ class NativePreviewEngine(context: Context) {
             val tex = r.endGroup()
             if (tex == 0) return
             val blendId = BlendModes.find(g.blendMode).shaderId
-            val fxOps = fxOpsOf(g, t, c)
+            val fxOps = fxOpsOf(g, sceneT, c)
             // The children's parent link to this group (its ref = the embed's pivot): the embed's
             // own box in the frame is read off it, for the canvas clip below and the mask remap.
             val embedLink = if (c.embedW > 0f) {
@@ -684,13 +713,13 @@ class NativePreviewEngine(context: Context) {
                 if (clipOps != null) {
                     val clipped = r.applyFx(
                         drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0,
-                        0, 0f, 0, false, canvasRgb, null, ClipFxLibrary.grainFrame(t), clipOps, null, true
+                        0, 0f, 0, false, canvasRgb, null, ClipFxLibrary.grainFrame(sceneT), clipOps, null, true
                     )
                     if (clipped != 0) drawTex = clipped
                     else Log.w(TAG, "embed canvas clip failed on group '${c.name}', drawn unclipped")
                 }
             }
-            val rawMaskOps = ClipMaskLibrary.toNative(c.masks, t - c.startMs, CutoutMasks.sourceMs(c, t))
+            val rawMaskOps = ClipMaskLibrary.toNative(c.masks, sceneT - c.startMs, CutoutMasks.sourceMs(c, sceneT))
             // An imported group's own masks (a wipe on an embedScene — Graph round 6 G1) are
             // fractions of the EMBED's box, not of the frame the composed picture fills: remap
             // them onto the frame (see OverlayMasks). A user-authored group's masks were written
@@ -710,13 +739,13 @@ class NativePreviewEngine(context: Context) {
             // is evaluated like every layer, so the cut follows its own animation; outside a mask
             // layer's own span there is no cut from it. (In the beginGroup fallback above there is no group
             // picture, so a mask on such a group cannot cut — the layers are already on the frame.)
-            val maskAdjs = scopeMasksFor(c, t)
+            val maskAdjs = scopeMasksFor(c, sceneT)
             if (maskAdjs.isNotEmpty()) {
                 val pw = PreviewFrameRef.widthPx
                 val kk = if (pw > 0f) outW / pw else 1f
                 val dens = appCtx.resources.displayMetrics.density
                 for (maskAdj in maskAdjs) {
-                    val cutTex = cutGroupPicture(r, drawTex, maskAdj, outW, outH, kk, dens, t)
+                    val cutTex = cutGroupPicture(r, drawTex, maskAdj, outW, outH, kk, dens, sceneT)
                     if (cutTex != 0) drawTex = cutTex
                     else Log.w(TAG, "layer mask '${maskAdj.name}' was not applied to group '${c.name}', drawn uncut by it")
                 }
@@ -724,7 +753,7 @@ class NativePreviewEngine(context: Context) {
             if (fxOps != null || maskOps != null) {
                 val fxTex = r.applyFx(
                     drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0,
-                    0, 0f, 0, false, canvasRgb, fxOps, ClipFxLibrary.grainFrame(t), maskOps, null, true
+                    0, 0f, 0, false, canvasRgb, fxOps, ClipFxLibrary.grainFrame(sceneT), maskOps, null, true
                 )
                 if (fxTex != 0) drawTex = fxTex
                 else Log.w(TAG, "native effects / masks failed on group '${c.name}', drawn without them")
@@ -734,7 +763,7 @@ class NativePreviewEngine(context: Context) {
             // posed about the group's own anchor (RepeatDraw); without one, the single draw. (In
             // the beginGroup fallback above there is no group picture to pose, so a repeat on such
             // a group leaves its layers drawn once — the same limit as a mask on such a group.)
-            val copies = groupRepeatDrawParams(g, t, if (previewW > 0f) outW / previewW else 1f, opacity)
+            val copies = groupRepeatDrawParams(g, sceneT, if (previewW > 0f) outW / previewW else 1f, opacity)
             if (copies == null) {
                 val lp = LayerParams().apply { this.opacity = opacity }
                 if (blendId == 0) r.drawLayer(drawTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp)
@@ -753,7 +782,7 @@ class NativePreviewEngine(context: Context) {
         fun drawScope(scopeId: String?, depth: Int) {
             val clips = GroupOps.scopeTracks(liveTracks, scopeId).asReversed().flatMap { it.clips }
             val active = clips.filter {
-                it.isVisible && !it.isMask && it.isActiveAt(t) &&
+                it.isVisible && !it.isMask && it.isActiveAt(sceneT) &&
                     ((it.type == LayerType.VIDEO && it.uri != null) || it.type == LayerType.GROUP)
             }
             // Depth: nearer (bigger Z) layers later; equal Z keeps the lane order.
@@ -769,10 +798,49 @@ class NativePreviewEngine(context: Context) {
                     if (mc.type == LayerType.GROUP) drawGroupLayer(mc, depth) else drawMediaLayer(mc, depth)
                 }
             }
-            drawTextLayers(r, t, canvasRgb, scopeId, drawMediaUpTo)
+            drawTextLayers(r, sceneT, canvasRgb, scopeId, drawMediaUpTo)
             drawMediaUpTo(Float.POSITIVE_INFINITY, Int.MAX_VALUE)  // pictures in front of every shape / text / sticker
         }
         drawScopeRef = ::drawScope
+        // ONION SKIN (build 190): the ghost passes, drawn UNDER the real frame. The plan
+        // is pure (model/OnionSkin.plan); each ghost is the SAME scene pass at the ghost's
+        // own time — so keyframed animation is evaluated exactly as the renderer always
+        // evaluates it — captured into a group picture (transparent where the scene draws
+        // nothing), colorized to its side's tint with the shipped Colorize op and drawn
+        // at its falloff alpha. The real pass below then covers the ghosts at full
+        // opacity wherever the real scene is opaque: a ghost shows exactly where the
+        // scene has moved away from, or has not yet arrived at. The tints are a
+        // content-visualisation aid for the scene's own frames (like the markers' gold),
+        // not chrome. When the plan is empty — toggle off, playing, a full-screen editor
+        // override — not one extra call runs: zero behaviour or cost change. Cost when
+        // on: one extra scene render per ghost (decoder seeks included), capped at
+        // 3 + 3 by the plan; the pictures are re-rendered per drawFrame, like the frame
+        // itself, so scrubbing and edits always show the current scene.
+        val onionPlan = if (!playing && editorTracks == null && onionSkin.enabled)
+            OnionSkin.plan(t, onionFps, onionDurationMs, onionSkin.countPerSide, onionSkin.opacity)
+        else emptyList()
+        fun onionTintOps(hueDeg: Float): FloatArray? = ClipFxLibrary.toNative(
+            listOf(ClipFx(type = ClipFxLibrary.COLORIZE_AM, values = listOf(hueDeg, 1f)))
+        )
+        for (ghost in onionPlan) {
+            sceneT = ghost.timeMs
+            if (!r.beginGroup()) {
+                Log.w(TAG, "onion skin: no group pass for the ${ghost.timeMs} ms ghost, skipped")
+                continue
+            }
+            drawScope(null, 0)
+            val ghostTex = r.endGroup()
+            if (ghostTex == 0) continue
+            val tintOps = onionTintOps(ghost.hueDeg)
+            val tinted = if (tintOps != null) r.applyFx(
+                ghostTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0,
+                0, 0f, 0, false, canvasRgb, tintOps, 0, null
+            ) else 0
+            // A failed tint keeps the ghost (untinted, same alpha) instead of dropping it.
+            val lp = LayerParams().apply { opacity = ghost.alpha }
+            r.drawLayer(if (tinted != 0) tinted else ghostTex, false, IDENTITY_TEX_MATRIX, outW, outH, 0, lp)
+        }
+        sceneT = t
         drawScope(null, 0)
         pruneOverlayCaches(r, groupIds)
         r.endFrame()

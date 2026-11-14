@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.engine.NativePreviewEngine
+import com.example.model.OnionSkinSettings
 import com.example.model.TimelineTrack
 
 /**
@@ -22,10 +23,14 @@ internal fun NativePreviewSurface(
     playheadMs: () -> Long,
     isPlaying: Boolean,
     canvasArgb: Int,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Onion-skin ghosts (build 190): the settings + the project rate / duration the ghost plan steps by. */
+    onionSkin: OnionSkinSettings = OnionSkinSettings(),
+    onionFps: Int = 30,
+    onionDurationMs: Long = 0L
 ) {
     SideEffect {
-        engine.update(tracks, playheadMs, canvasArgb)
+        engine.update(tracks, playheadMs, canvasArgb, onionSkin, onionFps, onionDurationMs)
         engine.setPlaying(isPlaying)
         engine.requestFrame()
     }

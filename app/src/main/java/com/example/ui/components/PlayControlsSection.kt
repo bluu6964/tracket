@@ -74,7 +74,10 @@ fun PlayControlsSection(
     /** Plus icon at the right end: puts a beat mark at the playhead. */
     onBeatMarkClick: () -> Unit = {},
     /** Flag icon next to the beat mark: adds a NAMED marker at the playhead (or edits the one already there). */
-    onMarkerClick: () -> Unit = {}
+    onMarkerClick: () -> Unit = {},
+    /** Stacked-frames icon at the right end (build 190): toggles the onion-skin ghost frames on the canvas. */
+    onionSkinOn: Boolean = false,
+    onOnionSkinClick: () -> Unit = {}
 ) {
     Box(
         modifier = modifier
@@ -155,6 +158,9 @@ fun PlayControlsSection(
             }
             IconButton44(enabled = true, onClick = onMarkerClick, tag = "marker_button", description = "Marker") {
                 MarkerGlyph()
+            }
+            IconButton44(enabled = true, onClick = onOnionSkinClick, tag = "onion_skin_button", description = "Onion skin") {
+                OnionGlyph(onionSkinOn)
             }
         }
     }
@@ -290,6 +296,22 @@ private fun MarkerGlyph() {
         }
         drawPath(flag, c)
         drawPath(flag, c, style = Stroke(1.4f * u, join = StrokeJoin.Round))
+    }
+}
+
+/**
+ * Two overlapping frames (the onion-skin ghosts, build 190): the back frame is a bare
+ * outline, the front frame is filled while the ghosts are on. White = on, grey = off —
+ * the used-tool state law, like every other state in this bar.
+ */
+@Composable
+private fun OnionGlyph(on: Boolean) {
+    Canvas(Modifier.size(24.dp)) {
+        val u = size.width / 24f
+        val c = if (on) Color(0xFFF2F2F2) else IconDisabled
+        drawRoundRect(c, Offset(8.6f * u, 3.4f * u), Size(12f * u, 12f * u), CornerRadius(2.6f * u), style = Stroke(1.8f * u))
+        if (on) drawRoundRect(c, Offset(3.4f * u, 8.6f * u), Size(12f * u, 12f * u), CornerRadius(2.6f * u))
+        else drawRoundRect(c, Offset(3.4f * u, 8.6f * u), Size(12f * u, 12f * u), CornerRadius(2.6f * u), style = Stroke(1.8f * u))
     }
 }
 

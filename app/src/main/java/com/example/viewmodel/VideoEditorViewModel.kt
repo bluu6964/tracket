@@ -32,6 +32,8 @@ import com.example.model.LaneLayout
 import com.example.model.LayerType
 import com.example.model.MultiAction
 import com.example.model.MultiSelectOps
+import com.example.model.OnionSkin
+import com.example.model.OnionSkinSettings
 import com.example.model.PreviewResolution
 import com.example.model.AnimProp
 import com.example.model.Easing
@@ -363,6 +365,27 @@ class VideoEditorViewModel : ViewModel() {
     /** The marker at [timeMs] (within [MARKER_TOLERANCE_MS]), if any — the marker button then edits it instead of adding a second one on the same spot. */
     fun markerNear(timeMs: Long): TimelineMarker? =
         ProjectMarkers.nearest(_markers.value, timeMs, MARKER_TOLERANCE_MS)
+
+    // ---- Onion skin (build 190): ghost frames around the playhead on the canvas ----
+    private val _onionSkin = MutableStateFlow(OnionSkinSettings())
+    /**
+     * Onion-skin settings. Editor VIEW state only: like the beat marks it lives outside
+     * the track undo history, but unlike them it is NOT saved with the project — the
+     * ghosts are a preview aid, not project content, and they can never reach an export.
+     */
+    val onionSkin: StateFlow<OnionSkinSettings> = _onionSkin.asStateFlow()
+
+    fun setOnionSkinEnabled(on: Boolean) {
+        _onionSkin.value = _onionSkin.value.copy(enabled = on)
+    }
+
+    fun setOnionSkinCount(countPerSide: Int) {
+        _onionSkin.value = OnionSkin.normalize(_onionSkin.value.copy(countPerSide = countPerSide))
+    }
+
+    fun setOnionSkinOpacity(opacity: Float) {
+        _onionSkin.value = OnionSkin.normalize(_onionSkin.value.copy(opacity = opacity))
+    }
 
     fun setCanvasColor(argb: Long) {
         _canvasColor.value = argb or 0xFF000000L // the canvas is always opaque

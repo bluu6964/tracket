@@ -1172,7 +1172,11 @@ fun FullscreenPlayerModal(
     /** Live playhead reader (the screen's playheadProvider): the canvas follows playback, not the opening frame. */
     playheadMs: () -> Long,
     onTogglePlay: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Onion-skin ghosts (build 190): the same settings the inline canvas receives, so the shared engine's state does not flip while the player is open. */
+    onionSkin: com.example.model.OnionSkinSettings = com.example.model.OnionSkinSettings(),
+    onionFps: Int = 30,
+    onionDurationMs: Long = 0L
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -1197,6 +1201,9 @@ fun FullscreenPlayerModal(
                 nativeTracks = nativeTracks,
                 nativePreview = nativePreview,
                 onTogglePlayPause = onTogglePlay,
+                onionSkin = onionSkin,
+                onionFps = onionFps,
+                onionDurationMs = onionDurationMs,
                 modifier = Modifier.fillMaxSize()
             )
 

@@ -149,6 +149,16 @@ fun CanvasArea(
      */
     externalSnapGuideX: Float? = null,
     externalSnapGuideY: Float? = null,
+    /**
+     * Onion-skin ghosts (build 190): the settings plus the project frame rate and
+     * duration the engine's ghost plan steps by. Handed to the preview engine with
+     * every update; the ghosts themselves are drawn by the engine UNDER the real
+     * frame, so every overlay in this area (selection, handles, guides) stays
+     * above them exactly as today.
+     */
+    onionSkin: com.example.model.OnionSkinSettings = com.example.model.OnionSkinSettings(),
+    onionFps: Int = 30,
+    onionDurationMs: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     val canvasColor = LocalCanvasColor.current
@@ -220,7 +230,10 @@ fun CanvasArea(
                         playheadMs = playheadMs,
                         isPlaying = isPlaying,
                         canvasArgb = canvasArgb,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        onionSkin = onionSkin,
+                        onionFps = onionFps,
+                        onionDurationMs = onionDurationMs
                     )
                 }                // ---- Canvas snapping (build 176, Sarowar's tool 3 from the audit) ----
                 // Every drag path below (media, shape, sticker, text) reports the layer's

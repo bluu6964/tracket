@@ -112,6 +112,7 @@ import coil.request.videoFrameMillis
 import com.example.R
 import com.example.model.LayerType
 import com.example.model.MultiAction
+import com.example.model.isBooleanShapeCandidate
 import com.example.model.MultiBarMode
 import com.example.model.MultiSelectOps
 import com.example.model.TIMELINE_PX_PER_MS
@@ -207,6 +208,8 @@ fun TimelineLayerPanel(
     onMultiAction: (MultiAction) -> Unit = {},
     /** A spatial align / distribute tile of the multi-select bar (build 188). */
     onSpatialAction: (com.example.model.SpatialAction) -> Unit = {},
+    /** A shape boolean tile of the multi-select bar (build 192). */
+    onBooleanAction: (com.example.model.ShapeBooleanOp) -> Unit = {},
     /** Quick actions (split/delete/…) + master speaker at the bottom-left. Off for the one-row editor strip. */
     showQuickActions: Boolean = true,
     /** Selected-layer bar (top panel): flip / replace. Replace is hidden when null. */
@@ -583,6 +586,7 @@ fun TimelineLayerPanel(
                 playheadMs = playheadMs,
                 onAction = onMultiAction,
                 onSpatialAction = onSpatialAction,
+                onBooleanAction = onBooleanAction,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .enterPop(fromBottom = true)
@@ -677,6 +681,7 @@ private fun MultiBarHost(
     playheadMs: () -> Long,
     onAction: (MultiAction) -> Unit,
     onSpatialAction: (com.example.model.SpatialAction) -> Unit = {},
+    onBooleanAction: (com.example.model.ShapeBooleanOp) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val mode by remember(tracks, multiSelectIds) {
@@ -685,11 +690,30 @@ private fun MultiBarHost(
             MultiSelectOps.barMode(checked, playheadMs())
         }
     }
+    // The boolean row (build 192) exists only for exactly two eligible shapes:
+    // stored-fields eligibility (a visible, non-mask shape with a filled region),
+    // active at the playhead, and not pose-placed (the frame-space evaluation in
+    // the engine refuses those — the row must not promise what it cannot do).
+    val booleanReady by remember(tracks, multiSelectIds) {
+        derivedStateOf {
+            if (multiSelectIds.size != 2) false
+            else {
+                val t = playheadMs()
+                val checked = tracks.flatMap { it.clips }.filter { it.id in multiSelectIds }
+                checked.size == 2 && checked.all {
+                    it.isBooleanShapeCandidate && it.isActiveAt(t) &&
+                        !com.example.engine.overlayNeedsPose(it)
+                }
+            }
+        }
+    }
     MultiSelectBar(
         mode = mode,
         onAction = onAction,
         selectedCount = multiSelectIds.size,
         onSpatialAction = onSpatialAction,
+        showBooleanRow = booleanReady,
+        onBooleanAction = onBooleanAction,
         modifier = modifier
     )
 }

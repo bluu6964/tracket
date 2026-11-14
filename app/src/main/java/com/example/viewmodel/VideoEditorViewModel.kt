@@ -930,6 +930,64 @@ class VideoEditorViewModel : ViewModel() {
     }
 
     /**
+     * Adds the result of a shape boolean (build 192) as a new PATH layer, ONE undo
+     * step. [drawn] carries the combined outline already baked in FRAME space (the
+     * two source shapes were evaluated as drawn at the playhead), and the new layer's
+     * placement is exactly the normalisation [VectorDraw] worked out — identity in
+     * the sense that the layer has no rotation, no parent, no controller link and no
+     * keyframes, so it draws precisely where the combined geometry lies (baking the
+     * frame-space result into a still-transformed layer is the classic trap here).
+     * The two originals are NOT touched (non-destructive; the user deletes them if
+     * they want). Timing is the FIRST selected shape's (the result stands in its time
+     * window — its own stored duration, not the drawn-path clamp); the fill state is
+     * the first shape's too (mode, colour, gradient, picture / video fill — the
+     * gradient re-blocks onto the new layer's own box, as any re-homed fill does).
+     * The stroke is NOT inherited: the combined outline is new geometry, and the
+     * first shape's stroke width was tuned to its own outline.
+     */
+    fun addBooleanResultClip(
+        drawn: VectorDraw.DrawnPath,
+        name: String,
+        fillFrom: TimelineClip,
+        startMs: Long,
+        durationMs: Long
+    ) {
+        pushHistory()
+        val newClip = TimelineClip(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            type = LayerType.SHAPE,
+            startMs = startMs,
+            durationMs = durationMs.coerceAtLeast(1L),
+            color = fillFrom.color,
+            textColor = fillFrom.textColor,
+            fillMode = fillFrom.fillMode,
+            gradType = fillFrom.gradType,
+            gradColor1 = fillFrom.gradColor1,
+            gradColor2 = fillFrom.gradColor2,
+            gradX1 = fillFrom.gradX1,
+            gradY1 = fillFrom.gradY1,
+            gradX2 = fillFrom.gradX2,
+            gradY2 = fillFrom.gradY2,
+            fillImageUri = fillFrom.fillImageUri,
+            fillImageMode = fillFrom.fillImageMode,
+            fillVideoUri = fillFrom.fillVideoUri,
+            shapePattern = "PATH",
+            pathSegments = drawn.segments,
+            shapeOffsetX = drawn.offsetX,
+            shapeOffsetY = drawn.offsetY,
+            shapeScaleX = drawn.shapeScale,
+            shapeScaleY = drawn.shapeScale,
+            transformX = drawn.offsetX,
+            transformY = drawn.offsetY,
+            scalePercent = (drawn.shapeScale * 100f).coerceAtLeast(1f)
+        )
+        _tracks.value = placeNewLayer(_tracks.value, newClip)
+        setSelected(newClip.id)
+        recomputeTotal()
+    }
+
+    /**
      * Adds a real shape layer at the current playhead. This is the single entry point
      * used by the Shape picker so timeline insertion, selection, undo/redo and duration
      * calculation stay consistent.

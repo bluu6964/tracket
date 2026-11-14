@@ -2645,6 +2645,79 @@ fun VideoEditorScreen(
                             }
                         }
                     },
+                    // Shape booleans (build 192): the checked pair is evaluated AS
+                    // DRAWN at the playhead — each shape's outline goes through the
+                    // preview's own ParentRig into frame space (ShapeBooleanGeometry),
+                    // the pure winding core combines them (model/ShapeBoolean), and
+                    // the result is baked into a fresh PATH layer through the same
+                    // normalisation the Pen tool writes (VectorDraw.normalize), whose
+                    // identity placement draws it exactly where the geometry lies.
+                    // Subtract = FIRST-checked minus second-checked (the checked set
+                    // iterates in check order). The originals stay untouched; an
+                    // empty result (no overlap / fully cut away) only reports.
+                    onBooleanAction = { op ->
+                        val t = playheadState.value
+                        val fw = previewFrameWidthPx
+                        val allClips = tracks.flatMap { it.clips }
+                        val pair = multiSelectIds.mapNotNull { id -> allClips.firstOrNull { it.id == id } }
+                        fun report(msg: String) {
+                            scope.launch {
+                                snackbarHostState.currentSnackbarData?.dismiss()
+                                snackbarHostState.showSnackbar(msg)
+                            }
+                        }
+                        if (fw > 1f && pair.size == 2) {
+                            val fh = fw / selectedAspectRatio.ratioFloat
+                            val rig = com.example.engine.ParentRig(allClips) { c, tm ->
+                                com.example.engine.NativeRenderAt.renderAt(c, tm)
+                            }
+                            val ra = com.example.engine.ShapeBooleanGeometry.frameRings(
+                                allClips, rig, pair[0], t, fw, fh, 1f, previewDensity
+                            )
+                            val rb = com.example.engine.ShapeBooleanGeometry.frameRings(
+                                allClips, rig, pair[1], t, fw, fh, 1f, previewDensity
+                            )
+                            if (ra == null || rb == null) {
+                                report("These two shapes cannot be combined")
+                            } else {
+                                val result = com.example.model.ShapeBoolean.combine(ra, rb, op)
+                                if (result.isEmpty()) {
+                                    report(
+                                        when (op) {
+                                            com.example.model.ShapeBooleanOp.INTERSECT -> "The two shapes do not overlap"
+                                            com.example.model.ShapeBooleanOp.SUBTRACT -> "Nothing is left after the cut"
+                                            com.example.model.ShapeBooleanOp.XOR -> "The two shapes cancel each other out"
+                                            com.example.model.ShapeBooleanOp.UNION -> "Nothing to combine"
+                                        }
+                                    )
+                                } else {
+                                    val raw = ArrayList<com.example.model.PathSeg>()
+                                    for (ring in result) {
+                                        ring.forEachIndexed { i, p ->
+                                            raw += com.example.model.PathSeg(
+                                                if (i == 0) com.example.model.PATH_OP_MOVE
+                                                else com.example.model.PATH_OP_LINE,
+                                                listOf((p.x / fh).toFloat(), (p.y / fh).toFloat())
+                                            )
+                                        }
+                                        raw += com.example.model.PathSeg(com.example.model.PATH_OP_CLOSE)
+                                    }
+                                    val built = com.example.model.VectorDraw.normalize(raw, fw, fh, previewDensity)
+                                    if (built == null) {
+                                        report("Nothing to combine")
+                                    } else {
+                                        viewModel.addBooleanResultClip(
+                                            drawn = built,
+                                            name = op.displayName,
+                                            fillFrom = pair[0],
+                                            startMs = pair[0].startMs,
+                                            durationMs = pair[0].durationMs
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
                     onSplitClip = {
                         com.example.ui.buddy.BuddyBrain.react(com.example.ui.buddy.BuddyEvent.SPLIT)
                         viewModel.splitSelectedClip()

@@ -11,22 +11,30 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.model.MultiAction
 import com.example.model.MultiBarMode
+import com.example.model.ShapeBooleanOp
 import com.example.model.SpatialAction
 import com.example.ui.theme.amGlassBrush
 import com.example.ui.util.bouncyClickable
@@ -39,6 +47,9 @@ private val IconColor = Color.White
  * layers IN TIME. Second row (build 188): canvas SPATIAL align / distribute of the checked
  * layers (see [com.example.model.SpatialAlign]) — bare tiles like the rest of the bar;
  * the two distribute tiles dim out below 3 checked layers (they need three to space).
+ * Third row (build 192): shape BOOLEAN ops (see [com.example.model.ShapeBoolean]) —
+ * composed ONLY when [showBooleanRow] (exactly two eligible shape layers checked);
+ * Subtract reads first-checked minus second-checked.
  */
 @Composable
 fun MultiSelectBar(
@@ -48,7 +59,11 @@ fun MultiSelectBar(
     /** How many layers are checked (the distribute tiles need >= 3). */
     selectedCount: Int = 0,
     /** A spatial align / distribute tile of the second row. */
-    onSpatialAction: (SpatialAction) -> Unit = {}
+    onSpatialAction: (SpatialAction) -> Unit = {},
+    /** Show the boolean row (exactly two eligible shape layers are checked). */
+    showBooleanRow: Boolean = false,
+    /** A boolean tile of the third row. */
+    onBooleanAction: (ShapeBooleanOp) -> Unit = {}
 ) {
     Column(
         modifier = modifier
@@ -121,6 +136,48 @@ fun MultiSelectBar(
                 SpatialTile(SpatialAction.DISTRIBUTE_V, onSpatialAction, enabled = selectedCount >= 3) { drawDistributeGlyph(horizontal = false) }
             }
         }
+        if (showBooleanRow) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                BooleanTile(ShapeBooleanOp.UNION, onBooleanAction)
+                BooleanTile(ShapeBooleanOp.SUBTRACT, onBooleanAction)
+                BooleanTile(ShapeBooleanOp.INTERSECT, onBooleanAction)
+                BooleanTile(ShapeBooleanOp.XOR, onBooleanAction)
+            }
+        }
+    }
+}
+
+/**
+ * A boolean tile of the third row: a drawn Venn glyph over a small name (the ops are
+ * not self-evident as bare icons on first sight; the name is part of the tile, in the
+ * bar's bare B/W language — no box, no fill).
+ */
+@Composable
+private fun BooleanTile(
+    op: ShapeBooleanOp,
+    onAction: (ShapeBooleanOp) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(58.dp)
+            .bouncyClickable { onAction(op) }
+            .padding(vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Canvas(modifier = Modifier.size(width = 28.dp, height = 20.dp)) { drawBooleanGlyph(op) }
+        Text(
+            op.displayName,
+            color = Color.White.copy(alpha = 0.75f),
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1
+        )
     }
 }
 
@@ -363,6 +420,46 @@ private fun DrawScope.drawDistributeGlyph(horizontal: Boolean) {
         val left = (w - bw) / 2f
         for (cy in floatArrayOf(0.25f, 0.5f, 0.75f)) {
             drawRoundRect(IconColor, Offset(left, h * cy - bh / 2f), Size(bw, bh), cr)
+        }
+    }
+}
+
+/**
+ * Boolean glyphs: two overlapping circles read as the op's Venn diagram. The glyph
+ * paths use the Compose path ops (an icon convenience only — the feature's own core
+ * is [com.example.model.ShapeBoolean]). Subtract cuts the RIGHT circle out of the
+ * left (first-checked minus second-checked) and leaves the cut circle as a dim
+ * outline so the direction stays readable.
+ */
+private fun DrawScope.drawBooleanGlyph(op: ShapeBooleanOp) {
+    val w = size.width
+    val h = size.height
+    val r = minOf(w, h) * 0.34f
+    fun circle(cx: Float, cy: Float): Path = Path().apply {
+        addOval(Rect(Offset(cx - r, cy - r), Size(2f * r, 2f * r)))
+    }
+    val p1 = circle(w * 0.36f, h * 0.5f)
+    val p2 = circle(w * 0.64f, h * 0.5f)
+    val sw = 1.4.dp.toPx()
+    when (op) {
+        ShapeBooleanOp.UNION -> {
+            drawPath(p1, IconColor)
+            drawPath(p2, IconColor)
+        }
+        ShapeBooleanOp.SUBTRACT -> {
+            val cut = Path().apply { op(p1, p2, PathOperation.Difference) }
+            drawPath(cut, IconColor)
+            drawPath(p2, IconColor.copy(alpha = 0.45f), style = Stroke(width = sw))
+        }
+        ShapeBooleanOp.INTERSECT -> {
+            drawPath(p1, IconColor.copy(alpha = 0.45f), style = Stroke(width = sw))
+            drawPath(p2, IconColor.copy(alpha = 0.45f), style = Stroke(width = sw))
+            val lens = Path().apply { op(p1, p2, PathOperation.Intersect) }
+            drawPath(lens, IconColor)
+        }
+        ShapeBooleanOp.XOR -> {
+            val x = Path().apply { op(p1, p2, PathOperation.Xor) }
+            drawPath(x, IconColor)
         }
     }
 }

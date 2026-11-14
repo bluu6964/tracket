@@ -1915,6 +1915,53 @@ fun VideoEditorScreen(
         }
     }
 
+    // Alight Motion XML export (build 197): the same project, written as an .xml scene the
+    // importer (or Alight Motion itself) can open. Media is referenced by uri, never embedded;
+    // the exporter anchors positions at this screen's preview width, like the importer.
+    var pendingXmlExportId by remember { mutableStateOf<String?>(null) }
+
+    val exportAlightXmlLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/xml")
+    ) { target: android.net.Uri? ->
+        val id = pendingXmlExportId
+        pendingXmlExportId = null
+        if (target != null && id != null) {
+            scope.launch {
+                projectBusy = "Exporting Alight XML..."
+                projectBusyProgress = -1f
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        if (id == viewModel.projectId.value) projectStore.save(id, viewModel.snapshot())
+                        val snap = projectStore.load(id) ?: error("The project cannot be read")
+                        val name = projectStore.list().firstOrNull { it.id == id }?.name ?: "Project"
+                        val exported = com.example.engine.AlightXmlExporter.export(
+                            name, snap, previewFrameWidthPx
+                        ) ?: error("The project is empty")
+                        val out = context.contentResolver.openOutputStream(target)
+                            ?: error("Cannot write there")
+                        out.use { o -> o.write(exported.xml.toByteArray(Charsets.UTF_8)) }
+                        exported.report
+                    }
+                }
+                projectBusy = null
+                val report = result.getOrNull()
+                val msg = if (report != null) {
+                    var m = "Saved as Alight XML"
+                    if (report.omittedEffectCount > 0) {
+                        m += " (" + report.omittedEffectCount + " effects could not be written)"
+                    }
+                    if (report.omittedLayers.isNotEmpty()) {
+                        m += " (" + report.omittedLayers.size + " layers could not be written)"
+                    }
+                    m
+                } else {
+                    "Export failed: " + (result.exceptionOrNull()?.message ?: "unknown error")
+                }
+                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     val importProjectLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { source: android.net.Uri? ->
@@ -4552,6 +4599,15 @@ fun VideoEditorScreen(
                 pendingExportId = p.id
                 val safe = p.name.replace(Regex("[^\\p{L}\\p{N} _.-]"), "_").trim().ifEmpty { "Project" }
                 exportProjectLauncher.launch(safe + "." + com.example.engine.ProjectArchive.EXTENSION)
+            },
+            onExportAlightXml = { p ->
+                if (p.layerCount == 0) {
+                    android.widget.Toast.makeText(context, "That project is empty", android.widget.Toast.LENGTH_LONG).show()
+                } else {
+                    pendingXmlExportId = p.id
+                    val safe = p.name.replace(Regex("[^\\p{L}\\p{N} _.-]"), "_").trim().ifEmpty { "Project" }
+                    exportAlightXmlLauncher.launch(safe + ".xml")
+                }
             },
             onImport = { importProjectLauncher.launch(arrayOf("*/*")) },
             missingMediaCount = com.example.engine.MissingMedia.collect(viewModel.snapshot(), ownAuthority).size,

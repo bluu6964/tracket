@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
@@ -66,6 +67,8 @@ fun ProjectsDialog(
     onDelete: (String) -> Unit,
     /** Save the project as a portable .ampro file (media included). */
     onExport: (ProjectMeta) -> Unit,
+    /** Save the project as an Alight Motion XML file (build 197; media referenced, not included). */
+    onExportAlightXml: (ProjectMeta) -> Unit = {},
     /** Pick a .ampro file and add it as a new project. */
     onImport: () -> Unit,
     /** Files of the OPEN project that only the exporting phone had (build 111); 0 hides the button. */
@@ -129,6 +132,9 @@ fun ProjectsDialog(
                         }
                         IconButton(onClick = { onExport(p) }, modifier = Modifier.size(44.dp)) {
                             Icon(Icons.Filled.Share, contentDescription = "Export project file", tint = TextSecondary)
+                        }
+                        IconButton(onClick = { onExportAlightXml(p) }, modifier = Modifier.size(44.dp)) {
+                            Icon(Icons.Filled.Code, contentDescription = "Export as Alight Motion XML", tint = TextSecondary)
                         }
                         IconButton(onClick = { renaming = p }, modifier = Modifier.size(44.dp)) {
                             Icon(Icons.Filled.Edit, contentDescription = "Rename", tint = TextSecondary)

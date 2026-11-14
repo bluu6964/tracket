@@ -45,7 +45,18 @@ internal class FrameGeo(
     minScale: Float,
     /** Size the layer's pivot is measured against (media layers pivot on the whole canvas); 0 = the box itself. */
     pivotRefW: Float = 0f,
-    pivotRefH: Float = 0f
+    pivotRefH: Float = 0f,
+    /**
+     * Visible part of the box after Crop (shape / text layers — the painters clip the box in
+     * place, see [com.example.model.cropVisibleBox]): the corners / edges / hit test hug this
+     * sub-rectangle, not the whole box. Defaults = the whole box. The pivot and [center] keep
+     * measuring against the full box — crop does not move the layer's pivot.
+     */
+    val visW: Float = w,
+    val visH: Float = h,
+    /** Centre of the visible part relative to the centre of the box, in box units. */
+    val visOffX: Float = 0f,
+    val visOffY: Float = 0f
 ) {
     private val sx = (clip.effectiveScalePercent / 100f).coerceAtLeast(minScale) * (if (clip.isFlippedH) -1f else 1f)
     private val sy = (clip.effectiveScalePercent / 100f).coerceAtLeast(minScale) * (if (clip.isFlippedV) -1f else 1f)
@@ -90,18 +101,18 @@ internal class FrameGeo(
     }
 
     fun corner(i: Int): Offset = when (i) {
-        0 -> map(-w / 2f, -h / 2f) // top-left
-        1 -> map(w / 2f, -h / 2f)  // top-right
-        2 -> map(w / 2f, h / 2f)   // bottom-right
-        else -> map(-w / 2f, h / 2f) // bottom-left
+        0 -> map(visOffX - visW / 2f, visOffY - visH / 2f) // top-left
+        1 -> map(visOffX + visW / 2f, visOffY - visH / 2f)  // top-right
+        2 -> map(visOffX + visW / 2f, visOffY + visH / 2f)   // bottom-right
+        else -> map(visOffX - visW / 2f, visOffY + visH / 2f) // bottom-left
     }
 
     /** Mid-edge handles: 0=top, 1=right, 2=bottom, 3=left. */
     fun edge(i: Int): Offset = when (i) {
-        0 -> map(0f, -h / 2f)   // top mid
-        1 -> map(w / 2f, 0f)    // right mid
-        2 -> map(0f, h / 2f)    // bottom mid
-        else -> map(-w / 2f, 0f) // left mid
+        0 -> map(visOffX, visOffY - visH / 2f)   // top mid
+        1 -> map(visOffX + visW / 2f, visOffY)    // right mid
+        2 -> map(visOffX, visOffY + visH / 2f)    // bottom mid
+        else -> map(visOffX - visW / 2f, visOffY) // left mid
     }
 }
 
@@ -122,12 +133,21 @@ fun SelectionFrameOverlay(
     onTransform: (id: String, scalePercent: Float, rotationDeg: Float) -> Unit,
     modifier: Modifier = Modifier,
     pivotRefW: Float = 0f,
-    pivotRefH: Float = 0f
+    pivotRefH: Float = 0f,
+    /**
+     * Visible part of the layer's box after Crop (shape / text layers): size + centre offset
+     * in box px, from [com.example.model.cropVisibleBox]. Defaults = the whole box (media
+     * callers pass the already-cropped visible size as the box itself).
+     */
+    visW: Float = layerWidthPx,
+    visH: Float = layerHeightPx,
+    visOffX: Float = 0f,
+    visOffY: Float = 0f
 ) {
     val density = LocalDensity.current.density
     var frameW by remember { mutableFloatStateOf(1f) }
     var frameH by remember { mutableFloatStateOf(1f) }
-    val geo = FrameGeo(clip, layerWidthPx, layerHeightPx, frameW, frameH, minScale, pivotRefW, pivotRefH)
+    val geo = FrameGeo(clip, layerWidthPx, layerHeightPx, frameW, frameH, minScale, pivotRefW, pivotRefH, visW, visH, visOffX, visOffY)
     val geoNow by rememberUpdatedState(geo)
     val begin by rememberUpdatedState(onBegin)
     val send by rememberUpdatedState(onTransform)

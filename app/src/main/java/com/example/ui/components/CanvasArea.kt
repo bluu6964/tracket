@@ -81,6 +81,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.AspectRatio
 import com.example.model.CanvasSnap
+import com.example.model.CropVisibleBox
+import com.example.model.cropVisibleBox
 import com.example.model.LayerType
 import com.example.model.SnapRect
 import com.example.model.at
@@ -450,7 +452,18 @@ fun CanvasArea(
                     val isShape = selOverlay.type == LayerType.SHAPE || selOverlay.type == LayerType.STICKER || selOverlay.type == LayerType.NULL || selOverlay.type == LayerType.GROUP || selOverlay.type == LayerType.CONTROLLER
                     val size = if (isShape) androidx.compose.ui.geometry.Size(130f * dens, 130f * dens)
                     else textSizes[selOverlay.id]
-                    if (size != null && size.width > 0f && size.height > 0f) {
+                    // Crop clips a shape / text layer's own box in place (the layer is NOT resized
+                    // or re-centred), so the frame hugs the visible cropped part, not the pre-crop
+                    // box. Stickers are drawn uncropped, and Null / Group / Controller have no
+                    // cropped picture — their box stays the whole box, as before.
+                    val vis = size?.let {
+                        if (selOverlay.type == LayerType.SHAPE || selOverlay.text != null) {
+                            selOverlay.cropVisibleBox(it.width, it.height)
+                        } else {
+                            CropVisibleBox(it.width, it.height, 0f, 0f)
+                        }
+                    }
+                    if (size != null && vis != null && size.width > 0f && size.height > 0f) {
                         SelectionFrameOverlay(
                             clip = selOverlay,
                             layerWidthPx = size.width,
@@ -458,7 +471,11 @@ fun CanvasArea(
                             minScale = 0.01f,
                             onBegin = onSelectionBegin,
                             onTransform = onSelectionTransform,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize(),
+                            visW = vis.width,
+                            visH = vis.height,
+                            visOffX = vis.offX,
+                            visOffY = vis.offY
                         )
                     }
                 }
@@ -575,10 +592,12 @@ internal fun mediaVisibleSize(mc: com.example.model.TimelineClip, fw: Float, fh:
  * Where a layer sits on the canvas for snapping (build 176): its axis-aligned bounds
  * (the four rotated corners) and centre, in canvas pixels — the same [FrameGeo] geometry
  * the selection frame uses. Media layers measure their visible (fitted, cropped) picture
- * with the pivot on the whole canvas; shape / sticker / group layers their 130 dp box;
- * text its measured box (centre-only until measured). A dragged Null / Controller /
- * Camera (no picture) snaps by its centre only; as a snap TARGET those types (and
- * anything without a measurable picture) return null and are skipped.
+ * with the pivot on the whole canvas; shape layers their 130 dp box FOLLOWING the crop
+ * window (the painters clip the box in place, so a cropped shape offers no phantom snap
+ * lines); sticker / group layers their 130 dp box; text its measured box, also following
+ * its crop window. A dragged Null / Controller / Camera (no picture) snaps by its centre
+ * only; as a snap TARGET those types (and anything without a measurable picture) return
+ * null and are skipped.
  */
 private fun snapRectOf(
     clip: TimelineClip,
@@ -592,25 +611,38 @@ private fun snapRectOf(
     val h: Float
     val prW: Float
     val prH: Float
+    // The visible (cropped) part of the layer's box, where crop clips the box in place.
+    // Null = the whole box is the visible part (media already measures its cropped size).
+    var vis: CropVisibleBox? = null
     when {
         clip.type == LayerType.VIDEO && clip.uri != null -> {
             val s = mediaVisibleSize(clip, fw, fh)
             w = s.width; h = s.height; prW = fw; prH = fh
         }
-        clip.type == LayerType.SHAPE || clip.type == LayerType.STICKER || clip.type == LayerType.GROUP -> {
+        clip.type == LayerType.SHAPE -> {
+            val s = 130f * density
+            w = s; h = s; prW = 0f; prH = 0f
+            vis = clip.cropVisibleBox(w, h)
+        }
+        clip.type == LayerType.STICKER || clip.type == LayerType.GROUP -> {
             val s = 130f * density
             w = s; h = s; prW = 0f; prH = 0f
         }
         clip.text != null -> {
             val s = textSizes[clip.id]
             w = s?.width ?: 0f; h = s?.height ?: 0f; prW = 0f; prH = 0f
+            vis = clip.cropVisibleBox(w, h)
         }
         forDragged -> {
             w = 0f; h = 0f; prW = 0f; prH = 0f
         }
         else -> return null
     }
-    val geo = FrameGeo(clip, w, h, fw, fh, 0.01f, prW, prH)
+    val geo = if (vis != null) {
+        FrameGeo(clip, w, h, fw, fh, 0.01f, prW, prH, vis.width, vis.height, vis.offX, vis.offY)
+    } else {
+        FrameGeo(clip, w, h, fw, fh, 0.01f, prW, prH)
+    }
     var l = Float.MAX_VALUE
     var tp = Float.MAX_VALUE
     var r = -Float.MAX_VALUE

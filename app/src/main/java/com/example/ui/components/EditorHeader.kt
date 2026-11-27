@@ -107,17 +107,28 @@ fun EditorHeader(
     var ratioMenuOpen by remember { mutableStateOf(false) }
     var resMenuOpen by remember { mutableStateOf(false) }
 
-    fun resolveAll(): UiLabelAtlas.Entry? = atlas.resolve(resolutionLabel, UiLabelStyle.PILL)
-    var pillEntry = resolveAll()
+    fun resolveAll(): Pair<UiLabelAtlas.Entry?, UiLabelAtlas.Entry?> =
+        atlas.resolve(resolutionLabel, UiLabelStyle.PILL) to
+            atlas.resolve("Export", UiLabelStyle.EXPORT_PILL)
+    var resolvedPair = resolveAll()
     if (atlas.overflowed) {
         atlas.reset()
-        pillEntry = resolveAll()
+        resolvedPair = resolveAll()
     }
+    val pillEntry = resolvedPair.first
+    val exportEntry = resolvedPair.second
     val pillTextH = atlas.textHeightPx(UiLabelStyle.PILL)
     val pillAscent = atlas.fontMetrics(UiLabelStyle.PILL).ascent
     val pillWidthDp = pillEntry?.let {
         (hg.pillWidthPx(it.advance, density) / density).dp
     } ?: 0.dp
+    // Build 276: the Export pill's label metrics + width (the same law
+    // the GL draw and the tap target share).
+    val exportTextH = atlas.textHeightPx(UiLabelStyle.EXPORT_PILL)
+    val exportAscent = atlas.fontMetrics(UiLabelStyle.EXPORT_PILL).ascent
+    val exportPillWidthDp = exportEntry?.let {
+        (hg.exportPillWidthPx(it.advance, density) / density).dp
+    } ?: hg.BTN_DP.dp
 
     // Press scales: close, ratio, pill, export.
     val scales = remember { List(4) { Animatable(1f) } }
@@ -146,9 +157,10 @@ fun EditorHeader(
             Spacer(Modifier.weight(1f))
             Box(
                 Modifier
-                    .size(hg.BTN_DP.dp)
+                    .width(exportPillWidthDp)
+                    .height(hg.BTN_DP.dp)
                     .shadow(
-                        elevation = 5.dp, shape = RoundedCornerShape(hg.CORNER_DP.dp), clip = false,
+                        elevation = 5.dp, shape = RoundedCornerShape(percent = 50), clip = false,
                         ambientColor = RefLime.copy(alpha = 0.25f),
                         spotColor = RefLime.copy(alpha = 0.25f)
                     )
@@ -159,13 +171,14 @@ fun EditorHeader(
             modifier = Modifier.fillMaxSize(),
             clearArgb = 0,
             atlas = atlas,
-            drawKey = listOf(pillEntry, scaleValues, atlas.generation),
+            drawKey = listOf(pillEntry, exportEntry, scaleValues, atlas.generation),
             buildCmds = { w, h, dd ->
                 val btnPx = hg.BTN_DP * dd
                 val btnT = hg.btnTopPx(h, dd)
                 val cy = btnT + btnPx / 2f
                 val faceSize = hg.faceSizePx(dd)
                 val faceRadius = hg.faceRadiusPx(dd)
+                val exportPillW = exportEntry?.let { hg.exportPillWidthPx(it.advance, dd) } ?: btnPx
 
                 // Close: surface face + the X.
                 run {
@@ -182,7 +195,7 @@ fun EditorHeader(
                 }
 
                 val pillW = pillEntry?.let { hg.pillWidthPx(it.advance, dd) } ?: 0f
-                val pillLeft = hg.pillLeftPx(w, pillW, dd)
+                val pillLeft = hg.pillLeftPx(w, pillW, exportPillW, dd)
 
                 // Aspect ratio: surface face + the corners glyph.
                 run {
@@ -217,17 +230,27 @@ fun EditorHeader(
                     clearTransform()
                 }
 
-                // Export: the lime face + the download glyph.
+                // Export (build 276): the filled accent PILL — the
+                // download glyph + the word "Export", both in ink.
                 run {
-                    val left = hg.exportLeftPx(w, dd)
-                    val cx = left + btnPx / 2f
+                    val left = hg.exportLeftPx(w, exportPillW, dd)
+                    val cx = left + exportPillW / 2f
                     setScaleAbout(cx, cy, scales[3].value)
-                    addRoundRect(cx, cy, btnPx, btnPx, hg.CORNER_DP * dd, RefLime.toArgb())
+                    addRoundRect(cx, cy, exportPillW, btnPx, btnPx / 2f, RefLime.toArgb())
                     setTranslate(
-                        hg.glyphLeftPx(left, hg.GLYPH_EXPORT_DP, dd),
+                        hg.exportGlyphLeftPx(left, dd),
                         hg.glyphTopPx(h, hg.GLYPH_EXPORT_DP, dd)
                     )
                     glyphDownloadBody(hg.GLYPH_EXPORT_DP * dd, RefLimeInk.toArgb())
+                    setTranslate(0f, 0f)
+                    exportEntry?.let { e ->
+                        val baseY = hg.pillTextTopPx(h, exportTextH, dd) - exportAscent
+                        addText(
+                            e.index, hg.exportTextLeftPx(left, dd) + e.bearing - pad, baseY - e.base,
+                            0f, 0f, e.rectW.toFloat(), e.rectH.toFloat(),
+                            tintArgb = RefLimeInk.toArgb()
+                        )
+                    }
                     clearTransform()
                 }
             }
@@ -244,6 +267,16 @@ fun EditorHeader(
             ChromePressBox(
                 scales[0], 0.92f, onBackClick, Modifier.size(hg.BTN_DP.dp),
                 tag = "header_back_button", description = "Back to projects"
+            )
+            // Build 276 (fresh design): the app title at the left,
+            // beside the back button (the concept's header).
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "Timeline Pro",
+                color = TextPrimary,
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
             )
             Spacer(Modifier.weight(1f))
             Row(
@@ -324,7 +357,8 @@ fun EditorHeader(
                     }
                 }
                 ChromePressBox(
-                    scales[3], 0.94f, onExportClick, Modifier.size(hg.BTN_DP.dp),
+                    scales[3], 0.94f, onExportClick,
+                    Modifier.width(exportPillWidthDp).height(hg.BTN_DP.dp),
                     tag = "header_export_button", description = "Export"
                 )
             }

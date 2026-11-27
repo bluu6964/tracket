@@ -71,6 +71,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.TextEffectIds
@@ -263,6 +264,36 @@ fun TextEditPanel(
                     TextTab.EFFECTS -> EffectsTab(clip, onUpdate)
                     TextTab.ANIMATIONS -> AnimationsTab(clip, onUpdate, onAnimApply, onAnimPreview)
                     TextTab.BUBBLES -> BubblesTab(clip, onUpdate)
+                }
+            }
+            // Build 276 (fresh design): the concept's full-width
+            // bottom pill — it carries the panel's EXISTING Done /
+            // close action (the same onClose as the head's Done pill
+            // and the input row's ✓; editing stays live, nothing is
+            // "applied" by it), so it is labelled Done, not Apply.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(TextEditGeometry.Panel.DONE_BAR_H_DP.dp)
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Color(TextEditGeometry.Ref.CYAN_ARGB),
+                            RoundedCornerShape(23.dp)
+                        )
+                        .clickable { onClose() }
+                        .testTag("text_edit_done_bar"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Done",
+                        color = Color(0xFF111114),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }
@@ -627,10 +658,14 @@ private fun RefSubTabs(
                         val (te, ie) = resolved[i]
                         val cx = lefts[i] + widths[i] / 2f
                         val cy = itemTop + itemH / 2f
-                        if (te != null && item.key == selectedKey) {
+                        if (te != null) {
+                            // Build 276: every text chip is a pill —
+                            // the active one filled accent, the rest grey.
                             addRoundRect(
                                 cx, cy, widths[i], itemH,
-                                r.SUB_CHIP_RADIUS_DP * dd, r.SUB_ACTIVE_BG_ARGB
+                                r.SUB_CHIP_RADIUS_DP * dd,
+                                if (item.key == selectedKey) r.SUB_ACTIVE_BG_ARGB
+                                else r.SUB_IDLE_BG_ARGB
                             )
                         }
                         if (ie != null) {
@@ -658,7 +693,7 @@ private fun RefSubTabs(
                             addText(
                                 te.index, dstX, dstY,
                                 0f, 0f, te.rectW.toFloat(), te.rectH.toFloat(),
-                                tintArgb = if (item.key == selectedKey) r.TEXT_ARGB
+                                tintArgb = if (item.key == selectedKey) r.SUB_ACTIVE_INK_ARGB
                                     else r.SECONDARY_ARGB
                             )
                         }
@@ -825,9 +860,18 @@ private fun RefSliderRow(
                         r.SLIDER_TRACK_H_DP * dd / 2f, r.SLIDER_TRACK_ARGB
                     )
                     val tx = r.sliderThumbXPx(fraction, w, dd)
+                    // Build 276: the concept's accent-filled track
+                    // portion, up to the thumb.
+                    if (tx > 0f) {
+                        addRoundRect(
+                            tx / 2f, cy, tx, r.SLIDER_TRACK_H_DP * dd,
+                            r.SLIDER_TRACK_H_DP * dd / 2f, r.CYAN_ARGB
+                        )
+                    }
+                    // Build 276: the thumb is a solid accent disc.
                     addCircle(
                         tx, cy, r.SLIDER_THUMB_DP * dd / 2f,
-                        r.TEXT_ARGB, r.SLIDER_THUMB_BORDER_DP * dd, r.CYAN_ARGB
+                        r.CYAN_ARGB, r.SLIDER_THUMB_BORDER_DP * dd, r.SHEET_ARGB
                     )
                 }
             )
@@ -932,12 +976,13 @@ private fun RefColorRow(
                         val cy = h / 2f
                         val rad = w / 2f - dd
                         val borderW = r.SWATCH_BORDER_W_DP * dd
-                        val border = if (isSel) 0xFFFFFFFF.toInt() else r.SWATCH_BORDER_ARGB
+                        // Build 276: the selected swatch's ring is the accent.
+                        val border = if (isSel) r.CYAN_ARGB else r.SWATCH_BORDER_ARGB
                         when (item) {
                             is RefSwatch.ColorSw ->
                                 addCircle(cx, cy, rad, item.argb.toInt(), borderW, border)
                             is RefSwatch.Transparent -> {
-                                addCircle(cx, cy, rad, 0xFF2E2E36.toInt(), borderW, border)
+                                addCircle(cx, cy, rad, 0xFF2A3542.toInt(), borderW, border)
                                 val d = rad * 0.72f
                                 addLine(
                                     cx - d, cy + d, cx + d, cy - d,

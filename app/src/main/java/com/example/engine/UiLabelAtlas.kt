@@ -53,6 +53,9 @@ enum class UiLabelStyle(
     /** Build 250 (stage 3): app-header resolution pill: 11 sp Bold. */
     PILL(11f, 700),
 
+    /** Build 276 (fresh design): the header Export pill's label: 13 sp Bold. */
+    EXPORT_PILL(13f, 700),
+
     /** Build 250 (stage 3): layer-header name: 15 sp SemiBold. */
     HEADER_NAME(15f, 600),
 

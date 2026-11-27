@@ -1601,7 +1601,7 @@ void UiGlRenderer::buildRulerDialGeometry(
     const float r = 6.0f * d;
     if (accentNeedle) {
         addCircle(cx, cy, r, 1.0f * d,
-                  argbToRgba(static_cast<int32_t>(0xFFD2FC32)),
+                  argbToRgba(static_cast<int32_t>(0xFF18D8E0)),
                   argbToRgba(static_cast<int32_t>(0x59000000)));
     } else {
         addCircle(cx, cy, r, 1.2f * d,

@@ -332,10 +332,11 @@ class TextEditGeometryTest {
             // lower zone — the canvas above is never covered).
             assertEquals(max, g.draggedHeightPx(400f * d, -100000f, min, max), eps)
             // A huge downward drag stops at the minimum: head +
-            // typing field + tab row + about one control row.
+            // typing field + tab row + about one control row + the
+            // build-276 Done bar.
             assertEquals(min, g.draggedHeightPx(400f * d, 100000f, min, max), eps)
             assertEquals(
-                (g.HEAD_H_DP + g.FIELD_H_DP + g.TAB_ROW_H_DP + g.MIN_CONTENT_DP) * d,
+                (g.HEAD_H_DP + g.FIELD_H_DP + g.TAB_ROW_H_DP + g.MIN_CONTENT_DP + g.DONE_BAR_H_DP) * d,
                 min, eps
             )
         }
@@ -425,9 +426,10 @@ class TextEditGeometryTest {
         val twoRows = (ref.SUBHEADER_H_DP + ref.CONTENT_PAD_TOP_DP +
             2f * ref.TEMPLATE_CELL_NOMINAL_DP + grid.GAP_DP)
         for (d in densities) {
-            // The two-row height is exactly chrome + two card rows.
+            // The two-row height is exactly chrome + the build-276
+            // Done bar + two card rows.
             assertEquals(
-                g.chromeHeightPx(d) + twoRows * d,
+                g.chromeHeightPx(d) + g.DONE_BAR_H_DP * d + twoRows * d,
                 g.twoTemplateRowsHeightPx(d), eps
             )
             // A roomy zone: the default's content viewport fits two

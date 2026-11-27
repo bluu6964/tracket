@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,8 @@ import com.example.ui.theme.AmAccentViolet
 import com.example.ui.theme.AmBarSurface
 import com.example.ui.theme.AmCardSurface
 import com.example.ui.theme.AmDanger
+import com.example.ui.theme.AmHairlineStrong
+import com.example.ui.theme.AmPanel
 import com.example.ui.theme.AmSpace
 import com.example.ui.theme.AmTextDim
 import com.example.ui.theme.AmTextPrimary
@@ -117,10 +120,20 @@ fun BottomToolbar(
                 .height(1.dp)
                 .background(AmCardSurface)
         )
-        DockGlRow(
-            modifier = Modifier
+        // Build 276 (fresh design): the dock row sits in a rounded
+        // slate container — a floating band inside the same dock
+        // height; the row's own geometry is untouched.
+        Box(
+            Modifier
                 .fillMaxWidth()
-                .weight(1f),
+                .weight(1f)
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .background(AmPanel, RoundedCornerShape(20.dp))
+                .border(1.dp, AmHairlineStrong, RoundedCornerShape(20.dp))
+        ) {
+        DockGlRow(
+            modifier = Modifier.fillMaxSize(),
+            fxActive = fxActive,
             onMediaClick = onMediaClick,
             onAudioClick = onAudioClick,
             onFxClick = onFxClick,
@@ -135,6 +148,7 @@ fun BottomToolbar(
             onChainClick = onChainClick,
             onSpaceClick = onSpaceClick
         )
+        }
     }
 }
 

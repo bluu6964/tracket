@@ -11,7 +11,7 @@ namespace timeline {
 namespace {
 
 // ---- Colours (build-223 theme values; per-type bar colours come from Kotlin) ----
-constexpr uint32_t kBg = 0xFF121215u;
+constexpr uint32_t kBg = 0xFF0A0E13u;
 constexpr uint32_t kTickMajor = 0x57FFFFFFu;
 constexpr uint32_t kTickMinor = 0x33FFFFFFu;
 constexpr uint32_t kBeat = 0x80FFFFFFu;
@@ -19,21 +19,21 @@ constexpr uint32_t kKeyOrange = 0xFFF97316u;
 constexpr uint32_t kRangeBand = 0x12FFFFFFu;
 constexpr uint32_t kRangeEdge = 0x66FFFFFFu;
 constexpr uint32_t kWhite = 0xFFFFFFFFu;
-constexpr uint32_t kHairline = 0xFF1F1F26u;
-constexpr uint32_t kEyeBg = 0xFF1E1E24u;
+constexpr uint32_t kHairline = 0xFF232C38u;
+constexpr uint32_t kEyeBg = 0xFF141B24u;
 constexpr uint32_t kEyeTint = 0xFFA1A1AAu;
 constexpr uint32_t kEyeHidden = 0xFF52525Bu;
-constexpr uint32_t kChainBg = 0xFF18181Du;
-constexpr uint32_t kChainBgSel = 0xFF1D1D24u;
-constexpr uint32_t kChainBorder = 0xFF262630u;
-constexpr uint32_t kChainBridge = 0xFF3A3A46u;
+constexpr uint32_t kChainBg = 0xFF0E1319u;
+constexpr uint32_t kChainBgSel = 0xFF131920u;
+constexpr uint32_t kChainBorder = 0xFF232C38u;
+constexpr uint32_t kChainBridge = 0xFF33404Fu;
 constexpr uint32_t kChainInk = 0xFF71717Au;
 constexpr uint32_t kChainInkSel = 0xFFD4D4D8u;
-constexpr uint32_t kFxBadge = 0xFF27272Eu;
+constexpr uint32_t kFxBadge = 0xFF1E2732u;
 constexpr uint32_t kChipBg = 0x8C000000u;   // black 55%
 constexpr uint32_t kTeal = 0xFF00B8A9u;     // controller
 constexpr uint32_t kGroupTeal = 0xFF14B8A6u;
-constexpr uint32_t kLime = 0xFFD2FC32u;
+constexpr uint32_t kLime = 0xFF18D8E0u;  // build 276: the accent is cyan now (multi-select check disc)
 constexpr uint32_t kLimeInk = 0xFF111114u;
 constexpr uint32_t kNullPink = 0xFFF9326Au;
 constexpr uint32_t kKeyInk = 0xFFA1A1AAu;   // in-bar keyframe diamond rim (AmTextDim)

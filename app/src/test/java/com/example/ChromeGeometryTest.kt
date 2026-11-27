@@ -120,13 +120,18 @@ class ChromeGeometryTest {
         // header slot at d=2): button top = (88 - 76.8) / 2 = 5.6.
         assertEquals(5.6f, h.btnTopPx(88f, d), 0.001f)
         assertEquals(20f, h.closeLeftPx(d), 0f)
-        assertEquals(703.2f, h.exportLeftPx(800f, d), 0.001f) // 800 - 48.4*2
+        // Build 276: Export is a pill — label advance 60 px → width
+        // 60 + (12+19.2+5+12)*2 = 156.4; left = 800 - 20 - 156.4.
+        assertEquals(156.4f, h.exportPillWidthPx(60f, d), 0.001f)
+        assertEquals(623.6f, h.exportLeftPx(800f, 156.4f, d), 0.001f)
+        assertEquals(647.6f, h.exportGlyphLeftPx(623.6f, d), 0.001f) // + 12*2
+        assertEquals(696f, h.exportTextLeftPx(623.6f, d), 0.001f) // + (12+19.2+5)*2 = 72.4
         // Pill: advance 50 px → width 50 + 32.6*2 = 115.2.
         assertEquals(115.2f, h.pillWidthPx(50f, d), 0.001f)
-        assertEquals(574f, h.pillLeftPx(800f, 115.2f, d), 0.001f) // 703.2 - 14 - 115.2
-        assertEquals(483.2f, h.ratioLeftPx(574f, d), 0.001f) // 574 - 45.4*2
-        assertEquals(594f, h.pillTextLeftPx(574f, d), 0f)
-        assertEquals(652f, h.triLeftPx(574f, 50f, d), 0f) // 574 + 28 + 50
+        assertEquals(494.4f, h.pillLeftPx(800f, 115.2f, 156.4f, d), 0.001f) // 623.6 - 14 - 115.2
+        assertEquals(403.6f, h.ratioLeftPx(494.4f, d), 0.001f) // 494.4 - 45.4*2
+        assertEquals(514.4f, h.pillTextLeftPx(494.4f, d), 0f)
+        assertEquals(572.4f, h.triLeftPx(494.4f, 50f, d), 0.001f) // 494.4 + 28 + 50
         assertEquals(34.4f, h.triTopPx(88f, d), 0.001f) // 5.6 + (38.4-9.6)
     }
 

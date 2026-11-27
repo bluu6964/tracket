@@ -32,7 +32,8 @@ object DockGeometry {
     const val GAP_DP = 8f
     const val PAD_DP = 8f
     const val LABEL_GAP_DP = 2f
-    const val CORNER_DP = 8f
+    /** Build 276 (fresh design): the tile is a CIRCLE — corner radius = half the tile. */
+    const val CORNER_DP = 22f
     const val BORDER_DP = 1f
 
     /** Floor for the label auto-fit scale (no current label reaches it). */

@@ -86,6 +86,9 @@ import kotlin.math.roundToInt
 @Composable
 internal fun DockGlRow(
     modifier: Modifier = Modifier,
+    /** Build 276: while the effects stage is open, the Fx tile renders
+     *  as the concept's active item — a filled accent disc, dark glyph. */
+    fxActive: Boolean = false,
     onMediaClick: () -> Unit,
     onAudioClick: () -> Unit,
     onFxClick: () -> Unit,
@@ -182,13 +185,13 @@ internal fun DockGlRow(
                 modifier = Modifier.fillMaxSize(),
                 clearArgb = 0,
                 atlas = atlas,
-                drawKey = listOf(labelEntries, iconEntries, playEntry, starEntry, scaleValues, atlas.generation),
+                drawKey = listOf(labelEntries, iconEntries, playEntry, starEntry, scaleValues, fxActive, atlas.generation),
                 buildCmds = { _, h, d ->
                     buildDockCommands(
                         heightPx = h, density = d,
                         labelEntries = labelEntries, iconEntries = iconEntries,
                         playEntry = playEntry, starEntry = starEntry,
-                        scaleValues = scaleValues,
+                        scaleValues = scaleValues, fxActive = fxActive,
                         labelHeightPx = labelHPx, labelAscentPx = labelAscentPx
                     )
                 }
@@ -274,10 +277,14 @@ private fun VectorCmdBuilder.buildDockCommands(
     playEntry: UiLabelAtlas.Entry?,
     starEntry: UiLabelAtlas.Entry?,
     scaleValues: List<Float>,
+    fxActive: Boolean,
     labelHeightPx: Float,
     labelAscentPx: Float
 ) {
     val tileFillArgb = RefSurface.toArgb()
+    // Build 276: the active Fx tile's filled accent disc + dark ink.
+    val tileActiveFillArgb = 0xFF18D8E0.toInt()
+    val tileActiveInkArgb = 0xFF111114.toInt()
     val tileBorderArgb = Color.White.copy(alpha = 0.04f).toArgb()
     val labelArgb = AmTextDim.toArgb()
     val iconTintArgb = RefCtrl.toArgb()
@@ -302,7 +309,7 @@ private fun VectorCmdBuilder.buildDockCommands(
             width = tilePx - borderPx,
             height = tilePx - borderPx,
             cornerRadius = DockGeometry.CORNER_DP * density - borderPx / 2f,
-            fillArgb = tileFillArgb,
+            fillArgb = if (i == 2 && fxActive) tileActiveFillArgb else tileFillArgb,
             strokeWidth = borderPx,
             strokeArgb = tileBorderArgb
         )
@@ -338,13 +345,13 @@ private fun VectorCmdBuilder.buildDockCommands(
                     DockGeometry.FX_STAR_SMALL_C, DockGeometry.FX_STAR_SMALL_C,
                     DockGeometry.FX_STAR_SMALL_R
                 )
-                blitInk(e, sl, st, ss, FX_STAR_SMALL_ARGB)
+                blitInk(e, sl, st, ss, if (fxActive) tileActiveInkArgb else FX_STAR_SMALL_ARGB)
                 val (bl, bt, bs) = DockGeometry.fxStarBlit(
                     glyphLeft, glyphTop, gw,
                     DockGeometry.FX_STAR_BIG_C, DockGeometry.FX_STAR_BIG_C,
                     DockGeometry.FX_STAR_BIG_R
                 )
-                blitInk(e, bl, bt, bs, FX_STAR_BIG_ARGB)
+                blitInk(e, bl, bt, bs, if (fxActive) tileActiveInkArgb else FX_STAR_BIG_ARGB)
             }
         } else {
             setTranslate(glyphLeft, glyphTop)
@@ -377,7 +384,7 @@ private fun VectorCmdBuilder.buildDockCommands(
                 srcDX = 0f, srcDY = 0f,
                 srcW = e.rectW.toFloat(), srcH = e.rectH.toFloat(),
                 dstW = dstW, dstH = dstH,
-                tintArgb = labelArgb
+                tintArgb = if (i == 2 && fxActive) tileActiveFillArgb else labelArgb
             )
         }
         clearTransform()

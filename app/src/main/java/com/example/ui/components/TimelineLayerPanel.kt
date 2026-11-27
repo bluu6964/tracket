@@ -1694,7 +1694,7 @@ internal fun laneHeightFor(type: LayerType, comfort: Boolean = false): Dp = when
 private val LaneBarInset = 0.dp
 /** Build 187: the lane's dark track groove. The panel is pure black (AmBaseDeep), so the
  *  reference's black track becomes a near-black groove — the same track-vs-page contrast. */
-private val LaneTrackColor = Color(0xFF121215) // build 217: no visible groove on the dark timeline
+private val LaneTrackColor = Color(0xFF0A0E13) // build 217: no visible groove on the dark timeline (build 276: the new base)
 /** Build 187: the Controller's settled teal marker colour (same as CanvasArea's). */
 private val ControllerTeal = Color(0xFF00B8A9)
 /** Build 215: the audio bar's own colour (AudioClipBody's fill) — the reference's neon green. */

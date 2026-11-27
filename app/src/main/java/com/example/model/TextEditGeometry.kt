@@ -353,11 +353,12 @@ object TextEditGeometry {
     // sliders and pill toggles. Reference px read as dp/sp 1:1.
 
     object Ref {
-        // Tokens.
-        const val SHEET_ARGB: Int = 0xFF121215.toInt()
-        const val ELEVATED_ARGB: Int = 0xFF1C1C21.toInt()
-        const val CARD_ARGB: Int = 0xFF222228.toInt()
-        const val CARD_HOVER_ARGB: Int = 0xFF2C2C34.toInt()
+        // Tokens. Build 276 (fresh design): the slate family of the
+        // new design language (sheet = the app base, cards slate).
+        const val SHEET_ARGB: Int = 0xFF0A0E13.toInt()
+        const val ELEVATED_ARGB: Int = 0xFF151B23.toInt()
+        const val CARD_ARGB: Int = 0xFF1C242E.toInt()
+        const val CARD_HOVER_ARGB: Int = 0xFF242F3B.toInt()
         const val HAIRLINE_ARGB: Int = 0x14FFFFFF
         const val TEXT_ARGB: Int = 0xFFF5F5F7.toInt()
         const val SECONDARY_ARGB: Int = 0xFF8E8E98.toInt()
@@ -376,9 +377,9 @@ object TextEditGeometry {
         const val INPUT_PAD_BOTTOM_DP = 7f
         const val INPUT_BOX_H_DP = 40f
         const val INPUT_RADIUS_DP = 10f
-        const val INPUT_BG_ARGB: Int = 0xFF232329.toInt()
+        const val INPUT_BG_ARGB: Int = 0xFF1A222C.toInt()
         const val INPUT_BORDER_ARGB: Int = 0x12FFFFFF
-        const val INPUT_FOCUS_BG_ARGB: Int = 0xFF292931.toInt()
+        const val INPUT_FOCUS_BG_ARGB: Int = 0xFF212B36.toInt()
         const val INPUT_FOCUS_BORDER_ARGB: Int = 0xB818D8E0.toInt()
         const val PLACEHOLDER_ARGB: Int = 0xFF71717B.toInt()
         const val INPUT_GAP_DP = 10f
@@ -422,10 +423,17 @@ object TextEditGeometry {
         const val SUB_PAD_TOP_DP = 9f
         const val SUB_PAD_BOTTOM_DP = 7f
         const val SUB_GAP_DP = 14f
-        const val SUB_ITEM_PAD_H_DP = 6f
+        /** Build 276: roomier pill chips (was 6 dp in the reference build). */
+        const val SUB_ITEM_PAD_H_DP = 10f
         const val SUB_ITEM_PAD_V_DP = 3f
-        const val SUB_CHIP_RADIUS_DP = 6f
-        const val SUB_ACTIVE_BG_ARGB: Int = 0x1AFFFFFF
+        /** Build 276: sub-tab chips are PILLS (radius = half the 24 dp item height). */
+        const val SUB_CHIP_RADIUS_DP = 12f
+        /** Build 276: the active chip is a FILLED accent pill (dark ink text). */
+        const val SUB_ACTIVE_BG_ARGB: Int = 0xFF18D8E0.toInt()
+        /** Build 276: an inactive chip's grey pill fill. */
+        const val SUB_IDLE_BG_ARGB: Int = 0xFF242F3B.toInt()
+        /** Build 276: ink on the active chip's accent fill. */
+        const val SUB_ACTIVE_INK_ARGB: Int = 0xFF111114.toInt()
         const val SUB_ICON_DP = 17f
         const val SUBHEADER_H_DP = 34f
 
@@ -445,7 +453,7 @@ object TextEditGeometry {
         }
 
         // Inline search field.
-        const val SEARCH_BG_ARGB: Int = 0xFF1F1F25.toInt()
+        const val SEARCH_BG_ARGB: Int = 0xFF151B23.toInt()
         const val SEARCH_RADIUS_DP = 8f
         const val SEARCH_PAD_BOTTOM_DP = 8f
 
@@ -453,7 +461,8 @@ object TextEditGeometry {
         const val CONTENT_PAD_H_DP = 14f
         const val CONTENT_PAD_TOP_DP = 4f
         const val CONTENT_PAD_BOTTOM_DP = 16f
-        const val CARD_RADIUS_DP = 9f
+        /** Build 276: the concept's large rounded tool tiles. */
+        const val CARD_RADIUS_DP = 16f
         const val CARD_BORDER_W_DP = 1.5f
         const val FONT_CARD_H_DP = 54f
         const val BUBBLE_ASPECT = 1.25f
@@ -494,8 +503,9 @@ object TextEditGeometry {
         const val SLIDER_GAP_DP = 12f
         const val SLIDER_VALUE_W_DP = 42f
         const val SLIDER_TRACK_H_DP = 3.5f
-        const val SLIDER_TRACK_ARGB: Int = 0xFF36363E.toInt()
-        const val SLIDER_THUMB_DP = 16f
+        const val SLIDER_TRACK_ARGB: Int = 0xFF2A3542.toInt()
+        /** Build 276: the concept's large accent thumb. */
+        const val SLIDER_THUMB_DP = 22f
         const val SLIDER_THUMB_BORDER_DP = 2f
         const val SLIDER_ROW_PAD_V_DP = 6f
 
@@ -531,7 +541,8 @@ object TextEditGeometry {
         const val PILL_MIN_W_DP = 48f
         const val PILL_H_DP = 36f
         const val PILL_PAD_H_DP = 12f
-        const val PILL_RADIUS_DP = 8f
+        /** Build 276: pill toggles are true pills (radius = half the height). */
+        const val PILL_RADIUS_DP = 18f
         const val PILL_GAP_DP = 8f
         const val PILL_ROW_PAD_V_DP = 6f
         const val PILL_SEL_BG_ARGB: Int = 0x2418D8E0
@@ -554,7 +565,7 @@ object TextEditGeometry {
         // Aa preset tiles.
         const val AA_W_DP = 40f
         const val AA_H_DP = 36f
-        const val AA_RADIUS_DP = 8f
+        const val AA_RADIUS_DP = 12f
         const val AA_GAP_DP = 8f
         const val AA_PAD_TOP_DP = 10f
         const val AA_PAD_BOTTOM_DP = 2f
@@ -598,12 +609,21 @@ object TextEditGeometry {
         /** Minimum visible content under the tabs: about one row. */
         const val MIN_CONTENT_DP = 44f
 
+        /**
+         * Build 276 (fresh design): the bottom Done bar — the
+         * concept's full-width accent pill, carrying the panel's
+         * existing Done/close action (10 dp pads + a 46 dp pill).
+         * It is part of the panel's chrome for every height law
+         * except the keyboard collapse (the bar hides with the body).
+         */
+        const val DONE_BAR_H_DP = 66f
+
         /** First-open height: this share of the available height. */
         const val DEFAULT_FRACTION = 0.62f
 
-        /** The smallest panel: head + field + tab row + one row. */
+        /** The smallest panel: head + field + tab row + one row + the Done bar. */
         fun minHeightPx(density: Float): Float =
-            (HEAD_H_DP + FIELD_H_DP + TAB_ROW_H_DP + MIN_CONTENT_DP) * density
+            (HEAD_H_DP + FIELD_H_DP + TAB_ROW_H_DP + MIN_CONTENT_DP + DONE_BAR_H_DP) * density
 
         /**
          * The most room the panel may take: the height the host hands
@@ -656,9 +676,10 @@ object TextEditGeometry {
         fun chromeHeightPx(density: Float): Float =
             (HEAD_H_DP + FIELD_H_DP + TAB_ROW_H_DP) * density
 
-        /** The tab content's viewport height at [heightPx]. */
+        /** The tab content's viewport height at [heightPx] (above the
+         *  chrome and below it the build-276 Done bar). */
         fun contentViewportPx(heightPx: Float, density: Float): Float =
-            (heightPx - chromeHeightPx(density)).coerceAtLeast(0f)
+            (heightPx - chromeHeightPx(density) - DONE_BAR_H_DP * density).coerceAtLeast(0f)
 
         /**
          * Build 271: the keyboard-open height. While the main typing
@@ -676,7 +697,7 @@ object TextEditGeometry {
          * and the gap between them.
          */
         fun twoTemplateRowsHeightPx(density: Float): Float =
-            chromeHeightPx(density) +
+            chromeHeightPx(density) + DONE_BAR_H_DP * density +
                 (Ref.SUBHEADER_H_DP + Ref.CONTENT_PAD_TOP_DP +
                     2f * Ref.TEMPLATE_CELL_NOMINAL_DP + Grid.GAP_DP) * density
 

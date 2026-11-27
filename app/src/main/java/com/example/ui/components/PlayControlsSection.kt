@@ -30,7 +30,7 @@ import com.example.engine.UiLabelStyle
 import com.example.engine.rememberUiAtlas
 import com.example.model.ChromeGeometry
 import com.example.ui.theme.AmBase
-import com.example.ui.theme.AmHairline
+import com.example.ui.theme.AmPanel
 import com.example.ui.theme.RefCtrl
 import com.example.ui.theme.RefCtrlDisabled
 import com.example.ui.theme.RefLime
@@ -156,8 +156,15 @@ fun PlayControlsSection(
                 val btnT = c.btnTopPx(h, dd)
                 val cy = btnT + btnPx / 2f
 
-                // The bar's bottom hairline.
-                addRect(0f, c.hairlineTopPx(h, dd), w, dd, AmHairline.toArgb())
+                // Build 276 (fresh design): the bar sits on a rounded
+                // slate band inset from the screen edges (the concept's
+                // toolbar band); the buttons' law positions are
+                // unchanged, and the band's edge replaces the old
+                // bottom hairline as the bar's lower boundary.
+                addRoundRect(
+                    w / 2f, h / 2f, w - 16f * dd, h - 8f * dd, 16f * dd,
+                    AmPanel.toArgb()
+                )
 
                 // Undo / redo: atlas icons; a disabled button's tint is
                 // the disabled colour at bouncyClickable's 0.45 alpha.

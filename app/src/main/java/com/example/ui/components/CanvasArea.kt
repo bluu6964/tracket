@@ -227,9 +227,9 @@ fun CanvasArea(
             Box(
                 modifier = Modifier
                     .size(width = frameW, height = frameH)
-                    .clip(RoundedCornerShape(6.dp)) // build 217: the reference's canvas corners
+                    .clip(RoundedCornerShape(16.dp)) // build 276: the fresh design's canvas card (was 6 dp, build 217)
                     .background(canvasColor)
-                    .border(1.dp, Color(0xFF1E1E24), RoundedCornerShape(6.dp)),
+                    .border(1.dp, Color(0xFF2B3644), RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 val anyActiveClip by remember(tracks) {

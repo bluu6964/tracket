@@ -570,8 +570,8 @@ internal fun GlChip(
     pressScale: Float = 0.94f,
     styleOn: UiLabelStyle = UiLabelStyle.TEXT_11_BOLD,
     styleOff: UiLabelStyle = UiLabelStyle.TEXT_11_SEMI,
-    fillOnArgb: Int = 0x24D2FC32,
-    fillOffArgb: Int = 0xFF202026.toInt(),
+    fillOnArgb: Int = 0x2418D8E0,
+    fillOffArgb: Int = 0xFF151B23.toInt(),
     textOnArgb: Int = 0xFFF4F4F5.toInt(),
     textOffArgb: Int = 0xFFA1A1AA.toInt(),
     textDisabledArgb: Int = 0xFFA1A1AA.toInt(),
@@ -740,7 +740,7 @@ internal fun GlDonePill(
                 addRoundRect(w / 2f, h / 2f, w, h, h / 2f, 0xFFFFFFFF.toInt())
                 addRoundRect(
                     w / 2f, h / 2f, w - 1f * dd, h - 1f * dd, h / 2f - 0.5f * dd,
-                    0, 1f * dd, 0xFF1F1F26.toInt()
+                    0, 1f * dd, 0xFF232C38.toInt()
                 )
                 if (e != null) {
                     val textH = atlas.textHeightPx(style)
@@ -847,7 +847,7 @@ internal fun GlVioletPill(
                 atlas = atlas,
                 drawKey = listOf(e, scale.value, atlas.generation),
                 buildCmds = { w, h, _ ->
-                    addRoundRect(w / 2f, h / 2f, w, h, h / 2f, 0xFFD2FC32.toInt())
+                    addRoundRect(w / 2f, h / 2f, w, h, h / 2f, 0xFF18D8E0.toInt())
                     if (e != null) {
                         val fm = atlas.fontMetrics(style)
                         val top = EditorGeometry.centredTextTopPx(0f, h, textH)
@@ -917,7 +917,7 @@ internal fun GlWhitePill(
                     addRoundRect(w / 2f, h / 2f, w, h, h / 2f, 0xFFFFFFFF.toInt())
                     addRoundRect(
                         w / 2f, h / 2f, w - 1f * dd, h - 1f * dd, h / 2f - 0.5f * dd,
-                        0, 1f * dd, 0xFF1F1F26.toInt()
+                        0, 1f * dd, 0xFF232C38.toInt()
                     )
                     if (e != null) {
                         val fm = atlas.fontMetrics(style)
@@ -980,12 +980,12 @@ internal fun GlSwitch(
                         g.thumbRadiusPx(true, dd), 0xFFF4F4F5.toInt()
                     )
                 } else {
-                    addRoundRect(w / 2f, h / 2f, w, h, h / 2f, 0xFF202026.toInt())
+                    addRoundRect(w / 2f, h / 2f, w, h, h / 2f, 0xFF151B23.toInt())
                     addRoundRect(
                         w / 2f, h / 2f,
                         w - g.BORDER_W_DP * dd, h - g.BORDER_W_DP * dd,
                         h / 2f - (g.BORDER_W_DP / 2f) * dd,
-                        0, g.BORDER_W_DP * dd, 0xFF2E2E38.toInt()
+                        0, g.BORDER_W_DP * dd, 0xFF2E3947.toInt()
                     )
                     addCircle(
                         g.thumbCentreXPx(false, dd), h / 2f,
@@ -1066,7 +1066,7 @@ internal fun GlWidthRow(
             onValueChangeFinished = null,
             thumbArgb = 0xFFF4F4F5.toInt(),
             activeArgb = 0xFFF4F4F5.toInt(),
-            inactiveArgb = 0xFF202026.toInt(),
+            inactiveArgb = 0xFF2A3542.toInt(),
             modifier = Modifier
                 .weight(1f)
                 .testTag(sliderTag)

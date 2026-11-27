@@ -36,22 +36,27 @@ import androidx.compose.ui.unit.sp
 // panel, sheet, dialog and chrome surface in the app uses these tokens —
 // background #121215, surfaces of the #202026 family, ONE lime accent.
 // (Builds 214–221 each brought a reference palette; 223 retired them all.)
-/** App base: near-black. */
-val AmBase = Color(0xFF121215)
-/** Pure black for recessed / canvas surround. */
-val AmBaseDeep = Color(0xFF0A0A0C)
+//
+// Build 276 (Sarowar's fresh-design migration): the palette shifts to the
+// new design language — a blue-tinted near-black base #0A0E13, dark slate
+// surfaces (#151B23 / #1C242E), and the ONE accent becomes cyan #18D8E0
+// (the lime is retired; the token names stay so call sites are stable).
+/** App base: near-black, blue-tinted. */
+val AmBase = Color(0xFF0A0E13)
+/** Deeper black for recessed / canvas surround. */
+val AmBaseDeep = Color(0xFF06090D)
 /** Primary panel surface — sheets, bottom bars, dialogs, the panel stage. */
-val AmPanel = Color(0xFF202026)
+val AmPanel = Color(0xFF151B23)
 /** Raised surface — chips, selected pills, elevated cards. */
-val AmPanelHigh = Color(0xFF202026)
+val AmPanelHigh = Color(0xFF151B23)
 /** Slightly higher for interactive hover / pressed states. */
-val AmPanelElevated = Color(0xFF2A2A32)
+val AmPanelElevated = Color(0xFF1C242E)
 /** Default fill for small chrome items on base. */
-val AmGlassFill = Color(0xFF202026)
+val AmGlassFill = Color(0xFF151B23)
 /** Subtle 1px hairline (build 214: the architecture's hairline colour). */
-val AmHairline = Color(0xFF1F1F26)
+val AmHairline = Color(0xFF232C38)
 /** Stronger hairline for focused edges. */
-val AmHairlineStrong = Color(0xFF2E2E38)
+val AmHairlineStrong = Color(0xFF2E3947)
 
 // ── Accents — white / grey emphasis (names kept for compatibility) ───────
 /** Active / selected: pure white. */
@@ -66,8 +71,8 @@ val AmCyanBright = Color(0xFFF4F4F5)
 val AmViolet = Color(0xFFA1A1AA)
 /** Mid grey. */
 val AmVioletDeep = Color(0xFF71717A)
-/** Legacy lime → white. */
-val AmLime = Color(0xFFD2FC32)
+/** Legacy lime name → the build-276 cyan accent. */
+val AmLime = Color(0xFF18D8E0)
 /** Neutral light grey. */
 val AmOrange = Color(0xFFF97316)
 /** White. */
@@ -75,33 +80,32 @@ val AmPink = Color(0xFFF54BBF)
 /** Soft red — only for destructive actions. */
 val AmDanger = Color(0xFFFF5C5C)
 /**
- * The lime accent in its Effects-ruler role (the fx dial's accent disc).
+ * The accent in its Effects-ruler role (the fx dial's accent disc).
  * Same value as [AmAccent]; the separate name survives from build 214.
  */
-val AmFxAccent = Color(0xFFD2FC32)
+val AmFxAccent = Color(0xFF18D8E0)
 /** Ink drawn on white fills (Export label, badges). */
 val AmInk = Color(0xFF111114)
 
 // ── Build 206: the redesign's surfaces + accent ──────────────────────────
 /**
- * The one accent: lime #D2FC32 (the editor's accent since build 217; the
- * short-lived brand red of build 214 was retired in 217 and its last
- * comments in 223). It marks selection, primary actions, slider fills
- * and the dock's Add. The token keeps its build-206 name so call sites
- * stay compatible.
+ * The one accent: cyan #18D8E0 (build 276's fresh design; lime #D2FC32
+ * was the editor's accent from build 217 to 275). It marks selection,
+ * primary actions, slider fills and the dock's Add. The token keeps
+ * its build-206 name so call sites stay compatible.
  */
-val AmAccentViolet = Color(0xFFD2FC32)
-/** Alias for new code: the same lime accent, honestly named. */
+val AmAccentViolet = Color(0xFF18D8E0)
+/** Alias for new code: the same cyan accent, honestly named. */
 val AmAccent = AmAccentViolet
-/** Floating pill bars (transport, toolbars, header): near-black, a step above the base. */
-val AmBarSurface = Color(0xFF121215)
-/** The filled pill of a selected / active item inside a bar or grid (lime wash). */
-val AmPillSelected = Color(0x24D2FC32)
+/** Floating pill bars (transport, toolbars, header): the base itself. */
+val AmBarSurface = Color(0xFF0A0E13)
+/** The filled pill of a selected / active item inside a bar or grid (cyan wash). */
+val AmPillSelected = Color(0x2418D8E0)
 /** Card surface on the base (project cards, panel-stage panels). */
-val AmCardSurface = Color(0xFF1B1B21)
+val AmCardSurface = Color(0xFF11161D)
 
 /** Selected-layer header slate (build 211's role; value is the card surface). */
-val AmSlateHeader = Color(0xFF1B1B21)
+val AmSlateHeader = Color(0xFF11161D)
 
 // ── Text hierarchy ───────────────────────────────────────────────────────
 /** Secondary text. */

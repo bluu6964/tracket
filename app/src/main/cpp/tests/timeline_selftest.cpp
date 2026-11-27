@@ -219,7 +219,7 @@ int main() {
         const uint8_t* p = &imgB[((size_t)320 * W2 + 700) * 4];
         uint32_t secPx = ((uint32_t)p[3] << 24) | ((uint32_t)p[0] << 16) |
                          ((uint32_t)p[1] << 8) | p[2];
-        CHECK(secPx == 0xFF1D1D24u, "selected chain section background");
+        CHECK(secPx == 0xFF131920u, "selected chain section background");
     }
     {
         // Fade knobs: a selected audio clip on the second lane; its knob box straddles the
@@ -251,12 +251,12 @@ int main() {
         const uint8_t* p = &img[((size_t)y * W + x) * 4];
         return ((uint32_t)p[3] << 24) | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | p[2];
     };
-    CHECK(px(700, 20) == 0xFF121215u, "ruler background");
+    CHECK(px(700, 20) == 0xFF0A0E13u, "ruler background");
     CHECK(px(450, 465) == 0xFF3EB1F7u, "shape bar body colour");
     CHECK(px(360, 300) == 0xFFFFFFFFu, "playhead line over the lanes");
-    CHECK(px(700, 320) == 0xFF18181Du, "unselected chain section background");
+    CHECK(px(700, 320) == 0xFF0E1319u, "unselected chain section background");
     CHECK(px(271, 128) == 0xFFFFFFFFu, "selected bar white border");
-    CHECK(px(42, 128) == 0xFF1E1E24u, "rail eye pupil shows the cell colour");
+    CHECK(px(42, 128) == 0xFF141B24u, "rail eye pupil shows the cell colour");
     CHECK(nearPx(px(370, 110), 0xFF1BBC87u, 4), "video bar filmstrip cell tint over the body colour");
     CHECK(px(363, 50) == 0xFFF4F4F5u, "timecode digit at the ruler centre");
     writeBmp("/tmp/timeline-proof.bmp", img, W, H);
@@ -285,7 +285,7 @@ int main() {
             return ((uint32_t)p[3] << 24) | ((uint32_t)p[0] << 16) |
                    ((uint32_t)p[1] << 8) | p[2];
         };
-        CHECK(pxC(700, 320) == 0xFF121215u, "out-of-range chainClip draws no section band");
+        CHECK(pxC(700, 320) == 0xFF0A0E13u, "out-of-range chainClip draws no section band");
         CHECK(rC.hitTest(696, 356, v, &tr, &cl) == kZoneBar && cl == 0,
               "out-of-range chainClip: no chain delete zone (section bg is a plain bar)");
         CHECK(rC.hitTest(42, 356, v, &tr, &cl) == kZoneEye && cl == 0,

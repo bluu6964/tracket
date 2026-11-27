@@ -170,20 +170,41 @@ object ChromeGeometry {
         const val GLYPH_EXPORT_DP = 19.2f
         const val TRI_DP = 9.6f
 
+        // Build 276 (fresh design): Export is a filled accent PILL —
+        // glyph + the word "Export" — not a square icon button. Its
+        // height stays BTN_DP; its width is the label-driven law below
+        // and its corner radius is half the height (a true pill).
+        const val EXPORT_PAD_START_DP = 12f
+        const val EXPORT_GAP_DP = 5f
+        const val EXPORT_PAD_END_DP = 12f
+
         fun btnTopPx(heightPx: Float, density: Float): Float =
             (heightPx - BTN_DP * density) / 2f
 
         fun closeLeftPx(density: Float): Float = PAD_DP * density
 
-        fun exportLeftPx(widthPx: Float, density: Float): Float =
-            widthPx - (PAD_DP + BTN_DP) * density
+        /** The Export pill's width: start pad + glyph + gap + label advance + end pad. */
+        fun exportPillWidthPx(advancePx: Float, density: Float): Float =
+            advancePx + (EXPORT_PAD_START_DP + GLYPH_EXPORT_DP + EXPORT_GAP_DP + EXPORT_PAD_END_DP) * density
+
+        /** The Export pill's left edge (its right edge is the header padding). */
+        fun exportLeftPx(widthPx: Float, exportPillWidthPx: Float, density: Float): Float =
+            widthPx - PAD_DP * density - exportPillWidthPx
+
+        /** The Export glyph's box left inside the pill. */
+        fun exportGlyphLeftPx(exportLeftPx: Float, density: Float): Float =
+            exportLeftPx + EXPORT_PAD_START_DP * density
+
+        /** The Export label's layout-box left inside the pill. */
+        fun exportTextLeftPx(exportLeftPx: Float, density: Float): Float =
+            exportLeftPx + (EXPORT_PAD_START_DP + GLYPH_EXPORT_DP + EXPORT_GAP_DP) * density
 
         /** Pill width: start padding 10 + text advance + gap 4 + triangle [TRI_DP] + end padding 9. */
         fun pillWidthPx(advancePx: Float, density: Float): Float =
             advancePx + (10f + 4f + TRI_DP + 9f) * density
 
-        fun pillLeftPx(widthPx: Float, pillWidthPx: Float, density: Float): Float =
-            exportLeftPx(widthPx, density) - GAP_DP * density - pillWidthPx
+        fun pillLeftPx(widthPx: Float, pillWidthPx: Float, exportPillWidthPx: Float, density: Float): Float =
+            exportLeftPx(widthPx, exportPillWidthPx, density) - GAP_DP * density - pillWidthPx
 
         fun ratioLeftPx(pillLeftPx: Float, density: Float): Float =
             pillLeftPx - (GAP_DP + BTN_DP) * density
